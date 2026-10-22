@@ -1,0 +1,17 @@
+# 依赖
+node_modules/
+
+# 构建产物
+src-tauri/target/
+dist/
+
+# Tauri 生成的能力 Schema（构建时自动重建）
+src-tauri/gen/schemas/
+
+# 工具本地数据（会话记忆、缓存等）
+.workbuddy/
+
+# 系统 / 编辑器杂项
+.DS_Store
+Thumbs.db
+*.log
