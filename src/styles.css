@@ -92,22 +92,99 @@ input { font-family: inherit; font-size: inherit; color: inherit; }
 ::-webkit-scrollbar-thumb:hover { background: var(--fg-faint); background-clip: padding-box; border: 3px solid transparent; }
 ::-webkit-scrollbar-track { background: transparent; }
 
-/* ================= 顶部 ================= */
-.topbar { background: var(--bg-panel); border-bottom: 1px solid var(--line); flex: none; }
-
-.titlebar-row {
-  display: flex; align-items: center; gap: 6px;
-  padding: 7px 10px 0;
-  height: 38px;
-  -webkit-app-region: drag;
+/* ================= 顶部：自绘标题栏 ================= */
+/* 窗口本身无系统边框（tauri.conf 里 decorations=false），这一行就是标题栏：
+   品牌图标 + 菜单 + 文档标题 + 窗口按钮；空白处可拖动，双击最大化 */
+.appbar {
+  flex: none;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--line);
+  position: relative;
+  z-index: 30;
 }
-.titlebar-row > * { -webkit-app-region: no-drag; }
-.tabs { display: flex; gap: 4px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; max-width: calc(100% - 220px); }
+
+.titlebar {
+  height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding-left: 10px;
+  position: relative;
+  /* 顶部一道极淡的高光，模仿 Win11 标题栏的立体感（深色模式下几乎不可见） */
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, .5), rgba(255, 255, 255, 0) 60%);
+}
+body[data-theme="dark"] .titlebar { background-image: none; }
+
+/* 窗口失焦：标题与窗口按钮变淡，和系统原生标题栏的行为一致 */
+body.win-blur .win-title { opacity: .55; }
+body.win-blur .wc { opacity: .6; }
+body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
+
+.brand { display: flex; align-items: center; padding-right: 2px; }
+.brand-mark {
+  width: 22px; height: 22px; border-radius: 6px;
+  display: grid; place-items: center;
+  background: linear-gradient(150deg, #6b95ff 0%, #3a63ef 100%);
+  color: #fff;
+  box-shadow: 0 1px 2px rgba(30, 60, 160, .28), inset 0 1px 0 rgba(255, 255, 255, .28);
+  transition: filter .15s var(--ease);
+}
+.brand-mark .ico { width: 13px; height: 13px; stroke-width: 2.1; }
+
+.menubar { display: flex; align-items: center; gap: 1px; }
+.am-btn {
+  height: 26px; padding: 0 9px; border: none; background: transparent;
+  border-radius: 6px; color: var(--fg-soft); font-size: 12.5px; line-height: 1;
+  transition: background .12s var(--ease), color .12s var(--ease);
+}
+.am-btn:hover { background: var(--bg-hover); color: var(--fg); }
+.am-btn.open { background: var(--bg-active); color: var(--fg); }
+
+/* 中间是文档标题，同时也是拖拽区（标题为空时照样能拖）。
+   绝对定位 + 居中，保证它相对整个窗口居中，而不是相对菜单右侧的剩余空间 */
+.titlebar-fill { flex: 1; align-self: stretch; }
+.win-title {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  max-width: min(46vw, 520px);
+  padding: 0 10px;
+  text-align: center; font-size: 12.5px; color: var(--fg-soft);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  letter-spacing: .01em;
+  pointer-events: auto;
+  transition: opacity .15s var(--ease);
+}
+/* 窗口窄时菜单先保证完整，标题让位 */
+@media (max-width: 820px) { .win-title { display: none; } }
+
+.win-ctrl { display: flex; align-items: center; gap: 2px; padding-right: 5px; }
+.wc {
+  width: 42px; height: 28px; padding: 0;
+  border: none; background: transparent; border-radius: 6px;
+  color: var(--fg-soft); display: grid; place-items: center;
+  transition: background .12s var(--ease), color .12s var(--ease), opacity .15s var(--ease);
+}
+.wc .ico { width: 11px; height: 11px; stroke-width: 2.1; }
+.wc:hover { background: var(--bg-hover); color: var(--fg); }
+.wc:active { background: var(--bg-active); }
+.wc.danger:hover { background: #e5484d; color: #fff; }
+.wc.danger:active { background: #cf3b40; color: #fff; }
+
+/* 标签栏 */
+.tabbar { height: 32px; display: flex; align-items: center; gap: 3px; padding: 0 8px; }
+.tabs {
+  display: flex; gap: 3px; overflow-x: auto; overflow-y: hidden;
+  scrollbar-width: none; min-width: 0; flex: 0 1 auto;
+}
 .tabs::-webkit-scrollbar { display: none; }
+.tabbar-fill { flex: 1; align-self: stretch; }
+
 .tab {
   display: flex; align-items: center; gap: 6px;
-  height: 30px; padding: 0 8px 0 12px;
-  border-radius: 8px 8px 0 0;
+  height: 27px; padding: 0 7px 0 11px;
+  border-radius: 7px;
   color: var(--fg-soft);
   white-space: nowrap;
   max-width: 200px;
@@ -117,10 +194,9 @@ input { font-family: inherit; font-size: inherit; color: inherit; }
   border: none;
 }
 .tab:hover { background: var(--bg-hover); }
-.tab.active { background: var(--bg-soft); color: var(--fg); font-weight: 600; }
-.tab.active::after {
-  content: ""; position: absolute; left: 10px; right: 10px; bottom: 0; height: 2px;
-  background: var(--accent); border-radius: 2px;
+.tab.active {
+  background: var(--bg-soft); color: var(--fg); font-weight: 600;
+  box-shadow: inset 0 0 0 1px var(--line);
 }
 .tab-name { overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
 .tab-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; }
@@ -138,16 +214,42 @@ input { font-family: inherit; font-size: inherit; color: inherit; }
 }
 .tab-add .ico { width: 15px; height: 15px; }
 .tab-add:hover { background: var(--bg-hover); color: var(--fg); }
-.titlebar-spacer { flex: 1; }
-.wordmark { font-size: 11px; color: var(--fg-faint); letter-spacing: .08em; padding-right: 4px; }
 
 .toolbar {
   display: flex; align-items: center; gap: 2px;
-  padding: 4px 10px 7px;
+  padding: 0 10px 7px;
   flex-wrap: nowrap;
   /* 不能用 overflow:hidden —— 模式下拉菜单是绝对定位子元素，会被整块裁掉 */
   overflow: visible;
 }
+
+/* ================= 应用菜单（自绘，替代原生菜单栏） ================= */
+.appmenu {
+  position: fixed; z-index: 500; min-width: 240px; padding: 5px;
+  background: var(--bg-panel);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  animation: pop .12s var(--ease);
+  user-select: none;
+}
+.am-item {
+  display: flex; align-items: center; gap: 2px;
+  width: 100%; height: 29px; padding: 0 8px;
+  border: none; background: transparent; border-radius: 7px;
+  font-size: 12.5px; color: var(--fg); text-align: left;
+  white-space: nowrap;
+}
+.am-item .am-check { width: 16px; flex: none; display: grid; place-items: center; color: currentColor; }
+.am-item .am-check .ico { width: 12px; height: 12px; stroke-width: 2.6; }
+.am-item .am-label { flex: 1; }
+.am-item .am-kbd { font-size: 11px; color: var(--fg-faint); padding-left: 20px; letter-spacing: .02em; }
+.am-item.hot { background: var(--accent); color: var(--accent-fg); }
+.am-item.hot .am-kbd { color: var(--accent-fg); opacity: .72; }
+.am-item:disabled { opacity: .38; cursor: default; }
+.am-item:disabled.hot { background: transparent; color: var(--fg); }
+.am-sep { height: 1px; background: var(--line); margin: 5px 7px; }
+
 .tb {
   height: 28px; padding: 0 10px; border-radius: var(--r-sm);
   border: 1px solid transparent; background: transparent;
@@ -160,6 +262,7 @@ input { font-family: inherit; font-size: inherit; color: inherit; }
 .tb.icon-only { width: 30px; padding: 0; justify-content: center; }
 .tb .ico { width: 16px; height: 16px; }
 .tb-sep { width: 1px; height: 16px; background: var(--line); margin: 0 5px; flex: none; }
+.tb-spacer { flex: 1; }
 .tb-badge {
   font-size: 11px; color: var(--fg-soft); background: var(--bg-soft);
   border: 1px solid var(--line); padding: 2px 8px; border-radius: 20px; margin-right: 4px;

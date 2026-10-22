@@ -215,77 +215,39 @@ fn write_binary_file(path: String, bytes: Vec<u8>) -> Result<String, String> {
     Ok(path)
 }
 
-/// 原生菜单：菜单项点击后把命令 id 发给前端，前端统一分发
-fn install_menu(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
-    use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
+/// Windows 11：给无边框窗口套上系统自带的圆角。
+/// 走 DWM 原生属性，不需要把窗口设为 transparent —— 圆角之外由系统裁剪，
+/// 阴影、拖动缩放全都还是系统那一套。Win10 及更早版本不认识这个属性，
+/// 调用会失败（返回错误码），窗口保持直角，不影响任何功能。
+#[cfg(target_os = "windows")]
+fn apply_rounded_corners(window: &tauri::WebviewWindow) {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use windows_sys::Win32::Graphics::Dwm::DwmSetWindowAttribute;
 
-    let mut made: Vec<MenuItem<tauri::Wry>> = Vec::new();
-    let mut mi = |id: &str, label: &str| -> MenuItem<tauri::Wry> {
-        let item = MenuItem::with_id(app, id, label, true, None::<&str>).unwrap();
-        made.push(item.clone());
-        item
-    };
+    // DWMWA_WINDOW_CORNER_PREFERENCE = 33, DWMWCP_ROUND = 2（Win11 SDK）
+    const DWMWA_WINDOW_CORNER_PREFERENCE: u32 = 33;
+    const DWMWCP_ROUND: i32 = 2;
 
-    let sep = || PredefinedMenuItem::separator(app).unwrap();
+    let Ok(handle) = window.window_handle() else { return };
+    let RawWindowHandle::Win32(win32) = handle.as_raw() else { return };
+    let hwnd = win32.hwnd.get() as *mut core::ffi::c_void;
 
-    let quit = PredefinedMenuItem::quit(app, Some("退出"))?;
-    let undo = PredefinedMenuItem::undo(app, Some("撤销"))?;
-    let redo = PredefinedMenuItem::redo(app, Some("重做"))?;
-    let cut = PredefinedMenuItem::cut(app, Some("剪切"))?;
-    let copy = PredefinedMenuItem::copy(app, Some("复制"))?;
-    let paste = PredefinedMenuItem::paste(app, Some("粘贴"))?;
-    let selall = PredefinedMenuItem::select_all(app, Some("全选"))?;
-    let fs = PredefinedMenuItem::fullscreen(app, Some("全屏"))?;
-
-    let (n_new, n_open, n_save, n_saveas, n_pdf, n_reload, n_close) = (
-        mi("new", "新建"), mi("open", "打开…"), mi("save", "保存"), mi("saveAs", "另存为…"),
-        mi("exportPdf", "导出 PDF / 打印…"), mi("reload", "重新载入"), mi("closeTab", "关闭标签"),
-    );
-    let s1 = sep(); let s2 = sep(); let s3 = sep();
-    let file = Submenu::with_items(app, "文件", true, &[
-        &n_new, &n_open, &n_save, &n_saveas, &s1, &n_pdf, &n_reload, &s2, &n_close, &s3, &quit,
-    ])?;
-
-    let (n_find, n_rep, n_goto) = (mi("find", "查找…"), mi("replace", "替换…"), mi("gotoLine", "跳转到行…"));
-    let e1 = sep(); let e2 = sep();
-    let edit = Submenu::with_items(app, "编辑", true, &[
-        &undo, &redo, &e1, &cut, &copy, &paste, &selall, &e2, &n_find, &n_rep, &n_goto,
-    ])?;
-
-    let (n_wys, n_editm, n_prev) = (mi("modeWysiwyg", "所见即所得"), mi("modeEdit", "编辑模式"), mi("modePreview", "预览模式"));
-    let (n_layout, n_outline, n_toolbar) = (mi("toggleLayout", "单栏 / 双栏"), mi("toggleOutline", "显示 / 隐藏大纲"), mi("toggleToolbar", "显示 / 隐藏工具栏"));
-    let (n_zin, n_zout, n_zreset, n_theme) = (mi("zoomIn", "放大"), mi("zoomOut", "缩小"), mi("zoomReset", "实际大小"), mi("toggleTheme", "切换主题"));
-    let v1 = sep(); let v2 = sep(); let v3 = sep();
-    let view = Submenu::with_items(app, "视图", true, &[
-        &n_wys, &n_editm, &n_prev, &v1, &n_layout, &n_outline, &n_toolbar, &v2,
-        &n_zin, &n_zout, &n_zreset, &v3, &n_theme, &fs,
-    ])?;
-
-    let (n_fmt, n_sa, n_sd, n_sn, n_dd, n_re, n_tr) = (
-        mi("format", "一键格式化"), mi("sortAsc", "按行升序排序"), mi("sortDesc", "按行降序排序"),
-        mi("sortNum", "按数字排序"), mi("dedupe", "去除重复行"), mi("removeEmpty", "删除空行"),
-        mi("trimLines", "去除首尾空白"),
-    );
-    let (n_up, n_low, n_ti) = (mi("upper", "转大写"), mi("lower", "转小写"), mi("title", "首字母大写"));
-    let (n_tc, n_fc, n_mg) = (mi("textCompare", "文本对比…"), mi("folderCompare", "文件夹对比…"), mi("merge", "三向合并…"));
-    let (n_wc, n_enc, n_eol) = (mi("wordCount", "字数统计"), mi("encoding", "文件编码…"), mi("eol", "切换换行符"));
-    let t1 = sep(); let t2 = sep(); let t3 = sep(); let t4 = sep();
-    let tools = Submenu::with_items(app, "工具", true, &[
-        &n_fmt, &t1, &n_sa, &n_sd, &n_sn, &n_dd, &n_re, &n_tr, &t2, &n_up, &n_low, &n_ti,
-        &t3, &n_tc, &n_fc, &n_mg, &t4, &n_wc, &n_enc, &n_eol,
-    ])?;
-
-    let (n_keys, n_about) = (mi("shortcuts", "快捷键一览"), mi("about", "关于 简单记事本"));
-    let help = Submenu::with_items(app, "帮助", true, &[&n_keys, &n_about])?;
-
-    let menu = Menu::with_items(app, &[&file, &edit, &view, &tools, &help])?;
-    app.set_menu(menu)?;
-    Ok(())
+    let pref = DWMWCP_ROUND;
+    unsafe {
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_WINDOW_CORNER_PREFERENCE,
+            &pref as *const i32 as *const core::ffi::c_void,
+            std::mem::size_of::<i32>() as u32,
+        );
+    }
 }
 
+/// 原生菜单已移除：窗口改为无边框自绘标题栏（decorations=false），
+/// 菜单由前端 appmenu.js 渲染，命令仍统一走前端 commands 表。
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
@@ -296,13 +258,14 @@ pub fn run() {
             write_binary_file
         ])
         .setup(|app| {
-            install_menu(app)?;
+            #[cfg(target_os = "windows")]
+            if let Some(w) = tauri::Manager::get_webview_window(app, "main") {
+                apply_rounded_corners(&w);
+            }
             Ok(())
         })
-        .on_menu_event(|app, event| {
-            use tauri::Emitter;
-            let _ = app.emit("menu-command", event.id().0.clone());
-        })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|_, _| {});
 }

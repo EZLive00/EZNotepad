@@ -19,6 +19,7 @@ export const settings = Object.assign(
     layout: 'split',      // split | single
     outlineVisible: true,
     showToolbar: true,
+    showWinTitle: true,   // 标题栏中间是否显示文件名
     lastMode: {},
   },
   LS.get('settings', {})

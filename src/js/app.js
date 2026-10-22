@@ -13,6 +13,8 @@ import { MergeWizard } from './mergewizard.js';
 import { showShortcuts } from './shortcuts.js';
 import { exportPdf, printTab } from './pdf.js';
 import { iconHTML, setIcon } from './icons.js';
+import { createAppMenu } from './appmenu.js';
+import * as win from './win.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -48,6 +50,10 @@ const el = {
   stDraft: $('stDraft'),
   findbar: $('findbar'),
   workspace: $('workspace'),
+  winTitle: $('winTitle'),
+  menubar: $('menubar'),
+  wcMax: $('wcMax'),
+  wcMaxIcon: $('wcMaxIcon'),
 };
 
 const MODE_META = {
@@ -86,6 +92,22 @@ const wys = new WysiwygEditor(el.wysiwyg, {
 });
 
 /* ---------------- 标签 ---------------- */
+/** 标题栏中间那行文字 + 系统窗口标题（任务栏 / Alt+Tab 用） */
+let titleTimer = 0;
+function refreshTitle() {
+  const t = activeTab();
+  const dirty = t ? isDirty(t) : false;
+  const name = t ? t.name : '';
+  const shown = settings.showWinTitle === false
+    ? ''
+    : (t ? (dirty ? '• ' + name : name) : '简单记事本');
+  if (el.winTitle && el.winTitle.textContent !== shown) el.winTitle.textContent = shown;
+  const docTitle = t ? `${dirty ? '• ' : ''}${name} — 简单记事本` : '简单记事本';
+  if (document.title !== docTitle) document.title = docTitle;
+  clearTimeout(titleTimer);
+  titleTimer = setTimeout(() => win.setTitle(docTitle), 300);
+}
+
 function renderTabs() {
   el.tabs.innerHTML = '';
   const act = activeTab();
@@ -122,6 +144,7 @@ function renderTabs() {
     };
     el.tabs.appendChild(b);
   }
+  refreshTitle();
 }
 
 async function revealInFolder(p) {
@@ -839,6 +862,39 @@ function showAbout() {
   });
 }
 
+/* ---------------- 自绘菜单 / 窗口按钮 ---------------- */
+/** 当前可编辑元素：所见即所得是 contenteditable，其余是 textarea */
+function editTarget() {
+  const t = activeTab();
+  if (t && t.mode === 'wysiwyg') return el.wysiwyg;
+  return el.editor;
+}
+
+/** 走 execCommand 的编辑命令（菜单点击会抢焦点，这里先还原焦点） */
+function editCmd(cmd) {
+  const target = editTarget();
+  if (!target) return;
+  target.focus();
+  try { document.execCommand(cmd); } catch {}
+  if (target === el.editor) onEditorInput();
+}
+
+async function pasteFromClipboard() {
+  const target = editTarget();
+  target.focus();
+  try {
+    const text = await navigator.clipboard.readText();
+    if (text) { document.execCommand('insertText', false, text); if (target === el.editor) onEditorInput(); return; }
+  } catch {}
+  toast('请按 Ctrl+V 粘贴');
+}
+
+function setTheme(mode) {
+  settings.theme = mode;
+  saveSettings();
+  applyTheme();
+}
+
 /* ---------------- 命令表 ---------------- */
 const commands = {
   new: () => newTab('未命名.md', ''),
@@ -846,6 +902,17 @@ const commands = {
   save: () => saveTab(),
   saveAs: () => saveTabAs(activeTab()),
   closeTab: () => activeTab() && closeTab(activeTab().id),
+  quit: async () => {
+    persistCurrentView();
+    saveDraft();
+    await win.closeWindow();
+  },
+  undo: () => editCmd('undo'),
+  redo: () => editCmd('redo'),
+  cut: () => editCmd('cut'),
+  copy: () => editCmd('copy'),
+  paste: pasteFromClipboard,
+  selectAll: () => editCmd('selectAll'),
   exportPdf,
   print: () => printTab(activeTab()),
   find: () => openFind(false),
@@ -862,16 +929,38 @@ const commands = {
     applyTheme();
     toast(`主题：${{ auto: '跟随系统', light: '浅色', dark: '深色' }[settings.theme]}`);
   },
+  themeAuto: () => setTheme('auto'),
+  themeLight: () => setTheme('light'),
+  themeDark: () => setTheme('dark'),
   toggleLayout: () => setLayout(settings.layout === 'split' ? 'single' : 'split'),
+  layoutSingle: () => setLayout('single'),
+  layoutSplit: () => setLayout('split'),
   toggleOutline: () => {
     settings.outlineVisible = !settings.outlineVisible;
     saveSettings();
     updateOutline();
   },
+  toggleToolbar: () => {
+    settings.showToolbar = !settings.showToolbar;
+    saveSettings();
+    document.getElementById('toolbar').classList.toggle('hidden', !settings.showToolbar);
+  },
+  toggleWinTitle: () => {
+    settings.showWinTitle = settings.showWinTitle === false;
+    saveSettings();
+    refreshTitle();
+  },
+  fullscreen: async () => {
+    const on = await win.toggleFullscreen();
+    if (on) toast('已进入全屏，按 F11 退出');
+  },
   zoomIn: () => zoom(1),
   zoomOut: () => zoom(-1),
   zoomReset: () => { settings.fontSize = 13.5; saveSettings(); applyFont(); },
   setMode,
+  modeWysiwyg: () => setMode('wysiwyg', { fromActivate: true }),
+  modeEdit: () => setMode('edit', { fromActivate: true }),
+  modePreview: () => setMode('preview', { fromActivate: true }),
   textCompare: () => diff.openText(),
   folderCompare: () => diff.openFolder(),
   merge: () => merge.open(),
@@ -892,9 +981,137 @@ const commands = {
   title: () => transformText(caseOps.title, '首字母大写'),
 };
 
+/* ---------------- 菜单结构（自绘标题栏用） ---------------- */
+const hasTab = () => !!activeTab();
+const markMode = (m) => () => !!(activeTab() && activeTab().mode === m);
+
+const MENU_TREE = [
+  {
+    label: '文件',
+    items: [
+      { id: 'new', label: '新建', kbd: 'Ctrl+N' },
+      { id: 'open', label: '打开…', kbd: 'Ctrl+O' },
+      { sep: true },
+      { id: 'save', label: '保存', kbd: 'Ctrl+S', disabled: () => !hasTab() },
+      { id: 'saveAs', label: '另存为…', kbd: 'Ctrl+Shift+S', disabled: () => !hasTab() },
+      { sep: true },
+      { id: 'exportPdf', label: '导出 PDF / 打印…', kbd: 'Ctrl+P', disabled: () => !hasTab() },
+      { id: 'reload', label: '重新载入', disabled: () => !hasTab() },
+      { sep: true },
+      { id: 'closeTab', label: '关闭标签', kbd: 'Ctrl+W', disabled: () => !hasTab() },
+      { sep: true },
+      { id: 'quit', label: '退出' },
+    ],
+  },
+  {
+    label: '编辑',
+    items: [
+      { id: 'undo', label: '撤销', kbd: 'Ctrl+Z', disabled: () => !hasTab() },
+      { id: 'redo', label: '重做', kbd: 'Ctrl+Y', disabled: () => !hasTab() },
+      { sep: true },
+      { id: 'cut', label: '剪切', kbd: 'Ctrl+X', disabled: () => !hasTab() },
+      { id: 'copy', label: '复制', kbd: 'Ctrl+C', disabled: () => !hasTab() },
+      { id: 'paste', label: '粘贴', kbd: 'Ctrl+V', disabled: () => !hasTab() },
+      { id: 'selectAll', label: '全选', kbd: 'Ctrl+A', disabled: () => !hasTab() },
+      { sep: true },
+      { id: 'find', label: '查找…', kbd: 'Ctrl+F' },
+      { id: 'replace', label: '替换…', kbd: 'Ctrl+H' },
+      { id: 'gotoLine', label: '跳转到行…', kbd: 'Ctrl+G', disabled: () => !hasTab() },
+    ],
+  },
+  {
+    label: '视图',
+    items: [
+      { id: 'modeWysiwyg', label: '所见即所得', kbd: 'Ctrl+1', checked: markMode('wysiwyg'), disabled: () => !hasTab() },
+      { id: 'modeEdit', label: '编辑模式', kbd: 'Ctrl+2', checked: markMode('edit'), disabled: () => !hasTab() },
+      { id: 'modePreview', label: '预览模式', kbd: 'Ctrl+3', checked: markMode('preview'), disabled: () => !hasTab() },
+      { sep: true },
+      { id: 'layoutSingle', label: '单栏', kbd: 'Ctrl+Shift+L', checked: () => settings.layout === 'single' },
+      { id: 'layoutSplit', label: '双栏', checked: () => settings.layout === 'split' },
+      { sep: true },
+      { id: 'toggleOutline', label: '显示大纲', kbd: 'Ctrl+Shift+O', checked: () => settings.outlineVisible },
+      { id: 'toggleToolbar', label: '显示工具栏', checked: () => settings.showToolbar !== false },
+      { id: 'toggleWinTitle', label: '标题栏显示文件名', checked: () => settings.showWinTitle !== false },
+      { sep: true },
+      { id: 'zoomIn', label: '放大', kbd: 'Ctrl+=' },
+      { id: 'zoomOut', label: '缩小', kbd: 'Ctrl+-' },
+      { id: 'zoomReset', label: '实际大小', kbd: 'Ctrl+0' },
+      { sep: true },
+      { id: 'themeAuto', label: '主题：跟随系统', checked: () => settings.theme === 'auto' },
+      { id: 'themeLight', label: '主题：浅色', checked: () => settings.theme === 'light' },
+      { id: 'themeDark', label: '主题：深色', checked: () => settings.theme === 'dark' },
+      { sep: true },
+      { id: 'fullscreen', label: '全屏', kbd: 'F11' },
+    ],
+  },
+  {
+    label: '工具',
+    items: [
+      { id: 'format', label: '一键格式化', kbd: 'Ctrl+Shift+F', disabled: () => !hasTab() },
+      { sep: true },
+      { id: 'sortAsc', label: '按行升序排序', disabled: () => !hasTab() },
+      { id: 'sortDesc', label: '按行降序排序', disabled: () => !hasTab() },
+      { id: 'sortNum', label: '按数字排序', disabled: () => !hasTab() },
+      { id: 'dedupe', label: '去除重复行', disabled: () => !hasTab() },
+      { id: 'removeEmpty', label: '删除空行', disabled: () => !hasTab() },
+      { id: 'trimLines', label: '去除首尾空白', disabled: () => !hasTab() },
+      { sep: true },
+      { id: 'upper', label: '转大写', disabled: () => !hasTab() },
+      { id: 'lower', label: '转小写', disabled: () => !hasTab() },
+      { id: 'title', label: '首字母大写', disabled: () => !hasTab() },
+      { sep: true },
+      { id: 'textCompare', label: '文本对比…', kbd: 'Ctrl+D' },
+      { id: 'folderCompare', label: '文件夹对比…' },
+      { id: 'merge', label: '三向合并…' },
+      { sep: true },
+      { id: 'wordCount', label: '字数统计', disabled: () => !hasTab() },
+      { id: 'encoding', label: '文件编码…', disabled: () => !hasTab() },
+      { id: 'eol', label: '切换换行符', disabled: () => !hasTab() },
+    ],
+  },
+  {
+    label: '帮助',
+    items: [
+      { id: 'shortcuts', label: '快捷键一览' },
+      { id: 'about', label: '关于 简单记事本' },
+    ],
+  },
+];
+
+function setupAppMenu() {
+  if (!el.menubar) return;
+  createAppMenu({
+    bar: el.menubar,
+    menus: MENU_TREE,
+    run: (id) => { const fn = commands[id]; if (fn) fn(); },
+  });
+}
+
 /* ---------------- 事件绑定 ---------------- */
 function bindEvents() {
   const on = (id, fn) => { const n = $(id); if (n) n.onclick = fn; };
+
+  /* 自绘标题栏：窗口按钮 + 最大化状态同步 */
+  on('wcMin', () => win.minimize());
+  on('wcMax', () => win.toggleMaximize());
+  on('wcClose', () => commands.quit());
+  let maxState = null;
+  const syncMaxState = async () => {
+    const max = !!(await win.isMaximized());
+    if (max === maxState) return;
+    maxState = max;
+    if (el.wcMaxIcon) setIcon(el.wcMaxIcon, max ? 'copy' : 'square');
+    if (el.wcMax) el.wcMax.title = max ? '还原' : '最大化';
+  };
+  window.addEventListener('resize', syncMaxState);
+  setTimeout(syncMaxState, 80);
+
+  /* 窗口失焦时让标题与窗口按钮变淡（Win11 原生标题栏就是这个行为） */
+  const setBlur = (on) => document.body.classList.toggle('win-blur', on);
+  window.addEventListener('blur', () => setBlur(true));
+  window.addEventListener('focus', () => { setBlur(false); syncMaxState(); });
+  document.addEventListener('visibilitychange', () => setBlur(document.hidden));
+
   on('btnNew', commands.new);
   on('btnOpen', commands.open);
   on('btnSave', commands.save);
@@ -996,6 +1213,7 @@ function setupKeys() {
     if (!mod) {
       if (e.key === 'F7') { diff.step(-1); return; }
       if (e.key === 'F8') { diff.step(1); return; }
+      if (e.key === 'F11') { e.preventDefault(); commands.fullscreen(); return; }
       if (e.key === 'F3') { findStep(e.shiftKey ? -1 : 1); e.preventDefault(); return; }
       if (e.key === 'Escape' && !el.findbar.classList.contains('hidden')) closeFind();
       return;
@@ -1029,30 +1247,8 @@ function setupKeys() {
   });
 }
 
-/** 原生菜单 -> 命令分发（唯一入口，快捷键与菜单走同一套命令） */
-async function setupMenuBridge() {
-  try {
-    const { listen } = await import('../vendor/api/event.js');
-    await listen('menu-command', (ev) => {
-      const id = ev.payload;
-      const map = {
-        modeWysiwyg: () => setMode('wysiwyg', { fromActivate: true }),
-        modeEdit: () => setMode('edit', { fromActivate: true }),
-        modePreview: () => setMode('preview', { fromActivate: true }),
-        toggleToolbar: () => {
-          settings.showToolbar = !settings.showToolbar;
-          saveSettings();
-          document.getElementById('toolbar').classList.toggle('hidden', !settings.showToolbar);
-        },
-      };
-      if (map[id]) return map[id]();
-      const fn = commands[id];
-      if (fn) fn();
-    });
-  } catch (e) {
-    // 非 Tauri 环境忽略
-  }
-}
+/* 菜单命令分发已经统一在自绘菜单里（setupAppMenu → commands 表），
+   原生菜单的事件桥在窗口改成无边框后已无用，删除。 */
 
 function cycleTab(dir) {
   if (tabs.length < 2) return;
@@ -1109,7 +1305,7 @@ console.log(hello('简单记事本'));
 async function boot() {
   bindEvents();
   setupKeys();
-  setupMenuBridge();
+  setupAppMenu();
   setupSplitters();
   setupDrop();
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
