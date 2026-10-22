@@ -39,10 +39,7 @@ const el = {
   modeMenu: $('modeMenu'),
   modeNote: $('modeNote'),
   fmtBadge: $('fmtBadge'),
-  layoutLabel: $('layoutLabel'),
-  layoutIcon: $('layoutIcon'),
-  btnOutline: $('btnOutlineToggle'),
-  themeIcon: $('themeIcon'),
+  btnSave: $('btnSave'),
   stPos: $('stPos'),
   stLines: $('stLines'),
   stWords: $('stWords'),
@@ -71,10 +68,6 @@ function applyTheme() {
   const sysDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
   const dark = settings.theme === 'dark' || (settings.theme === 'auto' && sysDark);
   document.body.dataset.theme = dark ? 'dark' : 'light';
-  // 按钮显示「点了会变成什么」，深色下给太阳、浅色下给月亮
-  setIcon(el.themeIcon, dark ? 'sun' : 'moon');
-  const btn = $('btnTheme');
-  if (btn) btn.title = dark ? '切换到浅色' : '切换到深色';
 }
 
 /* ---------------- WYSIWYG ---------------- */
@@ -104,6 +97,8 @@ function refreshTitle() {
     ? ''
     : (t ? (dirty ? '• ' + name : name) : '简单记事本');
   if (el.winTitle && el.winTitle.textContent !== shown) el.winTitle.textContent = shown;
+  // 保存按钮兼作「有改动」的提示：没有工具行的其它文件操作了，这里点一下最直接
+  if (el.btnSave) el.btnSave.classList.toggle('dirty', dirty);
   const docTitle = t ? `${dirty ? '• ' : ''}${name} — 简单记事本` : '简单记事本';
   if (document.title !== docTitle) document.title = docTitle;
   clearTimeout(titleTimer);
@@ -266,8 +261,6 @@ function updateModeMenu(kind, allowed) {
 function setLayout(layout) {
   settings.layout = layout;
   saveSettings();
-  el.layoutLabel.textContent = layout === 'split' ? '双栏' : '单栏';
-  setIcon(el.layoutIcon, layout === 'split' ? 'columns-2' : 'square');
   const t = activeTab();
   if (t) setMode(t.mode, { fromActivate: true });
 }
@@ -291,7 +284,6 @@ function updateOutline() {
   const show = settings.outlineVisible;
   el.outlinePane.classList.toggle('hidden', !show);
   el.outlineSplitter.classList.toggle('hidden', !show);
-  if (el.btnOutline) el.btnOutline.classList.toggle('on', show);
   if (!show) return;
   const kind = detectKind(t.name);
   const items = extractOutline(kind, t.content);
@@ -1033,7 +1025,7 @@ const MENU_TREE = [
       { id: 'layoutSplit', label: '双栏', checked: () => settings.layout === 'split' },
       { sep: true },
       { id: 'toggleOutline', label: '显示大纲', kbd: 'Ctrl+Shift+O', checked: () => settings.outlineVisible },
-      { id: 'toggleToolbar', label: '显示工具栏', checked: () => settings.showToolbar !== false },
+      { id: 'toggleToolbar', label: '显示快捷按钮', checked: () => settings.showToolbar !== false },
       { id: 'toggleWinTitle', label: '标题栏显示文件名', checked: () => settings.showWinTitle !== false },
       { sep: true },
       { id: 'zoomIn', label: '放大', kbd: 'Ctrl+=' },
@@ -1115,16 +1107,9 @@ function bindEvents() {
   window.addEventListener('focus', () => { setBlur(false); syncMaxState(); });
   document.addEventListener('visibilitychange', () => setBlur(document.hidden));
 
-  on('btnNew', commands.new);
-  on('btnOpen', commands.open);
+  on('btnFind', () => openFind(false));
   on('btnSave', commands.save);
   on('tabAdd', commands.new);
-  on('btnLayout', commands.toggleLayout);
-  on('btnOutlineToggle', commands.toggleOutline);
-  on('btnFind', () => openFind(false));
-  on('btnFormat', commands.format);
-  on('btnCompare', () => diff.openHub());
-  on('btnTheme', commands.toggleTheme);
 
   $('btnMode').onclick = (e) => { e.stopPropagation(); el.modeMenu.classList.toggle('open'); };
   el.modeMenu.querySelectorAll('button[data-mode]').forEach((b) => {
@@ -1203,8 +1188,6 @@ function bindEvents() {
 
   applyFont();
   applyTheme();
-  el.layoutLabel.textContent = settings.layout === 'split' ? '双栏' : '单栏';
-  setIcon(el.layoutIcon, settings.layout === 'split' ? 'columns-2' : 'square');
   document.getElementById('toolbar').classList.toggle('hidden', settings.showToolbar === false);
 }
 

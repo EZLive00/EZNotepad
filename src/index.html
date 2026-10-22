@@ -149,12 +149,9 @@
       <button class="tab-add" id="tabAdd" title="新建标签 (Ctrl+T)"><svg class="ico" aria-hidden="true"><use href="#i-plus" /></svg></button>
       <div class="tabbar-fill" data-tauri-drag-region></div>
 
+      <!-- 工具行只留三个高频动作，其余（新建/打开/单栏双栏/大纲/格式化/对比/主题）
+           都在菜单里有，且带勾选状态 —— 宁可省行宽，也不重复摆放 -->
       <div class="toolbar" id="toolbar">
-        <button class="tb" id="btnNew" title="新建 (Ctrl+N)"><svg class="ico" aria-hidden="true"><use href="#i-file-plus" /></svg><span>新建</span></button>
-        <button class="tb" id="btnOpen" title="打开 (Ctrl+O)"><svg class="ico" aria-hidden="true"><use href="#i-folder-open" /></svg><span>打开</span></button>
-        <button class="tb" id="btnSave" title="保存 (Ctrl+S)"><svg class="ico" aria-hidden="true"><use href="#i-save" /></svg><span>保存</span></button>
-        <span class="tb-sep"></span>
-
         <div class="dropdown" id="modeDropdown">
           <button class="tb" id="btnMode">
             <svg class="ico" id="modeIcon" aria-hidden="true"><use href="#i-code" /></svg><span id="modeLabel">编辑</span><svg class="ico caret" aria-hidden="true"><use href="#i-chevron-down" /></svg>
@@ -167,16 +164,8 @@
           </div>
         </div>
 
-        <span class="tb-sep"></span>
-        <button class="tb" id="btnLayout" title="单栏 / 双栏 (Ctrl+Shift+L)"><svg class="ico" id="layoutIcon" aria-hidden="true"><use href="#i-columns-2" /></svg><span id="layoutLabel">双栏</span></button>
-        <button class="tb" id="btnOutlineToggle" title="显示/隐藏大纲 (Ctrl+Shift+O)"><svg class="ico" aria-hidden="true"><use href="#i-list-tree" /></svg><span>大纲</span></button>
-        <span class="tb-sep"></span>
         <button class="tb icon-only" id="btnFind" title="查找替换 (Ctrl+F)"><svg class="ico" aria-hidden="true"><use href="#i-search" /></svg></button>
-        <button class="tb icon-only" id="btnFormat" title="一键格式化 (Ctrl+Shift+F)"><svg class="ico" aria-hidden="true"><use href="#i-wand-sparkles" /></svg></button>
-        <span class="tb-sep"></span>
-        <button class="tb" id="btnCompare" title="文本对比 (Ctrl+D)"><svg class="ico" aria-hidden="true"><use href="#i-file-diff" /></svg><span>对比</span></button>
-        <span class="tb-sep"></span>
-        <button class="tb icon-only" id="btnTheme" title="浅色 / 深色"><svg class="ico" id="themeIcon" aria-hidden="true"><use href="#i-sun" /></svg></button>
+        <button class="tb" id="btnSave" title="保存 (Ctrl+S)"><svg class="ico" aria-hidden="true"><use href="#i-save" /></svg><span>保存</span></button>
       </div>
     </div>
   </header>

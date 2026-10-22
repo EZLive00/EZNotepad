@@ -222,11 +222,11 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
 .tab-add .ico { width: 15px; height: 15px; }
 .tab-add:hover { background: var(--bg-hover); color: var(--fg); }
 
-/* 工具组：贴在标签行右侧，不参与换行；模式下拉是绝对定位子元素，不能裁 */
+/* 工具组：贴在标签行右侧，只有三个高频动作用，其余都在菜单里 */
 .toolbar {
-  display: flex; align-items: center; gap: 1px;
+  display: flex; align-items: center; gap: 2px;
   flex: none;
-  margin-left: 4px;
+  margin-left: 8px;
   overflow: visible;
 }
 
@@ -264,37 +264,30 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
   transition: background .13s var(--ease), color .13s var(--ease);
   white-space: nowrap;
   flex: none;
+  position: relative;
 }
 .tb:hover { background: var(--bg-hover); color: var(--fg); }
 .tb:active { background: var(--bg-active); }
-/* 开关类按钮（大纲）有开启态：在行内给个淡淡的高亮，否则看不出开没开 */
-.tb.on { background: var(--accent-soft); color: var(--accent); }
-.tb.on:hover { background: var(--accent-soft); color: var(--accent); }
+/* 保存按钮兼当「有未保存改动」的信号：无改动时是普通灰，有改动时整颗淡蓝高亮。
+   比在按钮上叠一个小圆点稳（圆点会压到文字），也比状态栏的小字更早被看到 */
+.tb.dirty { color: var(--accent); background: var(--accent-soft); }
+.tb.dirty:hover { color: var(--accent); background: var(--accent-soft); filter: brightness(.97); }
 .tb.icon-only { width: 28px; padding: 0; justify-content: center; }
 .tb .ico { width: 15px; height: 15px; }
-.tb-sep { width: 1px; height: 15px; background: var(--line); margin: 0 4px; flex: none; }
 .caret { width: 12px; height: 12px; stroke-width: 2.2; opacity: .6; margin-left: -1px; }
 
-/* 窄窗口：工具组退化为纯图标，再窄就只留最常用的几个（其余在菜单里） */
-@media (max-width: 1120px) {
+/* 窄窗口：模式只留图标 + 下拉箭头（当前模式从图标能看出来），其余保持原样 */
+@media (max-width: 1000px) {
   .toolbar .tb > span { display: none; }
-  .toolbar .tb:not(.icon-only) { width: 28px; padding: 0; justify-content: center; }
-  /* 模式是下拉，单独保留箭头，否则看不出能展开 */
-  .toolbar #btnMode { width: auto; padding: 0 5px; gap: 1px; }
+  .toolbar .tb:not(.icon-only) { width: auto; padding: 0 6px; }
   .toolbar #btnMode .caret { display: block; width: 11px; height: 11px; margin-left: 0; }
-}
-@media (max-width: 900px) {
-  /* 大纲按钮控制左侧栏显隐，窄屏反而更需要它，保留；
-     单栏/双栏、对比、格式化在菜单里都有，这里先收起来 */
-  .toolbar #btnLayout, .toolbar #btnCompare, .toolbar #btnFormat { display: none; }
-  /* 按钮少了之后分隔线会出现连续两根，干脆去掉，靠间距分组 */
-  .toolbar .tb-sep { display: none; }
 }
 
 /* 下拉菜单 */
 .dropdown { position: relative; }
 .menu-panel {
-  position: absolute; top: 32px; left: 0; z-index: 50;
+  /* 工具行现在贴右边缘，面板改成右对齐展开，否则 250px 宽的菜单会溢出窗口 */
+  position: absolute; top: 32px; right: 0; left: auto; z-index: 50;
   min-width: 250px; padding: 6px;
   background: var(--bg-panel); border: 1px solid var(--line); border-radius: var(--r-md);
   box-shadow: var(--shadow); display: none;
