@@ -172,22 +172,28 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
 .wc.danger:hover { background: #e5484d; color: #fff; }
 .wc.danger:active { background: #cf3b40; color: #fff; }
 
-/* 标签栏 */
-.tabbar { height: 32px; display: flex; align-items: center; gap: 3px; padding: 0 8px; }
+/* 标签与工具同行：左边标签，中间留白（可拖窗口），右边是高频操作。
+   这样内容区上方只有一行，比原来"标签栏 + 工具栏"两行更干净。 */
+.tabbar {
+  height: 40px;
+  display: flex; align-items: center; gap: 2px;
+  padding: 0 6px 0 8px;
+}
 .tabs {
   display: flex; gap: 3px; overflow-x: auto; overflow-y: hidden;
   scrollbar-width: none; min-width: 0; flex: 0 1 auto;
 }
 .tabs::-webkit-scrollbar { display: none; }
-.tabbar-fill { flex: 1; align-self: stretch; }
+.tabbar-fill { flex: 1; align-self: stretch; min-width: 12px; }
 
 .tab {
   display: flex; align-items: center; gap: 6px;
-  height: 27px; padding: 0 7px 0 11px;
+  height: 28px; padding: 0 7px 0 11px;
   border-radius: 7px;
   color: var(--fg-soft);
   white-space: nowrap;
   max-width: 200px;
+  flex: 0 1 auto;
   position: relative;
   transition: background .15s var(--ease);
   background: transparent;
@@ -211,15 +217,16 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
 .tab-add {
   width: 26px; height: 26px; border-radius: 7px; border: none; background: transparent;
   color: var(--fg-soft); display: inline-flex; align-items: center; justify-content: center; padding: 0;
+  flex: none;
 }
 .tab-add .ico { width: 15px; height: 15px; }
 .tab-add:hover { background: var(--bg-hover); color: var(--fg); }
 
+/* 工具组：贴在标签行右侧，不参与换行；模式下拉是绝对定位子元素，不能裁 */
 .toolbar {
-  display: flex; align-items: center; gap: 2px;
-  padding: 0 10px 7px;
-  flex-wrap: nowrap;
-  /* 不能用 overflow:hidden —— 模式下拉菜单是绝对定位子元素，会被整块裁掉 */
+  display: flex; align-items: center; gap: 1px;
+  flex: none;
+  margin-left: 4px;
   overflow: visible;
 }
 
@@ -251,29 +258,43 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
 .am-sep { height: 1px; background: var(--line); margin: 5px 7px; }
 
 .tb {
-  height: 28px; padding: 0 10px; border-radius: var(--r-sm);
+  height: 26px; padding: 0 8px; border-radius: var(--r-sm);
   border: 1px solid transparent; background: transparent;
   color: var(--fg-soft); display: inline-flex; align-items: center; gap: 5px;
   transition: background .13s var(--ease), color .13s var(--ease);
   white-space: nowrap;
+  flex: none;
 }
 .tb:hover { background: var(--bg-hover); color: var(--fg); }
 .tb:active { background: var(--bg-active); }
-.tb.icon-only { width: 30px; padding: 0; justify-content: center; }
-.tb .ico { width: 16px; height: 16px; }
-.tb-sep { width: 1px; height: 16px; background: var(--line); margin: 0 5px; flex: none; }
-.tb-spacer { flex: 1; }
-.tb-badge {
-  font-size: 11px; color: var(--fg-soft); background: var(--bg-soft);
-  border: 1px solid var(--line); padding: 2px 8px; border-radius: 20px; margin-right: 4px;
-  letter-spacing: .02em;
-}
+/* 开关类按钮（大纲）有开启态：在行内给个淡淡的高亮，否则看不出开没开 */
+.tb.on { background: var(--accent-soft); color: var(--accent); }
+.tb.on:hover { background: var(--accent-soft); color: var(--accent); }
+.tb.icon-only { width: 28px; padding: 0; justify-content: center; }
+.tb .ico { width: 15px; height: 15px; }
+.tb-sep { width: 1px; height: 15px; background: var(--line); margin: 0 4px; flex: none; }
 .caret { width: 12px; height: 12px; stroke-width: 2.2; opacity: .6; margin-left: -1px; }
+
+/* 窄窗口：工具组退化为纯图标，再窄就只留最常用的几个（其余在菜单里） */
+@media (max-width: 1120px) {
+  .toolbar .tb > span { display: none; }
+  .toolbar .tb:not(.icon-only) { width: 28px; padding: 0; justify-content: center; }
+  /* 模式是下拉，单独保留箭头，否则看不出能展开 */
+  .toolbar #btnMode { width: auto; padding: 0 5px; gap: 1px; }
+  .toolbar #btnMode .caret { display: block; width: 11px; height: 11px; margin-left: 0; }
+}
+@media (max-width: 900px) {
+  /* 大纲按钮控制左侧栏显隐，窄屏反而更需要它，保留；
+     单栏/双栏、对比、格式化在菜单里都有，这里先收起来 */
+  .toolbar #btnLayout, .toolbar #btnCompare, .toolbar #btnFormat { display: none; }
+  /* 按钮少了之后分隔线会出现连续两根，干脆去掉，靠间距分组 */
+  .toolbar .tb-sep { display: none; }
+}
 
 /* 下拉菜单 */
 .dropdown { position: relative; }
 .menu-panel {
-  position: absolute; top: 34px; left: 0; z-index: 50;
+  position: absolute; top: 32px; left: 0; z-index: 50;
   min-width: 250px; padding: 6px;
   background: var(--bg-panel); border: 1px solid var(--line); border-radius: var(--r-md);
   box-shadow: var(--shadow); display: none;
@@ -486,6 +507,12 @@ body[data-theme="dark"] .tok-attr { color: #c9a2ff; }
 .st-btn:hover { background: var(--bg-hover); color: var(--fg); }
 #stDraft { color: var(--fg-faint); transition: color .3s; }
 #stDraft.dirty { color: var(--chg-fg); }
+/* 文件类型徽章（原来在工具栏右侧，移到状态栏后不再挤占操作区） */
+.st-item.fmt {
+  font-size: 10.5px; letter-spacing: .04em; color: var(--fg-soft);
+  background: var(--bg-soft); border: 1px solid var(--line);
+  padding: 1px 7px; border-radius: 20px; margin-left: 4px;
+}
 
 /* ================= 覆盖层面板 ================= */
 .overlay {

@@ -128,7 +128,7 @@
     </symbol>
   </svg>
   <!-- icon-sprite:end -->
-  <!-- ============ 顶部：自绘标题栏（菜单 + 标题 + 窗口按钮）｜标签栏｜工具栏 ============ -->
+  <!-- ============ 顶部：标题栏（菜单 + 标题 + 窗口按钮）｜标签与工具行 ============ -->
   <header class="appbar">
     <div class="titlebar" data-tauri-drag-region>
       <div class="brand" title="简单记事本">
@@ -148,36 +148,36 @@
       <div class="tabs" id="tabs"></div>
       <button class="tab-add" id="tabAdd" title="新建标签 (Ctrl+T)"><svg class="ico" aria-hidden="true"><use href="#i-plus" /></svg></button>
       <div class="tabbar-fill" data-tauri-drag-region></div>
-    </div>
 
-    <div class="toolbar" id="toolbar">
-      <button class="tb" id="btnNew" title="新建 (Ctrl+N)"><svg class="ico" aria-hidden="true"><use href="#i-file-plus" /></svg><span>新建</span></button>
-      <button class="tb" id="btnOpen" title="打开 (Ctrl+O)"><svg class="ico" aria-hidden="true"><use href="#i-folder-open" /></svg><span>打开</span></button>
-      <button class="tb" id="btnSave" title="保存 (Ctrl+S)"><svg class="ico" aria-hidden="true"><use href="#i-save" /></svg><span>保存</span></button>
-      <span class="tb-sep"></span>
+      <div class="toolbar" id="toolbar">
+        <button class="tb" id="btnNew" title="新建 (Ctrl+N)"><svg class="ico" aria-hidden="true"><use href="#i-file-plus" /></svg><span>新建</span></button>
+        <button class="tb" id="btnOpen" title="打开 (Ctrl+O)"><svg class="ico" aria-hidden="true"><use href="#i-folder-open" /></svg><span>打开</span></button>
+        <button class="tb" id="btnSave" title="保存 (Ctrl+S)"><svg class="ico" aria-hidden="true"><use href="#i-save" /></svg><span>保存</span></button>
+        <span class="tb-sep"></span>
 
-      <div class="dropdown" id="modeDropdown">
-        <button class="tb" id="btnMode">
-          <svg class="ico" id="modeIcon" aria-hidden="true"><use href="#i-code" /></svg><span id="modeLabel">编辑</span><svg class="ico caret" aria-hidden="true"><use href="#i-chevron-down" /></svg>
-        </button>
-        <div class="menu-panel" id="modeMenu">
-          <button data-mode="wysiwyg"><b>所见即所得<svg class="ico menu-check" aria-hidden="true"><use href="#i-check" /></svg></b><small>输入即渲染，富文本体验</small></button>
-          <button data-mode="edit"><b>编辑模式<svg class="ico menu-check" aria-hidden="true"><use href="#i-check" /></svg></b><small>显示原始 Markdown / 源码</small></button>
-          <button data-mode="preview"><b>预览模式<svg class="ico menu-check" aria-hidden="true"><use href="#i-check" /></svg></b><small>只读，仅查看渲染结果</small></button>
-          <div class="menu-note" id="modeNote"></div>
+        <div class="dropdown" id="modeDropdown">
+          <button class="tb" id="btnMode">
+            <svg class="ico" id="modeIcon" aria-hidden="true"><use href="#i-code" /></svg><span id="modeLabel">编辑</span><svg class="ico caret" aria-hidden="true"><use href="#i-chevron-down" /></svg>
+          </button>
+          <div class="menu-panel" id="modeMenu">
+            <button data-mode="wysiwyg"><b>所见即所得<svg class="ico menu-check" aria-hidden="true"><use href="#i-check" /></svg></b><small>输入即渲染，富文本体验</small></button>
+            <button data-mode="edit"><b>编辑模式<svg class="ico menu-check" aria-hidden="true"><use href="#i-check" /></svg></b><small>显示原始 Markdown / 源码</small></button>
+            <button data-mode="preview"><b>预览模式<svg class="ico menu-check" aria-hidden="true"><use href="#i-check" /></svg></b><small>只读，仅查看渲染结果</small></button>
+            <div class="menu-note" id="modeNote"></div>
+          </div>
         </div>
-      </div>
 
-      <button class="tb" id="btnLayout" title="单栏 / 双栏 (Ctrl+Shift+L)"><svg class="ico" id="layoutIcon" aria-hidden="true"><use href="#i-columns-2" /></svg><span id="layoutLabel">双栏</span></button>
-      <button class="tb" id="btnOutlineToggle" title="显示/隐藏大纲 (Ctrl+Shift+O)"><svg class="ico" aria-hidden="true"><use href="#i-list-tree" /></svg><span>大纲</span></button>
-      <span class="tb-sep"></span>
-      <button class="tb icon-only" id="btnFind" title="查找替换 (Ctrl+F)"><svg class="ico" aria-hidden="true"><use href="#i-search" /></svg></button>
-      <button class="tb icon-only" id="btnFormat" title="一键格式化 (Ctrl+Shift+F)"><svg class="ico" aria-hidden="true"><use href="#i-wand-sparkles" /></svg></button>
-      <span class="tb-sep"></span>
-      <button class="tb" id="btnCompare" title="文本对比 (Ctrl+D)"><svg class="ico" aria-hidden="true"><use href="#i-file-diff" /></svg><span>对比</span></button>
-      <div class="tb-spacer"></div>
-      <span class="tb-badge" id="fmtBadge">Markdown</span>
-      <button class="tb icon-only" id="btnTheme" title="浅色 / 深色"><svg class="ico" id="themeIcon" aria-hidden="true"><use href="#i-sun" /></svg></button>
+        <span class="tb-sep"></span>
+        <button class="tb" id="btnLayout" title="单栏 / 双栏 (Ctrl+Shift+L)"><svg class="ico" id="layoutIcon" aria-hidden="true"><use href="#i-columns-2" /></svg><span id="layoutLabel">双栏</span></button>
+        <button class="tb" id="btnOutlineToggle" title="显示/隐藏大纲 (Ctrl+Shift+O)"><svg class="ico" aria-hidden="true"><use href="#i-list-tree" /></svg><span>大纲</span></button>
+        <span class="tb-sep"></span>
+        <button class="tb icon-only" id="btnFind" title="查找替换 (Ctrl+F)"><svg class="ico" aria-hidden="true"><use href="#i-search" /></svg></button>
+        <button class="tb icon-only" id="btnFormat" title="一键格式化 (Ctrl+Shift+F)"><svg class="ico" aria-hidden="true"><use href="#i-wand-sparkles" /></svg></button>
+        <span class="tb-sep"></span>
+        <button class="tb" id="btnCompare" title="文本对比 (Ctrl+D)"><svg class="ico" aria-hidden="true"><use href="#i-file-diff" /></svg><span>对比</span></button>
+        <span class="tb-sep"></span>
+        <button class="tb icon-only" id="btnTheme" title="浅色 / 深色"><svg class="ico" id="themeIcon" aria-hidden="true"><use href="#i-sun" /></svg></button>
+      </div>
     </div>
   </header>
 
@@ -223,6 +223,7 @@
     <span class="st-item" id="stPos">行 1, 列 1</span>
     <span class="st-item" id="stLines">1 行</span>
     <span class="st-item" id="stWords">0 字</span>
+    <span class="st-item fmt" id="fmtBadge">Markdown</span>
     <span class="st-spacer"></span>
     <button class="st-btn" id="stEOL" title="切换换行符">LF</button>
     <button class="st-btn" id="stEncoding" title="更改编码">UTF-8</button>

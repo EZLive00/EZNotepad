@@ -41,6 +41,7 @@ const el = {
   fmtBadge: $('fmtBadge'),
   layoutLabel: $('layoutLabel'),
   layoutIcon: $('layoutIcon'),
+  btnOutline: $('btnOutlineToggle'),
   themeIcon: $('themeIcon'),
   stPos: $('stPos'),
   stLines: $('stLines'),
@@ -57,9 +58,10 @@ const el = {
 };
 
 const MODE_META = {
-  wysiwyg: { label: '所见即所得', icon: 'type' },
-  edit: { label: '编辑模式', icon: 'code' },
-  preview: { label: '预览模式', icon: 'eye' },
+  // short 用于工具栏/标题栏这类横向空间紧张的地方
+  wysiwyg: { label: '所见即所得', short: '所见即所得', icon: 'type' },
+  edit: { label: '编辑模式', short: '编辑', icon: 'code' },
+  preview: { label: '预览模式', short: '预览', icon: 'eye' },
 };
 
 let currentLang = '';
@@ -217,7 +219,7 @@ function setMode(mode, opt = {}) {
   settings.lastMode[kind] = mode;
   saveSettings();
 
-  el.modeLabel.textContent = MODE_META[mode].label;
+  el.modeLabel.textContent = MODE_META[mode].short || MODE_META[mode].label;
   setIcon(el.modeIcon, MODE_META[mode].icon);
 
   const split = settings.layout === 'split';
@@ -289,6 +291,7 @@ function updateOutline() {
   const show = settings.outlineVisible;
   el.outlinePane.classList.toggle('hidden', !show);
   el.outlineSplitter.classList.toggle('hidden', !show);
+  if (el.btnOutline) el.btnOutline.classList.toggle('on', show);
   if (!show) return;
   const kind = detectKind(t.name);
   const items = extractOutline(kind, t.content);
