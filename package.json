@@ -9,7 +9,8 @@
     "build": "tauri build",
     "build:win": "tauri build --target x86_64-pc-windows-msvc",
     "build:mac": "tauri build --target universal-apple-darwin",
-    "icons": "node scripts/build-icons.mjs"
+    "icons": "node scripts/build-icons.mjs",
+    "test": "node test/run.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.12.3"

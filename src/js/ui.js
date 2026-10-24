@@ -69,6 +69,8 @@ export function contextMenu(x, y, items) {
     const b = document.createElement('button');
     b.textContent = it.label;
     if (it.disabled) b.disabled = true;
+    // 保住编辑区焦点与选区，否则「加粗」这类命令会找不到目标
+    b.addEventListener('mousedown', (e) => e.preventDefault());
     if (it.shortcut) {
       const k = document.createElement('span');
       k.className = 'ctx-kbd';

@@ -59,6 +59,66 @@ function splitRow(line) {
 
 const isTableSep = (line) => /^\s*\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)*\|?\s*$/.test(line) && line.includes('-');
 
+/** 表格行的对齐方式 */
+function tableAlign(cell) {
+  const c = String(cell).trim();
+  const l = c.startsWith(':');
+  const r = c.endsWith(':');
+  if (l && r) return 'center';
+  if (r) return 'right';
+  if (l) return 'left';
+  return '';
+}
+
+/**
+ * 把收集到的列表项（带缩进层级）渲染成真正嵌套的 <ul>/<ol>。
+ * 纯字符串拼接，不依赖 DOM，方便在无 document 的环境里复用。
+ */
+function listToHtml(items) {
+  /** 层级栈：{ indent, tag, liOpen } */
+  const stack = [];
+  let html = '';
+
+  const closeList = () => {
+    const lv = stack.pop();
+    if (lv.liOpen) html += '</li>';
+    html += `</${lv.tag}>`;
+  };
+
+  for (const it of items) {
+    const tag = it.ordered ? 'ol' : 'ul';
+
+    // 1. 缩进回退 → 关掉更深的层
+    while (stack.length && it.indent < stack[stack.length - 1].indent) closeList();
+
+    let top = stack[stack.length - 1];
+    // 2. 同层但换了列表类型 → 关掉当前列表，另起一个
+    if (top && it.indent === top.indent && top.tag !== tag) {
+      closeList();
+      top = stack[stack.length - 1];
+    }
+
+    const needNew = !top || it.indent > top.indent || top.tag !== tag;
+    if (needNew) {
+      const cls = it.task !== null ? ' class="task-list"' : '';
+      const start = it.ordered && it.start > 1 ? ` start="${it.start}"` : '';
+      html += `<${tag}${cls}${start}>`; // 父层的 <li> 保持打开，形成嵌套
+      stack.push({ indent: it.indent, tag, liOpen: false });
+    } else if (top.liOpen) {
+      html += '</li>';
+    }
+
+    const body = it.task !== null
+      ? `<input type="checkbox" disabled${it.task ? ' checked' : ''}> ${it.text}`
+      : it.text;
+    html += `<li>${body}`;
+    stack[stack.length - 1].liOpen = true;
+  }
+
+  while (stack.length) closeList();
+  return html;
+}
+
 /**
  * 渲染整篇 Markdown。
  * @param {string} md
@@ -70,25 +130,29 @@ export function renderMarkdown(md, opts = {}) {
   const out = [];
   let i = 0;
 
-  const flushList = (buf) => {
-    if (!buf.items.length) return;
-    const tag = buf.ordered ? 'ol' : 'ul';
-    const task = buf.items.some((it) => it.task !== null);
-    const cls = task ? ' class="task-list"' : '';
-    out.push(`<${tag}${cls}>`);
-    for (const it of buf.items) {
-      if (task && it.task !== null) {
-        out.push(`<li><input type="checkbox" disabled${it.task ? ' checked' : ''}>${it.text}</li>`);
-      } else {
-        out.push(`<li>${it.text}</li>`);
-      }
-    }
-    out.push(`</${tag}>`);
-    buf.items = [];
-    buf.ordered = false;
+  const listItems = [];
+  const colStack = [];
+
+  const flushList = () => {
+    if (!listItems.length) return;
+    out.push(listToHtml(listItems));
+    listItems.length = 0;
+    colStack.length = 0;
   };
 
-  const listBuf = { items: [], ordered: false };
+  /** 列表缩进同理：按「列」判断层级，2 / 3 / 4 空格都能读对 */
+  const levelOf = (col) => {
+    while (colStack.length && col < colStack[colStack.length - 1]) colStack.pop();
+    if (!colStack.length) colStack.push(col);
+    else if (col > colStack[colStack.length - 1]) colStack.push(col);
+    return colStack.length - 1;
+  };
+
+  const colsOf = (ws) => {
+    let n = 0;
+    for (const ch of ws) n += ch === '\t' ? 4 : 1;
+    return n;
+  };
 
   while (i < lines.length) {
     const line = lines[i];
@@ -96,7 +160,7 @@ export function renderMarkdown(md, opts = {}) {
     // 围栏代码块
     const fence = line.match(/^\s*(```|~~~)\s*([\w#+-]*)\s*$/);
     if (fence) {
-      flushList(listBuf);
+      flushList();
       const marker = fence[1];
       const lang = fence[2] || '';
       const body = [];
@@ -113,14 +177,14 @@ export function renderMarkdown(md, opts = {}) {
 
     // 空行
     if (/^\s*$/.test(line)) {
-      flushList(listBuf);
+      flushList();
       i++;
       continue;
     }
 
     // 分割线
     if (/^\s*([-*_])\s*(\1\s*){2,}$/.test(line)) {
-      flushList(listBuf);
+      flushList();
       out.push('<hr>');
       i++;
       continue;
@@ -129,7 +193,7 @@ export function renderMarkdown(md, opts = {}) {
     // ATX 标题
     const h = line.match(/^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/);
     if (h) {
-      flushList(listBuf);
+      flushList();
       const lv = h[1].length;
       out.push(`<h${lv} id="h-${i}">${inline(h[2])}</h${lv}>`);
       i++;
@@ -138,17 +202,19 @@ export function renderMarkdown(md, opts = {}) {
 
     // 表格：表头 + 分隔行
     if (line.includes('|') && i + 1 < lines.length && isTableSep(lines[i + 1])) {
-      flushList(listBuf);
+      flushList();
       const head = splitRow(line);
+      const aligns = splitRow(lines[i + 1]).map(tableAlign);
+      const sty = (k) => (aligns[k] ? ` style="text-align:${aligns[k]}"` : '');
       i += 2;
       const rows = [];
       while (i < lines.length && lines[i].includes('|') && !/^\s*$/.test(lines[i])) {
         rows.push(splitRow(lines[i]));
         i++;
       }
-      out.push('<table><thead><tr>' + head.map((c) => `<th>${inline(c)}</th>`).join('') + '</tr></thead><tbody>');
+      out.push('<table><thead><tr>' + head.map((c, k) => `<th${sty(k)}>${inline(c)}</th>`).join('') + '</tr></thead><tbody>');
       for (const r of rows) {
-        out.push('<tr>' + head.map((_, k) => `<td>${inline(r[k] || '')}</td>`).join('') + '</tr>');
+        out.push('<tr>' + head.map((_, k) => `<td${sty(k)}>${inline(r[k] || '')}</td>`).join('') + '</tr>');
       }
       out.push('</tbody></table>');
       continue;
@@ -156,7 +222,7 @@ export function renderMarkdown(md, opts = {}) {
 
     // 引用（含嵌套内容，简单实现：连续 > 行合并）
     if (/^\s*>\s?/.test(line)) {
-      flushList(listBuf);
+      flushList();
       const buf = [];
       while (i < lines.length && /^\s*>\s?/.test(lines[i])) {
         buf.push(lines[i].replace(/^\s*>\s?/, ''));
@@ -169,7 +235,6 @@ export function renderMarkdown(md, opts = {}) {
     // 无序列表 / 任务列表
     const ul = line.match(/^(\s*)[-*+]\s+(.*)$/);
     if (ul) {
-      if (listBuf.ordered) flushList(listBuf);
       let text = ul[2];
       let task = null;
       const t = text.match(/^\[([ xX])\]\s+(.*)$/);
@@ -177,23 +242,33 @@ export function renderMarkdown(md, opts = {}) {
         task = t[1].toLowerCase() === 'x';
         text = t[2];
       }
-      listBuf.items.push({ text: inline(text), task });
+      listItems.push({
+        indent: levelOf(colsOf(ul[1])),
+        ordered: false,
+        start: 1,
+        text: inline(text),
+        task,
+      });
       i++;
       continue;
     }
 
     // 有序列表
-    const ol = line.match(/^\s*\d+[.)]\s+(.*)$/);
+    const ol = line.match(/^(\s*)\d+[.)]\s+(.*)$/);
     if (ol) {
-      if (!listBuf.ordered && listBuf.items.length) flushList(listBuf);
-      listBuf.ordered = true;
-      listBuf.items.push({ text: inline(ol[1]), task: null });
+      listItems.push({
+        indent: levelOf(colsOf(ol[1])),
+        ordered: true,
+        start: +(line.match(/\d+/)?.[0] || 1),
+        text: inline(ol[2]),
+        task: null,
+      });
       i++;
       continue;
     }
 
     // 段落（连续非空行合并，行尾两个空格 = 硬换行）
-    flushList(listBuf);
+    flushList();
     const para = [];
     while (
       i < lines.length &&
@@ -211,7 +286,7 @@ export function renderMarkdown(md, opts = {}) {
     }
     if (para.length) out.push(`<p>${para.join('\n')}</p>`);
   }
-  flushList(listBuf);
+  flushList();
   return `<div class="md">${out.join('\n')}</div>`;
 }
 

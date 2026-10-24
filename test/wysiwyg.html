@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>wysiwyg 内核测试</title>
+<link rel="stylesheet" href="../src/styles.css" />
+<style>
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); }
+  body { display: block; overflow: auto; user-select: auto; }
+  #wysiwyg { min-height: 300px; }
+</style>
+</head>
+<body data-theme="light">
+<div id="wysiwyg" class="wysiwyg" contenteditable="true" spellcheck="false"></div>
+<script type="module">
+import { WysiwygEditor } from '../src/js/wysiwyg.js';
+import { renderMarkdown } from './../src/js/markdown.js';
+
+const root = document.getElementById('wysiwyg');
+let out = '';
+const ed = new WysiwygEditor(root, { onChange: (m) => { out = m; } });
+window.__ed = ed;
+
+const T = {
+  reset(src) {
+    root.focus();
+    ed.render(src);
+    out = ed.toMarkdown();
+    root.focus();
+    ed.restoreCaret({ blockIndex: 0, offset: 0 });
+    return out;
+  },
+  out: () => ed.toMarkdown(),
+  caret(i, off) { root.focus(); ed.restoreCaret({ blockIndex: i, offset: off }); return ed.caretState(); },
+  type(s) { document.execCommand('insertText', false, s); return ed.toMarkdown(); },
+  key(k, o = {}) {
+    root.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...o }));
+    return ed.toMarkdown();
+  },
+  blocks: () => [...root.children].map((b) => {
+    const t = (b.querySelector('.w-text') || b.querySelector('td') || b).textContent;
+    const li = b.dataset.type === 'li' ? `:${b.dataset.list}` : '';
+    const ind = b.dataset.indent ? '@' + b.dataset.indent : '';
+    return `${b.dataset.type}${li}${ind}=${t}`;
+  }),
+  cells: () => [...root.querySelectorAll('table tr')].map((tr) => [...tr.children].map((c) => c.textContent).join('|')),
+  undo() { ed.undo(); return ed.toMarkdown(); },
+};
+
+window.T = T;
+
+window.__run = () => {
+  const R = [];
+  const eq = (name, got, want) => R.push({ name, ok: String(got) === String(want), got: String(got), want: String(want) });
+  const has = (name, ok) => R.push({ name, ok: !!ok, got: String(!!ok), want: 'true' });
+
+  // 1. 往返保真
+  const SRC = [
+    '# 标题',
+    '',
+    '普通 **粗体** 与 _斜体_ 和 `code`。',
+    '',
+    '- 项目一',
+    '- 项目二',
+    '  - 子项 A',
+    '1. 第一',
+    '2. 第二',
+    '',
+    '> 引用一行',
+    '',
+    '| 名称 | 数量 |',
+    '| --- | ---: |',
+    '| 苹果 | 3 |',
+    '',
+    '```js',
+    'const a = 1;',
+    '```',
+    '',
+    '---',
+  ].join('\n');
+  eq('往返保真', T.reset(SRC), SRC);
+
+  // 2. 段首语法糖
+  T.reset('');
+  T.type('- ');
+  eq('输入 "- " 变无序列表', T.blocks()[0], 'li:ul@0=');
+  T.type('一');
+  T.key('Enter');
+  T.type('二');
+  eq('列表内回车接着编号', T.out(), '- 一\n- 二');
+
+  // 3. 空列表项回车退出
+  T.key('Enter');
+  eq('空项回车先清标记', T.blocks().length, 3);
+  T.key('Enter');
+  eq('再回车退出列表', T.blocks()[2].startsWith('p'), true);
+
+  // 4. Tab / Shift+Tab
+  T.reset('- a\n- b');
+  T.caret(1, 3);
+  T.key('Tab');
+  eq('Tab 缩进一级', T.out(), '- a\n  - b');
+  T.key('Tab', { shiftKey: true });
+  eq('Shift+Tab 退一级', T.out(), '- a\n- b');
+  T.key('Tab', { shiftKey: true });
+  eq('顶层再退变段落', T.out(), '- a\nb');
+
+  // 5. 退格：列表项开头
+  T.reset('- a\n  - b');
+  T.caret(1, 0);
+  T.key('Backspace');
+  eq('缩进项退格退一级', T.out(), '- a\n- b');
+  T.caret(1, 0);
+  T.key('Backspace');
+  eq('顶层列表项退格变段落', T.out(), '- a\nb');
+
+  // 6. 有序列表重排
+  T.reset('1. 甲\n2. 乙');
+  T.caret(0, 2);
+  T.key('Enter');
+  T.type('丙');
+  eq('中间插入自动重排', T.out(), '1. 甲\n2. 丙\n3. 乙');
+
+  // 7. 引用
+  T.reset('> 引用');
+  T.caret(0, 2);
+  T.key('Enter');
+  T.type('续行');
+  eq('引用内回车继续引用', T.out(), '> 引用\n> 续行');
+
+  // 8. 表格
+  T.reset('');
+  ed.insertTable(3, 3);
+  eq('插入 3x3 表格', T.out(), '|  |  |  |\n| --- | --- | --- |\n|  |  |  |\n|  |  |  |');
+  T.type('名称');
+  T.key('Tab');
+  T.type('数量');
+  T.key('Tab');
+  T.type('备注');
+  eq('Tab 在单元格间移动', T.cells()[0], '名称|数量|备注');
+  T.key('Tab');
+  T.type('一级');
+  eq('第 3 次 Tab 落到下一行首列', T.cells()[1], '一级||');
+  T.key('Enter');
+  T.type('苹果');
+  eq('回车换到下一行同列', T.cells()[2], '苹果||');
+  has('表格 Markdown 带表头', T.out().split('\n').some((l) => l.startsWith('| 苹果 |')));
+
+  // 9. 行内自动转换
+  T.reset('');
+  T.type('**粗**');
+  eq('粗体标记转换', T.out(), '**粗**');
+  has('确实生成了 strong', root.querySelector('strong'));
+  T.type(' 尾');
+  eq('粗体后继续输入', T.out(), '**粗** 尾');
+
+  // 10. 行内样式不丢（回归）
+  T.reset('**粗** 普通');
+  T.caret(0, 6);
+  T.type('!');
+  eq('编辑后粗体标记仍在', T.out(), '**粗** 普通!');
+
+  // 11. 删除合并
+  T.reset('abc\ndef');
+  T.caret(0, 3);
+  T.key('Delete');
+  eq('行尾 Delete 合并下一行', T.out(), 'abcdef');
+
+  T.reset('abc\ndef');
+  T.caret(1, 0);
+  T.key('Backspace');
+  eq('行首 Backspace 并入上一行', T.out(), 'abcdef');
+
+  // 12. 标题：回车后变正文
+  T.reset('# 标题');
+  T.caret(0, 4);
+  T.key('Enter');
+  T.type('正文');
+  eq('标题内回车后是新段落', T.out(), '# 标题\n正文');
+
+  // 13. 撤销
+  T.reset('');
+  T.type('abc');
+  T.undo();
+  eq('撤销回到空', T.out(), '');
+
+  // 14. 任务列表
+  T.reset('- [ ] 待办\n- [x] 完成');
+  eq('任务列表往返', T.out(), '- [ ] 待办\n- [x] 完成');
+  root.querySelectorAll('.w-check')[0].click();
+  eq('点勾选框写回 Markdown', T.out(), '- [x] 待办\n- [x] 完成');
+
+  // 15. 列表 / 标题切换
+  T.reset('一段文字');
+  T.caret(0, 0);
+  ed.toggleList('ul');
+  eq('段落转无序列表', T.out(), '- 一段文字');
+  ed.toggleList('ul');
+  eq('再点一次取消列表', T.out(), '一段文字');
+  ed.toggleHeading(2);
+  eq('转二级标题', T.out(), '## 一段文字');
+  ed.toggleHeading(2);
+  eq('再点一次回正文', T.out(), '一段文字');
+
+  // 16. 表格行列增删
+  T.reset('');
+  ed.insertTable(2, 2);
+  T.type('A');
+  T.key('Tab');
+  T.type('B');
+  T.key('Tab');
+  ed.tableCommand('rowBelow');
+  eq('表格加一行', T.cells().length, 3);
+  ed.tableCommand('delRow');
+  eq('表格删一行', T.cells().length, 2);
+  ed.focusCell(root.querySelector('.w-block'), 0, 1);
+  ed.tableCommand('colAfter');
+  eq('表格加一列', T.cells()[0], 'A|B|');
+  ed.focusCell(root.querySelector('.w-block'), 0, 2);
+  ed.tableCommand('delCol');
+  eq('表格删一列', T.cells()[0], 'A|B');
+  eq('表格 Markdown', T.out(), '| A | B |\n| --- | --- |\n|  |  |');
+
+  // 17. 撤销结构操作
+  T.reset('- a\n- b');
+  T.caret(1, 3);
+  T.key('Tab');
+  eq('缩进生效', T.out(), '- a\n  - b');
+  T.undo();
+  eq('撤销缩进', T.out(), '- a\n- b');
+
+  // 18. 多行粘贴按 Markdown 解析
+  T.reset('');
+  T.caret(0, 0);
+  const dt = new DataTransfer();
+  dt.setData('text/plain', '## 小标题\n- 甲\n- 乙');
+  root.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+  eq('多行粘贴保留结构', T.out(), '## 小标题\n- 甲\n- 乙');
+
+  // 19. 代码块内回车
+  T.reset('```js\nconst a = 1;\n```');
+  ed.restoreCaret({ blockIndex: 0, offset: 12 });
+  T.key('Enter');
+  T.type('const b = 2;');
+  eq('代码块回车换行', T.out(), '```js\nconst a = 1;\nconst b = 2;\n```');
+
+  // 20. 四空格缩进的嵌套列表：结构要读对（序列化会规范化列宽）
+  T.reset('- 父\n    - 子');
+  eq('四空格缩进识别为一级子项', T.blocks()[1], 'li:ul@1=子');
+
+  // 21. 空行退格合并
+  T.reset('a\n\nb');
+  T.caret(1, 0);
+  T.key('Backspace');
+  eq('空行退格被吸收', T.out(), 'a\nb');
+
+  // 22. 行内码切换
+  T.reset('text');
+  ed.restoreCaret({ blockIndex: 0, offset: 0 });
+  const rng = document.createRange();
+  rng.setStart(root.querySelector('.w-text').firstChild, 0);
+  rng.setEnd(root.querySelector('.w-text').firstChild, 4);
+  const s2 = getSelection();
+  s2.removeAllRanges();
+  s2.addRange(rng);
+  ed.toggleInline('code');
+  eq('行内码包裹选区', T.out(), '`text`');
+
+  // 23. 表格列对齐：写进 data-aligns 并体现在分隔行
+  T.reset('| a | b |\n|---|---|\n| 1 | 2 |');
+  ed.focusCell(root.querySelector('.w-table'), 1, 1);
+  ed.setColAlign('center');
+  eq('列居中写入 Markdown', T.out(), '| a | b |\n| --- | :---: |\n| 1 | 2 |');
+  T.reset(T.out());
+  eq('列居中往返保留', root.querySelector('tbody td:nth-child(2)').style.textAlign, 'center');
+  ed.focusCell(root.querySelector('.w-table'), 0, 0);
+  ed.setColAlign('right');
+  eq('表头列也能右对齐', T.out(), '| a | b |\n| ---: | :---: |\n| 1 | 2 |');
+
+  // 24. 三级嵌套有序列表 + 编号
+  T.reset('1. a\n   1. b\n2. c');
+  eq('嵌套有序列表结构', T.blocks().join(','), 'li:ol@0=a,li:ol@1=b,li:ol@0=c');
+  eq('嵌套有序列表列宽', T.out(), '1. a\n   1. b\n2. c');
+
+  // 25. 选区离开编辑区后仍能定位当前块（菜单/工具栏点击时不丢目标）
+  T.reset('alpha\nbeta');
+  ed.restoreCaret({ blockIndex: 1, offset: 2 });
+  const blk = ed.currentBlock();
+  getSelection().collapse(document.body, 0);
+  has('选区离开后 currentBlock 兜底', ed.currentBlock() === blk);
+
+  // 26. 段落 → 引用
+  T.reset('引用这段');
+  ed.restoreCaret({ blockIndex: 0, offset: 0 });
+  ed.insertBlock('quote');
+  eq('段落转引用', T.out(), '> 引用这段');
+
+  // 27. 预览渲染器：嵌套列表 / 表格对齐 / 任务清单
+  const prev = renderMarkdown('- 一级\n  - 二级\n    1. 三级有序\n- 一级b\n\n| l | c |\n| :-- | :-: |\n| 1 | 2 |\n\n- [x] 完成\n- [ ] 未完成\n');
+  has('预览：嵌套列表结构', prev.includes('<ul><li>一级<ul><li>二级<ol><li>三级有序</li></ol></li></ul></li><li>一级b</li></ul>'));
+  has('预览：表格对齐', prev.includes('<th style="text-align:left">l</th>') && prev.includes('<td style="text-align:center">2</td>'));
+  has('预览：任务清单', prev.includes('<ul class="task-list">') && prev.includes('checked'));
+
+  // 28. 输入 --- 变分割线
+  T.reset('');
+  T.type('---');
+  eq('输入 --- 变分割线', T.blocks().join(','), 'hr=,p=');
+
+  // 29. 表格落在文档末尾时自动补一个空段落当落脚点
+  T.reset('abc');
+  ed.restoreCaret({ blockIndex: 0, offset: 3 });
+  ed.insertTable(2, 2);
+  eq('表格后补空段落', T.blocks().length, 3);
+  eq('空段落排在表格之后', T.blocks()[2], 'p=');
+  has('末尾空段落不写进 Markdown', !T.out().endsWith('\n'));
+
+  // 30. 光标离开表格后，表格命令立刻失效
+  T.reset('| a | b |\n|---|---|\n| 1 | 2 |\n\n正文');
+  ed.focusCell(root.querySelector('.w-table'), 1, 1);
+  has('单元格里 isInTable 为真', ed.isInTable());
+  ed.restoreCaret({ blockIndex: 1, offset: 1 });
+  has('回到正文后 isInTable 为假', !ed.isInTable());
+
+  // 31. 空行上插入代码块不留空段落；引用可以再点一次取消
+  T.reset('');
+  ed.insertBlock('code');
+  eq('空行上插代码块不残留空段落', T.blocks().join(','), 'code=');
+  T.reset('一段话');
+  ed.restoreCaret({ blockIndex: 0, offset: 0 });
+  ed.insertBlock('quote');
+  eq('段落转引用', T.out(), '> 一段话');
+  ed.insertBlock('quote');
+  eq('再点一次取消引用', T.out(), '一段话');
+
+  return R;
+};
+
+window.__ready = true;
+</script>
+</body>
+</html>

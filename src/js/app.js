@@ -541,6 +541,89 @@ function requireEditMode() {
   return true;
 }
 
+/** 块级格式命令只在「所见即所得」模式下有意义 */
+function wysCmd(fn) {
+  const t = activeTab();
+  if (!t) return;
+  if (t.mode !== 'wysiwyg') { toast('该操作请在「所见即所得」模式下使用'); return; }
+  fn(wys);
+}
+
+/** 表格列对齐 */
+function alignColumn(w, align) {
+  if (!w.isInTable()) { toast('请先把光标放进表格'); return; }
+  w.setColAlign(align);
+  toast(align ? `本列已${{ left: '左对齐', center: '居中', right: '右对齐' }[align]}` : '本列已取消对齐');
+}
+
+/** 调整当前块缩进（列表改层级、引用改嵌套深度） */
+function shiftIndent(delta) {
+  wysCmd((w) => {
+    const b = w.currentBlock();
+    if (!b) return;
+    const n = Math.max(0, Math.min(6, (+b.dataset.indent || 0) + delta));
+    if (b.dataset.type === 'bq') w.setQuoteLevel(b, n);
+    else if (b.dataset.type === 'li') w.setIndent(b, n);
+  });
+}
+
+/** 自定大小的插入表格 */
+function tablePrompt() {
+  const t = activeTab();
+  if (!t) return;
+  if (t.mode !== 'wysiwyg') { toast('插入表格请在「所见即所得」模式下使用'); return; }
+  const saved = saveRange();
+  const box = document.createElement('div');
+  box.innerHTML = '<div class="dlg-text">行数（含表头）与列数：</div>'
+    + '<div class="dlg-row">'
+    + '<input class="dlg-input" id="tblRows" value="3">'
+    + '<span>行</span>'
+    + '<input class="dlg-input" id="tblCols" value="3">'
+    + '<span>列</span>'
+    + '</div>';
+  dialog({ title: '插入表格', body: box, buttons: [{ id: 'ok', label: '插入', primary: true }, { id: 'cancel', label: '取消' }] })
+    .then((r) => {
+      if (r !== 'ok') return;
+      const rows = Math.max(1, Math.min(20, parseInt(document.getElementById('tblRows').value, 10) || 3));
+      const cols = Math.max(1, Math.min(12, parseInt(document.getElementById('tblCols').value, 10) || 3));
+      restoreRange(saved);
+      wysCmd((w) => w.insertTable(rows, cols));
+    });
+  setTimeout(() => document.getElementById('tblRows')?.select(), 40);
+}
+
+/** 插入链接 */
+function linkPrompt() {
+  const t = activeTab();
+  if (!t) return;
+  if (t.mode !== 'wysiwyg') { toast('插入链接请在「所见即所得」模式下使用'); return; }
+  const saved = saveRange();
+  const box = document.createElement('div');
+  box.innerHTML = '<div class="dlg-text">链接地址：</div><input class="dlg-input" id="linkInput" value="https://">';
+  dialog({ title: '插入链接', body: box, buttons: [{ id: 'ok', label: '插入', primary: true }, { id: 'cancel', label: '取消' }] })
+    .then((r) => {
+      if (r !== 'ok') return;
+      const v = document.getElementById('linkInput').value.trim();
+      if (!v || v === 'https://') return;
+      restoreRange(saved);
+      wys.applyLink(v);
+    });
+  setTimeout(() => document.getElementById('linkInput')?.select(), 40);
+}
+
+/* 对话框会抢走焦点，动手前把编辑区选区存下来 */
+function saveRange() {
+  const sel = window.getSelection();
+  return sel && sel.rangeCount ? sel.getRangeAt(0).cloneRange() : null;
+}
+
+function restoreRange(r) {
+  if (!r) return;
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(r);
+}
+
 /** 对全文或选区做整段替换的通用入口 */
 function transformText(fn, label) {
   const t = activeTab();
@@ -918,6 +1001,34 @@ const commands = {
   inlineCode: () => surround('`'),
   strike: () => surround('~~'),
   format: formatDoc,
+
+  /* —— 块级格式（仅所见即所得模式） —— */
+  body: () => wysCmd((w) => w.toggleHeading(0)),
+  h1: () => wysCmd((w) => w.toggleHeading(1)),
+  h2: () => wysCmd((w) => w.toggleHeading(2)),
+  h3: () => wysCmd((w) => w.toggleHeading(3)),
+  ul: () => wysCmd((w) => w.toggleList('ul')),
+  ol: () => wysCmd((w) => w.toggleList('ol')),
+  taskList: () => wysCmd((w) => w.toggleList('task')),
+  quote: () => wysCmd((w) => w.insertBlock('quote')),
+  codeBlock: () => wysCmd((w) => w.insertBlock('code')),
+  hr: () => wysCmd((w) => w.insertBlock('hr')),
+  table: () => wysCmd((w) => w.insertTable(3, 3)),
+  tablePrompt,
+  indentIn: () => shiftIndent(1),
+  indentOut: () => shiftIndent(-1),
+  link: linkPrompt,
+  tableRowAbove: () => wysCmd((w) => w.tableCommand('rowAbove')),
+  tableRowBelow: () => wysCmd((w) => w.tableCommand('rowBelow')),
+  tableColBefore: () => wysCmd((w) => w.tableCommand('colBefore')),
+  tableColAfter: () => wysCmd((w) => w.tableCommand('colAfter')),
+  tableDelRow: () => wysCmd((w) => w.tableCommand('delRow')),
+  tableDelCol: () => wysCmd((w) => w.tableCommand('delCol')),
+  tableDel: () => wysCmd((w) => w.tableCommand('delTable')),
+  tableAlignLeft: () => wysCmd((w) => alignColumn(w, 'left')),
+  tableAlignCenter: () => wysCmd((w) => alignColumn(w, 'center')),
+  tableAlignRight: () => wysCmd((w) => alignColumn(w, 'right')),
+  tableAlignNone: () => wysCmd((w) => alignColumn(w, '')),
   toggleTheme: () => {
     settings.theme = settings.theme === 'auto' ? 'light' : settings.theme === 'light' ? 'dark' : 'auto';
     saveSettings();
@@ -979,6 +1090,9 @@ const commands = {
 /* ---------------- 菜单结构（自绘标题栏用） ---------------- */
 const hasTab = () => !!activeTab();
 const markMode = (m) => () => !!(activeTab() && activeTab().mode === m);
+const canWys = () => !!(activeTab() && activeTab().mode === 'wysiwyg');
+const inTable = () => canWys() && wys.isInTable();
+const wysOnly = () => !canWys();
 
 const MENU_TREE = [
   {
@@ -1012,6 +1126,46 @@ const MENU_TREE = [
       { id: 'find', label: '查找…', kbd: 'Ctrl+F' },
       { id: 'replace', label: '替换…', kbd: 'Ctrl+H' },
       { id: 'gotoLine', label: '跳转到行…', kbd: 'Ctrl+G', disabled: () => !hasTab() },
+    ],
+  },
+  {
+    label: '格式',
+    items: [
+      { id: 'body', label: '正文', kbd: 'Ctrl+Alt+0', disabled: wysOnly },
+      { id: 'h1', label: '一级标题', kbd: 'Ctrl+Alt+1', disabled: wysOnly },
+      { id: 'h2', label: '二级标题', kbd: 'Ctrl+Alt+2', disabled: wysOnly },
+      { id: 'h3', label: '三级标题', kbd: 'Ctrl+Alt+3', disabled: wysOnly },
+      { sep: true },
+      { id: 'bold', label: '加粗', kbd: 'Ctrl+B', disabled: () => !hasTab() },
+      { id: 'italic', label: '斜体', kbd: 'Ctrl+I', disabled: () => !hasTab() },
+      { id: 'strike', label: '删除线', kbd: 'Ctrl+Shift+X', disabled: () => !hasTab() },
+      { id: 'inlineCode', label: '行内代码', disabled: () => !hasTab() },
+      { id: 'link', label: '插入链接…', kbd: 'Ctrl+K', disabled: wysOnly },
+      { sep: true },
+      { id: 'ul', label: '无序列表', kbd: 'Ctrl+Shift+8', disabled: wysOnly },
+      { id: 'ol', label: '有序列表', kbd: 'Ctrl+Shift+7', disabled: wysOnly },
+      { id: 'taskList', label: '任务列表', kbd: 'Ctrl+Shift+9', disabled: wysOnly },
+      { id: 'indentIn', label: '增加缩进', kbd: 'Tab', disabled: wysOnly },
+      { id: 'indentOut', label: '减少缩进', kbd: 'Shift+Tab', disabled: wysOnly },
+      { sep: true },
+      { id: 'quote', label: '引用', kbd: 'Ctrl+Shift+Q', disabled: wysOnly },
+      { id: 'codeBlock', label: '代码块', kbd: 'Ctrl+Shift+K', disabled: wysOnly },
+      { id: 'hr', label: '分割线', disabled: wysOnly },
+      { sep: true },
+      { id: 'table', label: '插入表格', kbd: 'Ctrl+Shift+T', disabled: wysOnly },
+      { id: 'tablePrompt', label: '插入表格（自定大小）…', disabled: wysOnly },
+      { id: 'tableRowAbove', label: '光标行上方插入一行', disabled: () => !inTable() },
+      { id: 'tableRowBelow', label: '光标行下方插入一行', disabled: () => !inTable() },
+      { id: 'tableColBefore', label: '光标列左侧插入一列', disabled: () => !inTable() },
+      { id: 'tableColAfter', label: '光标列右侧插入一列', disabled: () => !inTable() },
+      { id: 'tableDelRow', label: '删除本行', disabled: () => !inTable() },
+      { id: 'tableDelCol', label: '删除本列', disabled: () => !inTable() },
+      { id: 'tableDel', label: '删除整个表格', disabled: () => !inTable() },
+      { sep: true },
+      { id: 'tableAlignLeft', label: '本列左对齐', disabled: () => !inTable() },
+      { id: 'tableAlignCenter', label: '本列居中', disabled: () => !inTable() },
+      { id: 'tableAlignRight', label: '本列右对齐', disabled: () => !inTable() },
+      { id: 'tableAlignNone', label: '本列取消对齐', disabled: () => !inTable() },
     ],
   },
   {
@@ -1155,14 +1309,46 @@ function bindEvents() {
   document.addEventListener('contextmenu', (e) => {
     if (e.target.closest('.wysiwyg')) {
       e.preventDefault();
-      contextMenu(e.clientX, e.clientY, [
+      const tbl = wys.isInTable();
+      const items = [
         { label: '加粗', shortcut: 'Ctrl+B', action: () => commands.bold() },
         { label: '斜体', shortcut: 'Ctrl+I', action: () => commands.italic() },
+        { label: '删除线', shortcut: 'Ctrl+Shift+X', action: () => commands.strike() },
         { label: '行内代码', action: () => commands.inlineCode() },
+        { label: '插入链接…', shortcut: 'Ctrl+K', action: () => commands.link() },
         { sep: true },
+        { label: '正文', shortcut: 'Ctrl+Alt+0', action: () => commands.body() },
+        { label: '一级标题', shortcut: 'Ctrl+Alt+1', action: () => commands.h1() },
+        { label: '无序列表', shortcut: 'Ctrl+Shift+8', action: () => commands.ul() },
+        { label: '有序列表', shortcut: 'Ctrl+Shift+7', action: () => commands.ol() },
+        { label: '任务列表', shortcut: 'Ctrl+Shift+9', action: () => commands.taskList() },
+        { sep: true },
+      ];
+      if (tbl) {
+        items.push(
+          { label: '上方插入行', action: () => commands.tableRowAbove() },
+          { label: '下方插入行', action: () => commands.tableRowBelow() },
+          { label: '左侧插入列', action: () => commands.tableColBefore() },
+          { label: '右侧插入列', action: () => commands.tableColAfter() },
+          { sep: true },
+          { label: '本列居中', action: () => commands.tableAlignCenter() },
+          { label: '删除本行', action: () => commands.tableDelRow() },
+          { label: '删除本列', action: () => commands.tableDelCol() },
+          { label: '删除表格', action: () => commands.tableDel() },
+          { sep: true },
+        );
+      } else {
+        items.push(
+          { label: '插入表格', shortcut: 'Ctrl+Shift+T', action: () => commands.table() },
+          { label: '分割线', action: () => commands.hr() },
+          { sep: true },
+        );
+      }
+      items.push(
         { label: '全选', action: () => document.execCommand('selectAll') },
         { label: '查找替换…', shortcut: 'Ctrl+F', action: () => openFind(false) },
-      ]);
+      );
+      contextMenu(e.clientX, e.clientY, items);
     }
   });
 
@@ -1206,8 +1392,21 @@ function setupKeys() {
     }
     const shift = e.shiftKey;
     let handled = true;
+
+    // —— 块级格式：Ctrl+Alt+0/1/2/3 = 正文 / 一级 / 二级 / 三级标题 ——
+    if (e.altKey && /^[0-3]$/.test(k)) {
+      commands[k === '0' ? 'body' : 'h' + k]();
+      e.preventDefault();
+      return;
+    }
+    // 列表用 e.code 判定：Shift+数字在不同键盘布局下 e.key 不是数字
+    if (shift && e.code === 'Digit7') { commands.ol(); e.preventDefault(); return; }
+    if (shift && e.code === 'Digit8') { commands.ul(); e.preventDefault(); return; }
+    if (shift && e.code === 'Digit9') { commands.taskList(); e.preventDefault(); return; }
+
     if (k === 'n' && shift) diff.openText();
     else if (k === 'n') commands.new();
+    else if (k === 'o' && shift) commands.toggleOutline();
     else if (k === 'o') commands.open();
     else if (k === 's' && shift) commands.saveAs();
     else if (k === 's') commands.save();
@@ -1218,7 +1417,11 @@ function setupKeys() {
     else if (k === 'd') diff.openText();
     else if (k === 'g') commands.gotoLine();
     else if (k === 'l' && shift) commands.toggleLayout();
-    else if (k === 'o' && shift) commands.toggleOutline();
+    else if (k === 'k' && shift) commands.codeBlock();
+    else if (k === 'k') commands.link();
+    else if (k === 'q' && shift) commands.quote();
+    else if (k === 't' && shift) commands.table();
+    else if (k === 'x' && shift) commands.strike();
     else if (k === '1') setMode('wysiwyg', { fromActivate: true });
     else if (k === '2') setMode('edit', { fromActivate: true });
     else if (k === '3') setMode('preview', { fromActivate: true });
@@ -1271,6 +1474,9 @@ const WELCOME = `# 欢迎使用 简单记事本
 | 查找 / 替换 | \`Ctrl+F\` / \`Ctrl+H\` |
 | 一键格式化 | \`Ctrl+Shift+F\` |
 | 文本对比 | \`Ctrl+D\` |
+| 标题级别 / 正文 | \`Ctrl+Alt+1~3\` / \`Ctrl+Alt+0\` |
+| 无序 / 有序 / 任务列表 | \`Ctrl+Shift+8 / 7 / 9\` |
+| 插入表格 / 引用 | \`Ctrl+Shift+T\` / \`Ctrl+Shift+Q\` |
 | 单栏 / 双栏 | \`Ctrl+Shift+L\` |
 | 跳转行 | \`Ctrl+G\` |
 | 导出 PDF | \`Ctrl+P\` |
