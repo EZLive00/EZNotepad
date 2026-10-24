@@ -346,7 +346,7 @@ window.__run = () => {
   eq('两个空行保留', T.out(), 'a\n\n\nb');
   eq('第二个空行是个空块', T.blocks().join(','), 'p=a,p=,p=b');
 
-  // 33. 空标题按退格降级为正文（删空后重写不该还是标题）
+  // 33. 删空标题：块立刻退回正文（否则会留下一条没有文字的装饰线，打字还是标题）
   T.reset('## 标题');
   T.caret(0, 0);
   const rh = document.createRange();
@@ -354,11 +354,59 @@ window.__run = () => {
   getSelection().removeAllRanges();
   getSelection().addRange(rh);
   document.execCommand('delete');
-  eq('标题文字已删空', T.blocks()[0], 'h2=');
-  T.key('Backspace');
-  eq('空标题退格变正文', T.blocks()[0], 'p=');
+  eq('标题文字删空后立刻变正文', T.blocks()[0], 'p=');
+  has('删空的块里没有游离 <br>', ![...root.children[0].childNodes].some((n) => n.nodeName === 'BR'));
   T.type('新内容');
-  eq('重写变成普通段落', T.out(), '新内容');
+  eq('删空标题后重写是普通段落', T.out(), '新内容');
+
+  // 33b. 标题 + 分割线：删空标题不该把分割线挤下去，也不该把 ## 写回文件
+  T.reset('## 标题\n\n---\n\n正文');
+  T.caret(0, 0);
+  const rh2 = document.createRange();
+  rh2.selectNodeContents(root.querySelector('.w-text'));
+  getSelection().removeAllRanges();
+  getSelection().addRange(rh2);
+  document.execCommand('delete');
+  eq('删空标题后分割线原地不动', T.blocks().join(','), 'p=,hr=,p=正文');
+  eq('删空标题后回写不留 ##', T.out(), '---\n\n正文');
+
+  // 33c. 空标题里回车 = 退出标题，接着写的是正文
+  T.reset('');
+  T.caret(0, 0);
+  T.type('## ');
+  eq('输入 ## 空格得到空标题', T.blocks()[0], 'h2=');
+  T.key('Enter');
+  eq('空标题里回车退回正文', T.blocks()[0], 'p=');
+
+  // 33d. 文件里遗留的空标题（## 后面什么都没有）载入时也退回正文
+  T.reset('## \n\n正文');
+  eq('载入时空标题退回正文', T.blocks().join(','), 'p=,p=正文');
+
+  // 33e. 段落里同样不该留游离 <br>（删除整行文字后块会凭空高出一行）
+  T.reset('一个段落');
+  T.caret(0, 0);
+  const rp = document.createRange();
+  rp.selectNodeContents(root.querySelector('.w-text'));
+  getSelection().removeAllRanges();
+  getSelection().addRange(rp);
+  document.execCommand('delete');
+  has('段落删空后没有游离 <br>', ![...root.children[0].childNodes].some((n) => n.nodeName === 'BR'));
+  eq('段落删空后高度只有一行', root.children[0].getBoundingClientRect().height < 40, true);
+
+  // 33f. 用菜单把空行设成标题、还没打字时，别处敲字不该把这个标题悄悄吃掉
+  T.reset('甲\n\n乙');
+  T.caret(1, 1);
+  const re2 = document.createRange();
+  re2.selectNodeContents(root.children[1].querySelector('.w-text'));
+  getSelection().removeAllRanges();
+  getSelection().addRange(re2);
+  document.execCommand('delete');
+  window.__ed.restoreCaret({ blockIndex: 1, offset: 0 });
+  window.__ed.toggleHeading(2);
+  eq('菜单把空行设成二级标题', T.blocks()[1], 'h2=');
+  T.caret(0, 1);
+  T.type('字');
+  eq('别处敲字不影响这个空标题', T.blocks()[1], 'h2=');
 
   return R;
 };

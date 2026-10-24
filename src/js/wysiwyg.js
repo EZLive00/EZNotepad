@@ -471,7 +471,9 @@ export function blocksToMarkdown(root) {
     lines.push(...c.lines);
     prev = c.type;
   }
-  // 末尾空行在 Markdown 里没有意义，顺手去掉（编辑器里仍可留空段落当落脚点）
+  // 首尾空行在 Markdown 里没有意义，顺手去掉（编辑器里仍可留空段落当落脚点）。
+  // 开头那个空段落尤其要清掉：把标题文字删光后它会留在最前面，存盘就多出两行空行。
+  while (lines.length && lines[0].trim() === '') lines.shift();
   while (lines.length && lines[lines.length - 1].trim() === '') lines.pop();
   return lines.join('\n');
 }
@@ -580,6 +582,7 @@ export class WysiwygEditor {
     this.lastCell = null;
     this.root.appendChild(parseMarkdown(md));
     this.silent = false;
+    this.normalize(true);      // 载入时也过一遍：空标题退回正文、清掉游离节点
     this.renumber();
     if (restore) this.restoreCaret(restore);
   }
@@ -721,7 +724,48 @@ export class WysiwygEditor {
 
   /* ---------------- DOM 规范化 ---------------- */
 
-  normalize() {
+  /**
+   * 块里除了 .w-text，偶尔会多出浏览器自己塞的节点。最常见的是**选中整行文字
+   * 后按删除**：Chromium 会把内容清空，却在 .w-text 外面留一个孤立的 <br>。
+   * 那个 <br> 会撑出一整行高度，于是标题下面那条装饰线看起来"凭空往下移了一行"。
+   * 这里把它扫掉；万一游离节点里真有文字，就并回 .w-text，不丢内容。
+   */
+  sweepBlock(b, t) {
+    const keep = (n) => n.nodeType === 1
+      && (n.classList.contains('w-li-marker')
+        || n.classList.contains('w-codebar')
+        || n.tagName === 'INPUT');
+    const before = [];
+    const after = [];
+    let seen = false;
+    for (const n of [...b.childNodes]) {
+      if (n === t) { seen = true; continue; }
+      if (keep(n)) continue;
+      (seen ? after : before).push(n);
+    }
+    if (!before.length && !after.length) return;
+
+    const absorb = (list, atStart) => {
+      // 从后往前插，保证多节点时顺序不乱
+      for (const n of atStart ? [...list].reverse() : list) {
+        if (n.nodeType === 1 && n.tagName === 'BR') { n.remove(); continue; }
+        if (n.nodeType === 3) {
+          if (!n.nodeValue || !n.nodeValue.trim()) { n.remove(); continue; }
+          t.insertBefore(n, atStart ? t.firstChild : null);
+          continue;
+        }
+        if (n.nodeType !== 1) { n.remove(); continue; }
+        // 有内容的容器：把孩子搬进去，容器本身丢掉
+        while (n.firstChild) t.insertBefore(n.firstChild, atStart ? t.firstChild : null);
+        n.remove();
+      }
+    };
+    absorb(before, true);
+    absorb(after, false);
+  }
+
+  normalize(all = false) {
+    const caret = this.currentBlock();
     // 顶层游离节点（浏览器偶尔会造出 div/br/text）→ 包成段落
     for (const n of [...this.root.childNodes]) {
       if (n.nodeType === 1 && n.classList.contains('w-block')) continue;
@@ -734,13 +778,23 @@ export class WysiwygEditor {
       n.replaceWith(p);
     }
 
-    for (const b of this.root.children) {
+    for (const b of [...this.root.children]) {
       const type = b.dataset.type;
       if (type === 'table' || type === 'hr') continue;
       let t = b.querySelector('.w-text');
       if (!t) {
         t = mkText('');
         b.appendChild(t);
+      }
+      this.sweepBlock(b, t);
+      // 空标题立刻退回正文。留着它有两个坏处：标题下方那条装饰线会变成一条
+      // 没有文字的横线（像凭空多出来的分割线），而且接着打字还是标题。
+      // 只降级「光标所在的那个块」（以及整体载入时的所有块）：刚用菜单把空行设成
+      // 标题、还没开始打字的情况下，别的地方敲一个字就把这个标题悄悄吃掉。
+      if (/^h[1-6]$/.test(type) && isEmptyText(t) && !t.querySelector('img') && (all || b === caret)) {
+        b.dataset.type = 'p';
+        b.classList.remove('w-h');
+        b.classList.add('w-p');
       }
       // 清掉空的行内包裹（删字后常见的 <strong></strong>）
       t.querySelectorAll('strong,em,code,del,b,i,strike,a').forEach((el) => {
@@ -1048,7 +1102,11 @@ export class WysiwygEditor {
   splitBlock(block) {
     const type = block.dataset.type;
 
-    // 空列表项 / 空引用：退出结构
+    // 空列表项 / 空引用 / 空标题：退出结构（在空标题里回车 = 我要写正文）
+    if (/^h[1-6]$/.test(type) && this.isEmptyBlock(block)) {
+      this.toParagraph(block, 0);
+      return;
+    }
     if ((type === 'li' || type === 'bq') && this.isEmptyBlock(block)) {
       const ind = +block.dataset.indent || 0;
       if (type === 'li' && ind > 0) { this.setIndent(block, ind - 1); return; }
