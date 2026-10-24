@@ -52,6 +52,11 @@ const el = {
   menubar: $('menubar'),
   wcMax: $('wcMax'),
   wcMaxIcon: $('wcMaxIcon'),
+  editWrap: $('editWrap'),
+  wHandle: $('wHandle'),
+  whAdd: $('whAdd'),
+  whMenu: $('whMenu'),
+  wBlockMenu: $('wBlockMenu'),
 };
 
 const MODE_META = {
@@ -232,14 +237,18 @@ function setMode(mode, opt = {}) {
   el.previewPane.style.flex = split ? '1' : '1';
   el.previewHead.textContent = split ? '预览' : '预览（只读）';
 
-  if (showWys) wys.render(t.content);
+  const docDir = t.path ? be.dirName(t.path) : '';
+  if (showWys) { wys.setDocDir(docDir); wys.render(t.content); }
   else if (showEditor) { el.editor.value = t.content; }
-  if (showPreview) renderPreview(kind, t.content, currentLang, el.preview);
+  if (showPreview) renderPreview(kind, t.content, currentLang, el.preview, docDir);
 
   updateModeMenu(kind, allowed);
   updateOutline();
   refreshStats();
   if (mode === 'preview') el.preview.scrollTop = t.scrollTop || 0;
+  // 手柄只属于所见即所得：切到编辑/预览就收起来
+  if (mode === 'wysiwyg') refreshHandle();
+  else { hoverBlock = null; handleBusy = false; el.wHandle.classList.add('hidden'); closeBlockMenu(); }
 }
 
 function updateModeMenu(kind, allowed) {
@@ -273,7 +282,7 @@ function schedulePreview() {
     const t = activeTab();
     if (!t || el.previewPane.classList.contains('hidden')) return;
     const scroll = el.preview.scrollTop;
-    renderPreview(detectKind(t.name), t.content, currentLang, el.preview);
+    renderPreview(detectKind(t.name), t.content, currentLang, el.preview, t.path ? be.dirName(t.path) : '');
     el.preview.scrollTop = scroll;
   }, 120);
 }
@@ -519,8 +528,35 @@ function onEditorInput() {
   updateStatus();
 }
 
-function surround(marker) {
-  const t = activeTab();
+/**
+ * 纯文本编辑器的制表：
+ *   Tab        → 有选区就整体缩进一行或多行；没选区插 4 个空格
+ *   Shift+Tab  → 反缩进，删掉行首最多 4 个空格（或一个 tab）
+ * 每行单独判断而不是字符串替换，复制粘贴来的混合缩进也能收敛整齐。
+ */
+function editorIndent(dedent) {
+  const e = el.editor;
+  const s = e.selectionStart;
+  const t = e.selectionEnd;
+  const v = e.value;
+  if (!dedent && s === t) {
+    e.setRangeText('    ', s, t, 'end');
+    onEditorInput();
+    return;
+  }
+  const start = v.lastIndexOf('\n', s - 1) + 1;
+  let end = t;
+  if (end > 0 && v[end - 1] === '\n') end -= 1;   // 选区停在下一行行首时，别把那一行也带上
+  const block = v.slice(start, Math.max(start, end));
+  const out = block.split('\n')
+    .map((ln) => (dedent ? ln.replace(/^( {1,4}|\t)/, '') : '    ' + ln))
+    .join('\n');
+  if (out === block) return;
+  e.setRangeText(out, start, Math.max(start, end), 'select');
+  onEditorInput();
+}
+
+function surround(marker) {  const t = activeTab();
   if (!t) return;
   if (t.mode === 'wysiwyg') { wys.wrapInline(marker); return; }
   if (t.mode !== 'edit') { toast('预览模式下不能编辑'); return; }
@@ -609,6 +645,101 @@ function linkPrompt() {
       wys.applyLink(v);
     });
   setTimeout(() => document.getElementById('linkInput')?.select(), 40);
+}
+
+/**
+ * 插入图片。两条路：
+ *   · 本地图片 → 复制到文档同目录 assets/，写相对路径（文档连 assets 一起拷走还能显示）
+ *   · 网络地址 → 原样写进 src
+ * 未保存的文档没有「同目录」，先让用户存盘，否则图片只能落成绝对路径，换台机器就断。
+ */
+async function imagePrompt() {
+  const t = activeTab();
+  if (!t) return;
+  if (t.mode !== 'wysiwyg') { toast('插入图片请在「所见即所得」模式下使用'); return; }
+  const saved = saveRange();
+  const pick = await dialog({
+    title: '插入图片',
+    body: '本地图片会复制到文档同目录的 <b>assets/</b> 下，用相对路径引用；也可以直接给一个网络地址。',
+    buttons: [
+      { id: 'local', label: '选择本地图片…', primary: true },
+      { id: 'url', label: '网络地址…' },
+      { id: 'cancel', label: '取消' },
+    ],
+  });
+
+  if (pick === 'local') {
+    if (!t.path) { toast('请先保存文档，图片要放进它同目录的 assets/'); return; }
+    const src = await be.pickImage();
+    if (!src) return;
+    try {
+      const rel = await be.copyImageToAssets(src, t.path);
+      restoreRange(saved);
+      wys.insertImage(rel, '');
+      toast('图片已复制到 assets/');
+    } catch (e) {
+      toast('插入失败：' + e);
+    }
+    return;
+  }
+
+  if (pick === 'url') {
+    const box = document.createElement('div');
+    box.innerHTML = '<div class="dlg-text">图片地址：</div><input class="dlg-input" id="imgInput" value="https://">';
+    const ok = await dialog({ title: '图片地址', body: box, buttons: [{ id: 'ok', label: '插入', primary: true }, { id: 'cancel', label: '取消' }] });
+    if (ok !== 'ok') return;
+    const url = document.getElementById('imgInput').value.trim();
+    if (!url || url === 'https://') return;
+    restoreRange(saved);
+    wys.insertImage(url, '');
+  }
+}
+
+/* ---------------- 新建文档：先选类型 ---------------- */
+
+const NEW_TYPES = [
+  { ext: 'md', name: 'Markdown', desc: '所见即所得写作' },
+  { ext: 'txt', name: '纯文本', desc: '记事 / 日志' },
+  { ext: 'json', name: 'JSON', desc: '校验 + 高亮' },
+  { ext: 'csv', name: 'CSV', desc: '表格文本' },
+  { ext: 'js', name: 'JavaScript', desc: '代码高亮' },
+  { ext: 'ts', name: 'TypeScript' },
+  { ext: 'py', name: 'Python' },
+  { ext: 'html', name: 'HTML' },
+  { ext: 'css', name: 'CSS' },
+  { ext: 'sh', name: 'Shell 脚本' },
+];
+
+/** 建一个空文档。非 Markdown 的类型只会开放编辑 / 预览两种模式（普通编辑器）。 */
+function createNew(ext = 'md') {
+  settings.lastNewExt = ext;
+  saveSettings();
+  newTab(`未命名.${ext}`, '');
+}
+
+/** 新建入口：类型网格，点一下直接开，回车默认上次用过的类型 */
+async function newFilePrompt() {
+  const box = document.createElement('div');
+  box.className = 'new-types';
+  const last = settings.lastNewExt || 'md';
+  NEW_TYPES.forEach((ty) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'new-type' + (ty.ext === last ? ' active' : '');
+    b.dataset.dialogClose = ty.ext;
+    b.innerHTML = `<b>${ty.name}</b><small>.${ty.ext}${ty.desc ? ' · ' + ty.desc : ''}</small>`;
+    box.appendChild(b);
+  });
+  const picked = await dialog({
+    title: '新建文档',
+    body: box,
+    buttons: [
+      { id: last, label: `新建 ${NEW_TYPES.find((t) => t.ext === last)?.name || 'Markdown'}`, primary: true },
+      { id: 'cancel', label: '取消' },
+    ],
+  });
+  if (!picked || picked === 'cancel') return;
+  createNew(picked);
 }
 
 /* 对话框会抢走焦点，动手前把编辑区选区存下来 */
@@ -975,7 +1106,7 @@ function setTheme(mode) {
 
 /* ---------------- 命令表 ---------------- */
 const commands = {
-  new: () => newTab('未命名.md', ''),
+  new: newFilePrompt,
   open: openFileDialog,
   save: () => saveTab(),
   saveAs: () => saveTabAs(activeTab()),
@@ -1015,6 +1146,7 @@ const commands = {
   hr: () => wysCmd((w) => w.insertBlock('hr')),
   table: () => wysCmd((w) => w.insertTable(3, 3)),
   tablePrompt,
+  image: imagePrompt,
   indentIn: () => shiftIndent(1),
   indentOut: () => shiftIndent(-1),
   link: linkPrompt,
@@ -1141,6 +1273,7 @@ const MENU_TREE = [
       { id: 'strike', label: '删除线', kbd: 'Ctrl+Shift+X', disabled: () => !hasTab() },
       { id: 'inlineCode', label: '行内代码', disabled: () => !hasTab() },
       { id: 'link', label: '插入链接…', kbd: 'Ctrl+K', disabled: wysOnly },
+      { id: 'image', label: '插入图片…', disabled: wysOnly },
       { sep: true },
       { id: 'ul', label: '无序列表', kbd: 'Ctrl+Shift+8', disabled: wysOnly },
       { id: 'ol', label: '有序列表', kbd: 'Ctrl+Shift+7', disabled: wysOnly },
@@ -1236,6 +1369,211 @@ function setupAppMenu() {
   });
 }
 
+/* ---------------- 行首块手柄：+ 插入 / ⋮⋮ 换块类型 ----------------
+   手柄挂在 .edit-wrap 上、在 contenteditable 之外，所以浏览器选不中它、
+   退格删不到它、sweepBlock 也不会把它吸进正文。
+   两张菜单都不含新逻辑：执行一律走 commands 表，和顶栏菜单同一条路。 */
+
+const svgIco = (n) => `<svg class="ico" aria-hidden="true"><use href="#i-${n}" /></svg>`;
+
+const BLOCK_KINDS = [
+  { id: 'body', label: '正文段落', icon: 'type' },
+  { id: 'h1', label: '标题 1', icon: 'type' },
+  { id: 'h2', label: '标题 2', icon: 'type' },
+  { id: 'h3', label: '标题 3', icon: 'type' },
+  { id: 'ul', label: '无序列表', icon: 'list-tree' },
+  { id: 'ol', label: '有序列表', icon: 'list-tree' },
+  { id: 'taskList', label: '任务列表', icon: 'check' },
+  { id: 'quote', label: '引用', icon: 'type' },
+  { id: 'codeBlock', label: '代码块', icon: 'code' },
+];
+
+/** 插入类：这几件事自己知道往哪插，不用先造空块 */
+const BLOCK_INSERTS = [
+  { id: 'table', label: '表格（3 × 3）', icon: 'square' },
+  { id: 'tablePrompt', label: '表格（自定大小）…', icon: 'square' },
+  { id: 'image', label: '图片…', icon: 'image' },
+  { id: 'link', label: '链接…', icon: 'arrow-left-right' },
+  { id: 'hr', label: '分割线', icon: 'minus' },
+];
+const SELF_INSERTING = new Set(['table', 'tablePrompt', 'image', 'link', 'hr']);
+
+let hoverBlock = null;
+let handleBlock = null;
+let handleBusy = false;      // 鼠标在手柄 / 菜单上，别自动收起
+let handleTimer = 0;
+let bmMode = 'convert';
+
+const isWysMode = () => !!activeTab() && activeTab().mode === 'wysiwyg';
+
+/** 块当前是什么类型，用来在「转换」菜单里打勾 */
+function kindOfBlock(b) {
+  const t = b.dataset.type;
+  if (t === 'li') return b.dataset.list === 'task' ? 'taskList' : (b.dataset.list === 'ol' ? 'ol' : 'ul');
+  if (t === 'bq') return 'quote';
+  if (t === 'code') return 'codeBlock';
+  if (t === 'p') return 'body';
+  if (/^h[1-6]$/.test(t)) return t;         // h4~h6 没有对应菜单项，只是不点亮
+  return '';
+}
+
+function placeHandle(block) {
+  if (!block || !block.isConnected || !block.classList.contains('w-block')) return hideHandle();
+  if (block.dataset.type === 'hr') return hideHandle();
+  const host = el.editWrap.getBoundingClientRect();
+  const r = block.getBoundingClientRect();
+  if (r.bottom < host.top + 4 || r.top > host.bottom - 4) return hideHandle();
+  handleBlock = block;
+  el.wHandle.classList.remove('hidden');
+  // 贴着首行：块可能是多行，手柄只对齐第一行
+  el.wHandle.style.top = Math.round(Math.max(2, r.top - host.top + 2)) + 'px';
+  el.wHandle.style.left = Math.round(Math.max(2, r.left - host.left - 45)) + 'px';
+}
+
+function hideHandle() {
+  handleBlock = null;
+  if (!handleBusy) el.wHandle.classList.add('hidden');
+}
+
+function refreshHandle() {
+  if (!isWysMode()) { hideHandle(); return; }
+  const target = hoverBlock || wys.currentBlock();
+  if (target) placeHandle(target); else hideHandle();
+}
+
+function openBlockMenu(mode) {
+  if (!handleBlock) return;
+  const box = el.wBlockMenu;
+  // 同一个按钮再点一次 = 收起
+  if (!box.classList.contains('hidden') && bmMode === mode) { closeBlockMenu(); return; }
+  bmMode = mode;
+  handleBusy = true;
+  box.innerHTML = '';
+  box.classList.remove('hidden');
+
+  const head = (t) => {
+    const d = document.createElement('div');
+    d.className = 'bm-head';
+    d.textContent = t;
+    box.appendChild(d);
+  };
+  const sep = () => {
+    const d = document.createElement('div');
+    d.className = 'bm-sep';
+    box.appendChild(d);
+  };
+  const item = (it, checked) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'bm-item' + (checked ? ' checked' : '');
+    b.innerHTML = svgIco(it.icon || 'type') + `<span>${it.label}</span>`;
+    b.addEventListener('mousedown', (e) => e.preventDefault());   // 保住编辑区选区
+    b.onclick = () => bmRun(it.id);
+    box.appendChild(b);
+  };
+
+  const cur = mode === 'convert' ? kindOfBlock(handleBlock) : '';
+  head(mode === 'insert' ? '在下方插入' : '转换这一块');
+  BLOCK_KINDS.forEach((it) => item(it, it.id === cur));
+  if (mode === 'insert') {
+    sep();
+    head('插入');
+    BLOCK_INSERTS.forEach((it) => item(it, false));
+  }
+
+  // 贴着按钮展开；右边放不下就翻到左边，下边放不下就往上收
+  const hr = el.wHandle.getBoundingClientRect();
+  const mw = box.offsetWidth || 198;
+  const mh = box.offsetHeight || 280;
+  let left = hr.right + 4;
+  let top = hr.top - 5;
+  if (left + mw > window.innerWidth - 8) left = Math.max(8, hr.left - mw - 4);
+  if (top + mh > window.innerHeight - 8) top = Math.max(8, window.innerHeight - mh - 8);
+  box.style.left = Math.round(left) + 'px';
+  box.style.top = Math.round(top) + 'px';
+  el.whMenu.classList.add('open');
+}
+
+function closeBlockMenu() {
+  el.wBlockMenu.classList.add('hidden');
+  el.wBlockMenu.innerHTML = '';
+  el.whMenu.classList.remove('open');
+  handleBusy = false;
+}
+
+function bmRun(id) {
+  const block = handleBlock;
+  const mode = bmMode;
+  closeBlockMenu();
+  if (!block || !block.isConnected) return;
+  if (mode === 'insert') {
+    if (SELF_INSERTING.has(id)) {
+      wys.focusBlock(block, true);
+      commands[id]?.();
+    } else {
+      const nb = wys.insertEmptyAfter(block);
+      wys.focusBlock(nb);
+      if (id !== 'body') commands[id]?.();
+    }
+  } else {
+    wys.focusBlock(block);
+    commands[id]?.();
+  }
+  clearTimeout(handleTimer);
+  handleTimer = setTimeout(() => { hoverBlock = null; refreshHandle(); }, 0);
+}
+
+function setupBlockHandle() {
+  if (!el.wHandle) return;
+  el.wysiwyg.addEventListener('mousemove', (e) => {
+    if (!isWysMode()) return;
+    if (!el.wBlockMenu.classList.contains('hidden')) closeBlockMenu();
+    const b = e.target.closest ? e.target.closest('.w-block') : null;
+    if (b === hoverBlock) return;
+    hoverBlock = b;
+    clearTimeout(handleTimer);
+    refreshHandle();
+  });
+  el.wysiwyg.addEventListener('mouseleave', () => {
+    hoverBlock = null;
+    clearTimeout(handleTimer);
+    handleTimer = setTimeout(() => { if (!handleBusy) hideHandle(); }, 240);
+  });
+  el.wysiwyg.addEventListener('scroll', () => { if (!handleBusy) refreshHandle(); }, { passive: true });
+
+  document.addEventListener('selectionchange', () => {
+    if (hoverBlock || handleBusy) return;
+    clearTimeout(handleTimer);
+    handleTimer = setTimeout(refreshHandle, 0);
+  });
+
+  // 鼠标移进手柄 / 菜单不算「离开编辑区」
+  el.wHandle.addEventListener('mouseenter', () => { handleBusy = true; clearTimeout(handleTimer); });
+  el.wHandle.addEventListener('mouseleave', () => {
+    handleBusy = false;
+    clearTimeout(handleTimer);
+    handleTimer = setTimeout(() => {
+      if (el.wBlockMenu.classList.contains('hidden')) hideHandle();
+    }, 240);
+  });
+
+  for (const b of [el.whAdd, el.whMenu]) b.addEventListener('mousedown', (e) => e.preventDefault());
+  el.whAdd.onclick = () => openBlockMenu('insert');
+  el.whMenu.onclick = () => openBlockMenu('convert');
+
+  document.addEventListener('mousedown', (e) => {
+    if (el.wBlockMenu.classList.contains('hidden')) return;
+    if (el.wBlockMenu.contains(e.target) || el.wHandle.contains(e.target)) return;
+    closeBlockMenu();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || el.wBlockMenu.classList.contains('hidden')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    closeBlockMenu();
+  }, true);
+}
+
 /* ---------------- 事件绑定 ---------------- */
 function bindEvents() {
   const on = (id, fn) => { const n = $(id); if (n) n.onclick = fn; };
@@ -1286,7 +1624,19 @@ function bindEvents() {
   el.editor.addEventListener('keydown', (e) => {
     if (e.key === 'Tab') {
       e.preventDefault();
-      document.execCommand('insertText', false, '    ');
+      editorIndent(e.shiftKey);
+      return;
+    }
+    // 回车沿用上一行的缩进：代码块、列表、缩进嵌套都能接着写，
+    // 这是纯文本编辑器最影响手感的一条（Notepad++ / VS Code 都这么做）
+    if (e.key === 'Enter' && !e.isComposing && !e.shiftKey && !e.ctrlKey && !e.altKey) {
+      const pos = el.editor.selectionStart;
+      if (pos !== el.editor.selectionEnd) return;
+      const line = el.editor.value.slice(el.editor.value.lastIndexOf('\n', pos - 1) + 1, pos);
+      const indent = (line.match(/^[ \t]*/) || [''])[0];
+      if (!indent) return;
+      e.preventDefault();
+      document.execCommand('insertText', false, '\n' + indent);
       onEditorInput();
     }
   });
@@ -1460,11 +1810,13 @@ const WELCOME = `# 欢迎使用 简单记事本
 
 ## 三种模式
 
-- **所见即所得**：输入 \`# \` 立刻变标题（文字写好了回行首补 \`# \` 也行），\`**粗体**\` 立刻加粗
+- **所见即所得**：输入 \`# \` 立刻变标题（文字写好了回行首补 \`# \` 也行），\`**粗体**\` 立刻加粗；光标哪一行，左边就浮出 \`+\` 和 \`⋮⋮\` —— 插新块、换块类型不用离开正文
 - **编辑模式**：显示原始 Markdown，带行号
 - **预览模式**：只读渲染
 
 在工具栏「模式」下拉切换，或按 \`Ctrl+1 / Ctrl+2 / Ctrl+3\`。
+
+新建时可以先选类型：Markdown、纯文本、JSON、CSV 和常见代码。非 Markdown 的文件只开放编辑 / 预览，当普通文本编辑器用（\`Tab\` 缩进、\`Shift+Tab\` 反缩进、回车沿用上一行缩进）。
 
 ## 常用快捷键
 
@@ -1500,6 +1852,7 @@ async function boot() {
   setupAppMenu();
   setupSplitters();
   setupDrop();
+  setupBlockHandle();
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
     if (settings.theme === 'auto') applyTheme();
   });

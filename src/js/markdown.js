@@ -16,8 +16,26 @@ function escapeAttr(s) {
   return escapeHtml(s).replace(/'/g, '&#39;');
 }
 
+/**
+ * 图片地址落地：Markdown 里存相对路径（assets/x.png）才方便整个文件夹拷走，
+ * 但 WebView 只能加载 http(s) / asset: 这类地址，相对路径会被当成
+ * http://tauri.localhost/assets/x.png 去要内嵌资源 —— 必然 404。
+ * 所以显示时把相对路径拼成绝对路径再转成 asset 协议；序列化时仍写回相对路径
+ * （img 上的 data-src 保存原值）。
+ */
+export function resolveDocImg(src, docDir) {
+  if (!src || !docDir) return src;
+  if (/^(https?:|data:|blob:|asset:|file:)/i.test(src)) return src;
+  if (/^[a-z]:[\\/]/i.test(src) || src.startsWith('//')) return src;   // 已经是绝对路径
+  const abs = docDir.replace(/[\\/]+$/, '') + '/' + src.replace(/^\.\//, '');
+  try {
+    const conv = window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.convertFileSrc;
+    return conv ? conv(abs, 'asset') : src;
+  } catch { return src; }
+}
+
 /** 行内元素渲染 */
-export function inline(text) {
+export function inline(text, imgResolver) {
   // 先保护行内代码，避免其中的 * _ 被误解析
   const codes = [];
   let s = text.replace(/`([^`]+)`/g, (_, c) => {
@@ -29,8 +47,10 @@ export function inline(text) {
 
   // 图片 ![alt](src "title")
   s = s.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+&quot;([^&]*)&quot;)?\)/g,
-    (_, alt, src, title) =>
-      `<img src="${src}" alt="${alt}"${title ? ` title="${title}"` : ''}>`);
+    (_, alt, src, title) => {
+      const shown = imgResolver ? imgResolver(src) : src;
+      return `<img src="${shown}" alt="${alt}"${title ? ` title="${title}"` : ''}>`;
+    });
 
   // 链接 [text](href)
   s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g,
@@ -126,6 +146,7 @@ function listToHtml(items) {
  */
 export function renderMarkdown(md, opts = {}) {
   const hl = opts.codeHighlight || ((c) => escapeHtml(c));
+  const resolveImg = opts.imgResolver || null;   // 相对图片路径 -> 可加载的绝对地址
   const lines = String(md).replace(/\r\n?/g, '\n').split('\n');
   const out = [];
   let i = 0;
@@ -195,7 +216,7 @@ export function renderMarkdown(md, opts = {}) {
     if (h) {
       flushList();
       const lv = h[1].length;
-      out.push(`<h${lv} id="h-${i}">${inline(h[2])}</h${lv}>`);
+      out.push(`<h${lv} id="h-${i}">${inline(h[2], resolveImg)}</h${lv}>`);
       i++;
       continue;
     }
@@ -212,9 +233,9 @@ export function renderMarkdown(md, opts = {}) {
         rows.push(splitRow(lines[i]));
         i++;
       }
-      out.push('<table><thead><tr>' + head.map((c, k) => `<th${sty(k)}>${inline(c)}</th>`).join('') + '</tr></thead><tbody>');
+      out.push('<table><thead><tr>' + head.map((c, k) => `<th${sty(k)}>${inline(c, resolveImg)}</th>`).join('') + '</tr></thead><tbody>');
       for (const r of rows) {
-        out.push('<tr>' + head.map((_, k) => `<td${sty(k)}>${inline(r[k] || '')}</td>`).join('') + '</tr>');
+        out.push('<tr>' + head.map((_, k) => `<td${sty(k)}>${inline(r[k] || '', resolveImg)}</td>`).join('') + '</tr>');
       }
       out.push('</tbody></table>');
       continue;
@@ -246,7 +267,7 @@ export function renderMarkdown(md, opts = {}) {
         indent: levelOf(colsOf(ul[1])),
         ordered: false,
         start: 1,
-        text: inline(text),
+        text: inline(text, resolveImg),
         task,
       });
       i++;
@@ -260,7 +281,7 @@ export function renderMarkdown(md, opts = {}) {
         indent: levelOf(colsOf(ol[1])),
         ordered: true,
         start: +(line.match(/\d+/)?.[0] || 1),
-        text: inline(ol[2]),
+        text: inline(ol[2], resolveImg),
         task: null,
       });
       i++;
@@ -281,7 +302,7 @@ export function renderMarkdown(md, opts = {}) {
       !/^\s*([-*_])\s*(\1\s*){2,}$/.test(lines[i])
     ) {
       const l = lines[i];
-      para.push(l.endsWith('  ') ? inline(l.trimEnd()) + '<br>' : inline(l));
+      para.push(l.endsWith('  ') ? inline(l.trimEnd(), resolveImg) + '<br>' : inline(l, resolveImg));
       i++;
     }
     if (para.length) out.push(`<p>${para.join('\n')}</p>`);

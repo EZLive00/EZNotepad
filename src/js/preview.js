@@ -5,13 +5,16 @@
 //  code    -> 语法高亮 + 行号
 //  txt/log -> 等宽只读
 // ============================================================
-import { renderMarkdown } from './markdown.js';
+import { renderMarkdown, resolveDocImg } from './markdown.js';
 import { highlight, normalizeLang } from './highlight.js';
 import { jsonErrorPosition } from './format.js';
 
-export function renderPreview(kind, text, lang, target) {
+export function renderPreview(kind, text, lang, target, docDir = '') {
   if (kind === 'md') {
-    target.innerHTML = renderMarkdown(text, { codeHighlight: (code, l) => highlight(code, l) });
+    target.innerHTML = renderMarkdown(text, {
+      codeHighlight: (code, l) => highlight(code, l),
+      imgResolver: (src) => resolveDocImg(src, docDir),
+    });
     return;
   }
   if (kind === 'json') {

@@ -36,6 +36,14 @@ export function dialog({ title = '提示', body = '', buttons = [{ id: 'ok', lab
       footEl.appendChild(btn);
       if (b.id === 'ok' || b.primary) setTimeout(() => btn.focus(), 30);
     });
+    // body 里带 data-dialog-close 的元素点一下就关闭并把它的值交回去
+    // （「新建文档」的类型网格用这个，省得自建一套弹层）
+    bodyEl.onclick = (e) => {
+      const hit = e.target.closest && e.target.closest('[data-dialog-close]');
+      if (!hit) return;
+      e.preventDefault();
+      close(hit.dataset.dialogClose);
+    };
     document.getElementById('dlgClose').onclick = () => close('cancel');
     overlay.classList.remove('hidden');
     overlay.onkeydown = (e) => {

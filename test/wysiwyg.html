@@ -80,6 +80,13 @@ window.__run = () => {
   ].join('\n');
   eq('往返保真', T.reset(SRC), SRC);
 
+  // 1b. 图片：Markdown 里存相对路径，DOM 里用 data-src 记住原值
+  T.reset('![图](assets/a.png)');
+  eq('图片相对路径往返不丢', T.out(), '![图](assets/a.png)');
+  eq('img 保留原始地址', root.querySelector('img').getAttribute('data-src'), 'assets/a.png');
+  T.reset('![网图](https://example.com/x.png)');
+  eq('网络图片原样', T.out(), '![网图](https://example.com/x.png)');
+
   // 2. 段首语法糖
   T.reset('');
   T.type('- ');

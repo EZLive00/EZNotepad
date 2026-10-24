@@ -59,6 +59,14 @@
       <path d="M20 5a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h2.5a1.5 1.5 0 0 1 1.2.6l.6.8a1.5 1.5 0 0 0 1.2.6z" />
       <path d="M3 8.268a2 2 0 0 0-1 1.738V19a2 2 0 0 0 2 2h11a2 2 0 0 0 1.732-1" />
     </symbol>
+    <symbol id="i-grip-vertical" viewBox="0 0 24 24">
+      <path d="M9 5v.01M9 12v.01M9 19v.01M15 5v.01M15 12v.01M15 19v.01" />
+    </symbol>
+    <symbol id="i-image" viewBox="0 0 24 24">
+      <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+      <circle cx="9" cy="9" r="2" />
+      <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+    </symbol>
     <symbol id="i-list-tree" viewBox="0 0 24 24">
       <path d="M8 5h13" />
       <path d="M13 12h8" />
@@ -196,6 +204,13 @@
         <div class="linegutter hidden" id="lineGutter"></div>
         <textarea id="editor" spellcheck="false" autocomplete="off" autocapitalize="off" wrap="soft"></textarea>
         <div id="wysiwyg" class="wysiwyg hidden" contenteditable="true" spellcheck="false"></div>
+
+        <!-- 行首块手柄：放在编辑流之外，浏览器选不中、退格删不到。
+             位置由 app.js 按当前块的行盒算，left 落在 .wysiwyg 的左侧留白里 -->
+        <div class="w-handle hidden" id="wHandle">
+          <button class="wh-btn" id="whAdd" tabindex="-1" title="在下方插入"><svg class="ico" aria-hidden="true"><use href="#i-plus" /></svg></button>
+          <button class="wh-btn" id="whMenu" tabindex="-1" title="块类型"><svg class="ico" aria-hidden="true"><use href="#i-grip-vertical" /></svg></button>
+        </div>
       </div>
     </section>
 
@@ -324,6 +339,9 @@
       <div class="modal-foot" id="dlgFoot"></div>
     </div>
   </div>
+
+  <!-- 块类型菜单：点行首手柄弹出，和顶栏菜单共用同一套命令 -->
+  <div class="w-bmenu hidden" id="wBlockMenu" role="menu"></div>
 
   <div class="toast-wrap" id="toasts"></div>
 

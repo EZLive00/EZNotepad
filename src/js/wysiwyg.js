@@ -12,8 +12,13 @@
 //      在下次编辑时会被抹平成纯文本（** 丢了）。
 // ============================================================
 
+import { resolveDocImg } from './markdown.js';
+
 const MAX_INDENT = 6;
 const ZWSP = '\u200b';
+
+/** 当前文档所在目录：图片的相对路径要按它展开成可加载的绝对地址 */
+let docDir = '';
 
 const escapeHtml = (s) => String(s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -32,7 +37,10 @@ export function inlineHtml(src) {
   });
   t = escapeHtml(t);
   t = t.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g,
-    (_, alt, s) => `<img class="w-img" src="${escapeAttr(s)}" alt="${escapeAttr(alt)}">`);
+    (_, alt, s) => {
+      const shown = resolveDocImg(s, docDir);
+      return `<img class="w-img" src="${escapeAttr(shown)}" data-src="${escapeAttr(s)}" alt="${escapeAttr(alt)}">`;
+    });
   t = t.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g,
     (_, txt, href) => `<a href="${escapeAttr(href)}">${txt}</a>`);
   t = t.replace(/\*\*\*([^*]+)\*\*\*/g, '<strong><em>$1</em></strong>');
@@ -53,7 +61,12 @@ export function inlineToMd(node) {
     if (n.nodeType !== 1) return;
     const tag = n.tagName.toLowerCase();
     if (tag === 'br') return;
-    if (tag === 'img') { s += `![${n.getAttribute('alt') || ''}](${n.getAttribute('src') || ''})`; return; }
+    // 图片：写回 Markdown 时用 data-src 里的原始地址（相对路径），
+    // 不能用 src —— 那是展开成 asset:// 之后的显示用地址，存进去就搬不动了
+    if (tag === 'img') {
+      s += `![${n.getAttribute('alt') || ''}](${n.getAttribute('data-src') || n.getAttribute('src') || ''})`;
+      return;
+    }
     const inner = inlineToMd(n);
     switch (tag) {
       case 'strong': case 'b': s += inner.trim() ? `**${inner}**` : inner; break;
@@ -570,6 +583,9 @@ export class WysiwygEditor {
 
   /* ---------------- 公共 API ---------------- */
 
+  /** 文档换了目录，图片相对路径要跟着换基准（渲染前调用） */
+  setDocDir(dir) { docDir = dir || ''; }
+
   render(md, restore) {
     this._render(md, restore);
     this.history = [{ md: this.toMarkdown(), caret: null }];
@@ -696,6 +712,22 @@ export class WysiwygEditor {
   placeCaretEnd(block) {
     const t = textEl(block);
     setCaretOffset(t, t.textContent.length);
+  }
+
+  /** 把光标放到指定块的首位或末尾（行首手柄用：菜单点完要回到原来那一行） */
+  focusBlock(block, atEnd = false) {
+    if (!block || !block.isConnected) return;
+    this.root.focus();
+    if (atEnd) this.placeCaretEnd(block);
+    else this.placeCaretStart(block);
+  }
+
+  /** 在指定块之后插一个空段落并返回它（行首「+」插入新块用） */
+  insertEmptyAfter(block) {
+    const p = mkPara('');
+    if (block && block.isConnected) block.after(p);
+    else this.root.appendChild(p);
+    return p;
   }
 
   isCaretAtStart(block) { return offsetIn(textEl(block)) === 0; }
@@ -945,7 +977,8 @@ export class WysiwygEditor {
       if (rule.img) {
         el = document.createElement('img');
         el.className = 'w-img';
-        el.setAttribute('src', m[2]);
+        el.setAttribute('data-src', m[2]);
+        el.setAttribute('src', resolveDocImg(m[2], docDir));
         el.setAttribute('alt', m[1] || '');
       } else if (rule.link) {
         el = document.createElement('a');
@@ -1741,6 +1774,38 @@ export class WysiwygEditor {
     this.root.focus();
     sel.removeAllRanges();
     sel.addRange(after);
+    this.hCoalesce = false;
+    this.flush();
+  }
+
+  /* ---------------- 图片 ---------------- */
+
+  /**
+   * 在光标处插一张图。src 用相对路径（assets/xxx.png）时，WebView2 会按
+   * 文档所在目录解析；纯网络地址原样用。
+   * 插完在图片后补一个空文本节点，否则光标进不到图后面，接着打字会叠在图上。
+   */
+  insertImage(src, alt = '') {
+    if (!src) return;
+    const block = this.currentBlock();
+    if (!block) return;
+    const t = textEl(block);
+    const img = document.createElement('img');
+    img.className = 'w-img';
+    img.setAttribute('data-src', src);
+    img.setAttribute('src', resolveDocImg(src, docDir));
+    img.setAttribute('alt', alt);
+
+    const sel = window.getSelection();
+    if (sel.rangeCount && t.contains(sel.getRangeAt(0).startContainer)) {
+      const range = sel.getRangeAt(0);
+      range.deleteContents();
+      range.insertNode(img);
+    } else {
+      t.appendChild(img);
+    }
+    img.after(document.createTextNode(ZWSP));
+    this.placeCaretEnd(block);
     this.hCoalesce = false;
     this.flush();
   }

@@ -43,7 +43,8 @@ function buildPrintHtml(t) {
     try { return [...s.cssRules].map((r) => r.cssText).join('\n'); } catch { return ''; }
   }).join('\n');
   const box = document.createElement('div');
-  renderPreview(kind, t.content, '', box);
+  const docDir = t.path ? t.path.replace(/[\\/][^\\/]*$/, '') : '';
+  renderPreview(kind, t.content, '', box, docDir);
   const body = kind === 'md'
     ? box.innerHTML
     : `<pre class="plainview">${t.content.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</pre>`;

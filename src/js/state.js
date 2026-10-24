@@ -21,6 +21,7 @@ export const settings = Object.assign(
     showToolbar: true,
     showWinTitle: true,   // 标题栏中间是否显示文件名
     lastMode: {},
+    lastNewExt: 'md',     // 「新建」上次选的扩展名
   },
   LS.get('settings', {})
 );

@@ -215,6 +215,51 @@ fn write_binary_file(path: String, bytes: Vec<u8>) -> Result<String, String> {
     Ok(path)
 }
 
+/// 把一张图片复制到「文档同目录 / assets」下，返回相对路径（assets/xxx.png）。
+/// 用相对路径而不是绝对路径，文档连着 assets 一起拷走才还能显示。
+/// 同名文件不覆盖，自动加 -1、-2 后缀。
+#[tauri::command]
+fn copy_image_to_assets(src_path: String, doc_path: String) -> Result<String, String> {
+    let src = PathBuf::from(&src_path);
+    if !src.is_file() {
+        return Err("图片文件不存在".into());
+    }
+    let doc = PathBuf::from(&doc_path);
+    let dir = doc
+        .parent()
+        .ok_or("文档路径无效")?
+        .join("assets");
+    fs::create_dir_all(&dir).map_err(|e| format!("创建 assets 目录失败：{e}"))?;
+
+    let name = src
+        .file_name()
+        .ok_or("图片文件名无效")?
+        .to_string_lossy()
+        .to_string();
+    let (stem, ext) = match name.rsplit_once('.') {
+        Some((s, e)) => (s.to_string(), format!(".{e}")),
+        None => (name.clone(), String::new()),
+    };
+
+    let mut target = dir.join(&name);
+    let mut i = 1;
+    while target.exists() {
+        target = dir.join(format!("{stem}-{i}{ext}"));
+        i += 1;
+        if i > 999 {
+            return Err("同名图片太多了，换个文件名吧".into());
+        }
+    }
+    fs::copy(&src, &target).map_err(|e| format!("复制图片失败：{e}"))?;
+
+    let file = target
+        .file_name()
+        .ok_or("目标文件名无效")?
+        .to_string_lossy()
+        .to_string();
+    Ok(format!("assets/{file}"))
+}
+
 /// Windows 11：给无边框窗口套上系统自带的圆角。
 /// 走 DWM 原生属性，不需要把窗口设为 transparent —— 圆角之外由系统裁剪，
 /// 阴影、拖动缩放全都还是系统那一套。Win10 及更早版本不认识这个属性，
@@ -255,7 +300,8 @@ pub fn run() {
             save_text_file,
             file_stat,
             list_dir_recursive,
-            write_binary_file
+            write_binary_file,
+            copy_image_to_assets
         ])
         .setup(|app| {
             #[cfg(target_os = "windows")]
