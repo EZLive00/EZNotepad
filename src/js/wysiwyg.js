@@ -822,17 +822,59 @@ export class WysiwygEditor {
 
   /* ---------------- 输入即转换（Markdown 语法糖） ---------------- */
 
-  /** 段首输入 "# " / "- " / "1. " / "> " / "```" / "- [ ] " 立刻转成对应块 */
+  /**
+   * 段首输入 "# " / "- " / "1. " / "> " / "```" / "- [ ] " 立刻转成对应块。
+   *
+   * 判据是「光标之前这一小段文字」（mark），不是整行 —— 光标可以停在已有文字
+   * 的正前方，只敲标记，标记后面的文字原样留在新块里。于是「先写内容再补 #」
+   * 和「先打 # 再写内容」是同一件事。
+   * 搬运后半段用 Range 取 DOM 片段而不是 textContent，行内样式（**粗体**、
+   * 链接、行内码）才不会被抹平。
+   */
   applyBlockRule() {
     const block = this.currentBlock();
     if (!block || block.dataset.type !== 'p') return false;
     const t = textEl(block);
+    const sel = window.getSelection();
+    if (!sel.rangeCount || !sel.isCollapsed) return false;
+    const here = sel.getRangeAt(0);
+    if (!t.contains(here.startContainer)) return false;
     const text = t.textContent;
-    if (!text || text.length > 32) return false;
-    if (!this.isCaretAtEnd(block)) return false;
+    if (!text) return false;
+    const off = offsetIn(t);
+    const mark = text.slice(0, off);
+    if (!mark || mark.length > 16) return false;
 
-    // --- / *** / ___ → 分割线（后面自动补一个空段落，否则没处落脚）
-    if (/^(-{3,}|\*{3,}|_{3,})$/.test(text)) {
+    /** 光标之后的文字搬进新块，光标落在它前面 */
+    const takeover = (nb) => {
+      const r = document.createRange();
+      r.setStart(here.startContainer, here.startOffset);
+      r.setEnd(t, t.childNodes.length);
+      if (!r.collapsed) {
+        const frag = r.extractContents();
+        // 空段落里那个占位 <br> 不能跟着搬 —— 新块自己会补一个，
+        // 多出来的一行高会把后续的回车拆分算歪。
+        for (const n of [...frag.childNodes]) {
+          if (n.nodeType === 1 && n.tagName === 'BR') n.remove();
+        }
+        const hasContent = [...frag.childNodes].some((n) => n.nodeType === 1
+          || (n.nodeValue || '').replace(/[\s\u200b]/g, ''));
+        if (hasContent) {
+          const nt = textEl(nb);
+          nt.innerHTML = '';
+          nt.appendChild(frag);
+        }
+      }
+      block.replaceWith(nb);
+      this.placeCaretStart(nb);
+      this.hCoalesce = false;
+      this.renumber();
+      this.flush();
+      return true;
+    };
+
+    // --- / *** / ___ → 分割线（只有整行就这些字符时才触发，后面自动补一个空段落）
+    if (mark === text && /^(-{3,}|\*{3,}|_{3,})$/.test(mark)) {
       const hr = mkHr();
       const p = mkPara('');
       block.replaceWith(hr);
@@ -854,15 +896,9 @@ export class WysiwygEditor {
     ];
 
     for (const [re, build] of rules) {
-      const m = text.match(re);
+      const m = mark.match(re);
       if (!m) continue;
-      const nb = build(m);
-      block.replaceWith(nb);
-      this.placeCaretStart(nb);
-      this.hCoalesce = false;
-      this.renumber();
-      this.flush();
-      return true;
+      return takeover(build(m));
     }
     return false;
   }

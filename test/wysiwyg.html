@@ -95,6 +95,55 @@ window.__run = () => {
   T.key('Enter');
   eq('再回车退出列表', T.blocks()[2].startsWith('p'), true);
 
+  // 2b. 已有文字前面补标记（光标在文字前，不是行尾）
+  T.reset('已经写好的文字');
+  T.caret(0, 0);
+  T.type('## ');
+  eq('文字前面输入 "## " 变二级标题', T.blocks()[0], 'h2=已经写好的文字');
+  eq('光标停在标题文字前面', ed.caretState().offset, 0);
+  T.type('新的');
+  eq('接着输入落在文字前面', T.out(), '## 新的已经写好的文字');
+
+  T.reset('**粗体**和 `码`');
+  T.caret(0, 0);
+  T.type('### ');
+  eq('搬移后半段不丢行内样式', T.out(), '### **粗体**和 `码`');
+
+  T.reset('引用内容');
+  T.caret(0, 0);
+  T.type('> ');
+  eq('文字前面输入 "> " 变引用', T.out(), '> 引用内容');
+
+  T.reset('第一项内容');
+  T.caret(0, 0);
+  T.type('1. ');
+  eq('文字前面输入 "1. " 变有序列表', T.out(), '1. 第一项内容');
+
+  T.reset('待办事项');
+  T.caret(0, 0);
+  T.type('- [ ] ');
+  eq('文字前面输入 "- [ ] " 变任务项', T.blocks()[0], 'li:task@0=待办事项');
+
+  T.reset('const a = 1;');
+  T.caret(0, 0);
+  T.type('```js ');
+  eq('文字前面输入 ``` 变代码块', T.out(), '```js\nconst a = 1;\n```');
+
+  T.reset('第一行\n\n第二行');
+  T.caret(1, 0);
+  T.type('## ');
+  eq('只影响光标那一行', T.out(), '第一行\n\n## 第二行');
+
+  T.reset('文字');
+  T.caret(0, 0);
+  T.type('##');
+  eq('只打 "##" 不带空格不变标题', T.blocks()[0], 'p=##文字');
+
+  T.reset('abc def');
+  T.caret(0, 3);
+  T.type('- ');
+  has('行中间输入 "- " 不触发', T.blocks().length === 1 && T.blocks()[0].startsWith('p'));
+
   // 4. Tab / Shift+Tab
   T.reset('- a\n- b');
   T.caret(1, 3);
