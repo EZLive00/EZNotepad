@@ -696,6 +696,11 @@ mark.rem { background: rgba(220, 60, 60, .32); border-radius: 2px; }
 .wysiwyg .w-h[data-type="h5"],
 .wysiwyg .w-h[data-type="h6"] { font-size: 1.02em; font-weight: 650; margin: .6em 0 .2em; }
 .wysiwyg .w-p { margin: .32em 0; }
+/* 标题的 ### 标记：在标题行首按退格时亮出来，可以一级一级往回删 */
+.wysiwyg .w-hash {
+  color: var(--fg-faint); font-weight: 400; letter-spacing: .02em;
+  margin-right: .3em; user-select: none; cursor: default;
+}
 /* 列表：data-indent 通过 --li-indent 换算成视觉缩进，标记列固定宽度对齐 */
 .wysiwyg .w-li {
   display: flex; align-items: baseline; gap: 6px; margin: .1em 0;

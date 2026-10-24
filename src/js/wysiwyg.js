@@ -563,6 +563,9 @@ export class WysiwygEditor {
       if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) return;
       e.preventDefault();
     });
+    // 光标离开某个标题时，把它亮出来的 ### 收回去
+    this._onSelChange = () => this.collapseHashes();
+    document.addEventListener('selectionchange', this._onSelChange);
   }
 
   /* ---------------- 公共 API ---------------- */
@@ -734,6 +737,7 @@ export class WysiwygEditor {
     const keep = (n) => n.nodeType === 1
       && (n.classList.contains('w-li-marker')
         || n.classList.contains('w-codebar')
+        || n.classList.contains('w-hash')
         || n.tagName === 'INPUT');
     const before = [];
     const after = [];
@@ -791,10 +795,8 @@ export class WysiwygEditor {
       // 没有文字的横线（像凭空多出来的分割线），而且接着打字还是标题。
       // 只降级「光标所在的那个块」（以及整体载入时的所有块）：刚用菜单把空行设成
       // 标题、还没开始打字的情况下，别的地方敲一个字就把这个标题悄悄吃掉。
-      if (/^h[1-6]$/.test(type) && isEmptyText(t) && !t.querySelector('img') && (all || b === caret)) {
-        b.dataset.type = 'p';
-        b.classList.remove('w-h');
-        b.classList.add('w-p');
+      if (/^h[1-6]$/.test(type) && !this.hashEl(b) && isEmptyText(t) && !t.querySelector('img') && (all || b === caret)) {
+        this.degradeHeading(b);
       }
       // 清掉空的行内包裹（删字后常见的 <strong></strong>）
       t.querySelectorAll('strong,em,code,del,b,i,strike,a').forEach((el) => {
@@ -1000,6 +1002,7 @@ export class WysiwygEditor {
     if (type === 'hr' || type === 'table') { e.preventDefault(); return; }
     e.preventDefault();
     if (type === 'code') { this.codeNewline(); return; }
+    this.hideHashes(block);           // 回车 = 这个标题写完了，### 收起
     this.splitBlock(block);
   }
 
@@ -1035,10 +1038,11 @@ export class WysiwygEditor {
       return;
     }
 
-    // 空标题：先退回正文，再按一次才并到上一块（否则删空标题后打字还是标题）
-    if (/^h[1-6]$/.test(type) && this.isEmptyBlock(block)) {
+    // 标题：行首退格不直接砍级别，先把 ### 亮出来，之后每按一次删一个 #
+    if (/^h[1-6]$/.test(type)) {
       e.preventDefault();
-      this.toParagraph(block, 0);
+      if (this.hashEl(block)) this.demoteHeading(block);
+      else this.showHashes(block);
       return;
     }
 
@@ -1080,6 +1084,94 @@ export class WysiwygEditor {
     this.hCoalesce = false;
     this.flush();
     this.placeCaretEnd(block);
+  }
+
+  /* ---------------- 标题的 ### 标记 ----------------
+   * 在标题行首按退格，不会立刻把标题级别砍掉，而是先把 `###` 亮出来（正文一个字都不动），
+   * 再按一次删掉一个 #，一级一级往回退，删光了才退回正文。这样：
+   *   · 「改标题级别」从一次误操作变成可控的逐级倒退；
+   *   · 手滑退格不会把整行文字和级别一起弄丢；
+   *   · 标记只是视觉层，不进 .w-text、不进 Markdown，序列化天然不受影响。
+   */
+
+  /** 块里的 ### 标记（处于明文态时才有） */
+  hashEl(block) {
+    if (!block) return null;
+    for (const n of block.children) if (n.classList && n.classList.contains('w-hash')) return n;
+    return null;
+  }
+
+  hashesOf(block) {
+    const h = this.hashEl(block);
+    return h ? (h.textContent.match(/#/g) || []).length : 0;
+  }
+
+  /** 标题退回正文：原地改类型不换节点，光标与块下标都不受影响 */
+  degradeHeading(block) {
+    block.dataset.type = 'p';
+    block.classList.remove('w-h');
+    block.classList.add('w-p');
+  }
+
+  /** 第一次退格：把 ### 亮出来，级别与正文都不动 */
+  showHashes(block) {
+    if (this.hashEl(block)) return;
+    const lvl = +(block.dataset.type || 'h1')[1] || 1;
+    const h = document.createElement('span');
+    h.className = 'w-hash';
+    h.contentEditable = 'false';
+    h.textContent = '#'.repeat(lvl);
+    block.insertBefore(h, textEl(block));
+  }
+
+  /** 退格删掉一个 #：降一级；删光了就退回正文 */
+  demoteHeading(block) {
+    const h = this.hashEl(block);
+    if (!h) return;
+    const lvl = this.hashesOf(block);
+    if (lvl > 1) {
+      h.textContent = '#'.repeat(lvl - 1);
+      block.dataset.type = 'h' + (lvl - 1);
+      this.hCoalesce = false;
+      this.flush();
+      return;
+    }
+    h.remove();
+    this.degradeHeading(block);
+    this.hCoalesce = false;
+    this.renumber();
+    this.flush();
+  }
+
+  /** 收起标记（回车、光标离开这个块）。标记本身不是内容，所以不必 flush */
+  hideHashes(block) {
+    const h = this.hashEl(block);
+    if (!h) return false;
+    h.remove();
+    // 标题被删空了就别留着一条没有文字的横线
+    if (block.dataset.type !== 'p' && this.isEmptyBlock(block) && !textEl(block).querySelector('img')) {
+      this.degradeHeading(block);
+      return true;              // 类型变了 = Markdown 变了，调用方记得 flush
+    }
+    return false;
+  }
+
+  /** 光标已经不在的块：把标记全部收回去 */
+  collapseHashes() {
+    if (this.silent || !this.root.isConnected) return;
+    const marks = this.root.querySelectorAll('.w-hash');
+    if (!marks.length) return;
+    const cur = this.currentBlock();
+    let changed = false;
+    for (const h of marks) {
+      const b = h.closest('.w-block');
+      if (b && b !== cur && this.hideHashes(b)) changed = true;
+    }
+    if (changed) {
+      this.hCoalesce = false;
+      this.renumber();
+      this.flush();
+    }
   }
 
   /** 把块换成段落，保留行内内容与光标位置 */

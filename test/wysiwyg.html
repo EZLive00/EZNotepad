@@ -408,6 +408,60 @@ window.__run = () => {
   T.type('字');
   eq('别处敲字不影响这个空标题', T.blocks()[1], 'h2=');
 
+  // 34. 标题行首退格：先亮出 ###，再一级一级退，绝不一步砍掉标题
+  T.reset('前言\n\n## 标题\n\n正文');
+  T.caret(1, 0);
+  T.key('Backspace');
+  eq('一次退格：标题还是标题', T.blocks()[1], 'h2=标题');
+  eq('一次退格：亮出 ##', root.querySelector('.w-hash').textContent, '##');
+  eq('一次退格：文件一个字没变', T.out(), '前言\n\n## 标题\n\n正文');
+  T.key('Backspace');
+  eq('二次退格：降为一级标题', T.blocks()[1], 'h1=标题');
+  eq('标记跟着变短', root.querySelector('.w-hash').textContent, '#');
+  eq('降级写回文件', T.out(), '前言\n\n# 标题\n\n正文');
+  T.key('Backspace');
+  eq('三次退格：退回正文', T.blocks()[1], 'p=标题');
+  eq('标记已收走', root.querySelector('.w-hash'), null);
+  eq('正文写回文件', T.out(), '前言\n\n标题\n\n正文');
+  T.key('Backspace');
+  eq('再退格才和上一块合并', T.blocks().join(','), 'p=前言标题,p=正文');
+
+  // 34b. 空标题（还没写字）也一样：先亮标记，不把整行删掉
+  T.reset('甲\n\n乙');
+  T.caret(1, 0);
+  const r9 = document.createRange();
+  r9.selectNodeContents(root.children[1].querySelector('.w-text'));
+  getSelection().removeAllRanges();
+  getSelection().addRange(r9);
+  document.execCommand('delete');
+  window.__ed.restoreCaret({ blockIndex: 1, offset: 0 });
+  window.__ed.toggleHeading(3);
+  eq('空行设成三级标题', T.blocks()[1], 'h3=');
+  T.key('Backspace');
+  eq('空标题退格不删行', T.blocks()[1], 'h3=');
+  eq('空标题亮出 ###', root.querySelector('.w-hash').textContent, '###');
+  T.key('Backspace');
+  eq('空标题降为二级', T.blocks()[1], 'h2=');
+
+  // 34c. 回车 / 光标离开时标记自动收起，级别不受影响
+  T.reset('## 标题');
+  T.caret(0, 0);
+  T.key('Backspace');
+  has('亮出标记', !!root.querySelector('.w-hash'));
+  T.caret(0, 2);
+  T.key('Enter');
+  eq('回车后标题还在、下一行是正文', T.blocks().join(','), 'h2=标题,p=');
+  has('回车收走标记', !root.querySelector('.w-hash'));
+
+  T.reset('## 标题\n\n正文');
+  T.caret(0, 0);
+  T.key('Backspace');
+  has('亮出标记（第二处）', !!root.querySelector('.w-hash'));
+  T.caret(1, 0);
+  document.dispatchEvent(new Event('selectionchange'));
+  has('光标离开后标记收起', !root.querySelector('.w-hash'));
+  eq('标题级别不受影响', T.blocks().join(','), 'h2=标题,p=正文');
+
   return R;
 };
 
