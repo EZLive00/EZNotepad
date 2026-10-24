@@ -103,7 +103,7 @@ window.__run = () => {
   T.key('Tab', { shiftKey: true });
   eq('Shift+Tab 退一级', T.out(), '- a\n- b');
   T.key('Tab', { shiftKey: true });
-  eq('顶层再退变段落', T.out(), '- a\nb');
+  eq('顶层再退变段落', T.out(), '- a\n\nb');
 
   // 5. 退格：列表项开头
   T.reset('- a\n  - b');
@@ -112,7 +112,7 @@ window.__run = () => {
   eq('缩进项退格退一级', T.out(), '- a\n- b');
   T.caret(1, 0);
   T.key('Backspace');
-  eq('顶层列表项退格变段落', T.out(), '- a\nb');
+  eq('顶层列表项退格变段落', T.out(), '- a\n\nb');
 
   // 6. 有序列表重排
   T.reset('1. 甲\n2. 乙');
@@ -176,7 +176,7 @@ window.__run = () => {
   T.caret(0, 4);
   T.key('Enter');
   T.type('正文');
-  eq('标题内回车后是新段落', T.out(), '# 标题\n正文');
+  eq('标题内回车后是新段落', T.out(), '# 标题\n\n正文');
 
   // 13. 撤销
   T.reset('');
@@ -235,7 +235,7 @@ window.__run = () => {
   const dt = new DataTransfer();
   dt.setData('text/plain', '## 小标题\n- 甲\n- 乙');
   root.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
-  eq('多行粘贴保留结构', T.out(), '## 小标题\n- 甲\n- 乙');
+  eq('多行粘贴保留结构', T.out(), '## 小标题\n\n- 甲\n- 乙');
 
   // 19. 代码块内回车
   T.reset('```js\nconst a = 1;\n```');
@@ -248,11 +248,12 @@ window.__run = () => {
   T.reset('- 父\n    - 子');
   eq('四空格缩进识别为一级子项', T.blocks()[1], 'li:ul@1=子');
 
-  // 21. 空行退格合并
+  // 21. 空行只是块间分隔，不是空段落
   T.reset('a\n\nb');
+  eq('空行不生成空块', T.blocks().join(','), 'p=a,p=b');
   T.caret(1, 0);
   T.key('Backspace');
-  eq('空行退格被吸收', T.out(), 'a\nb');
+  eq('行首退格并入上一块', T.out(), 'ab');
 
   // 22. 行内码切换
   T.reset('text');
@@ -331,6 +332,33 @@ window.__run = () => {
   eq('段落转引用', T.out(), '> 一段话');
   ed.insertBlock('quote');
   eq('再点一次取消引用', T.out(), '一段话');
+
+  // 32. 空行不再生成空段落：标题与分割线之间只隔一层
+  T.reset('## 标题\n\n---');
+  eq('标题与分割线之间没有空块', T.blocks().join(','), 'h2=标题,hr=');
+  eq('空行往返不变', T.out(), '## 标题\n\n---');
+
+  T.reset('## 标题\n\n正文');
+  eq('标题与正文之间没有空块', T.blocks().join(','), 'h2=标题,p=正文');
+
+  // 连续两个空行是用户手打出来的空档，仍然保留
+  T.reset('a\n\n\nb');
+  eq('两个空行保留', T.out(), 'a\n\n\nb');
+  eq('第二个空行是个空块', T.blocks().join(','), 'p=a,p=,p=b');
+
+  // 33. 空标题按退格降级为正文（删空后重写不该还是标题）
+  T.reset('## 标题');
+  T.caret(0, 0);
+  const rh = document.createRange();
+  rh.selectNodeContents(root.querySelector('.w-text'));
+  getSelection().removeAllRanges();
+  getSelection().addRange(rh);
+  document.execCommand('delete');
+  eq('标题文字已删空', T.blocks()[0], 'h2=');
+  T.key('Backspace');
+  eq('空标题退格变正文', T.blocks()[0], 'p=');
+  T.type('新内容');
+  eq('重写变成普通段落', T.out(), '新内容');
 
   return R;
 };

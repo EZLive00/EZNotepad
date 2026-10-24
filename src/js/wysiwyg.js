@@ -283,11 +283,15 @@ export function parseMarkdown(md) {
       continue;
     }
 
-    // 空行：留一个空段落，保证行数/空行不丢
+    // 空行：只作块间分隔，不生成空段落。
+    // 原来每个空行都造一个空段落块，于是标题和分割线之间凭空多一行，
+    // 在那一行按退格又会并进上面的标题（光标留在标题里，越删越乱）。
+    // 现在只有「连着的第二个及以后」的空行才合成一个空段落——那是用户真按了两次回车。
     if (/^\s*$/.test(line)) {
       levelOf.reset();
-      frag.appendChild(mkPara(''));
-      i++;
+      let n = 0;
+      while (i < lines.length && /^\s*$/.test(lines[i])) { n++; i++; }
+      for (let k = 1; k < n && frag.childNodes.length; k++) frag.appendChild(mkPara(''));
       continue;
     }
 
@@ -408,7 +412,7 @@ function codeToText(el) {
 
 /** 编辑视图 DOM -> Markdown */
 export function blocksToMarkdown(root) {
-  const out = [];
+  const chunks = [];
   // 列表缩进按 CommonMark 的「列」算：子项要缩进到父项正文所在的列
   // （"- " 占 2 列、"1. " 占 3 列、" - [ ] " 占 6 列），这样交给任何渲染器都不会散架
   const cols = [];
@@ -416,15 +420,13 @@ export function blocksToMarkdown(root) {
   for (const el of root.children) {
     const type = el.dataset.type || 'p';
 
-    if (type === 'hr') { out.push('---'); cols.length = 0; continue; }
+    if (type === 'hr') { chunks.push({ type, lines: ['---'] }); cols.length = 0; continue; }
 
-    if (type === 'table') { out.push(...tableToMarkdown(el)); cols.length = 0; continue; }
+    if (type === 'table') { chunks.push({ type, lines: tableToMarkdown(el) }); cols.length = 0; continue; }
 
     if (type === 'code') {
       const text = codeToText(el.querySelector('.w-code') || el);
-      out.push('```' + (el.dataset.lang || ''));
-      out.push(text);
-      out.push('```');
+      chunks.push({ type, lines: ['```' + (el.dataset.lang || ''), text, '```'] });
       cols.length = 0;
       continue;
     }
@@ -433,7 +435,7 @@ export function blocksToMarkdown(root) {
     const text = inlineToMd(t);
 
     if (/^h[1-6]$/.test(type)) {
-      out.push('#'.repeat(+type[1]) + ' ' + text);
+      chunks.push({ type, lines: ['#'.repeat(+type[1]) + ' ' + text] });
       cols.length = 0;
     } else if (type === 'li') {
       const kind = el.dataset.list || 'ul';
@@ -445,20 +447,33 @@ export function blocksToMarkdown(root) {
         : kind === 'task'
           ? `- [${el.dataset.checked === '1' ? 'x' : ' '}] `
           : '- ';
-      out.push(' '.repeat(base) + marker + text);
+      chunks.push({ type, lines: [' '.repeat(base) + marker + text] });
       cols[lvl] = base + marker.length;
     } else if (type === 'bq') {
       const depth = (+el.dataset.indent || 0) + 1;
-      out.push('> '.repeat(depth) + text);
+      chunks.push({ type, lines: ['> '.repeat(depth) + text] });
       cols.length = 0;
     } else {
-      out.push(text);
+      chunks.push({ type, lines: [text] });
       cols.length = 0;
     }
   }
+
+  // 块之间要不要空行：列表项之间、连续引用之间必须紧凑（空行会变成 loose list、
+  // 或者把一段引用拆成两段），其余块之间补一个空行 —— Markdown 靠它断块。
+  const tight = (a, b) => (a === 'li' && b === 'li') || (a === 'bq' && b === 'bq');
+  const lines = [];
+  let prev = null;
+  for (const c of chunks) {
+    // 空段落本身就是一行空行，别再额外补一行（否则两个空行越攒越多）
+    const isBlankBlock = c.lines.length === 1 && c.lines[0] === '';
+    if (lines.length && prev && !tight(prev, c.type) && !isBlankBlock) lines.push('');
+    lines.push(...c.lines);
+    prev = c.type;
+  }
   // 末尾空行在 Markdown 里没有意义，顺手去掉（编辑器里仍可留空段落当落脚点）
-  while (out.length && out[out.length - 1].trim() === '') out.pop();
-  return out.join('\n');
+  while (lines.length && lines[lines.length - 1].trim() === '') lines.pop();
+  return lines.join('\n');
 }
 
 /* ============================================================
@@ -963,6 +978,13 @@ export class WysiwygEditor {
       const lvl = +block.dataset.indent || 0;
       if (lvl > 0) this.setQuoteLevel(block, lvl - 1);
       else this.toParagraph(block, 0);
+      return;
+    }
+
+    // 空标题：先退回正文，再按一次才并到上一块（否则删空标题后打字还是标题）
+    if (/^h[1-6]$/.test(type) && this.isEmptyBlock(block)) {
+      e.preventDefault();
+      this.toParagraph(block, 0);
       return;
     }
 
