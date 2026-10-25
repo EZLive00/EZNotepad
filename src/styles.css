@@ -60,6 +60,12 @@ body[data-theme="light"] {
   --tok-comment: #9aa3b2;
   --tok-punc: #5b6474;
   --sel-bg: #d8e4ff;
+
+  /* 提示块（callout）四色：边条/图标用深色调，底色用低透明度同色 */
+  --co-info: #3366f0;    --co-info-bg: rgba(51, 102, 240, .07);
+  --co-warn: #b45309;    --co-warn-bg: rgba(217, 119, 6, .09);
+  --co-danger: #c22f2f;  --co-danger-bg: rgba(194, 47, 47, .07);
+  --co-ok: #15803d;      --co-ok-bg: rgba(21, 128, 61, .08);
 }
 
 body[data-theme="dark"] {
@@ -99,6 +105,11 @@ body[data-theme="dark"] {
   --tok-comment: #6c7585;
   --tok-punc: #a4adbd;
   --sel-bg: #2f4270;
+
+  --co-info: #7ab8ff;    --co-info-bg: rgba(74, 124, 255, .10);
+  --co-warn: #ffcf6b;    --co-warn-bg: rgba(255, 176, 32, .09);
+  --co-danger: #ff8a8a;  --co-danger-bg: rgba(255, 90, 90, .10);
+  --co-ok: #62d38b;      --co-ok-bg: rgba(46, 204, 113, .09);
 }
 
 * { box-sizing: border-box; }
@@ -697,6 +708,22 @@ body[data-theme="dark"] .am-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 25
   margin: 1.1em 0; padding: .45em 1.1em; border-left: 3px solid var(--accent);
   color: var(--fg-soft); background: var(--accent-soft); border-radius: 0 var(--r-sm) var(--r-sm) 0;
 }
+/* 提示块（callout）：> [!info] 这类标记升级出来的染色引用 */
+.md blockquote.md-callout { border-left-color: var(--co-c, var(--accent)); background: var(--co-bg, var(--accent-soft)); }
+.md blockquote.md-callout-info    { --co-c: var(--co-info);   --co-bg: var(--co-info-bg); }
+.md blockquote.md-callout-warning { --co-c: var(--co-warn);   --co-bg: var(--co-warn-bg); }
+.md blockquote.md-callout-danger  { --co-c: var(--co-danger); --co-bg: var(--co-danger-bg); }
+.md blockquote.md-callout-success { --co-c: var(--co-ok);     --co-bg: var(--co-ok-bg); }
+.md blockquote .co-head {
+  display: flex; align-items: center; gap: 6px;
+  font-weight: 600; font-size: .92em; color: var(--co-c, var(--accent));
+  margin-bottom: .1em; user-select: none;
+}
+.md .co-ico {
+  width: 15px; height: 15px; flex: none;
+  fill: none; stroke: currentColor; stroke-width: 2;
+  stroke-linecap: round; stroke-linejoin: round;
+}
 .md ul, .md ol { padding-left: 1.6em; margin: .85em 0; }
 .md li { margin: .32em 0; }
 .md li > input[type=checkbox] { margin-right: 6px; }
@@ -1140,6 +1167,22 @@ body[data-theme="dark"] .ctx-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 2
 /* 连续的引用行在视觉上连成一块 */
 .wysiwyg .w-bq + .w-bq { margin-top: 0; }
 .wysiwyg .w-bq:has(+ .w-bq) { border-bottom-right-radius: 0; }
+/* 提示块：引用块 + [!info] 标记，四色染色 + 标题行（.w-co-head 非可编辑） */
+.wysiwyg .w-bq[data-callout] { border-left-color: var(--co-c, var(--accent)); background: var(--co-bg, var(--accent-soft)); }
+.wysiwyg .w-bq[data-callout="info"]    { --co-c: var(--co-info);   --co-bg: var(--co-info-bg); }
+.wysiwyg .w-bq[data-callout="warning"] { --co-c: var(--co-warn);   --co-bg: var(--co-warn-bg); }
+.wysiwyg .w-bq[data-callout="danger"]  { --co-c: var(--co-danger); --co-bg: var(--co-danger-bg); }
+.wysiwyg .w-bq[data-callout="success"] { --co-c: var(--co-ok);     --co-bg: var(--co-ok-bg); }
+.wysiwyg .w-co-head {
+  display: flex; align-items: center; gap: 6px;
+  font-weight: 600; font-size: 12.5px; color: var(--co-c, var(--accent));
+  margin-bottom: 3px; user-select: none;
+}
+.w-co-head .co-ico {
+  width: 14px; height: 14px; flex: none;
+  fill: none; stroke: currentColor; stroke-width: 2;
+  stroke-linecap: round; stroke-linejoin: round;
+}
 .wysiwyg .w-hr { margin: 2.1em 0; }
 .wysiwyg .w-hr hr { border: none; border-top: 1px solid var(--line-strong); }
 /* 所见即所得里的公式只染色：真渲染交给预览（往 contenteditable 塞 KaTeX

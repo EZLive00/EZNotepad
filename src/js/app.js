@@ -1833,6 +1833,10 @@ const commands = {
   ol: () => wysCmd((w) => w.toggleList('ol')),
   taskList: () => wysCmd((w) => w.toggleList('task')),
   quote: () => wysCmd((w) => w.insertBlock('quote')),
+  calloutInfo: () => wysCmd((w) => w.setCallout('info')),
+  calloutWarning: () => wysCmd((w) => w.setCallout('warning')),
+  calloutDanger: () => wysCmd((w) => w.setCallout('danger')),
+  calloutSuccess: () => wysCmd((w) => w.setCallout('success')),
   codeBlock: () => wysCmd((w) => w.insertBlock('code')),
   mathBlock: () => wysCmd((w) => w.insertBlock('math')),
   hr: () => wysCmd((w) => w.insertBlock('hr')),
@@ -1946,6 +1950,15 @@ const headingLevel = () => {
    用不上的灰项，所以统一用这个判断把它们藏起来（不是变灰，是根本不出现） */
 const noTable = () => !inTable();
 
+/** 光标所在块的引用类型：''=普通引用，'info' 等=提示块；不是引用块返回 null。
+    右键菜单的引用药丸拿它点亮当前值 */
+const bqCallout = () => {
+  if (!canWys()) return null;
+  const b = wys.currentBlock();
+  if (!b || b.dataset.type !== 'bq') return null;
+  return b.dataset.callout || '';
+};
+
 /** 光标所在表格列的当前对齐方式：'' | 'left' | 'center' | 'right'；不在表格里返回 null。
     右键菜单的对齐药丸拿它点亮当前值，不用点进去试 */
 const colAlign = () => {
@@ -2018,6 +2031,10 @@ const MENU_TREE = [
       { id: 'ol', label: '有序列表', icon: 'list-ordered', kbd: 'Ctrl+Shift+7', disabled: wysOnly },
       { id: 'taskList', label: '任务列表', icon: 'list-todo', kbd: 'Ctrl+Shift+9', disabled: wysOnly },
       { id: 'quote', label: '引用', icon: 'text-quote', kbd: 'Ctrl+Shift+Q', disabled: wysOnly },
+      { id: 'calloutInfo', label: '信息提示块', icon: 'info', disabled: wysOnly },
+      { id: 'calloutWarning', label: '警告提示块', icon: 'triangle-alert', disabled: wysOnly },
+      { id: 'calloutDanger', label: '危险提示块', icon: 'octagon-alert', disabled: wysOnly },
+      { id: 'calloutSuccess', label: '成功提示块', icon: 'circle-check', disabled: wysOnly },
       { id: 'codeBlock', label: '代码块', icon: 'square-code', kbd: 'Ctrl+Shift+K', disabled: wysOnly },
       { id: 'indentIn', label: '增加缩进', icon: 'indent-increase', kbd: 'Tab', disabled: wysOnly },
       { id: 'indentOut', label: '减少缩进', icon: 'indent-decrease', kbd: 'Shift+Tab', disabled: wysOnly },
@@ -2130,6 +2147,10 @@ const BLOCK_KINDS = [
   { id: 'ol', label: '有序列表', icon: 'list-tree' },
   { id: 'taskList', label: '任务列表', icon: 'check' },
   { id: 'quote', label: '引用', icon: 'type' },
+  { id: 'calloutInfo', label: '信息提示块', icon: 'info' },
+  { id: 'calloutWarning', label: '警告提示块', icon: 'triangle-alert' },
+  { id: 'calloutDanger', label: '危险提示块', icon: 'octagon-alert' },
+  { id: 'calloutSuccess', label: '成功提示块', icon: 'circle-check' },
   { id: 'codeBlock', label: '代码块', icon: 'code' },
 ];
 
@@ -2161,7 +2182,10 @@ const isWysMode = () => !!activeTab() && activeTab().mode === 'wysiwyg';
 function kindOfBlock(b) {
   const t = b.dataset.type;
   if (t === 'li') return b.dataset.list === 'task' ? 'taskList' : (b.dataset.list === 'ol' ? 'ol' : 'ul');
-  if (t === 'bq') return 'quote';
+  if (t === 'bq') {
+    const co = b.dataset.callout;
+    return co ? `callout${co[0].toUpperCase()}${co.slice(1)}` : 'quote';
+  }
   if (t === 'code') return 'codeBlock';
   if (t === 'p') return 'body';
   if (/^h[1-6]$/.test(t)) return t;         // h4~h6 没有对应菜单项，只是不点亮
@@ -2437,6 +2461,13 @@ function bindEvents() {
           { label: '任务列表', hint: '任务列表', icon: 'list-todo', iconOnly: true, shortcut: 'Ctrl+Shift+9', action: () => commands.taskList() },
           { label: '引用', hint: '引用块', icon: 'text-quote', iconOnly: true, shortcut: 'Ctrl+Shift+Q', action: () => commands.quote() },
         ] },
+        { lead: '引用', row: [
+          { label: '普通', hint: '普通引用', checked: () => bqCallout() === '', action: () => commands.quote() },
+          { label: '信息', hint: '信息提示块', checked: () => bqCallout() === 'info', action: () => commands.calloutInfo() },
+          { label: '警告', hint: '警告提示块', checked: () => bqCallout() === 'warning', action: () => commands.calloutWarning() },
+          { label: '危险', hint: '危险提示块', checked: () => bqCallout() === 'danger', action: () => commands.calloutDanger() },
+          { label: '成功', hint: '成功提示块', checked: () => bqCallout() === 'success', action: () => commands.calloutSuccess() },
+        ] },
       ];
       if (tbl) {
         items.push(
@@ -2617,6 +2648,17 @@ const WELCOME = `# 欢迎使用 简单记事本
 | 导出 PDF | \`Ctrl+P\` |
 
 > 支持 Markdown、JSON、TXT、日志与常见代码文件，打开时自动识别类型。
+
+提示块（引用的扩展写法）：行首输入 \`[!info] \` 加空格，或右键菜单「引用」里选类型 —— \`info\` / \`warning\` / \`danger\` / \`success\` 四种配色，和 GitHub、Obsidian 的写法互通：
+
+> [!info] 提示
+> 行首输入 \`[!info] \` 加空格就能生成这样的提示块，标题可自定义。
+
+> [!warning] 注意
+> 兼容 GitHub alerts 的别名：\`[!NOTE]\`、\`[!TIP]\`、\`[!IMPORTANT]\`、\`[!CAUTION]\` 也能认。
+
+> [!success] 完成
+> 颜色跟着类型走，普通引用仍是蓝色左边条。
 
 \`\`\`js
 // 代码块支持语法高亮

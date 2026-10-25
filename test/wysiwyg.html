@@ -531,6 +531,36 @@ window.__run = () => {
   const span = df.findInDom(root, /个加粗/g);
   eq('跨行内标签的匹配能还原成 Range', span.length ? df.rangeFor(span[0]).toString() : '（没找到）', '个加粗');
 
+  // 33. 提示块（callout）：> [!info] 扩展引用
+  T.reset('> [!warning] 注意\n> 正文行');
+  eq('提示块往返不丢', T.out(), '> [!warning] 注意\n> 正文行');
+  eq('解析出类型标记', root.children[0].dataset.callout, 'warning');
+  eq('自定义标题进标题行', root.querySelector('.w-co-head span').textContent, '注意');
+  eq('标记不进正文文字', root.children[0].querySelector('.w-text').textContent, '');
+  T.reset('> [!NOTE]\n内容');
+  eq('GitHub 别名归一', T.out(), '> [!info]\n\n内容');   // 「内容」不在引用里，是独立段落
+  eq('无标题用默认标签', root.querySelector('.w-co-head span').textContent, '信息');
+
+  T.reset('');
+  T.type('[!danger] ');
+  eq('输入 [!danger] 空格变提示块', root.children[0].dataset.callout, 'danger');
+  T.type('危险说明');
+  eq('标记后的文字进正文（引用第二行）', T.out(), '> [!danger]\n> 危险说明');
+
+  T.reset('一段话');
+  ed.setCallout('success');
+  eq('段落原地转提示块', T.out(), '> [!success]\n> 一段话');
+  ed.setCallout('success');
+  eq('再点一次退回普通引用', T.out(), '> 一段话');
+  ed.setCallout('info');
+  eq('普通引用可再升级', T.out(), '> [!info]\n> 一段话');
+
+  T.reset('> [!info] 一\n> 内容A\n\n> [!warning] 二\n> 内容B');
+  eq('相邻提示块之间保持空行（否则预览会连成一块）', T.out(), '> [!info] 一\n> 内容A\n\n> [!warning] 二\n> 内容B');
+  T.reset('> [!info] 标题\n> 正文一\n> 正文二');
+  eq('提示块正文续行不拆块', T.out(), '> [!info] 标题\n> 正文一\n> 正文二');
+
+  // 34. 查找里的假匹配回归（搜「尾开」不该跨块命中）
   T.reset('甲结尾\n\n开头乙');
   eq('不会跨块拼出假匹配', df.findInDom(root, /尾开/g).length, 0);
 

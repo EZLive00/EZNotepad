@@ -12,7 +12,7 @@
 //      在下次编辑时会被抹平成纯文本（** 丢了）。
 // ============================================================
 
-import { resolveDocImg, headingSlugs } from './markdown.js';
+import { resolveDocImg, headingSlugs, CALLOUT_TYPES, RE_CALLOUT, normalizeCallout } from './markdown.js';
 
 const MAX_INDENT = 6;
 const ZWSP = '\u200b';
@@ -153,10 +153,25 @@ export function mkLi(kind, text = '', indent = 0, checked = false, start = 1) {
   return b;
 }
 
-export function mkQuote(text = '', level = 0) {
+/** 提示块标题行：非可编辑，和 .w-codebar / .w-hash 同一套路 —— 视觉层不进 .w-text */
+function mkCalloutHead(callout, title = '') {
+  const def = CALLOUT_TYPES[callout];
+  const head = document.createElement('div');
+  head.className = 'w-co-head';
+  head.contentEditable = 'false';
+  head.innerHTML = `<svg class="co-ico"><use href="#i-${def.icon}"/></svg><span>${escapeHtml(title || def.label)}</span>`;
+  return head;
+}
+
+export function mkQuote(text = '', level = 0, callout = '', title = '') {
   const b = blockEl('bq', 'w-bq');
   b.dataset.indent = String(level);
   b.style.setProperty('--bq-indent', String(level));
+  if (callout) {
+    b.dataset.callout = callout;
+    if (title) b.dataset.calloutTitle = title;
+    b.appendChild(mkCalloutHead(callout, title));
+  }
   b.appendChild(mkText(text));
   return b;
 }
@@ -391,12 +406,21 @@ export function parseMarkdown(md) {
       continue;
     }
 
-    // 引用（支持 > > 嵌套）
+    // 引用（支持 > > 嵌套）；首行 [!info] 标记升级为提示块
     const q = line.match(RE_QUOTE);
     if (q) {
       const level = Math.min(MAX_INDENT, q[1].replace(/\s/g, '').length - 1);
+      let rest = q[2];
+      let callout = '';
+      let coTitle = '';
+      const cm = rest.match(RE_CALLOUT);
+      if (cm) {
+        callout = normalizeCallout(cm[1]);
+        coTitle = cm[2].trim();
+        rest = '';
+      }
       levelOf.reset();
-      frag.appendChild(mkQuote(q[2], Math.max(0, level)));
+      frag.appendChild(mkQuote(rest, Math.max(0, level), callout, coTitle));
       i++;
       continue;
     }
@@ -522,7 +546,17 @@ export function blocksToMarkdown(root) {
       cols[lvl] = base + marker.length;
     } else if (type === 'bq') {
       const depth = (+el.dataset.indent || 0) + 1;
-      chunks.push({ type, lines: ['> '.repeat(depth) + text] });
+      const prefix = '> '.repeat(depth);
+      const co = el.dataset.callout || '';
+      if (co) {
+        // 标记行 + 正文行：> [!info] 标题 / > 正文
+        const title = el.dataset.calloutTitle || '';
+        const lines = [prefix + `[!${co}]` + (title ? ` ${title}` : '')];
+        if (text.trim()) lines.push(prefix + text);
+        chunks.push({ type, lines, co: true });
+      } else {
+        chunks.push({ type, lines: [prefix + text] });
+      }
       cols.length = 0;
     } else {
       chunks.push({ type, lines: [text] });
@@ -532,13 +566,16 @@ export function blocksToMarkdown(root) {
 
   // 块之间要不要空行：列表项之间、连续引用之间必须紧凑（空行会变成 loose list、
   // 或者把一段引用拆成两段），其余块之间补一个空行 —— Markdown 靠它断块。
-  const tight = (a, b) => (a === 'li' && b === 'li') || (a === 'bq' && b === 'bq');
+  // 例外：引用后面跟的是**提示块**时必须断开 —— 不然两个 [!xx] 标记会进同一段
+  // 引用，预览里第二个标记变成普通文字，往返一次就丢了类型。
+  const tight = (a, b, co) => (a === 'li' && b === 'li')
+    || (a === 'bq' && b === 'bq' && !co);
   const lines = [];
   let prev = null;
   for (const c of chunks) {
     // 空段落本身就是一行空行，别再额外补一行（否则两个空行越攒越多）
     const isBlankBlock = c.lines.length === 1 && c.lines[0] === '';
-    if (lines.length && prev && !tight(prev, c.type) && !isBlankBlock) lines.push('');
+    if (lines.length && prev && !tight(prev, c.type, c.co) && !isBlankBlock) lines.push('');
     lines.push(...c.lines);
     prev = c.type;
   }
@@ -845,6 +882,7 @@ export class WysiwygEditor {
       && (n.classList.contains('w-li-marker')
         || n.classList.contains('w-codebar')
         || n.classList.contains('w-hash')
+        || n.classList.contains('w-co-head')
         || n.tagName === 'INPUT');
     const before = [];
     const after = [];
@@ -997,6 +1035,10 @@ export class WysiwygEditor {
       [/^(#{1,6})\s$/, (m) => mkHeading(m[1].length)],
       [/^```([\w#+.-]*)\s?$/, (m) => mkCode('', m[1] || '')],
       [/^>\s$/, () => mkQuote('')],
+      /* [!info] 这类标记 + 空格 → 提示块。> 开头的走上面那条，所以这里不用带 >；
+         文件里来的 > [!info] 由 parseMarkdown 认 */
+      [/^\[!(info|warning|danger|success|note|tip|important|caution)\]\s$/i,
+        (m) => mkQuote('', 0, normalizeCallout(m[1]), '')],
       [/^([-*+])\s\[([ xX])\]\s$/, (m) => mkLi('task', '', 0, m[2].toLowerCase() === 'x')],
       [/^([-*+])\s$/, () => mkLi('ul', '')],
       [/^(\d{1,9})[.)]\s$/, (m) => mkLi('ol', '', 0, false, parseInt(m[1], 10) || 1)],
@@ -1228,6 +1270,38 @@ export class WysiwygEditor {
     this.hCoalesce = false;
     this.flush();
     this.placeCaretEnd(block);
+  }
+
+  /** 当前块改成指定类型的提示块；已是该类型则退回普通引用，普通引用则原地升级 */
+  setCallout(type) {
+    const block = this.currentBlock();
+    if (!block) return;
+    if (block.dataset.type === 'bq') {
+      if (block.dataset.callout === type) {
+        delete block.dataset.callout;
+        delete block.dataset.calloutTitle;
+        block.querySelector('.w-co-head')?.remove();
+      } else {
+        const title = block.dataset.calloutTitle || '';
+        block.dataset.callout = type;
+        const old = block.querySelector('.w-co-head');
+        const head = mkCalloutHead(type, title);
+        if (old) old.replaceWith(head);
+        else block.insertBefore(head, block.firstChild);
+        if (title) block.dataset.calloutTitle = title;
+      }
+      this.hCoalesce = false;
+      this.flush();
+      this.placeCaretEnd(block);
+      return;
+    }
+    if (block.dataset.type === 'p' || /^h[1-6]$/.test(block.dataset.type)) {
+      const nb = mkQuote(textEl(block).textContent, 0, type, '');
+      block.replaceWith(nb);
+      this.placeCaretEnd(nb);
+      this.hCoalesce = false;
+      this.flush();
+    }
   }
 
   /* ---------------- 标题的 ### 标记 ----------------

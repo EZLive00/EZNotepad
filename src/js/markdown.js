@@ -197,6 +197,32 @@ function uniqueSlug(text, opts) {
 }
 
 /**
+ * 提示块（callout / alert，Obsidian 与 GitHub alerts 同款语法）：
+ *   > [!info]  可选标题
+ *   > 正文……
+ * 键是语法标记（小写），value 的 label 是中文默认标题、icon 对应图标精灵里的 id。
+ * note/tip/important/caution 是 GitHub alerts 的命名，收编为别名。
+ */
+export const CALLOUT_TYPES = {
+  info:    { label: '信息', icon: 'info' },
+  warning: { label: '警告', icon: 'triangle-alert' },
+  danger:  { label: '危险', icon: 'octagon-alert' },
+  success: { label: '成功', icon: 'circle-check' },
+  note:      { label: '信息', icon: 'info', aliasOf: 'info' },
+  tip:       { label: '成功', icon: 'circle-check', aliasOf: 'success' },
+  important: { label: '警告', icon: 'triangle-alert', aliasOf: 'warning' },
+  caution:   { label: '危险', icon: 'octagon-alert', aliasOf: 'danger' },
+};
+
+export const RE_CALLOUT = /^\[!(info|warning|danger|success|note|tip|important|caution)\]\s*(.*)$/i;
+
+/** `[!NOTE]` → 'info'（大小写与别名归一） */
+export function normalizeCallout(name) {
+  const key = String(name).toLowerCase();
+  return CALLOUT_TYPES[key]?.aliasOf || (CALLOUT_TYPES[key] ? key : '');
+}
+
+/**
  * 渲染整篇 Markdown。
  * @param {string} md
  * @param {{codeHighlight?: (code:string, lang:string)=>string}} opts
@@ -320,7 +346,8 @@ export function renderMarkdown(md, opts = {}) {
       continue;
     }
 
-    // 引用（含嵌套内容，简单实现：连续 > 行合并）
+    // 引用（含嵌套内容，简单实现：连续 > 行合并）。
+    // 首行带 [!info] 这类标记时升级为提示块（callout）：染色 + 图标标题行。
     if (/^\s*>\s?/.test(line)) {
       flushList();
       const buf = [];
@@ -328,7 +355,26 @@ export function renderMarkdown(md, opts = {}) {
         buf.push(lines[i].replace(/^\s*>\s?/, ''));
         i++;
       }
-      out.push(`<blockquote>${renderMarkdown(buf.join('\n'), opts)}</blockquote>`);
+      let co = '';
+      let coTitle = '';
+      const cm = buf[0] && buf[0].match(RE_CALLOUT);
+      if (cm) {
+        co = normalizeCallout(cm[1]);
+        coTitle = cm[2].trim();
+        buf.shift();
+      }
+      if (co) {
+        const def = CALLOUT_TYPES[co];
+        const label = coTitle || def.label;
+        const body = buf.length ? renderMarkdown(buf.join('\n'), opts) : '';
+        out.push(
+          `<blockquote class="md-callout md-callout-${co}">`
+          + `<div class="co-head"><svg class="co-ico"><use href="#i-${def.icon}"/></svg>${inline(label, resolveImg)}</div>`
+          + `${body}</blockquote>`
+        );
+      } else {
+        out.push(`<blockquote>${renderMarkdown(buf.join('\n'), opts)}</blockquote>`);
+      }
       continue;
     }
 

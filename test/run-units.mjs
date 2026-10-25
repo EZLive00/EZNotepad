@@ -59,6 +59,21 @@ ok('行内公式原样留着', html.includes('$x_1$'));
 const dupHtml = renderMarkdown('## 说明\n\n## 说明\n');
 ok('重复标题各自有 id', dupHtml.includes('id="说明"') && dupHtml.includes('id="说明-1"'));
 
+/* ---------- 提示块（callout）：> [!info] 的预览渲染 ---------- */
+const co = renderMarkdown('> [!warning] 注意事项\n> 正文一行\n');
+ok('提示块带类型 class', /md-callout md-callout-warning/.test(co));
+ok('提示块标题行渲染自定义标题', co.includes('注意事项'));
+ok('提示块图标走精灵图', co.includes('#i-triangle-alert'));
+ok('提示块正文照常渲染', co.includes('正文一行'));
+ok('标记本身不进正文', !co.includes('[!warning]'));
+ok('无标题用默认中文标签', renderMarkdown('> [!danger]').includes('危险'));
+ok('无正文不产生空标签', !/<p>\s*<\/p>/.test(renderMarkdown('> [!info]')));
+ok('GitHub 别名归一（NOTE → info）', /md-callout md-callout-info/.test(renderMarkdown('> [!NOTE] 一点说明')));
+ok('别名显示成功标签（tip → success）', renderMarkdown('> [!tip]').includes('成功'));
+ok('未知标记保持普通引用', !/md-callout/.test(renderMarkdown('> [!foo] 未知')));
+ok('普通引用不受影响', !/md-callout/.test(renderMarkdown('> 普通引用')));
+ok('标记行必须顶格在引用内', !/md-callout/.test(renderMarkdown('正文里的 [!info] 标记')));
+
 /* ---------- 汇总 ---------- */
 const fail = out.filter((r) => !r.ok);
 out.forEach((r) => {
