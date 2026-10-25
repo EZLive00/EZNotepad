@@ -161,9 +161,6 @@ await ev(`window.__snp.commands.toc()`);
 await sleep(400);
 await ev(`window.__snp.commands.modePreview()`);
 await sleep(1600);
-console.log('  [new-4 诊断] content $ =', await ev(`(window.__snp.getActiveTab().content.match(/\\$/g) || []).length`));
-console.log('  [new-4 诊断] content 片段 =', JSON.stringify((await ev(`window.__snp.getActiveTab().content`)).slice(0, 110)));
-console.log('  [new-4 诊断] preview 文本 =', JSON.stringify((await ev(`document.getElementById('preview').textContent`)).replace(/\s+/g, ' ').slice(0, 160)));
 await shot('new-4-toc-light.png');
 
 ws.close();
