@@ -15,6 +15,7 @@
 <script type="module">
 import { WysiwygEditor } from '../src/js/wysiwyg.js';
 import { renderMarkdown } from './../src/js/markdown.js';
+import * as df from '../src/js/domfind.js';
 
 const root = document.getElementById('wysiwyg');
 let out = '';
@@ -517,6 +518,30 @@ window.__run = () => {
   document.dispatchEvent(new Event('selectionchange'));
   has('光标离开后标记收起', !root.querySelector('.w-hash'));
   eq('标题级别不受影响', T.blocks().join(','), 'h2=标题,p=正文');
+
+  // ---- domfind：在渲染结果里查字（所见即所得的原位查找）----
+  T.reset('# 标题一\n\n正文里有标题两个字，还有一个**加粗的标题**。\n\n- 列表项里的标题\n\n```js\nconst a = 1; // 标题\n```');
+  const dm = df.findInDom(root, /标题/g);
+  eq('找到 5 处「标题」（标题块/正文/加粗/列表/代码）', dm.length, 5);
+  eq('第一处落在标题块', dm[0].block.dataset.type, 'h1');
+  eq('第一处还原成 Range 后就是「标题」', df.rangeFor(dm[0]).toString(), '标题');
+  has('加粗里的字也能找到', dm.some((m) => df.rangeFor(m).toString() === '标题' && m.block.textContent.includes('加粗')));
+  has('代码块里的字也能找到', dm.some((m) => m.block.dataset.type === 'code'));
+
+  const span = df.findInDom(root, /个加粗/g);
+  eq('跨行内标签的匹配能还原成 Range', span.length ? df.rangeFor(span[0]).toString() : '（没找到）', '个加粗');
+
+  T.reset('甲结尾\n\n开头乙');
+  eq('不会跨块拼出假匹配', df.findInDom(root, /尾开/g).length, 0);
+
+  // 高亮：CSS Custom Highlight 是渲染层的东西，DOM 结构不能被改动
+  const before = root.innerHTML;
+  df.paint(dm, 1);
+  has('当前匹配注册了高亮', !!CSS.highlights.get('sn-find-cur'));
+  has('全部匹配注册了高亮', !!CSS.highlights.get('sn-find'));
+  eq('画高亮不改动 DOM', root.innerHTML === before, 'true');
+  df.clear();
+  has('清除后没有残留', !CSS.highlights.get('sn-find') && !CSS.highlights.get('sn-find-cur'));
 
   return R;
 };

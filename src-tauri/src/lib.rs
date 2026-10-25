@@ -209,6 +209,114 @@ fn walk(dir: &Path, out: &mut Vec<DirEntryInfo>, limit: usize, depth: usize) -> 
     Ok(())
 }
 
+/// 列一层目录（不递归）。侧栏文件树按需展开，一次只读一层，
+/// 打开一个大仓库也不会先把几万个文件全读进来。
+#[tauri::command]
+fn read_dir_shallow(path: String) -> Result<Vec<DirEntryInfo>, String> {
+    let root = PathBuf::from(&path);
+    if !root.is_dir() {
+        return Err("不是文件夹".into());
+    }
+    let rd = fs::read_dir(&root).map_err(|e| format!("读取目录失败：{e}"))?;
+    let mut out = Vec::new();
+    for entry in rd.flatten() {
+        let p = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') || name == "node_modules" || name == "$RECYCLE.BIN" {
+            continue;
+        }
+        let meta = match entry.metadata() {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        let is_dir = meta.is_dir();
+        let mtime = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let ext = p
+            .extension()
+            .map(|e| e.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        out.push(DirEntryInfo {
+            name,
+            path: p.to_string_lossy().to_string(),
+            is_dir,
+            ext,
+            size: if is_dir { 0 } else { meta.len() },
+            mtime,
+        });
+    }
+    // 目录在前、同类按名字排：和资源管理器一致
+    out.sort_by(|a, b| {
+        b.is_dir
+            .cmp(&a.is_dir)
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+    Ok(out)
+}
+
+#[derive(Serialize)]
+struct SearchHit {
+    path: String,
+    name: String,
+    line: u32,
+    text: String,
+}
+
+/// 在整个文件夹里搜文本。放在 Rust 里做是为了不把每个文件都通过 IPC 搬到前端
+/// 再丢掉——一个几百个文件的目录走前端搜索会明显卡顿。
+/// 跳过二进制（含 NUL 字节）、跳过超大文件、单次最多返回 limit 条。
+#[tauri::command]
+fn search_in_folder(
+    root: String,
+    query: String,
+    max_results: Option<usize>,
+) -> Result<Vec<SearchHit>, String> {
+    let needle = query.to_lowercase();
+    if needle.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let root_path = PathBuf::from(&root);
+    if !root_path.is_dir() {
+        return Err("不是文件夹".into());
+    }
+    let limit = max_results.unwrap_or(300);
+    let mut files = Vec::new();
+    walk(&root_path, &mut files, 4000, 0)?;
+
+    let mut hits = Vec::new();
+    for f in files {
+        if f.size > 4 * 1024 * 1024 {
+            continue;
+        }
+        let bytes = match fs::read(&f.path) {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
+        if bytes.iter().take(8000).any(|b| *b == 0) {
+            continue;   // 二进制文件里搜到的「行」没有意义
+        }
+        let text = String::from_utf8_lossy(&bytes);
+        for (i, line) in text.lines().enumerate() {
+            if line.to_lowercase().contains(&needle) {
+                hits.push(SearchHit {
+                    path: f.path.clone(),
+                    name: f.name.clone(),
+                    line: (i + 1) as u32,
+                    text: line.trim().chars().take(180).collect(),
+                });
+                if hits.len() >= limit {
+                    return Ok(hits);
+                }
+            }
+        }
+    }
+    Ok(hits)
+}
+
 #[tauri::command]
 fn write_binary_file(path: String, bytes: Vec<u8>) -> Result<String, String> {
     fs::write(&path, &bytes).map_err(|e| format!("写入失败：{e}"))?;
@@ -360,6 +468,8 @@ pub fn run() {
             save_text_file,
             file_stat,
             list_dir_recursive,
+            read_dir_shallow,
+            search_in_folder,
             write_binary_file,
             copy_image_to_assets,
             save_image_bytes,

@@ -38,6 +38,11 @@ export const readText = (path, encoding = null) => invoke('read_text_file', { pa
 export const readTextAs = (path, encoding) => invoke('read_text_file', { path, encoding });
 export const saveText = (opts) => invoke('save_text_file', { opts });
 export const listDir = (path) => invoke('list_dir_recursive', { path, maxFiles: 20000 });
+/** 只列一层：侧栏文件树按需展开用 */
+export const readDirShallow = (path) => invoke('read_dir_shallow', { path });
+/** 全目录搜文本（在 Rust 里扫，别把每个文件都搬到前端） */
+export const searchInFolder = (root, query, maxResults = 300) =>
+  invoke('search_in_folder', { root, query, maxResults });
 export const writeBinary = (path, bytes) => invoke('write_binary_file', { path, bytes: Array.from(bytes) });
 
 const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'ico', 'avif'];

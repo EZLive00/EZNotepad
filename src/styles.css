@@ -445,6 +445,145 @@ body[data-theme="dark"] .am-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 25
   font-size: 11px; font-weight: 600; letter-spacing: .02em; color: var(--fg-faint);
   flex: none;
 }
+
+/* ---- 侧栏头：两个页面切换 + 设置入口 ---- */
+.side-head {
+  height: 38px; flex: none; display: flex; align-items: center;
+  justify-content: space-between; padding: 0 8px 0 10px; gap: 6px;
+}
+.side-tabs { display: flex; gap: 2px; }
+.side-tab {
+  height: 24px; padding: 0 9px; border: none; border-radius: 6px; cursor: pointer;
+  background: transparent; color: var(--fg-faint);
+  font-size: 11.5px; font-weight: 600; letter-spacing: .02em;
+  transition: background .12s var(--ease), color .12s var(--ease);
+}
+.side-tab:hover { background: var(--bg-hover); color: var(--fg-soft); }
+.side-tab.active { background: var(--bg-panel); color: var(--fg); box-shadow: 0 1px 2px rgba(17, 24, 39, .07); }
+.side-act {
+  width: 24px; height: 24px; flex: none; display: grid; place-items: center;
+  border: none; border-radius: 6px; background: transparent; color: var(--fg-faint); cursor: pointer;
+}
+.side-act:hover { background: var(--bg-hover); color: var(--fg); }
+.side-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+/* ---- 文件树 ---- */
+.ft-search {
+  flex: none; display: flex; align-items: center; gap: 5px;
+  margin: 0 8px 6px; padding: 0 7px; height: 27px;
+  background: var(--bg-panel); border-radius: 7px;
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.ft-search .ico { width: 13px; height: 13px; color: var(--fg-faint); flex: none; }
+.ft-search input {
+  flex: 1; min-width: 0; border: none; background: transparent; outline: none;
+  font-size: 12px; color: var(--fg); font-family: var(--font-ui);
+}
+.ft-search input::placeholder { color: var(--fg-faint); }
+.ft-x {
+  width: 18px; height: 18px; flex: none; border: none; border-radius: 5px;
+  background: transparent; color: var(--fg-faint); cursor: pointer;
+  display: grid; place-items: center;
+}
+.ft-x:hover { background: var(--bg-hover); color: var(--fg); }
+.ft-x .ico { width: 12px; height: 12px; }
+
+.ft-path {
+  flex: none; display: flex; align-items: center; gap: 6px;
+  padding: 0 10px 6px; font-size: 11.5px; color: var(--fg-faint);
+}
+.ft-path span {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-weight: 600; color: var(--fg-soft);
+}
+.ft-open {
+  flex: none; height: 21px; padding: 0 8px; border: none; border-radius: 5px;
+  background: var(--bg-panel); color: var(--fg-soft); font-size: 11px; cursor: pointer;
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.ft-open:hover { color: var(--fg); box-shadow: inset 0 0 0 1px var(--line-strong); }
+
+.ft-body { flex: 1; overflow: auto; padding: 0 6px 14px; }
+.ft-tree, .ft-results { display: flex; flex-direction: column; }
+.ft-row {
+  display: flex; align-items: center; gap: 5px; width: 100%;
+  height: 24px; padding-right: 6px; border: none; border-radius: 5px;
+  background: transparent; color: var(--fg-soft); font-size: 12.5px;
+  text-align: left; cursor: pointer; flex: none;
+}
+.ft-row:hover { background: var(--bg-hover); color: var(--fg); }
+.ft-row.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.ft-row .ft-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 折叠箭头占固定槽位，文件夹和文件的行首才对得齐 */
+.ft-caret { width: 12px; height: 12px; flex: none; color: var(--fg-faint); transition: transform .13s var(--ease); }
+.ft-row.open .ft-caret { transform: rotate(90deg); }
+.ft-ico { width: 14px; height: 14px; flex: none; color: var(--fg-faint); }
+.ft-row.dir .ft-ico { color: var(--fg-soft); }
+.ft-row.active .ft-ico { color: var(--accent); }
+
+.ft-hit-file {
+  display: flex; align-items: center; gap: 5px; width: 100%;
+  margin-top: 4px; padding: 4px 6px; border: none; border-radius: 5px;
+  background: transparent; color: var(--fg); font-size: 12px; font-weight: 600;
+  text-align: left; cursor: pointer;
+}
+.ft-hit-file:hover { background: var(--bg-hover); }
+.ft-hit-file .ft-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ft-hit-file .ft-count {
+  flex: none; font-size: 10.5px; color: var(--fg-faint); font-weight: 500;
+  background: var(--bg-panel); border-radius: 9px; padding: 0 5px;
+}
+.ft-hit {
+  display: flex; gap: 7px; width: 100%; padding: 3px 6px 3px 21px;
+  border: none; background: transparent; cursor: pointer; text-align: left;
+  font-size: 11.5px; color: var(--fg-soft); border-radius: 5px;
+}
+.ft-hit:hover { background: var(--bg-hover); color: var(--fg); }
+.ft-hit .ft-line {
+  flex: none; width: 22px; text-align: right; color: var(--fg-faint);
+  font-variant-numeric: tabular-nums; font-size: 10.5px; line-height: 1.6;
+}
+.ft-hit .ft-text {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--font-mono); font-size: 11px;
+}
+.ft-empty { padding: 18px 14px; font-size: 12px; line-height: 1.7; color: var(--fg-faint); }
+.ft-empty.small { padding: 4px 0 4px 0; font-size: 11.5px; }
+
+/* ---- 设置面板 ---- */
+.set-panel { display: flex; flex-direction: column; gap: 18px; min-width: 380px; }
+.set-group { display: flex; flex-direction: column; gap: 8px; }
+.set-label { font-size: 11px; font-weight: 600; letter-spacing: .04em; color: var(--fg-faint); }
+.set-seg { display: flex; gap: 4px; background: var(--bg-soft); padding: 3px; border-radius: 8px; }
+.set-seg button {
+  flex: 1; height: 26px; border: none; border-radius: 6px; background: transparent;
+  font-size: 12px; color: var(--fg-soft); cursor: pointer;
+  transition: background .12s var(--ease), color .12s var(--ease);
+}
+.set-seg button:hover { color: var(--fg); }
+.set-seg button.on { background: var(--bg-panel); color: var(--fg); font-weight: 600; box-shadow: 0 1px 2px rgba(17, 24, 39, .08); }
+.set-zoom { display: flex; align-items: center; gap: 8px; }
+.set-step {
+  width: 28px; height: 26px; border: none; border-radius: 6px; cursor: pointer;
+  background: var(--bg-soft); color: var(--fg); font-size: 15px; line-height: 1;
+}
+.set-step:hover { background: var(--bg-hover); }
+.set-value { min-width: 62px; text-align: center; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.set-link {
+  margin-left: auto; border: none; background: transparent; cursor: pointer;
+  font-size: 11.5px; color: var(--accent); padding: 0;
+}
+.set-row { display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--fg); cursor: pointer; }
+.set-row input[type="checkbox"] { margin: 0; }
+.set-row.folder { gap: 6px; cursor: default; }
+.set-folder {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 11.5px; color: var(--fg-soft); background: var(--bg-soft);
+  border-radius: 6px; padding: 3px 8px;
+}
+.set-folder.faint { color: var(--fg-faint); }
+.set-hint { font-size: 11px; color: var(--fg-faint); line-height: 1.6; }
+.set-foot { display: flex; justify-content: flex-end; border-top: 1px solid var(--line); padding-top: 12px; }
 .outline-list { flex: 1; overflow-y: auto; padding: 0 8px 16px; }
 .outline-item {
   display: block; width: 100%; text-align: left; border: none; background: transparent;
@@ -460,6 +599,12 @@ body[data-theme="dark"] .am-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 25
 .outline-item.h3 { padding-left: 30px; font-size: 12px; }
 .outline-item.h4 { padding-left: 42px; font-size: 12px; }
 .outline-item.h5, .outline-item.h6 { padding-left: 54px; font-size: 12px; }
+/* 当前章节：跟随滚动点亮。和 hover 用同一道左沿竖条，但常驻，
+   这样「我在哪」和「鼠标在哪」用的是同一种视觉语言 */
+.outline-item.active {
+  color: var(--fg); background: var(--bg-hover); border-left-color: var(--accent);
+  font-weight: 600;
+}
 .outline-empty { padding: 16px; font-size: 12px; color: var(--fg-faint); line-height: 1.7; }
 
 .splitter { width: 5px; flex: none; cursor: col-resize; background: transparent; position: relative; z-index: 5; }
@@ -596,11 +741,13 @@ body[data-theme="dark"] .am-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 25
 /* ================= 查找条 ================= */
 .findbar {
   position: absolute; top: 8px; right: 16px; z-index: 20;
-  display: flex; align-items: center; gap: 5px; flex-wrap: wrap;
+  display: flex; flex-direction: column; gap: 6px;
   background: var(--bg-float);
   border-radius: var(--r-md); box-shadow: var(--shadow); padding: 8px 10px;
   max-width: calc(100% - 32px);
 }
+.fb-row { display: flex; align-items: center; gap: 5px; }
+.fb-opts { display: flex; align-items: center; gap: 12px; padding: 0 2px 1px; }
 .findbar input[type=text], .findbar input:not([type]) {
   height: 26px; padding: 0 9px; border-radius: var(--r-sm);
   border: 1px solid var(--line-strong); background: var(--bg); outline: none; width: 158px;
@@ -618,6 +765,17 @@ body[data-theme="dark"] .am-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 25
 .fb.close { border: none; background: transparent; padding: 0; width: 24px; }
 .fb.close .ico { width: 15px; height: 15px; }
 .fb-check { font-size: 11.5px; color: var(--fg-soft); display: inline-flex; align-items: center; gap: 3px; }
+/* 「选区内」在没有选中文字时不可用，勾不上也不该看着像能用 */
+.fb-check:has(input:disabled) { opacity: .42; }
+.fb-check:has(input:disabled) input { cursor: default; }
+
+/* 查找高亮走 CSS Custom Highlight API：往 contenteditable 里插 <mark>
+   会毁掉行内结构和光标，所以只在渲染层上色。
+   当前匹配用琥珀色实底（和蓝色的「选中」区分开），其余匹配淡黄底。 */
+::highlight(sn-find) { background-color: rgba(255, 196, 0, .28); }
+::highlight(sn-find-cur) { background-color: #ffb020; color: #241a00; }
+body[data-theme="dark"] ::highlight(sn-find) { background-color: rgba(255, 196, 0, .18); }
+body[data-theme="dark"] ::highlight(sn-find-cur) { background-color: #ffc247; color: #1a1300; }
 
 /* ================= 状态栏 ================= */
 /* 和顶栏对称：同属画布层、不画上边框，靠底色差和正文分开 */

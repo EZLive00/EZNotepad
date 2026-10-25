@@ -23,6 +23,8 @@ export const settings = Object.assign(
     lastMode: {},
     lastNewExt: 'md',     // 「新建」上次选的扩展名
     autoSave: false,      // 自动保存（只对已存在于磁盘上的文件生效）
+    folder: '',           // 侧栏「文件」页打开的文件夹
+    side: 'outline',      // 侧栏当前页：outline | files
   },
   LS.get('settings', {})
 );

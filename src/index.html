@@ -24,6 +24,9 @@
     <symbol id="i-chevron-down" viewBox="0 0 24 24">
       <path d="m6 9 6 6 6-6" />
     </symbol>
+    <symbol id="i-chevron-right" viewBox="0 0 24 24">
+      <path d="m9 18 6-6-6-6" />
+    </symbol>
     <symbol id="i-chevron-up" viewBox="0 0 24 24">
       <path d="m18 15-6-6-6 6" />
     </symbol>
@@ -55,8 +58,18 @@
       <path d="M9 15h6" />
       <path d="M12 18v-6" />
     </symbol>
+    <symbol id="i-file-text" viewBox="0 0 24 24">
+      <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+      <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+      <path d="M10 9H8" />
+      <path d="M16 13H8" />
+      <path d="M16 17H8" />
+    </symbol>
     <symbol id="i-folder-open" viewBox="0 0 24 24">
       <path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2" />
+    </symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24">
+      <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
     </symbol>
     <symbol id="i-folders" viewBox="0 0 24 24">
       <path d="M20 5a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h2.5a1.5 1.5 0 0 1 1.2.6l.6.8a1.5 1.5 0 0 0 1.2.6z" />
@@ -163,6 +176,10 @@
       <path d="M5 12h14" />
       <path d="M12 5v14" />
     </symbol>
+    <symbol id="i-rotate-ccw" viewBox="0 0 24 24">
+      <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+      <path d="M3 3v5h5" />
+    </symbol>
     <symbol id="i-save" viewBox="0 0 24 24">
       <path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" />
       <path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7" />
@@ -171,6 +188,10 @@
     <symbol id="i-search" viewBox="0 0 24 24">
       <path d="m21 21-4.34-4.34" />
       <circle cx="11" cy="11" r="8" />
+    </symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24">
+      <path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915" />
+      <circle cx="12" cy="12" r="3" />
     </symbol>
     <symbol id="i-square-code" viewBox="0 0 24 24">
       <path d="m10 9-3 3 3 3" />
@@ -274,23 +295,59 @@
   <!-- ============ 主区域：大纲 | 编辑 | 预览 ============ -->
   <main class="workspace" id="workspace">
     <aside class="outline" id="outlinePane">
-      <div class="pane-head">大纲</div>
-      <div class="outline-list" id="outlineList"></div>
+      <div class="side-head">
+        <div class="side-tabs">
+          <button type="button" class="side-tab active" data-side="outline">大纲</button>
+          <button type="button" class="side-tab" data-side="files">文件</button>
+        </div>
+        <button type="button" class="side-act icon-only" id="sideSettings" title="设置">
+          <svg class="ico" aria-hidden="true"><use href="#i-settings" /></svg>
+        </button>
+      </div>
+
+      <!-- 大纲：只管导航 -->
+      <div class="side-body" id="sideOutline">
+        <div class="outline-list" id="outlineList"></div>
+      </div>
+
+      <!-- 文件：文件夹树 + 全目录搜索 -->
+      <div class="side-body hidden" id="sideFiles">
+        <div class="ft-search">
+          <svg class="ico" aria-hidden="true"><use href="#i-search" /></svg>
+          <input id="ftQuery" placeholder="在这个文件夹里搜内容" spellcheck="false" />
+          <button type="button" class="ft-x icon-only hidden" id="ftClear" title="清除搜索">
+            <svg class="ico" aria-hidden="true"><use href="#i-x" /></svg>
+          </button>
+        </div>
+        <div class="ft-path">
+          <span id="ftPathText" title="">未打开文件夹</span>
+          <button type="button" class="ft-open" id="ftPick">选择…</button>
+        </div>
+        <div class="ft-body" id="ftBody"></div>
+      </div>
     </aside>
     <div class="splitter" id="outlineSplitter"></div>
 
     <section class="editor-pane" id="editorPane">
       <div class="findbar hidden" id="findbar">
-        <input id="findInput" placeholder="查找" spellcheck="false" />
-        <input id="replaceInput" class="hidden" placeholder="替换为" spellcheck="false" />
-        <span class="find-count" id="findCount">0/0</span>
-        <button class="fb icon-only" id="findPrev" title="上一个 (Shift+Enter)"><svg class="ico" aria-hidden="true"><use href="#i-chevron-up" /></svg></button>
-        <button class="fb icon-only" id="findNext" title="下一个 (Enter)"><svg class="ico" aria-hidden="true"><use href="#i-chevron-down" /></svg></button>
-        <button class="fb" id="findReplaceOne" title="替换">替换</button>
-        <button class="fb" id="findReplaceAll" title="全部替换">全部</button>
-        <label class="fb-check"><input type="checkbox" id="findCase" /> 区分大小写</label>
-        <label class="fb-check"><input type="checkbox" id="findRegex" /> 正则</label>
-        <button class="fb close" id="findClose" title="关闭 (Esc)"><svg class="ico" aria-hidden="true"><use href="#i-x" /></svg></button>
+        <div class="fb-row">
+          <input id="findInput" placeholder="查找" spellcheck="false" />
+          <input id="replaceInput" class="hidden" placeholder="替换为" spellcheck="false" />
+          <span class="find-count" id="findCount">0/0</span>
+          <button class="fb icon-only" id="findPrev" title="上一个 (Shift+Enter)"><svg class="ico" aria-hidden="true"><use href="#i-chevron-up" /></svg></button>
+          <button class="fb icon-only" id="findNext" title="下一个 (Enter)"><svg class="ico" aria-hidden="true"><use href="#i-chevron-down" /></svg></button>
+          <button class="fb" id="findReplaceOne" title="替换">替换</button>
+          <button class="fb" id="findReplaceAll" title="全部替换">全部</button>
+          <button class="fb close" id="findClose" title="关闭 (Esc)"><svg class="ico" aria-hidden="true"><use href="#i-x" /></svg></button>
+        </div>
+        <!-- 选项单独一行：挤在同一行时新加的「整词 / 选区内」会被折到下一行，
+             排版变成上半截四个、下半截一个，很丑 -->
+        <div class="fb-opts">
+          <label class="fb-check"><input type="checkbox" id="findCase" /> 区分大小写</label>
+          <label class="fb-check"><input type="checkbox" id="findWord" /> 整词</label>
+          <label class="fb-check"><input type="checkbox" id="findRegex" /> 正则</label>
+          <label class="fb-check" id="findScopeWrap"><input type="checkbox" id="findScope" /> 选区内</label>
+        </div>
       </div>
 
       <div class="edit-wrap" id="editWrap">

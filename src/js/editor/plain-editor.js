@@ -76,6 +76,8 @@ export class PlainEditor {
     });
 
     this.view = new EditorView({ state, parent: host });
+    /* 滚动回调：大纲要跟着滚（谁滚谁负责通知，外部不必知道滚动容器是谁） */
+    this.view.scrollDOM.addEventListener('scroll', () => this.opts.onScroll?.(), { passive: true });
   }
 
   /* ---------------- 内部 ---------------- */
@@ -224,6 +226,18 @@ export class PlainEditor {
     const n = Math.max(1, Math.min(st.doc.lines, line));
     const pos = st.doc.line(n).from;
     this.view.dispatch({ effects: EditorView.scrollIntoView(pos, { y: 'center' }) });
+  }
+
+  /**
+   * 视口内某一点的纵坐标（相对可视区顶部）落在第几行（1 起）。
+   * 大纲跟随滚动用：算「现在读到哪一行」，不用自己累加行高（折行会算错）。
+   */
+  lineAtViewportY(viewportY = 0) {
+    const view = this.view;
+    // CM6 的高度是「文档坐标」（从文档顶端算起），documentTop 是文档顶端在视口里的位置
+    const docY = viewportY - view.documentTop;
+    const block = view.lineBlockAtHeight(Math.max(0, docY));
+    return view.state.doc.lineAt(block.from).number;
   }
 
   /* ---------------- 配置 ---------------- */

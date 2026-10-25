@@ -15,6 +15,8 @@ import { showShortcuts } from './shortcuts.js';
 import { exportPdf, printTab } from './pdf.js';
 import { iconHTML, setIcon } from './icons.js';
 import { createAppMenu } from './appmenu.js';
+import * as domfind from './domfind.js';
+import { FileTree } from './filetree.js';
 import { freeUntitledName, moveById } from './taborder.js';
 import * as win from './win.js';
 
@@ -58,6 +60,14 @@ const el = {
   whAdd: $('whAdd'),
   whMenu: $('whMenu'),
   wBlockMenu: $('wBlockMenu'),
+  sideOutline: $('sideOutline'),
+  sideFiles: $('sideFiles'),
+  sideTabs: [...document.querySelectorAll('.side-tab')],
+  ftQuery: $('ftQuery'),
+  ftBody: $('ftBody'),
+  ftPathText: $('ftPathText'),
+  ftPick: $('ftPick'),
+  ftClear: $('ftClear'),
 };
 
 /* ---------------- 纯文本 / 代码编辑区 ----------------
@@ -68,6 +78,7 @@ const el = {
 const plain = new PlainEditor(el.editor, {
   onChange: () => onEditorInput(),
   onCursor: () => updateCursorPos(),
+  onScroll: () => scheduleOutlineSync(),
   onPasteImage: (file) => insertImageFromFile(file),
 });
 
@@ -100,6 +111,7 @@ const wys = new WysiwygEditor(el.wysiwyg, {
       scheduleDraft();
       scheduleAutoSave();
       updateStatus();
+      scheduleFindRefresh();
     }
   },
   onPasteImage: (file) => insertImageFromFile(file),
@@ -256,6 +268,7 @@ function activate(id) {
     mode = allowed.includes(last) ? last : (allowed.includes('edit') ? 'edit' : allowed[0]);
   }
   setMode(mode, { fromActivate: true });
+  tree.setActive(t.path);
   saveDraft();
 }
 
@@ -361,6 +374,7 @@ function updateOutline() {
   if (!show) return;
   const kind = detectKind(t.name);
   const items = extractOutline(kind, t.content);
+  outlineItems = items;
   if (!items.length) {
     el.outlineList.innerHTML = `<div class="outline-empty">${kind === 'md' ? '用 # 定义标题后，这里会出现大纲。' : '当前文件没有可提取的结构。'}</div>`;
     return;
@@ -376,6 +390,39 @@ function updateOutline() {
   }
   el.outlineList.innerHTML = '';
   el.outlineList.appendChild(frag);
+  scheduleOutlineSync();     // 重建后立刻把「当前章节」点亮，不要等下一次滚动
+}
+
+/* ---------------- 大纲跟随滚动 ---------------- */
+/* 三种模式的滚动容器各不相同（CM6 自己一个、所见即所得一个、预览一个），
+   但判断逻辑一样：找到「最后一个顶部越过基准线的标题」。
+   用标题相对容器顶部的距离，而不是自己累加行高——折行的行高算不准。 */
+let outlineItems = [];
+let outlineTick = 0;
+
+function scheduleOutlineSync() {
+  clearTimeout(outlineTick);
+  outlineTick = setTimeout(syncOutline, 70);
+}
+
+function syncOutline() {
+  const t = activeTab();
+  if (!t || !settings.outlineVisible) return;
+  const nodes = [...el.outlineList.querySelectorAll('.outline-item')];
+  if (!nodes.length || !outlineItems.length) return;
+
+  let cur = -1;
+  if (t.mode === 'wysiwyg' || t.mode === 'preview') {
+    const box = t.mode === 'wysiwyg' ? el.wysiwyg : el.preview;
+    const top = box.getBoundingClientRect().top + Math.min(96, box.clientHeight * 0.3);
+    const heads = box.querySelectorAll(t.mode === 'wysiwyg' ? '.w-h' : 'h1,h2,h3,h4,h5,h6');
+    heads.forEach((h, i) => { if (h.getBoundingClientRect().top <= top) cur = i; });
+  } else {
+    const line = plain.lineAtViewportY(Math.min(96, el.editor.clientHeight * 0.3)) - 1;   // 0 起
+    outlineItems.forEach((it, i) => { if (it.line <= line) cur = i; });
+  }
+  if (cur >= nodes.length) cur = nodes.length - 1;
+  nodes.forEach((b, i) => b.classList.toggle('active', i === cur));
 }
 
 function gotoLine(line) {
@@ -394,6 +441,196 @@ function gotoLine(line) {
   for (let i = 0; i < line && i < lines.length; i++) off += lines[i].length + 1;
   plain.revealOffset(off, off + (lines[line] || '').length);
   updateStatus();
+}
+
+/* ---------------- 侧栏：大纲 / 文件 ---------------- */
+const tree = new FileTree({
+  body: el.ftBody,
+  pathText: el.ftPathText,
+  be,
+  toast,
+  onOpen: (p, line) => openPathAt(p, line),
+});
+
+/** 侧栏两个页面互斥显示；记住上次用的是哪个 */
+function setSide(side) {
+  const s = side === 'files' ? 'files' : 'outline';
+  settings.side = s;
+  saveSettings();
+  el.sideTabs.forEach((b) => b.classList.toggle('active', b.dataset.side === s));
+  el.sideOutline.classList.toggle('hidden', s === 'files');
+  el.sideFiles.classList.toggle('hidden', s !== 'files');
+}
+
+/** 从搜索结果打开：先开文件，等它渲染完再跳到那一行 */
+async function openPathAt(p, line) {
+  await openPath(p);
+  if (line) setTimeout(() => gotoLine(line - 1), 90);
+}
+
+async function pickFolder() {
+  const p = await be.pickFolder('选择文件夹');
+  if (!p) return;
+  settings.folder = p;
+  saveSettings();
+  setSide('files');
+  el.ftQuery.value = '';
+  el.ftClear.classList.add('hidden');
+  await tree.setRoot(p);
+}
+
+function clearFolder() {
+  settings.folder = '';
+  saveSettings();
+  el.ftQuery.value = '';
+  el.ftClear.classList.add('hidden');
+  tree.setRoot('');
+}
+
+function setupSidebar() {
+  el.sideTabs.forEach((b) => { b.onclick = () => setSide(b.dataset.side); });
+  el.ftPick.onclick = pickFolder;
+  $('sideSettings').onclick = showSettings;
+
+  let ftTimer = 0;
+  el.ftQuery.addEventListener('input', () => {
+    el.ftClear.classList.toggle('hidden', !el.ftQuery.value);
+    clearTimeout(ftTimer);
+    ftTimer = setTimeout(() => tree.search(el.ftQuery.value), 320);
+  });
+  el.ftQuery.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { el.ftQuery.value = ''; el.ftClear.classList.add('hidden'); tree.render(); }
+  });
+  el.ftClear.onclick = () => {
+    el.ftQuery.value = '';
+    el.ftClear.classList.add('hidden');
+    tree.render();
+  };
+
+  setSide(settings.side || 'outline');
+  // 有记住的文件夹就直接画出来；没有也要画一次（显示「还没打开文件夹」的引导）
+  tree.setRoot(settings.folder || '').catch(() => {});
+}
+
+/* ---------------- 设置面板 ---------------- */
+/* 设置项原来散在「视图」菜单里：主题、字号、单双栏各占一行，还看不出当前字号是多少。
+   集中成一个面板，改一项立刻生效，不需要「确定」。 */
+function showSettings() {
+  const box = document.createElement('div');
+  box.className = 'set-panel';
+  const seg = (name, opts, cur) => `<div class="set-seg" data-name="${name}">${
+    opts.map(([v, l]) => `<button type="button" data-v="${v}" class="${v === cur ? 'on' : ''}">${l}</button>`).join('')
+  }</div>`;
+
+  box.innerHTML = `
+    <div class="set-group">
+      <div class="set-label">主题</div>
+      ${seg('theme', [['auto', '跟随系统'], ['light', '浅色'], ['dark', '深色']], settings.theme)}
+    </div>
+
+    <div class="set-group">
+      <div class="set-label">字号</div>
+      <div class="set-zoom">
+        <button type="button" class="set-step" data-zoom="-1" title="缩小">−</button>
+        <span class="set-value" id="setFontSize">${settings.fontSize} px</span>
+        <button type="button" class="set-step" data-zoom="1" title="放大">+</button>
+        <button type="button" class="set-link" id="setFontReset">实际大小</button>
+      </div>
+    </div>
+
+    <div class="set-group">
+      <div class="set-label">界面</div>
+      <label class="set-row"><input type="checkbox" id="setOutline" ${settings.outlineVisible ? 'checked' : ''} /> 显示大纲 / 文件栏</label>
+      <label class="set-row"><input type="checkbox" id="setSplit" ${settings.layout === 'split' ? 'checked' : ''} /> 双栏（编辑 + 预览）</label>
+    </div>
+
+    <div class="set-group">
+      <div class="set-label">文件</div>
+      <label class="set-row"><input type="checkbox" id="setAutoSave" ${settings.autoSave ? 'checked' : ''} /> 自动保存（停手约 1 秒写盘）</label>
+      <div class="set-row folder">
+        <span class="set-folder" id="setFolder"></span>
+        <button type="button" class="mini" id="setPickFolder">选择…</button>
+        <button type="button" class="mini ghost" id="setClearFolder">清除</button>
+      </div>
+      <div class="set-hint">当前打开的文件夹，用于左侧「文件」页浏览与搜索。</div>
+    </div>
+
+    <div class="set-foot">
+      <button type="button" class="mini ghost" id="setReset">恢复默认设置</button>
+    </div>
+  `;
+
+  const paintFolder = () => {
+    const n = box.querySelector('#setFolder');
+    if (!n) return;
+    n.textContent = settings.folder || '未打开文件夹';
+    n.title = settings.folder || '';
+    n.classList.toggle('faint', !settings.folder);
+  };
+  paintFolder();
+
+  box.querySelectorAll('.set-seg button').forEach((b) => {
+    b.onclick = () => {
+      settings.theme = b.dataset.v;
+      saveSettings();
+      applyTheme();
+      b.parentElement.querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
+    };
+  });
+  box.querySelectorAll('[data-zoom]').forEach((b) => {
+    b.onclick = () => {
+      zoom(Number(b.dataset.zoom));
+      box.querySelector('#setFontSize').textContent = `${settings.fontSize} px`;
+    };
+  });
+  box.querySelector('#setFontReset').onclick = () => {
+    settings.fontSize = 13.5;
+    saveSettings();
+    applyFont();
+    box.querySelector('#setFontSize').textContent = '13.5 px';
+  };
+  box.querySelector('#setOutline').onchange = (e) => {
+    settings.outlineVisible = e.target.checked;
+    saveSettings();
+    updateOutline();
+  };
+  box.querySelector('#setSplit').onchange = (e) => {
+    setLayout(e.target.checked ? 'split' : 'single');
+    updateStatus();
+  };
+  box.querySelector('#setAutoSave').onchange = (e) => {
+    settings.autoSave = e.target.checked;
+    saveSettings();
+    toast(settings.autoSave ? '自动保存已开启' : '自动保存已关闭');
+  };
+  box.querySelector('#setPickFolder').onclick = async () => {
+    await pickFolder();
+    paintFolder();
+  };
+  box.querySelector('#setClearFolder').onclick = () => { clearFolder(); paintFolder(); };
+  box.querySelector('#setReset').onclick = async () => {
+    const ok = await confirmBox('恢复默认设置', '主题、字号、布局、自动保存都会回到出厂状态，文件夹设置也会清空。<br><br>确定？', '恢复', '取消');
+    if (!ok) return;
+    Object.assign(settings, {
+      theme: 'auto', fontSize: 13.5, layout: 'split', outlineVisible: true,
+      showToolbar: true, showWinTitle: true, autoSave: false, folder: '', side: 'outline',
+    });
+    saveSettings();
+    applyTheme();
+    applyFont();
+    setLayout(settings.layout);
+    updateOutline();
+    clearFolder();
+    paintFolder();
+    box.querySelector('#setFontSize').textContent = '13.5 px';
+    box.querySelectorAll('.set-seg[data-name="theme"] button').forEach((x) => x.classList.toggle('on', x.dataset.v === 'auto'));
+    box.querySelector('#setOutline').checked = true;
+    box.querySelector('#setSplit').checked = true;
+    box.querySelector('#setAutoSave').checked = false;
+    toast('已恢复默认设置');
+  };
+
+  dialog({ title: '设置', body: box, buttons: [{ id: 'ok', label: '完成', primary: true }] });
 }
 
 /* ---------------- 状态栏 ---------------- */
@@ -983,21 +1220,24 @@ function undoToast(msg, backup) {
 }
 
 /* ---------------- 查找替换 ---------------- */
-const find = { matches: [], index: 0 };
+/* 两套匹配结果：
+     · 编辑模式查的是 Markdown 源码，位置就是字符偏移；
+     · 所见即所得查的是渲染后的 DOM，位置是「第几个块 + 块内偏移」。
+   以前在所见即所得按 Ctrl+F 会被强行踢到编辑模式——查个词结果模式没了，
+   现在两套并存，替换才需要回源码（改 DOM 会破坏行内样式）。 */
+const find = { matches: [], index: 0, dom: false };
 
 function openFind(withReplace = false) {
   const t = activeTab();
   if (!t) return;
-  if (t.mode === 'wysiwyg') {
-    // WYSIWYG 下查找需要回到编辑模式，避免两套逻辑打架
-    toast('已切换到编辑模式以使用查找替换');
-    setMode('edit', { fromActivate: true });
-  }
   el.findbar.classList.remove('hidden');
   $('replaceInput').classList.toggle('hidden', !withReplace);
   $('findReplaceOne').classList.toggle('hidden', !withReplace);
   $('findReplaceAll').classList.toggle('hidden', !withReplace);
-  const sel = plain.selectedText;
+  // 「选区内」只在真的选了东西时才可用，否则勾了也没意义还让人困惑
+  const sel = t.mode === 'wysiwyg' ? '' : plain.selectedText;
+  $('findScope').disabled = !sel;
+  if (!sel) $('findScope').checked = false;
   if (sel && !sel.includes('\n')) $('findInput').value = sel;
   $('findInput').focus();
   $('findInput').select();
@@ -1011,32 +1251,80 @@ function buildRegex() {
   if ($('findRegex').checked) {
     try { return new RegExp(q, flags); } catch { return null; }
   }
-  return new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), flags);
+  let src = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  /* 整词：只在查询串的头/尾是 ASCII 单词字符时加边界。
+     中文没有词边界这回事（"标题" 匹配到 "副标题" 是正常的），
+     硬套 \b 只会让中文查询永远匹配不到。 */
+  if ($('findWord').checked) {
+    if (/^\w/.test(q)) src = '(?<!\\w)' + src;
+    if (/\w$/.test(q)) src += '(?!\\w)';
+  }
+  return new RegExp(src, flags);
+}
+
+function setFindCount() {
+  $('findCount').textContent = `${find.matches.length ? find.index + 1 : 0}/${find.matches.length}`;
+}
+
+/* 在所见即所得里改字之后，旧的高亮范围已经错位。
+   停手 300ms 重算一次（DOM 模式下重算不碰选区，不会打断输入）。 */
+let findRefreshTimer = 0;
+function scheduleFindRefresh() {
+  if (!find.dom || el.findbar.classList.contains('hidden')) return;
+  clearTimeout(findRefreshTimer);
+  findRefreshTimer = setTimeout(() => {
+    if (el.findbar.classList.contains('hidden') || !find.dom) return;
+    runFind();
+  }, 300);
 }
 
 function runFind() {
   const t = activeTab();
   const re = buildRegex();
+  const prevIndex = find.index;
   find.matches = [];
-  if (!t || !re) { $('findCount').textContent = '0/0'; return; }
-  let m;
-  re.lastIndex = 0;
-  while ((m = re.exec(t.content))) {
-    if (m[0].length === 0) { re.lastIndex++; continue; }
-    find.matches.push([m.index, m.index + m[0].length]);
-    if (find.matches.length > 5000) break;
+  find.index = 0;
+  if (!t || !re) { setFindCount(); domfind.clear(); return; }
+
+  if (t.mode === 'wysiwyg') {
+    find.dom = true;
+    find.matches = domfind.findInDom(el.wysiwyg, re);
+    // 编辑正文触发的刷新不要把人踢回第一处匹配
+    find.index = Math.min(prevIndex, Math.max(0, find.matches.length - 1));
+  } else {
+    find.dom = false;
+    const sel = plain.selection;
+    const onlySel = $('findScope').checked && sel.to > sel.from;
+    let m;
+    re.lastIndex = 0;
+    while ((m = re.exec(t.content))) {
+      if (m[0].length === 0) { re.lastIndex++; continue; }
+      const a = m.index;
+      const b = a + m[0].length;
+      if (!onlySel || (a >= sel.from && b <= sel.to)) find.matches.push([a, b]);
+      if (find.matches.length > 5000) break;
+    }
+    // 从光标位置往后数，避免每次都从头开始跳
+    const pos = plain.selection.from;
+    const idx = find.matches.findIndex(([a]) => a >= pos);
+    find.index = idx < 0 ? 0 : idx;
   }
-  const pos = plain.selection.from;
-  const idx = find.matches.findIndex(([a]) => a >= pos);
-  find.index = idx < 0 ? 0 : idx;
-  $('findCount').textContent = `${find.matches.length ? find.index + 1 : 0}/${find.matches.length}`;
+  setFindCount();
   if (find.matches.length) locateMatch();
+  else domfind.clear();
 }
 
 function locateMatch() {
   const t = activeTab();
+  if (!t || !find.matches.length) return;
+  if (find.dom) {
+    // 高亮交给 CSS Custom Highlight，不动 DOM —— contenteditable 里插 <mark> 会毁掉光标
+    domfind.paint(find.matches, find.index);
+    domfind.scrollTo(find.matches[find.index], el.wysiwyg);
+    return;
+  }
   const [a, b] = find.matches[find.index] || [];
-  if (a == null || !t) return;
+  if (a == null) return;
   plain.revealOffset(a, b);
   updateStatus();
 }
@@ -1044,33 +1332,65 @@ function locateMatch() {
 function findStep(dir) {
   if (!find.matches.length) { runFind(); return; }
   find.index = (find.index + dir + find.matches.length) % find.matches.length;
-  $('findCount').textContent = `${find.index + 1}/${find.matches.length}`;
+  setFindCount();
   locateMatch();
 }
 
-function replaceOne() {
+/** 替换要先回到编辑模式：在渲染后的 DOM 上改字会丢行内样式 */
+async function switchToEditForReplace() {
+  const t = activeTab();
+  if (!t || t.mode !== 'wysiwyg') return true;
+  const go = await confirmBox(
+    '替换需要编辑模式',
+    '所见即所得里直接替换会破坏加粗、链接这些格式。<br><br>切到编辑模式（Ctrl+2）继续替换？',
+    '切换并替换', '取消'
+  );
+  if (!go) return false;
+  setMode('edit', { fromActivate: true });
+  runFind();
+  return true;
+}
+
+async function replaceOne() {
   const t = activeTab();
   if (!t || !find.matches.length) return;
+  if (!(await switchToEditForReplace())) return;
+  if (find.dom || !find.matches.length) return;
   const [a, b] = find.matches[find.index];
   const rep = $('replaceInput').value;
   setContent(t.content.slice(0, a) + rep + t.content.slice(b));
   runFind();
 }
 
-function replaceAll() {
+async function replaceAll() {
   const t = activeTab();
+  if (!t) return;
+  if (!(await switchToEditForReplace())) return;
   const re = buildRegex();
-  if (!t || !re) return;
+  if (!re) return;
   const rep = $('replaceInput').value;
+  const sel = plain.selection;
+  const onlySel = $('findScope').checked && sel.to > sel.from;
   let n = 0;
-  const next = t.content.replace(re, () => (n++, rep));
-  if (!n) { toast('没有找到匹配项'); return; }
-  setContent(next);
+  if (onlySel) {
+    // 只动选区那一段，前后原样拼回去（选区外的同名文字不该被牵连）
+    const body = t.content.slice(sel.from, sel.to).replace(re, () => (n++, rep));
+    if (!n) { toast('选区内没有匹配项'); return; }
+    setContent(t.content.slice(0, sel.from) + body + t.content.slice(sel.to));
+  } else {
+    const next = t.content.replace(re, () => (n++, rep));
+    if (!n) { toast('没有找到匹配项'); return; }
+    setContent(next);
+  }
   toast(`已替换 ${n} 处`);
   runFind();
 }
 
-function closeFind() { el.findbar.classList.add('hidden'); }
+function closeFind() {
+  el.findbar.classList.add('hidden');
+  domfind.clear();
+  find.matches = [];
+}
 
 /** 拖进来的图片文件：走「复制到 assets」那条路，和「插入图片」对话框一致 */
 async function insertImageFromPath(p) {
@@ -1413,6 +1733,8 @@ const commands = {
     toast(settings.autoSave ? '自动保存已开启：改动停下约 1 秒就写盘' : '自动保存已关闭');
   },
   clearRecent: () => { LS.del('recent'); toast('已清除最近记录'); },
+  openFolder: pickFolder,
+  settings: showSettings,
   shortcuts: showShortcuts,
   about: showAbout,
   encoding: changeEncoding,
@@ -1459,6 +1781,7 @@ const MENU_TREE = [
     items: () => [
       { id: 'new', label: '新建', kbd: 'Ctrl+N' },
       { id: 'open', label: '打开…', kbd: 'Ctrl+O' },
+      { id: 'openFolder', label: '打开文件夹…', icon: 'folder-open' },
       ...recentMenuItems(),
       { sep: true },
       { id: 'save', label: '保存', kbd: 'Ctrl+S', disabled: () => !hasTab() },
@@ -1584,6 +1907,8 @@ const MENU_TREE = [
       { id: 'wordCount', label: '字数统计', disabled: () => !hasTab() },
       { id: 'encoding', label: '文件编码…', disabled: () => !hasTab() },
       { id: 'eol', label: '切换换行符', disabled: () => !hasTab() },
+      { sep: true },
+      { id: 'settings', label: '设置…', icon: 'settings', kbd: 'Ctrl+,' },
     ],
   },
   {
@@ -1941,6 +2266,8 @@ function bindEvents() {
   on('findClose', closeFind);
   on('findCase', runFind);
   on('findRegex', runFind);
+  on('findWord', runFind);
+  on('findScope', runFind);
 
   on('stEOL', cycleEol);
   on('stEncoding', changeEncoding);
@@ -1979,6 +2306,7 @@ function setupKeys() {
 
     if (k === 'n' && shift) diff.openText();
     else if (k === 'n') commands.new();
+    else if (k === ',' && !shift) commands.settings();
     else if (k === 'o' && shift) commands.toggleOutline();
     else if (k === 'o') commands.open();
     else if (k === 's' && shift) commands.saveAs();
@@ -2076,6 +2404,9 @@ async function boot() {
   setupSplitters();
   setupDrop();
   setupBlockHandle();
+  setupSidebar();
+  el.wysiwyg.addEventListener('scroll', scheduleOutlineSync, { passive: true });
+  el.preview.addEventListener('scroll', scheduleOutlineSync, { passive: true });
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
     if (settings.theme === 'auto') applyTheme();
   });
