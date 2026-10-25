@@ -4,35 +4,46 @@
   --font-mono: "SF Mono", "JetBrains Mono", "Cascadia Mono", Consolas, "Courier New", monospace;
   --font-read: -apple-system, "PingFang SC", "Microsoft YaHei", "Noto Sans SC", "Segoe UI", sans-serif;
   --r-sm: 6px;
-  --r-md: 9px;
-  --r-lg: 14px;
+  --r-md: 10px;
+  --r-lg: 16px;
   --ease: cubic-bezier(.2, .7, .3, 1);
   --fs-editor: 13.5px;   /* applyFont() 会在启动后覆盖成用户设置 */
+
+  /* 正文栏宽：宽窗口下正文不再一路拉到底，超过这个宽度就居中留白。
+     46rem ≈ 690px，中文 15px 下大约 30~34 字一行，是最舒服的阅读行长 */
+  --read-measure: 46rem;
+  /* 编辑 / 预览两侧的最小内边距 */
+  --read-gutter: 54px;
 }
 
+/* ---- 色彩分层：靠「底色深浅」分区域，而不是靠一堆 1px 边框 ----
+   bg       = 画布层：标题栏、标签行、大纲栏、状态栏（比内容面暗半格）
+   bg-panel = 内容面：编辑区、预览区、浮层（最亮）
+   bg-soft  = 内容面之上的浅坑：代码块、hover 底 */
 body[data-theme="light"] {
-  --bg: #f6f7f9;
+  --bg: #f3f4f6;
   --bg-panel: #ffffff;
-  --bg-soft: #f0f2f5;
-  --bg-hover: #e9ecf1;
-  --bg-active: #e2e7ef;
-  --fg: #1f2430;
-  --fg-soft: #5b6474;
-  --fg-faint: #9aa3b2;
-  --line: #e2e6ec;
-  --line-strong: #cdd4de;
-  --accent: #3a6ef6;
-  --accent-soft: #e8efff;
+  --bg-soft: #f4f5f7;
+  --bg-hover: #eaecf0;
+  --bg-active: #e1e4e9;
+  --fg: #17191e;
+  --fg-soft: #565c68;
+  --fg-faint: #9299a4;
+  --line: #e9eaee;
+  --line-strong: #d9dce1;
+  --accent: #3366f0;
+  --accent-soft: #eaf0ff;
   --accent-fg: #ffffff;
-  --code-bg: #f4f6f9;
+  --code-bg: #f5f6f8;
   --add-bg: #e6f7ec;
   --add-fg: #137a3a;
   --del-bg: #fdeaea;
   --del-fg: #b4232a;
   --chg-bg: #fff5dc;
   --chg-fg: #8a5a00;
-  --shadow: 0 8px 30px rgba(20, 30, 55, .10), 0 1px 2px rgba(20, 30, 55, .06);
-  --scroll: #cfd6e0;
+  /* 浮层轮廓用「0 0 0 1px」模拟，比真 border 更轻，且不会占布局 */
+  --shadow: 0 0 0 1px rgba(17, 24, 39, .06), 0 12px 36px rgba(17, 24, 39, .13), 0 2px 8px rgba(17, 24, 39, .05);
+  --scroll: #cdd2da;
 
   /* 语法着色：预览（highlight.js 的 .tok-*）和编辑器（CM6 的 HighlightStyle）
      共用这一组变量，改色只改这里 */
@@ -51,27 +62,27 @@ body[data-theme="light"] {
 body[data-theme="dark"] {
   /* 让复选框、滚动条等原生控件跟随深色，否则是刺眼的白块 */
   color-scheme: dark;
-  --bg: #16181d;
-  --bg-panel: #1d2027;
-  --bg-soft: #22252d;
-  --bg-hover: #2a2e37;
-  --bg-active: #313743;
-  --fg: #e6e9ef;
-  --fg-soft: #a4adbd;
-  --fg-faint: #6c7585;
-  --line: #2c313a;
-  --line-strong: #3a404c;
-  --accent: #6b93ff;
-  --accent-soft: #23304d;
+  --bg: #0f1013;
+  --bg-panel: #191b20;
+  --bg-soft: #202329;
+  --bg-hover: #272a31;
+  --bg-active: #2f333b;
+  --fg: #e7e9ee;
+  --fg-soft: #a1a8b4;
+  --fg-faint: #6c7480;
+  --line: #262930;
+  --line-strong: #343942;
+  --accent: #6d8dff;
+  --accent-soft: #1d2740;
   --accent-fg: #0d1015;
-  --code-bg: #191c22;
+  --code-bg: #16181d;
   --add-bg: #14301f;
   --add-fg: #62d38b;
   --del-bg: #341a1c;
   --del-fg: #ff8a8a;
   --chg-bg: #33280f;
   --chg-fg: #ffcf6b;
-  --shadow: 0 12px 40px rgba(0, 0, 0, .45), 0 1px 2px rgba(0, 0, 0, .4);
+  --shadow: 0 0 0 1px rgba(255, 255, 255, .07), 0 18px 48px rgba(0, 0, 0, .62), 0 3px 10px rgba(0, 0, 0, .45);
   --scroll: #3a404c;
 
   --tok-key: #b388ff;
@@ -107,16 +118,17 @@ input { font-family: inherit; font-size: inherit; color: inherit; }
 .icon-sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
 .ico {
   width: 16px; height: 16px; flex: none;
-  fill: none; stroke: currentColor; stroke-width: 2;
+  /* 1.75 而不是 2：16px 下的图标用 2 会显得「糊成一坨」，降一档立刻变精致 */
+  fill: none; stroke: currentColor; stroke-width: 1.75;
   stroke-linecap: round; stroke-linejoin: round;
   vertical-align: middle; pointer-events: none;
 }
 .icon-only { display: inline-flex; align-items: center; justify-content: center; }
 
-/* 滚动条 */
-::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 10px; border: 3px solid transparent; background-clip: padding-box; }
-::-webkit-scrollbar-thumb:hover { background: var(--fg-faint); background-clip: padding-box; border: 3px solid transparent; }
+/* 滚动条：6px 视觉宽度。太细不好抓，太粗会像十年前的软件 */
+::-webkit-scrollbar { width: 11px; height: 11px; }
+::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 10px; border: 2.5px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background: var(--fg-faint); background-clip: padding-box; border: 2.5px solid transparent; }
 ::-webkit-scrollbar-track { background: transparent; }
 
 /* ================= 顶部：自绘标题栏 ================= */
@@ -124,8 +136,9 @@ input { font-family: inherit; font-size: inherit; color: inherit; }
    品牌图标 + 菜单 + 文档标题 + 窗口按钮；空白处可拖动，双击最大化 */
 .appbar {
   flex: none;
-  background: var(--bg-panel);
-  border-bottom: 1px solid var(--line);
+  /* 顶部整块（标题栏 + 标签行）和左侧大纲栏同属「画布层」，比正文面暗半格。
+     不加下边框 —— 与正文的边界由底色差本身给出，少一条线就少一层噪音 */
+  background: var(--bg);
   position: relative;
   z-index: 30;
 }
@@ -138,7 +151,7 @@ input { font-family: inherit; font-size: inherit; color: inherit; }
   padding-left: 10px;
   position: relative;
   /* 顶部一道极淡的高光，模仿 Win11 标题栏的立体感（深色模式下几乎不可见） */
-  background-image: linear-gradient(180deg, rgba(255, 255, 255, .5), rgba(255, 255, 255, 0) 60%);
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, .34), rgba(255, 255, 255, 0) 70%);
 }
 body[data-theme="dark"] .titlebar { background-image: none; }
 
@@ -218,6 +231,7 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
   height: 28px; padding: 0 7px 0 11px;
   border-radius: 7px;
   color: var(--fg-soft);
+  font-size: 12.5px;
   white-space: nowrap;
   max-width: 200px;
   flex: 0 1 auto;
@@ -227,9 +241,20 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
   border: none;
 }
 .tab:hover { background: var(--bg-hover); }
+/* 激活标签：白色实体「浮」在灰色画布上，往下和正文面接成一片 ——
+   比原来的「浅灰底 + 内描边」更像一张卡片，也不会看起来像个输入框 */
 .tab.active {
-  background: var(--bg-soft); color: var(--fg); font-weight: 600;
-  box-shadow: inset 0 0 0 1px var(--line);
+  background: var(--bg-panel); color: var(--fg); font-weight: 600;
+  box-shadow: 0 1px 3px rgba(17, 24, 39, .09), 0 0 0 1px rgba(17, 24, 39, .045);
+}
+body[data-theme="dark"] .tab.active {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .5), 0 0 0 1px rgba(255, 255, 255, .055);
+}
+/* 当前文档的「锚点」：标签底沿一道 2px 主题色。整屏唯一的饱和色块，
+   位置固定、面积很小，所以不吵，但一眼知道「我在哪」 */
+.tab.active::after {
+  content: ""; position: absolute; left: 10px; right: 10px; bottom: -1px;
+  height: 2px; border-radius: 2px 2px 0 0; background: var(--accent);
 }
 .tab-name { overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
 .tab-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; }
@@ -258,11 +283,11 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
 }
 
 /* ================= 应用菜单（自绘，替代原生菜单栏） ================= */
+/* 浮层一律去描边：轮廓交给 --shadow 里的「0 0 0 1px」，比真 border 轻一半 */
 .appmenu {
-  position: fixed; z-index: 500; min-width: 240px; padding: 5px;
+  position: fixed; z-index: 500; min-width: 240px; padding: 6px;
   background: var(--bg-panel);
-  border: 1px solid var(--line-strong);
-  border-radius: 10px;
+  border-radius: 12px;
   box-shadow: var(--shadow);
   animation: pop .12s var(--ease);
   user-select: none;
@@ -316,7 +341,7 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
   /* 工具行现在贴右边缘，面板改成右对齐展开，否则 250px 宽的菜单会溢出窗口 */
   position: absolute; top: 32px; right: 0; left: auto; z-index: 50;
   min-width: 250px; padding: 6px;
-  background: var(--bg-panel); border: 1px solid var(--line); border-radius: var(--r-md);
+  background: var(--bg-panel); border-radius: var(--r-md);
   box-shadow: var(--shadow); display: none;
 }
 .menu-panel.open { display: block; animation: pop .14s var(--ease); }
@@ -340,13 +365,14 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
 
 .outline {
   width: 220px; min-width: 140px; max-width: 420px; flex: none;
-  background: var(--bg-panel); display: flex; flex-direction: column;
-  border-right: 1px solid transparent;
+  /* 大纲栏和顶栏同属画布层：比正文面暗半格，一眼能分出「导航 / 内容」 */
+  background: var(--bg); display: flex; flex-direction: column;
 }
 .pane-head {
   height: 34px; display: flex; align-items: center; padding: 0 14px;
-  font-size: 11px; font-weight: 600; letter-spacing: .1em; color: var(--fg-faint);
-  text-transform: uppercase; flex: none;
+  /* 中文不要用大 letter-spacing（会散架），只靠小字号 + 600 字重 + 淡色压住 */
+  font-size: 11px; font-weight: 600; letter-spacing: .02em; color: var(--fg-faint);
+  flex: none;
 }
 .outline-list { flex: 1; overflow-y: auto; padding: 0 8px 16px; }
 .outline-item {
@@ -354,8 +380,10 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
   padding: 5px 8px; border-radius: var(--r-sm); color: var(--fg-soft);
   font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   line-height: 1.45; border-left: 2px solid transparent;
+  transition: background .12s var(--ease), color .12s var(--ease), border-color .12s var(--ease);
 }
-.outline-item:hover { background: var(--bg-hover); color: var(--fg); }
+/* hover 时左沿浮出一道竖条：位置固定、只变色不加位移，指针扫过时不会跳 */
+.outline-item:hover { background: var(--bg-hover); color: var(--fg); border-left-color: var(--line-strong); }
 .outline-item.h1 { font-weight: 600; color: var(--fg); font-size: 13px; }
 .outline-item.h2 { padding-left: 18px; }
 .outline-item.h3 { padding-left: 30px; font-size: 12px; }
@@ -368,6 +396,8 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
   content: ""; position: absolute; top: 0; bottom: 0; left: 2px; width: 1px; background: var(--line);
   transition: background .15s;
 }
+/* 编辑和预览两边同色，中缝得靠线的对比度分开；大纲那一侧有底色差，留淡线就够 */
+#midSplitter::after { background: var(--line-strong); }
 .splitter:hover::after { background: var(--accent); width: 2px; left: 1.5px; }
 
 .editor-pane {
@@ -386,59 +416,76 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
 #editor.hidden { display: none; }
 
 .wysiwyg {
-  flex: 1; overflow-y: auto; padding: 28px 46px 40vh;
-  font-family: var(--font-read); font-size: 15px; line-height: 1.78;
+  flex: 1; overflow-y: auto;
+  /* 左右内边距 = max(最小留白, (可用宽 - 行长) / 2)：宽窗口下正文居中收窄，
+     窄窗口下退回固定留白。不用包一层 max-width，滚动条仍然贴着窗口右边。
+     分开写 padding-*，别用简写 —— 简写里的 max()/calc() 在某些版本上会被整条丢弃 */
+  padding-top: 32px;
+  padding-bottom: 40vh;
+  padding-left: max(var(--read-gutter), calc((100% - var(--read-measure)) / 2));
+  padding-right: max(var(--read-gutter), calc((100% - var(--read-measure)) / 2));
+  font-family: var(--font-read); font-size: 15px; line-height: 1.75;
+  letter-spacing: .008em;   /* 中文加一点点字距更透气，西文几乎看不出来 */
   outline: none; user-select: text;
 }
 .wysiwyg:empty::before { content: "开始输入… 输入 # 加空格变成标题"; color: var(--fg-faint); }
 
 /* ================= 预览 ================= */
+/* 预览和编辑都算「内容面」，用同一个白色；两栏之间只留一条极淡的分割线，
+   不再给预览整块换底色（那会让双栏看起来是两套东西） */
 .preview-pane {
   flex: 1; min-width: 0; display: flex; flex-direction: column;
-  background: var(--bg); border-left: 1px solid var(--line);
+  background: var(--bg-panel);
 }
 .preview-head {
   height: 34px; flex: none; display: flex; align-items: center; padding: 0 18px;
-  font-size: 11px; font-weight: 600; letter-spacing: .1em; color: var(--fg-faint); text-transform: uppercase;
-  background: var(--bg-panel); border-bottom: 1px solid var(--line);
+  font-size: 11px; font-weight: 600; letter-spacing: .02em; color: var(--fg-faint);
+  background: transparent;
 }
 .preview-body {
-  flex: 1; overflow-y: auto; padding: 26px 40px 40vh;
+  flex: 1; overflow-y: auto;
+  padding: 8px var(--read-gutter) 40vh;
   font-family: var(--font-read); font-size: 15px; line-height: 1.8;
   user-select: text;
 }
+/* 宽窗口下正文居中对齐到一个固定的行长，避免一行拉出一百多个字 */
+.preview-body > *, .preview-body > .md { max-width: var(--read-measure); margin-inline: auto; }
 
-/* 阅读排版 */
-.md h1, .md h2, .md h3, .md h4 { line-height: 1.3; margin: 1.4em 0 .55em; font-weight: 650; }
-.md h1 { font-size: 1.75em; letter-spacing: -.01em; }
-.md h2 { font-size: 1.38em; padding-bottom: .3em; border-bottom: 1px solid var(--line); }
-.md h3 { font-size: 1.15em; }
-.md h4 { font-size: 1em; }
+/* 阅读排版：字号阶梯拉开、段距放大、标题上方留够空白，
+   三件事一起做才有「文档感」，只调其中一项都会显得平 */
+.md h1, .md h2, .md h3, .md h4 { line-height: 1.32; margin: 1.85em 0 .6em; font-weight: 650; }
+.md h1 { font-size: 1.9em; letter-spacing: -.022em; margin-top: 0; }
+.md h2 { font-size: 1.42em; letter-spacing: -.012em; }
+.md h3 { font-size: 1.16em; letter-spacing: -.005em; }
+.md h4 { font-size: 1.02em; }
 .md > :first-child { margin-top: 0; }
-.md p { margin: .75em 0; }
+.md p { margin: .9em 0; }
 .md a { color: var(--accent); text-decoration: none; border-bottom: 1px solid transparent; }
 .md a:hover { border-bottom-color: var(--accent); }
 .md code {
   font-family: var(--font-mono); font-size: .88em; background: var(--code-bg);
-  padding: .16em .4em; border-radius: 5px; border: 1px solid var(--line);
+  padding: .16em .42em; border-radius: 5px;
 }
 .md pre {
-  background: var(--code-bg); border: 1px solid var(--line); border-radius: var(--r-md);
-  padding: 14px 16px; overflow-x: auto; margin: 1em 0; line-height: 1.6;
+  background: var(--code-bg); border-radius: var(--r-md);
+  padding: 16px 18px; overflow-x: auto; margin: 1.2em 0; line-height: 1.68;
+  box-shadow: inset 0 0 0 1px var(--line);
 }
-.md pre code { background: none; border: none; padding: 0; font-size: 13px; }
+.md pre code { background: none; padding: 0; font-size: 13px; }
 .md blockquote {
-  margin: 1em 0; padding: .2em 1em; border-left: 3px solid var(--accent);
+  margin: 1.1em 0; padding: .45em 1.1em; border-left: 3px solid var(--accent);
   color: var(--fg-soft); background: var(--accent-soft); border-radius: 0 var(--r-sm) var(--r-sm) 0;
 }
-.md ul, .md ol { padding-left: 1.6em; margin: .7em 0; }
-.md li { margin: .28em 0; }
+.md ul, .md ol { padding-left: 1.6em; margin: .85em 0; }
+.md li { margin: .32em 0; }
 .md li > input[type=checkbox] { margin-right: 6px; }
-.md hr { border: none; border-top: 1px solid var(--line-strong); margin: 2em 0; }
+.md hr { border: none; border-top: 1px solid var(--line-strong); margin: 2.4em 0; }
 .md img { max-width: 100%; border-radius: var(--r-md); }
-.md table { border-collapse: collapse; margin: 1em 0; font-size: .93em; width: auto; }
-.md th, .md td { border: 1px solid var(--line-strong); padding: 7px 12px; }
-.md th { background: var(--bg-soft); font-weight: 600; text-align: left; }
+/* 表格走「横线表」：只有表头上下一道、行间一道，去掉全部竖线和外框 */
+.md table { border-collapse: collapse; margin: 1.2em 0; font-size: .93em; width: 100%; }
+.md th, .md td { border: none; border-bottom: 1px solid var(--line); padding: 9px 12px; text-align: left; }
+.md th { border-bottom-color: var(--line-strong); color: var(--fg-soft); font-weight: 600; font-size: .92em; }
+.md tbody tr:last-child td { border-bottom: none; }
 .md del { color: var(--fg-faint); }
 .md .task-list { list-style: none; padding-left: .35em; }
 .md .task-list li { margin: .22em 0; }
@@ -479,8 +526,8 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
 .findbar {
   position: absolute; top: 8px; right: 16px; z-index: 20;
   display: flex; align-items: center; gap: 5px; flex-wrap: wrap;
-  background: var(--bg-panel); border: 1px solid var(--line-strong);
-  border-radius: var(--r-md); box-shadow: var(--shadow); padding: 7px 9px;
+  background: var(--bg-panel);
+  border-radius: var(--r-md); box-shadow: var(--shadow); padding: 8px 10px;
   max-width: calc(100% - 32px);
 }
 .findbar input[type=text], .findbar input:not([type]) {
@@ -502,9 +549,11 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
 .fb-check { font-size: 11.5px; color: var(--fg-soft); display: inline-flex; align-items: center; gap: 3px; }
 
 /* ================= 状态栏 ================= */
+/* 和顶栏对称：同属画布层、不画上边框，靠底色差和正文分开 */
 .statusbar {
-  flex: none; height: 26px; display: flex; align-items: center; gap: 2px;
-  padding: 0 10px; background: var(--bg-panel); border-top: 1px solid var(--line);
+  flex: none; height: 27px; display: flex; align-items: center; gap: 2px;
+  padding: 0 10px; background: var(--bg);
+  /* 行/列、字数这些是常看的信息，用 fg-soft；「草稿已同步」才是纯背景噪音 */
   font-size: 11.5px; color: var(--fg-soft);
 }
 .st-item { padding: 0 8px; white-space: nowrap; font-variant-numeric: tabular-nums; }
@@ -519,8 +568,7 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
 /* 文件类型徽章（原来在工具栏右侧，移到状态栏后不再挤占操作区） */
 .st-item.fmt {
   font-size: 10.5px; letter-spacing: .04em; color: var(--fg-soft);
-  background: var(--bg-soft); border: 1px solid var(--line);
-  padding: 1px 7px; border-radius: 20px; margin-left: 4px;
+  background: var(--bg-active); padding: 1.5px 8px; border-radius: 20px; margin-left: 4px;
 }
 
 /* ================= 覆盖层面板 ================= */
@@ -535,7 +583,6 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
   margin: 26px; flex: 1; max-width: 1600px;
   background: var(--bg-panel); border-radius: var(--r-lg); box-shadow: var(--shadow);
   display: flex; flex-direction: column; overflow: hidden;
-  border: 1px solid var(--line);
 }
 .sheet-page { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .sheet-head {
@@ -628,7 +675,7 @@ mark.rem { background: rgba(220, 60, 60, .32); border-radius: 2px; }
 .modal {
   margin: auto; width: 620px; max-width: calc(100vw - 60px); max-height: calc(100vh - 80px);
   background: var(--bg-panel); border-radius: var(--r-lg); box-shadow: var(--shadow);
-  display: flex; flex-direction: column; border: 1px solid var(--line); animation: pop .16s var(--ease);
+  display: flex; flex-direction: column; animation: pop .16s var(--ease);
 }
 .modal.small { width: 460px; }
 .modal-head {
@@ -682,8 +729,8 @@ mark.rem { background: rgba(220, 60, 60, .32); border-radius: 2px; }
 
 /* ============ 右键菜单 ============ */
 .ctx-menu {
-  position: fixed; z-index: 400; min-width: 190px; padding: 5px;
-  background: var(--bg-panel); border: 1px solid var(--line-strong); border-radius: var(--r-md);
+  position: fixed; z-index: 400; min-width: 190px; padding: 6px;
+  background: var(--bg-panel); border-radius: var(--r-md);
   box-shadow: var(--shadow); animation: pop .12s var(--ease);
 }
 .ctx-menu button {
@@ -698,7 +745,8 @@ mark.rem { background: rgba(220, 60, 60, .32); border-radius: 2px; }
 .ctx-sep { height: 1px; background: var(--line); margin: 5px 8px; }
 
 /* ============ WYSIWYG 块级编辑视图 ============ */
-.wysiwyg { padding: 26px 54px 40vh; font-family: var(--font-read); font-size: 15px; line-height: 1.78; }
+/* 注意：.wysiwyg 的 padding / 字体 / 行高统一写在「工作区」那一节，
+   这里不要重复声明，否则会悄悄盖掉那边的 max() 居中规则 */
 .wysiwyg .w-block { position: relative; }
 
 /* ---- 行首块手柄：只在光标 / 鼠标所在那一行浮出，落在正文左侧的留白里 ----
@@ -717,8 +765,8 @@ mark.rem { background: rgba(220, 60, 60, .32); border-radius: 2px; }
 .wh-btn .ico { width: 15px; height: 15px; }
 
 /* ---- 块类型菜单 ---- */.w-bmenu {
-  position: absolute; z-index: 60; min-width: 190px; padding: 5px;
-  background: var(--bg-panel); border: 1px solid var(--line); border-radius: var(--r-md);
+  position: absolute; z-index: 60; min-width: 190px; padding: 6px;
+  background: var(--bg-panel); border-radius: var(--r-md);
   box-shadow: var(--shadow);
 }
 .w-bmenu.hidden { display: none; }
@@ -750,13 +798,17 @@ mark.rem { background: rgba(220, 60, 60, .32); border-radius: 2px; }
 .new-type b { font-size: 13px; font-weight: 600; }
 .new-type small { font-size: 11px; color: var(--fg-faint); }
 .new-type.active { border-color: var(--accent); background: var(--bg-hover); }
-.wysiwyg .w-h[data-type="h1"] { font-size: 1.72em; font-weight: 680; margin: .75em 0 .3em; line-height: 1.3; letter-spacing: -.01em; }
-.wysiwyg .w-h[data-type="h2"] { font-size: 1.4em; font-weight: 660; margin: .7em 0 .3em; padding-bottom: .22em; border-bottom: 1px solid var(--line); }
-.wysiwyg .w-h[data-type="h3"] { font-size: 1.17em; font-weight: 650; margin: .65em 0 .25em; }
+.wysiwyg .w-h[data-type="h1"] { font-size: 1.9em; font-weight: 680; margin: 1.5em 0 .5em; line-height: 1.28; letter-spacing: -.022em; }
+/* h2 不再画下边框：中文里那条横线会把标题压成「分节条」，显旧。
+   改用「上方大间距 + 字号差」来分段，视线一样能一刀切开 */
+.wysiwyg .w-h[data-type="h2"] { font-size: 1.42em; font-weight: 660; margin: 1.85em 0 .55em; line-height: 1.32; letter-spacing: -.012em; }
+.wysiwyg .w-h[data-type="h3"] { font-size: 1.16em; font-weight: 650; margin: 1.55em 0 .45em; line-height: 1.4; }
 .wysiwyg .w-h[data-type="h4"],
 .wysiwyg .w-h[data-type="h5"],
-.wysiwyg .w-h[data-type="h6"] { font-size: 1.02em; font-weight: 650; margin: .6em 0 .2em; }
-.wysiwyg .w-p { margin: .32em 0; }
+.wysiwyg .w-h[data-type="h6"] { font-size: 1.02em; font-weight: 650; margin: 1.35em 0 .35em; }
+/* 第一个块贴顶：不让标题自带上边距，否则正文顶部的呼吸感全被吃掉 */
+.wysiwyg > .w-block:first-child { margin-top: 0; }
+.wysiwyg .w-p { margin: .85em 0; }
 /* 标题的 ### 标记：在标题行首按退格时亮出来，可以一级一级往回删 */
 .wysiwyg .w-hash {
   color: var(--fg-faint); font-weight: 400; letter-spacing: .02em;
@@ -764,11 +816,12 @@ mark.rem { background: rgba(220, 60, 60, .32); border-radius: 2px; }
 }
 /* 列表：data-indent 通过 --li-indent 换算成视觉缩进，标记列固定宽度对齐 */
 .wysiwyg .w-li {
-  display: flex; align-items: baseline; gap: 6px; margin: .1em 0;
+  display: flex; align-items: baseline; gap: 8px; margin: .28em 0;
   padding-left: calc(1.15em + var(--li-indent, 0) * 1.55em);
 }
+/* 标记用中性灰：整屏唯一的蓝点应该留给「当前态」，而不是每一行项目符号 */
 .wysiwyg .w-li-marker {
-  color: var(--accent); flex: none; min-width: 1.15em; text-align: right;
+  color: var(--fg-faint); flex: none; min-width: 1.15em; text-align: right;
   user-select: none; font-variant-numeric: tabular-nums; font-size: .96em;
 }
 .wysiwyg .w-li[data-list="task"] .w-li-marker { display: none; }
@@ -779,28 +832,30 @@ mark.rem { background: rgba(220, 60, 60, .32); border-radius: 2px; }
 .wysiwyg .w-task[data-checked="1"] > .w-text { color: var(--fg-faint); text-decoration: line-through; }
 .wysiwyg .w-bq {
   border-left: 3px solid var(--accent); background: var(--accent-soft);
-  margin: .4em 0 .4em calc(var(--bq-indent, 0) * 1.55em);
-  padding: .3em .9em; border-radius: 0 var(--r-sm) var(--r-sm) 0; color: var(--fg-soft);
+  margin: .95em 0 .95em calc(var(--bq-indent, 0) * 1.55em);
+  padding: .5em 1em; border-radius: 0 var(--r-sm) var(--r-sm) 0; color: var(--fg-soft);
 }
 /* 连续的引用行在视觉上连成一块 */
 .wysiwyg .w-bq + .w-bq { margin-top: 0; }
 .wysiwyg .w-bq:has(+ .w-bq) { border-bottom-right-radius: 0; }
-.wysiwyg .w-hr { margin: .9em 0; }
+.wysiwyg .w-hr { margin: 2.1em 0; }
 .wysiwyg .w-hr hr { border: none; border-top: 1px solid var(--line-strong); }
-.wysiwyg .w-codeblock { background: var(--code-bg); border: 1px solid var(--line); border-radius: var(--r-md); margin: .6em 0; overflow: hidden; }
-.wysiwyg .w-codebar { padding: 4px 12px; font-size: 10.5px; color: var(--fg-faint); letter-spacing: .06em; border-bottom: 1px solid var(--line); }
+/* 代码块：去掉描边，用一块比正文略沉的底 + 圆角，边界靠底色而不是线 */
+.wysiwyg .w-codeblock { background: var(--code-bg); border-radius: var(--r-md); margin: 1.15em 0; overflow: hidden; box-shadow: inset 0 0 0 1px var(--line); }
+.wysiwyg .w-codebar { padding: 6px 14px; font-size: 10.5px; color: var(--fg-faint); letter-spacing: .06em; border-bottom: 1px solid var(--line); }
 .wysiwyg .w-text { outline: none; }
-.wysiwyg .w-code { display: block; white-space: pre-wrap; font-family: var(--font-mono); font-size: 13px; line-height: 1.65; padding: 10px 14px; }
-.wysiwyg code { background: var(--bg-soft); border: 1px solid var(--line); padding: .1em .36em; border-radius: 5px; font-family: var(--font-mono); font-size: .88em; }
+.wysiwyg .w-code { display: block; white-space: pre-wrap; font-family: var(--font-mono); font-size: 13px; line-height: 1.68; padding: 12px 14px; }
+.wysiwyg code { background: var(--code-bg); padding: .12em .4em; border-radius: 5px; font-family: var(--font-mono); font-size: .88em; box-shadow: inset 0 0 0 1px var(--line); }
 .wysiwyg a { color: var(--accent); }
 .wysiwyg .w-img { max-width: 100%; max-height: 320px; border-radius: var(--r-md); margin: .3em 0; }
 
 /* 表格：编辑态 */
-.wysiwyg .w-table { margin: .7em 0; overflow-x: auto; }
+/* 编辑态保留竖线（单元格边界要靠它定位光标），但压到最淡的一档 */
+.wysiwyg .w-table { margin: 1.2em 0; overflow-x: auto; }
 .wysiwyg .w-table table { border-collapse: collapse; font-size: .94em; min-width: 100%; }
 .wysiwyg .w-table th,
 .wysiwyg .w-table td {
-  border: 1px solid var(--line-strong); padding: 6px 10px; min-width: 4.5em;
+  border: 1px solid var(--line); padding: 7px 11px; min-width: 4.5em;
   vertical-align: top; outline: none; line-height: 1.6;
 }
 .wysiwyg .w-table th { background: var(--bg-soft); font-weight: 620; text-align: left; }

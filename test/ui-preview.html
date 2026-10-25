@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>UI 预览（仅截图用）</title>
+<link rel="stylesheet" href="/src/styles.css" />
+</head>
+<body data-theme="light">
+<div id="mount"></div>
+<script type="module">
+// 复用 src/index.html 的骨架（含 svg symbol），只去掉 app.js，
+// 然后灌入假数据 —— 用来单独看 CSS 的视觉效果，不参与任何功能测试。
+// ?css=/x.css 可以换一份样式表，用来做「改版前 / 改版后」对照截图。
+const q = new URLSearchParams(location.search);
+const cssHref = q.get('css');
+if (cssHref) {
+  const link = document.querySelector('link[rel=stylesheet]');
+  link.href = cssHref;
+  await new Promise((r) => { link.onload = r; link.onerror = r; });
+}
+
+const src = await (await fetch('/src/index.html')).text();
+const doc = new DOMParser().parseFromString(src, 'text/html');
+
+const body = doc.body;
+body.querySelectorAll('script').forEach((s) => s.remove());
+document.body.insertAdjacentHTML('afterbegin', body.innerHTML);
+
+const $ = (s) => document.querySelector(s);
+
+// ---- 标题栏 ----
+$('#winTitle').textContent = '产品设计备忘.md';
+
+// ---- 标签栏：3 个标签，第 1 个激活且未保存 ----
+const tabs = [
+  { name: '产品设计备忘.md', active: true, dirty: true },
+  { name: '读书笔记.md' },
+  { name: '未命名.md' },
+];
+$('#tabs').innerHTML = tabs.map((t) => `
+  <div class="tab${t.active ? ' active' : ''}">
+    <span class="tab-name">${t.name}</span>
+    ${t.dirty ? '<span class="tab-dot"></span>' : ''}
+    <button class="tab-close"><svg class="ico" aria-hidden="true"><use href="#i-x" /></svg></button>
+  </div>`).join('');
+
+// ---- 菜单 ----
+$('#menubar').innerHTML = ['文件', '编辑', '格式', '视图', '帮助']
+  .map((n) => `<button class="am-btn">${n}</button>`).join('');
+
+// ---- 大纲 ----
+const heads = [
+  ['h1', '产品设计备忘'],
+  ['h2', '一、现状'],
+  ['h3', '交互层面的问题'],
+  ['h2', '二、改造方向'],
+  ['h3', '视觉语言'],
+  ['h3', '信息层次'],
+  ['h2', '三、落地顺序'],
+];
+$('#outlineList').innerHTML = heads
+  .map(([lv, txt]) => `<button class="outline-item ${lv}">${txt}</button>`).join('');
+
+// ---- 编辑区：换成 WYSIWYG 视图 ----
+$('#editor').classList.add('hidden');
+$('#wysiwyg').classList.remove('hidden');
+$('#wysiwyg').innerHTML = `
+<div class="w-block w-h" data-type="h1"><div class="w-text">产品设计备忘</div></div>
+<div class="w-block w-p"><div class="w-text">这份文档用来看排版：标题层级、正文节奏、列表与代码块之间的呼吸感是否一致。下面几段是真实的长度，不是占位符。</div></div>
+<div class="w-block w-h" data-type="h2"><div class="w-text">一、现状</div></div>
+<div class="w-block w-p"><div class="w-text">现在的界面足够克制，功能也都找得到。问题在于<strong>层级太平均</strong>：标题、正文、辅助信息在明度上挤在一起，扫一眼找不到重点。边框用得比留白多，整屏被切成很多块。</div></div>
+<div class="w-block w-li" data-list="ul" data-indent="0"><span class="w-li-marker">•</span><div class="w-text">标题栏 40px + 标签行 40px，两行都带边框</div></div>
+<div class="w-block w-li" data-list="ul" data-indent="0"><span class="w-li-marker">•</span><div class="w-text">状态栏 26px 又一条边框，纵向被切成四段</div></div>
+<div class="w-block w-li" data-list="ul" data-indent="1"><span class="w-li-marker">◦</span><div class="w-text">缩进层级用小圆点区分，实际很难看出层次</div></div>
+<div class="w-block w-bq"><div class="w-text">克制不等于寡淡。现代感来自留白比例、字号阶梯和克制的对比度，而不是更多的装饰。</div></div>
+<div class="w-block w-h" data-type="h3"><div class="w-text">代码块也要说</div></div>
+<div class="w-block w-codeblock"><div class="w-codebar">javascript</div><code class="w-code">const theme = matchMedia('(prefers-color-scheme: dark)');
+function apply(next) {
+  document.body.dataset.theme = next ? 'dark' : 'light';
+}</code></div>
+<div class="w-block w-p"><div class="w-text">行内 <code>dataset.theme</code> 一切换，全部颜色跟着走，不需要刷新。</div></div>
+`;
+
+// ---- 预览栏 ----
+$('#previewPane').classList.remove('hidden');
+$('#preview').innerHTML = `
+<div class="md">
+  <h1>产品设计备忘</h1>
+  <p>这份文档用来看排版：标题层级、正文节奏、列表与代码块之间的呼吸感是否一致。</p>
+  <h2>一、现状</h2>
+  <p>现在的问题在于<strong>层级太平均</strong>，扫一眼找不到重点。</p>
+  <ul><li>标题栏 40px + 标签行 40px</li><li>状态栏 26px 又一条边框</li></ul>
+  <blockquote>克制不等于寡淡。</blockquote>
+</div>`;
+
+// ---- 状态栏 ----
+$('#stPos').textContent = '行 12, 列 5';
+$('#stLines').textContent = '38 行';
+$('#stWords').textContent = '1,284 字';
+$('#fmtBadge').textContent = 'Markdown';
+$('#stDraft').textContent = '草稿已同步';
+
+window.__ready = 1;
+// 顺带把几处关键尺寸报回去，方便核对「正文是否真的居中收窄了」
+window.__run = () => {
+  const w = document.querySelector('#wysiwyg');
+  const r = (el) => { const b = el.getBoundingClientRect(); return { x: Math.round(b.x), w: Math.round(b.width) }; };
+  const cs = getComputedStyle(w);
+  const first = w.querySelector('.w-text');
+  return {
+    viewport: window.innerWidth,
+    editorPane: r(document.querySelector('#editorPane')),
+    wysiwyg: r(w),
+    padLeft: cs.paddingLeft,
+    padRight: cs.paddingRight,
+    textLeft: first ? Math.round(first.getBoundingClientRect().x) : null,
+    textWidth: first ? Math.round(first.getBoundingClientRect().width) : null,
+  };
+};
+</script>
+</body>
+</html>
