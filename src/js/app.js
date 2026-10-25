@@ -409,14 +409,14 @@ function updateOutline() {
     return;
   }
   const frag = document.createDocumentFragment();
-  for (const it of items) {
+  items.forEach((it, i) => {
     const b = document.createElement('button');
     b.className = `outline-item h${Math.min(6, it.level)}`;
     b.textContent = it.text;
     b.title = it.text;
-    b.onclick = () => gotoLine(it.line);
+    b.onclick = () => gotoLine(it.line, i);
     frag.appendChild(b);
-  }
+  });
   el.outlineList.innerHTML = '';
   el.outlineList.appendChild(frag);
   scheduleOutlineSync();     // 重建后立刻把「当前章节」点亮，不要等下一次滚动
@@ -443,21 +443,46 @@ function syncOutline() {
   let cur = -1;
   if (t.mode === 'wysiwyg' || t.mode === 'preview') {
     const box = t.mode === 'wysiwyg' ? el.wysiwyg : el.preview;
-    const top = box.getBoundingClientRect().top + Math.min(96, box.clientHeight * 0.3);
     const heads = box.querySelectorAll(t.mode === 'wysiwyg' ? '.w-h' : 'h1,h2,h3,h4,h5,h6');
-    heads.forEach((h, i) => { if (h.getBoundingClientRect().top <= top) cur = i; });
+    if (atScrollEnd(box.scrollTop, box.scrollHeight, box.clientHeight)) {
+      cur = heads.length - 1;      // 到底了：最后一个标题就是当前章节
+    } else {
+      const top = box.getBoundingClientRect().top + outlineBaseline(box);
+      heads.forEach((h, i) => { if (h.getBoundingClientRect().top <= top) cur = i; });
+    }
   } else {
-    const line = plain.lineAtViewportY(Math.min(96, el.editor.clientHeight * 0.3)) - 1;   // 0 起
+    // lineAtViewportY 收窗口坐标：基准线要加上编辑器在窗口里的偏移
+    const baseY = plain.rectTop + outlineBaseline(el.editor);
+    const line = atScrollEnd(plain.scrollTop, plain.scrollHeight, el.editor.clientHeight)
+      ? Infinity
+      : plain.lineAtViewportY(baseY) - 1;   // 0 起
     outlineItems.forEach((it, i) => { if (it.line <= line) cur = i; });
   }
   if (cur >= nodes.length) cur = nodes.length - 1;
   nodes.forEach((b, i) => b.classList.toggle('active', i === cur));
 }
 
-function gotoLine(line) {
+/** 大纲高亮的基准线：容器顶往下 96px（矮窗口取 30% 高）。点击跳转必须落在这条线上，高亮才对得上 */
+function outlineBaseline(box) { return Math.min(96, box.clientHeight * 0.3); }
+
+/** 滚到（几乎）底时高亮让给最后一个标题，否则文末标题够不到基准线、点了也不亮 */
+function atScrollEnd(scrollTop, scrollHeight, clientHeight) {
+  return scrollHeight > clientHeight + 4 && scrollHeight - scrollTop - clientHeight < 2;
+}
+
+function gotoLine(line, idx = null) {
   const t = activeTab();
   if (!t) return;
-  if (t.mode === 'wysiwyg') {
+  // 大纲点击走「标题顶贴基准线」，和高亮判定共用 outlineBaseline，点谁谁亮
+  if (t.mode === 'wysiwyg' && idx != null) {
+    const h = el.wysiwyg.querySelectorAll('.w-h')[idx];
+    if (h) { scrollBoxToHeading(el.wysiwyg, h); return; }
+  }
+  if (t.mode === 'preview' && idx != null) {
+    const h = el.preview.querySelectorAll('h1,h2,h3,h4,h5,h6')[idx];
+    if (h) { scrollBoxToHeading(el.preview, h); return; }
+  }
+  if (t.mode === 'wysiwyg') {          // 兜底：按行号数块（搜索结果跳转等无序号入口）
     let acc = 0;
     for (const blk of el.wysiwyg.children) {
       if (acc >= line) { blk.scrollIntoView({ block: 'center', behavior: 'smooth' }); return; }
@@ -468,8 +493,15 @@ function gotoLine(line) {
   const lines = t.content.split('\n');
   let off = 0;
   for (let i = 0; i < line && i < lines.length; i++) off += lines[i].length + 1;
-  plain.revealOffset(off, off + (lines[line] || '').length);
+  plain.revealOffset(off, off + (lines[line] || '').length,
+    { atTop: idx != null, yMargin: outlineBaseline(el.editor) });
   updateStatus();
+}
+
+/** 把容器里某个标题滚到基准线（容器顶往下 outlineBaseline 处），带动高亮跟随 */
+function scrollBoxToHeading(box, h) {
+  const delta = h.getBoundingClientRect().top - box.getBoundingClientRect().top - outlineBaseline(box);
+  box.scrollBy({ top: delta, behavior: 'smooth' });
 }
 
 /* ---------------- 侧栏：大纲 / 文件 ---------------- */
@@ -2641,6 +2673,7 @@ async function boot() {
 /* 供子面板回调 */
 window.__snp = {
   commands,
+  plain,
   getActiveTab: activeTab,
   openPath,
   setContent,

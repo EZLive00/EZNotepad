@@ -208,15 +208,30 @@ export class PlainEditor {
   get scrollTop() { return this.view.scrollDOM.scrollTop; }
   set scrollTop(v) { this.view.scrollDOM.scrollTop = v; }
 
+  get scrollHeight() { return this.view.scrollDOM.scrollHeight; }
+
+  /** 滚动容器在窗口里的纵坐标（大纲高亮与点击跳转都要用它换算基准线） */
+  get rectTop() { return this.view.scrollDOM.getBoundingClientRect().top; }
+
   setVisible(v) { this.host.classList.toggle('hidden', !v); }
 
-  /** 选中某个偏移并把这一行滚到视野中间 */
-  revealOffset(pos, end = pos) {
+  /**
+   * 选中某个偏移并把这一行滚到视野中间。
+   * opt.atTop 为真时改为「行顶贴在 yMargin 像素处」（相对滚动容器顶）——大纲点击用。
+   * 不走 scrollIntoView 的 yMargin（它对齐的是光标矩形，差半行距），自己按窗口坐标增量补差。
+   * 目标点略高于基准线 8px：高亮判据是「基准线落在哪个行块里」，正好压线会取到上一块。
+   */
+  revealOffset(pos, end = pos, opt = {}) {
     const from = this._clamp(pos);
-    this.view.dispatch({
-      selection: { anchor: from, head: this._clamp(end) },
-      effects: EditorView.scrollIntoView(from, { y: 'center' }),
-    });
+    this.view.dispatch({ selection: { anchor: from, head: this._clamp(end) } });
+    if (opt.atTop) {
+      const view = this.view;
+      const curY = view.documentTop + view.lineBlockAt(from).top;   // 行顶的窗口坐标
+      const target = this.rectTop + (opt.yMargin ?? 96) - 8;
+      view.scrollDOM.scrollTop += curY - target;
+    } else {
+      this.view.dispatch({ effects: EditorView.scrollIntoView(from, { y: 'center' }) });
+    }
     this.view.focus();
   }
 

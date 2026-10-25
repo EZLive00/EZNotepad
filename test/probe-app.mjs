@@ -145,6 +145,30 @@ try {
   await sleep(400);
   const editActive = await ev(`document.querySelector('.outline-item.active')?.textContent`);
   ok('编辑模式下大纲也跟滚动', editActive && editActive !== '第 1 节', editActive);
+
+  // 大纲点击：滚动后点亮的必须就是点的那一项（曾滚到视口中央、高亮停在上一节）
+  const clickOutline = (label) =>
+    ev(`[...document.querySelectorAll('.outline-item')].find(b => b.textContent === '${label}')?.click()`);
+  await ev(`window.__snp.commands.modeWysiwyg()`);
+  await sleep(300);
+  await clickOutline('第 15 节');
+  await sleep(900);
+  ok('wysiwyg 点击大纲项，滚完该项点亮',
+    (await ev(`document.querySelector('.outline-item.active')?.textContent`)) === '第 15 节');
+
+  await ev(`window.__snp.commands.modePreview()`);
+  await sleep(300);
+  await clickOutline('第 8 节');
+  await sleep(900);
+  ok('预览模式点击大纲项，滚完该项点亮',
+    (await ev(`document.querySelector('.outline-item.active')?.textContent`)) === '第 8 节');
+
+  await ev(`window.__snp.commands.modeEdit()`);
+  await sleep(300);
+  await clickOutline('第 22 节');
+  await sleep(900);
+  ok('编辑模式点击大纲项，滚完该项点亮',
+    (await ev(`document.querySelector('.outline-item.active')?.textContent`)) === '第 22 节');
 } catch (e) {
   ok('探针执行完成', false, e.message);
 } finally {
