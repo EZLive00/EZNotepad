@@ -100,6 +100,9 @@ const MENUS = [
       { id: 'table', label: '表格 3 × 3', icon: 'table', kbd: 'Ctrl+Shift+T' },
       { id: 'tablePrompt', label: '表格（自定大小）…', icon: 'table' },
       { id: 'hr', label: '分割线', icon: 'minus' },
+      { sep: true },
+      { id: 'mathBlock', label: '数学公式块' },
+      { id: 'toc', label: '目录…', icon: 'list-tree' },
       // 光标在表格里时才出现的一句提示（测试里靠 window.__inTable 切换）
       { note: '光标在表格内右键，可增删行列、调整对齐', hidden: () => !window.__inTable },
     ],

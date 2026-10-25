@@ -8,6 +8,7 @@
 import { renderMarkdown, resolveDocImg } from './markdown.js';
 import { highlight, normalizeLang } from './highlight.js';
 import { jsonErrorPosition } from './format.js';
+import { renderMathIn } from './math.js';
 
 export function renderPreview(kind, text, lang, target, docDir = '') {
   if (kind === 'md') {
@@ -15,6 +16,8 @@ export function renderPreview(kind, text, lang, target, docDir = '') {
       codeHighlight: (code, l) => highlight(code, l),
       imgResolver: (src) => resolveDocImg(src, docDir),
     });
+    // 公式在渲染完才扫描：先有 DOM 再让 KaTeX 接手，没公式的话这一步直接返回
+    renderMathIn(target);
     return;
   }
   if (kind === 'json') {

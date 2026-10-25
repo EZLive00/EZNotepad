@@ -6,6 +6,7 @@ import { createTab, tabs, settings, saveSettings, LS, isDirty, activeTab, setAct
 import * as be from './backend.js';
 import { detectKind, kindLabel, modesFor, formatByKind, lineOps, caseOps } from './format.js';
 import { renderPreview, extractOutline } from './preview.js';
+import { outlineFromMarkdown, headingSlugs } from './markdown.js';
 import { WysiwygEditor } from './wysiwyg.js';
 import { PlainEditor } from './editor/plain-editor.js';
 import { toast, dialog, confirmBox, contextMenu } from './ui.js';
@@ -18,6 +19,7 @@ import { createAppMenu } from './appmenu.js';
 import * as domfind from './domfind.js';
 import { FileTree } from './filetree.js';
 import { freeUntitledName, moveById } from './taborder.js';
+import { listen } from '../vendor/api/event.js';
 import * as win from './win.js';
 
 const $ = (id) => document.getElementById(id);
@@ -145,6 +147,7 @@ function renderTabs() {
   for (const t of tabs) {
     const b = document.createElement('div');
     b.className = 'tab' + (act && t.id === act.id ? ' active' : '');
+    if (t.extChanged) b.classList.add('stale');   // 后台标签被外部改过，点开时会问
     b.title = t.path || t.name;
     b.draggable = true;
     b.dataset.id = String(t.id);
@@ -250,6 +253,7 @@ export function newTab(name = '未命名.md', content = '', path = null, opts = 
   Object.assign(t, opts);
   tabs.push(t);
   activate(t.id);
+  syncWatches();
   return t;
 }
 
@@ -270,6 +274,8 @@ function activate(id) {
   setMode(mode, { fromActivate: true });
   tree.setActive(t.path);
   saveDraft();
+  /* 这个标签在后台待着的时候被外部改过？现在它上台了，正是问的时候 */
+  if (t.extChanged) setTimeout(() => checkExternalChange(t), 60);
 }
 
 function clearView() {
@@ -307,6 +313,9 @@ function setMode(mode, opt = {}) {
 
   plain.setVisible(showEditor && !showWys);
   el.wysiwyg.classList.toggle('hidden', !showWys);
+  /* 预览模式下把整个编辑面板收掉：只藏里面那两个视图的话，
+     这块 flex:1 的空壳还在，预览只占右半边，左半边一片空白。 */
+  el.editorPane.classList.toggle('hidden', !showEditor);
   el.previewPane.classList.remove('hidden');
   el.previewPane.classList.toggle('hidden', !showPreview);
   el.mid.classList.toggle('hidden', !(showEditor && showPreview));
@@ -350,6 +359,26 @@ function setLayout(layout) {
   saveSettings();
   const t = activeTab();
   if (t) setMode(t.mode, { fromActivate: true });
+}
+
+/* ---------------- 专注模式 ----------------
+   标题栏必须留着：窗口是无边框的，连标题栏都没了就没法拖、没法最小化关闭，
+   等于把用户关在自己写的文档里。所以只收敛标签行、侧栏、状态栏和菜单，
+   标题栏退成半透明 —— 视觉上几乎只剩正文，鼠标移到顶上又都能用。 */
+function applyZen() {
+  document.body.dataset.zen = settings.zen ? '1' : '';
+  if (settings.zen) refreshTitle();
+}
+
+/** 切一次专注模式；返回切换后的状态 */
+function toggleZen(force) {
+  settings.zen = force === undefined ? !settings.zen : !!force;
+  saveSettings();
+  applyZen();
+  // 侧栏一藏，编辑容器的宽度就变了，大纲和当前光标要重新对一次
+  if (!settings.zen) { updateOutline(); scheduleOutlineSync(); }
+  toast(settings.zen ? '专注模式：Esc 退出' : '已退出专注模式');
+  return settings.zen;
 }
 
 /* ---------------- 预览 ---------------- */
@@ -547,6 +576,7 @@ function showSettings() {
     <div class="set-group">
       <div class="set-label">文件</div>
       <label class="set-row"><input type="checkbox" id="setAutoSave" ${settings.autoSave ? 'checked' : ''} /> 自动保存（停手约 1 秒写盘）</label>
+      <label class="set-row"><input type="checkbox" id="setWatch" ${settings.watchFiles !== false ? 'checked' : ''} /> 监听磁盘改动（别的程序改了文件时提示）</label>
       <div class="set-row folder">
         <span class="set-folder" id="setFolder"></span>
         <button type="button" class="mini" id="setPickFolder">选择…</button>
@@ -593,6 +623,12 @@ function showSettings() {
     settings.outlineVisible = e.target.checked;
     saveSettings();
     updateOutline();
+  };
+  box.querySelector('#setWatch').onchange = (e) => {
+    settings.watchFiles = e.target.checked;
+    saveSettings();
+    syncWatches();
+    toast(settings.watchFiles ? '已开启磁盘改动监听' : '已关闭磁盘改动监听');
   };
   box.querySelector('#setSplit').onchange = (e) => {
     setLayout(e.target.checked ? 'split' : 'single');
@@ -728,11 +764,14 @@ function scheduleAutoSave() {
 
 /* 窗口重新获得焦点时比对一次修改时间。别的编辑器（或生成脚本）改了同一个文件，
    我们再保存就会把对方的改动默默抹掉——这是记事本类软件最伤数据的一种 bug。 */
-let extBusy = false;
-async function checkExternalChange() {
-  const t = activeTab();
-  if (!t || !t.path || t.mtime == null || extBusy) return;
-  extBusy = true;
+/* 正在检查的标签 id：事件密集时别给同一个文件弹两次窗。
+   以前这里是「全局一个锁」，多标签场景下会让别的标签被整个跳过。 */
+const extChecking = new Set();
+async function checkExternalChange(tab) {
+  const t = tab || activeTab();
+  if (!t || !t.path || t.mtime == null || extChecking.has(t.id)) return;
+  extChecking.add(t.id);
+  t.extChanged = false;
   try {
     const m = await be.fileMtime(t.path);
     if (m == null || m === t.mtime) return;
@@ -752,8 +791,44 @@ async function checkExternalChange() {
   } catch {
     /* 读不到就算了：真正的失败留给保存时报错，别在这里弹窗打扰 */
   } finally {
-    extBusy = false;
+    extChecking.delete(t.id);
+    renderTabs();
   }
+}
+
+/* ---------------- 文件变化监听 ----------------
+   后端只盯着「已打开文档所在目录」那一层，并且只放行我们关心的文件名，
+   所以这里收到的事件是稀疏的。仍然做一层 250ms 合并：一次保存常被拆成
+   「截断 + 写 + 改属性」好几个事件。 */
+
+let watchTimer = 0;
+/** 把当前打开的文件列表同步给后端；频繁开关标签时合并成一次调用 */
+function syncWatches() {
+  clearTimeout(watchTimer);
+  watchTimer = setTimeout(() => {
+    const paths = settings.watchFiles === false ? [] : tabs.filter((t) => t.path).map((t) => t.path);
+    be.watchFiles(paths).catch(() => { /* 监听不上不影响任何编辑功能 */ });
+  }, 300);
+}
+
+let fsTimer = 0;
+const fsQueue = new Set();
+function onFsChange(paths) {
+  if (settings.watchFiles === false) return;
+  for (const p of paths || []) fsQueue.add(p);
+  clearTimeout(fsTimer);
+  fsTimer = setTimeout(() => {
+    const list = [...fsQueue];
+    fsQueue.clear();
+    for (const p of list) {
+      const t = tabs.find((x) => x.path === p);
+      if (!t) continue;
+      if (activeTab() && activeTab().id === t.id) checkExternalChange(t);
+      /* 后台标签不弹窗：人正在另一个文件里写字，这时候弹框只会被当成噪声。
+         先挂个标记，标签上冒出小圆点，切过去的那一刻再问。 */
+      else { t.extChanged = true; renderTabs(); }
+    }
+  }, 250);
 }
 
 /** 把磁盘上的最新内容装回标签（不动 mtime 就让下一次检查又弹一遍） */
@@ -800,6 +875,7 @@ async function saveTab(t = activeTab(), saveAs = false, opts = {}) {
     t.external = false;
     currentLang = (t.name.split('.').pop() || '').toLowerCase();
     plain.setLanguage(currentLang);   // 另存为可能改了扩展名，着色要跟着换
+    syncWatches();                    // 文件落到了新目录，监听要跟过去
   }
   try {
     t.content = readEditor(t);
@@ -852,6 +928,7 @@ async function closeTab(id) {
   }
   const wasActive = activeTab() && activeTab().id === id;
   removeTab(id);
+  syncWatches();
   if (!tabs.length) { newTab(untitledName('md'), ''); return; }
   activate(wasActive ? activeTab().id : (activeTab() || tabs[tabs.length - 1]).id);
 }
@@ -1077,6 +1154,64 @@ async function insertImageFromFile(file) {
   }
 }
 
+/* ---------------- 目录 ---------------- */
+
+/** 标题文字进方括号前要清掉会截断链接语法的字符 */
+const tocLabel = (s) => s.replace(/[[\]]/g, '').replace(/\s+/g, ' ').trim() || '（无标题）';
+
+/**
+ * 插入目录：扫一遍标题，按层级缩进成 Markdown 列表。
+ * 锚点用的是一套和渲染时完全相同的 slug 规则，所以 [标题](#slug) 在预览里能直接跳。
+ * 位置：光标在第一块就插到文首，否则插在光标所在块之后。
+ */
+function insertToc() {
+  const t = activeTab();
+  if (!t) return;
+  if (t.mode === 'preview') { toast('预览模式是只读的，Ctrl+1 或 Ctrl+2 之后再插入'); return; }
+  const heads = outlineFromMarkdown(readEditor(t));
+  if (!heads.length) { toast('这篇还没有标题，先用 # 写几行小标题'); return; }
+  const slugs = headingSlugs(heads.map((h) => h.text));
+  const min = Math.min(...heads.map((h) => h.level));
+  const md = heads
+    .map((h, i) => `${'  '.repeat(Math.max(0, h.level - min))}- [${tocLabel(h.text)}](#${slugs[i]})`)
+    .join('\n');
+  if (canWys()) {
+    const b = wys.currentBlock();
+    wys.insertMarkdown(md, !!(b && b === wys.root.firstElementChild));
+  } else {
+    plain.insertText(md + '\n');
+  }
+  toast(`已插入目录：${heads.length} 个标题`);
+}
+
+/** 跳文档内锚点：目录里的 [标题](#slug) 走这条 */
+function gotoAnchor(href) {
+  const slug = decodeURIComponent(String(href).slice(1));
+  if (!slug) return;
+  const t = activeTab();
+  if (!t) return;
+  const esc = window.CSS && CSS.escape ? CSS.escape(slug) : slug.replace(/["\\]/g, '\\$&');
+
+  if (t.mode === 'preview') {
+    const node = el.preview.querySelector(`[id="${slug.replace(/["\\]/g, '\\$&')}"]`) || el.preview.querySelector('#' + esc);
+    if (node) node.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    else toast('找不到这一节');
+    return;
+  }
+  if (canWys()) {
+    const block = wys.findHeadingBySlug(slug);
+    if (!block) { toast('找不到这一节'); return; }
+    wys.focusBlock(block);
+    block.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    return;
+  }
+  // 编辑模式：源码里数一下第几个标题，再滚到那一行
+  const heads = outlineFromMarkdown(plain.value);
+  const i = headingSlugs(heads.map((h) => h.text)).indexOf(slug);
+  if (i < 0) { toast('找不到这一节'); return; }
+  plain.scrollToLine(heads[i].line + 1);
+}
+
 /** Ctrl/⌘+点击正文里的链接：外链交给系统浏览器，相对路径当文件打开 */
 async function openExternal(href) {
   const u = String(href || '').trim();
@@ -1088,7 +1223,7 @@ async function openExternal(href) {
     } catch { toast('无法打开链接'); }
     return;
   }
-  if (u.startsWith('#')) { toast('文档内锚点暂不支持跳转'); return; }
+  if (u.startsWith('#')) { gotoAnchor(u); return; }
   const t = activeTab();
   const base = t && t.path ? be.dirName(t.path) : '';
   const p = /^([a-zA-Z]:[\\/]|[\\/])/.test(u) ? u : `${base}/${u}`;
@@ -1666,10 +1801,12 @@ const commands = {
   taskList: () => wysCmd((w) => w.toggleList('task')),
   quote: () => wysCmd((w) => w.insertBlock('quote')),
   codeBlock: () => wysCmd((w) => w.insertBlock('code')),
+  mathBlock: () => wysCmd((w) => w.insertBlock('math')),
   hr: () => wysCmd((w) => w.insertBlock('hr')),
   table: () => wysCmd((w) => w.insertTable(3, 3)),
   tablePrompt,
   image: imagePrompt,
+  toc: insertToc,
   indentIn: () => shiftIndent(1),
   indentOut: () => shiftIndent(-1),
   link: linkPrompt,
@@ -1715,6 +1852,7 @@ const commands = {
     const on = await win.toggleFullscreen();
     if (on) toast('已进入全屏，按 F11 退出');
   },
+  toggleZen: () => toggleZen(),
   zoomIn: () => zoom(1),
   zoomOut: () => zoom(-1),
   zoomReset: () => { settings.fontSize = 13.5; saveSettings(); applyFont(); },
@@ -1756,6 +1894,7 @@ const markMode = (m) => () => !!(activeTab() && activeTab().mode === m);
 const canWys = () => !!(activeTab() && activeTab().mode === 'wysiwyg');
 const inTable = () => canWys() && wys.isInTable();
 const wysOnly = () => !canWys();
+const previewMode = () => !!(activeTab() && activeTab().mode === 'preview');
 
 /** 光标所在块的标题级别：0=正文，1~3=标题；
  *  光标在列表 / 引用 / 代码块 / 表格里时返回 -2（既不是正文也不是标题，四个都不点亮）；
@@ -1853,6 +1992,9 @@ const MENU_TREE = [
       { id: 'table', label: '表格 3 × 3', icon: 'table', kbd: 'Ctrl+Shift+T', disabled: wysOnly },
       { id: 'tablePrompt', label: '表格（自定大小）…', icon: 'table', disabled: wysOnly },
       { id: 'hr', label: '分割线', icon: 'minus', disabled: wysOnly },
+      { sep: true },
+      { id: 'mathBlock', label: '数学公式块', disabled: wysOnly },
+      { id: 'toc', label: '目录…', icon: 'list-tree', disabled: () => !hasTab() || previewMode() },
       /* 增删行列、调对齐这些「改已有表格」的操作不再占菜单位置：
          右键菜单里本来就有一整套，同一个命令没必要在两个地方各列一遍。
          这里只在光标真的进了表格时提一句，省得有人找不到 */
@@ -1881,6 +2023,7 @@ const MENU_TREE = [
       { id: 'themeLight', label: '主题：浅色', checked: () => settings.theme === 'light' },
       { id: 'themeDark', label: '主题：深色', checked: () => settings.theme === 'dark' },
       { sep: true },
+      { id: 'toggleZen', label: '专注模式', kbd: 'F9', checked: () => settings.zen },
       { id: 'fullscreen', label: '全屏', kbd: 'F11' },
     ],
   },
@@ -2286,8 +2429,13 @@ function setupKeys() {
       if (e.key === 'F7') { diff.step(-1); return; }
       if (e.key === 'F8') { diff.step(1); return; }
       if (e.key === 'F11') { e.preventDefault(); commands.fullscreen(); return; }
+      if (e.key === 'F9') { e.preventDefault(); commands.toggleZen(); return; }
       if (e.key === 'F3') { findStep(e.shiftKey ? -1 : 1); e.preventDefault(); return; }
-      if (e.key === 'Escape' && !el.findbar.classList.contains('hidden')) closeFind();
+      // Esc 先关查找条，再退专注模式：有事正在做的时候别把整块界面收掉
+      if (e.key === 'Escape') {
+        if (!el.findbar.classList.contains('hidden')) { closeFind(); return; }
+        if (settings.zen) { toggleZen(false); return; }
+      }
       return;
     }
     const shift = e.shiftKey;
@@ -2424,6 +2572,7 @@ async function boot() {
   }
   setLayout(settings.layout);
   updateOutline();
+  applyZen();
 
   window.addEventListener('beforeunload', () => { persistCurrentView(); saveDraft(); });
   document.addEventListener('visibilitychange', () => {
@@ -2431,6 +2580,11 @@ async function boot() {
   });
   /* 回到窗口时看一眼文件有没有被别的程序改过（延迟一点点，避开切换动画期间的 IO 抖动） */
   window.addEventListener('focus', () => setTimeout(checkExternalChange, 250));
+
+  /* 文件变化监听：后端推过来的是「命中名单的绝对路径」。
+     拿不到事件源也不影响任何编辑功能，所以静默失败即可。 */
+  try { await listen('fs-change', (e) => onFsChange(e.payload)); } catch {}
+  syncWatches();
 }
 
 /* 供子面板回调 */

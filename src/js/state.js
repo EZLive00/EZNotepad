@@ -25,6 +25,8 @@ export const settings = Object.assign(
     autoSave: false,      // 自动保存（只对已存在于磁盘上的文件生效）
     folder: '',           // 侧栏「文件」页打开的文件夹
     side: 'outline',      // 侧栏当前页：outline | files
+    zen: false,           // 专注模式：只留标题栏和正文
+    watchFiles: true,     // 监听磁盘上的改动（别的程序改了文件实时提示）
   },
   LS.get('settings', {})
 );

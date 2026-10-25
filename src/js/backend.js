@@ -71,3 +71,10 @@ export const isImagePath = (p) => IMAGE_EXTS.includes(String(p).split('.').pop()
 
 /** 文件修改时间（毫秒）；文件不存在时为 null。用于发现外部改动 */
 export const fileMtime = (path) => invoke('file_mtime', { path });
+
+/**
+ * 让后端重新布置文件监听：传进来的是所有已存在磁盘上的文档路径。
+ * 后端只盯这些文件各自所在的**目录这一层**，别处的改动不会推过来。
+ * 传空数组等于全撤。
+ */
+export const watchFiles = (paths) => invoke('watch_files', { paths });

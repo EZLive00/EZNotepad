@@ -99,7 +99,7 @@ try {
 
   // ---- 插入菜单：不在表格里 ----
   await openMenu(3);
-  ok('插入菜单 5 项', (await count('.am-item')) === 5);
+  ok('插入菜单 7 项', (await count('.am-item')) === 7);
   ok('插入菜单无分组小标题', (await count('.am-head')) === 0);
   ok('不在表格里时不显示提示', (await count('.am-note')) === 0);
 

@@ -272,6 +272,11 @@ body[data-theme="dark"] .tab.active {
 }
 .tab-name { overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
 .tab-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; }
+/* 后台标签被别的程序改过：琥珀点，和「未保存」的蓝点分开看 */
+.tab.stale .tab-name::after {
+  content: ""; display: inline-block; width: 5px; height: 5px; margin-left: 5px;
+  border-radius: 50%; background: var(--chg-fg); vertical-align: middle;
+}
 .tab-close {
   width: 18px; height: 18px; border: none; background: transparent; border-radius: 5px;
   color: var(--fg-faint); display: grid; place-items: center; line-height: 1; flex: none;
@@ -708,6 +713,15 @@ body[data-theme="dark"] .am-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 25
 .md .task-list ul, .md .task-list ol { padding-left: 1.5em; margin: .2em 0; }
 .md li > ul, .md li > ol { margin: .18em 0; }
 
+/* ---- 数学公式（KaTeX 的样式是它自己注入的，这里只管和正文怎么相处） ---- */
+.md .katex { font-size: 1.04em; }
+.md .math-block { margin: 1.15em 0; }
+/* 长公式（长矩阵、多行推导）横向滚动，别把整页撑出横向滚动条 */
+.md .katex-display { margin: .2em 0; overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
+.md .katex-display > .katex { white-space: normal; }
+.md .katex-error { color: var(--del-fg); font-family: var(--font-mono); font-size: .92em; }
+
+
 /* 纯文本 / 代码预览 */
 .plainview {
   font-family: var(--font-mono); font-size: 13.2px; line-height: 1.72;
@@ -776,6 +790,27 @@ body[data-theme="dark"] .am-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 25
 ::highlight(sn-find-cur) { background-color: #ffb020; color: #241a00; }
 body[data-theme="dark"] ::highlight(sn-find) { background-color: rgba(255, 196, 0, .18); }
 body[data-theme="dark"] ::highlight(sn-find-cur) { background-color: #ffc247; color: #1a1300; }
+
+/* ================= 专注模式 ================= */
+/* 标题栏必须留着：窗口是无边框的，连标题栏都没了就没法拖、没法最小化关闭，
+   等于把用户关在自己写的文档里。所以只收标签行 / 侧栏 / 状态栏 / 菜单，
+   标题栏退成半透明 —— 平时几乎只剩正文，鼠标移到顶上又都能用。 */
+body[data-zen="1"] .tabbar,
+body[data-zen="1"] .outline,
+body[data-zen="1"] #outlineSplitter,
+body[data-zen="1"] .statusbar,
+body[data-zen="1"] .menubar { display: none; }
+
+body[data-zen="1"] { --read-measure: 42rem; }   /* 少了两侧栏，行长收一点更好读 */
+
+body[data-zen="1"] .titlebar { background: transparent; }
+/* 品牌和窗口按钮压到半隐而不是全隐：全隐之后想关窗口得先「猜」上面有东西，
+   留一点影子既不影响阅读，也不至于让人找不到窗口按钮。 */
+body[data-zen="1"] .titlebar .brand,
+body[data-zen="1"] .titlebar .win-ctrl { opacity: .28; transition: opacity .18s var(--ease); }
+body[data-zen="1"] .titlebar:hover .brand,
+body[data-zen="1"] .titlebar:hover .win-ctrl { opacity: 1; }
+body[data-zen="1"] .win-title { color: var(--fg-faint); }
 
 /* ================= 状态栏 ================= */
 /* 和顶栏对称：同属画布层、不画上边框，靠底色差和正文分开 */
@@ -1069,6 +1104,23 @@ mark.rem { background: rgba(220, 60, 60, .32); border-radius: 2px; }
 .wysiwyg .w-bq:has(+ .w-bq) { border-bottom-right-radius: 0; }
 .wysiwyg .w-hr { margin: 2.1em 0; }
 .wysiwyg .w-hr hr { border: none; border-top: 1px solid var(--line-strong); }
+/* 所见即所得里的公式只染色：真渲染交给预览（往 contenteditable 塞 KaTeX
+   的 DOM，退格删不掉、光标会卡住）。染色是为了让人一眼认出这是公式而不是排版符号 */
+.wysiwyg .w-math {
+  background: var(--bg-soft); border-radius: 3px; padding: 0 1px;
+  font-family: var(--font-mono); font-size: .94em; color: var(--fg-soft);
+}
+
+/* 块级公式：一个整体块，内容是裸 TeX。$$ 用伪元素画出来（不进 DOM），
+   所以序列化时不会多一个也不会少一个 */
+.wysiwyg .w-mathblock {
+  background: var(--bg-soft); border-left: 2px solid var(--line-strong);
+  border-radius: var(--r-sm); padding: 9px 13px; margin: .95em 0;
+  font-family: var(--font-mono); font-size: .94em; color: var(--fg-soft);
+  white-space: pre-wrap;
+}
+.wysiwyg .w-mathblock::before { content: "$$ "; color: var(--fg-faint); }
+.wysiwyg .w-mathblock::after { content: " $$"; color: var(--fg-faint); }
 /* 代码块：去掉描边，用一块比正文略沉的底 + 圆角，边界靠底色而不是线 */
 .wysiwyg .w-codeblock { background: var(--code-bg); border-radius: var(--r-md); margin: 1.15em 0; overflow: hidden; box-shadow: inset 0 0 0 1px var(--line); }
 .wysiwyg .w-codebar { padding: 6px 14px; font-size: 10.5px; color: var(--fg-faint); letter-spacing: .06em; border-bottom: 1px solid var(--line); }

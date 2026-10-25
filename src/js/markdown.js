@@ -34,6 +34,23 @@ export function resolveDocImg(src, docDir) {
   } catch { return src; }
 }
 
+/**
+ * 标题锚点用的 slug（GitHub 风格，但对中文友好：中日韩字符原样保留）。
+ * 目录跳转靠它，所以规则必须稳定 —— 改这里等于让旧目录里的链接失效。
+ */
+export function slugify(text) {
+  const s = String(text)
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')   // 链接 / 图片只取文字
+    .replace(/[`*_~]/g, '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s\u3000]+/g, '-')
+    .replace(/[^\p{L}\p{N}\-_]/gu, '')
+    .replace(/-{2,}/g, '-')
+    .replace(/^-|-$/g, '');
+  return s || 'section';
+}
+
 /** 行内元素渲染 */
 export function inline(text, imgResolver) {
   // 先保护行内代码，避免其中的 * _ 被误解析
@@ -42,6 +59,16 @@ export function inline(text, imgResolver) {
     codes.push(c);
     return `\u0000C${codes.length - 1}\u0000`;
   });
+
+  /* 再保护公式，同样是为了不被强调语法吃掉：$x_1 * y$ 里的 _ 和 * 是下标与乘号，
+     不是斜体。必须赶在 escapeHtml 之前取原文 —— 转义后 KaTeX 拿到的是 &lt; 而不是 <。 */
+  const maths = [];
+  const hold = (tex, display) => {
+    maths.push({ tex, display });
+    return `\u0001M${maths.length - 1}\u0001`;
+  };
+  s = s.replace(/\$\$([\s\S]+?)\$\$/g, (_, t) => hold(t, true));
+  s = s.replace(/\$(?=[^\s$])([^$\n]*?[^\s$])\$/g, (_, t) => hold(t, false));
 
   s = escapeHtml(s);
 
@@ -67,6 +94,14 @@ export function inline(text, imgResolver) {
 
   // 还原行内代码
   s = s.replace(/\u0000C(\d+)\u0000/g, (_, i) => `<code>${escapeHtml(codes[+i])}</code>`);
+
+  /* 还原公式：内容重新转义一次，让 DOM 里的文本正好是原始 TeX，
+     auto-render 读的就是这段文本（页面上仍是 $…$，等它来渲染）。 */
+  s = s.replace(/\u0001M(\d+)\u0001/g, (_, i) => {
+    const { tex, display } = maths[+i];
+    const t = escapeHtml(tex);
+    return display ? `$$${t}$$` : `$${t}$`;
+  });
   return s;
 }
 
@@ -139,6 +174,28 @@ function listToHtml(items) {
   return html;
 }
 
+/** 同名标题依次加 -1 -2：目录里两条「## 说明」得各自有地方落 */
+function nextSlug(seen, text) {
+  const base = slugify(text);
+  const n = seen.get(base) || 0;
+  seen.set(base, n + 1);
+  return n ? `${base}-${n}` : base;
+}
+
+/**
+ * 一批标题的锚点。生成目录时用它，和渲染时用的是同一套规则 ——
+ * 两边但凡差一点，目录里的链接就跳不过去。
+ */
+export function headingSlugs(texts) {
+  const seen = new Map();
+  return texts.map((t) => nextSlug(seen, t));
+}
+
+function uniqueSlug(text, opts) {
+  const seen = opts.__slugs || (opts.__slugs = new Map());
+  return nextSlug(seen, text);
+}
+
 /**
  * 渲染整篇 Markdown。
  * @param {string} md
@@ -196,6 +253,28 @@ export function renderMarkdown(md, opts = {}) {
       continue;
     }
 
+    // 块级公式 $$ … $$（允许跨行：矩阵、多行推导没人挤在一行里写）
+    if (/^\s*\$\$/.test(line)) {
+      flushList();
+      const rest = line.replace(/^\s*\$\$/, '');
+      const same = rest.match(/^([\s\S]*?)\$\$\s*$/);
+      if (same) {
+        out.push(`<div class="math-block">$$${escapeHtml(same[1])}$$</div>`);
+        i++;
+        continue;
+      }
+      const buf = [rest];
+      i++;
+      while (i < lines.length) {
+        const m = lines[i].match(/^([\s\S]*?)\$\$\s*$/);
+        if (m) { buf.push(m[1]); i++; break; }
+        buf.push(lines[i]);
+        i++;
+      }
+      out.push(`<div class="math-block">$$${escapeHtml(buf.join('\n').trim())}$$</div>`);
+      continue;
+    }
+
     // 空行
     if (/^\s*$/.test(line)) {
       flushList();
@@ -216,7 +295,7 @@ export function renderMarkdown(md, opts = {}) {
     if (h) {
       flushList();
       const lv = h[1].length;
-      out.push(`<h${lv} id="h-${i}">${inline(h[2], resolveImg)}</h${lv}>`);
+      out.push(`<h${lv} id="${escapeAttr(uniqueSlug(h[2], opts))}">${inline(h[2], resolveImg)}</h${lv}>`);
       i++;
       continue;
     }

@@ -12,7 +12,7 @@
 //      在下次编辑时会被抹平成纯文本（** 丢了）。
 // ============================================================
 
-import { resolveDocImg } from './markdown.js';
+import { resolveDocImg, headingSlugs } from './markdown.js';
 
 const MAX_INDENT = 6;
 const ZWSP = '\u200b';
@@ -35,6 +35,16 @@ export function inlineHtml(src) {
     codes.push(c);
     return `\u0001${codes.length - 1}\u0001`;
   });
+
+  /* 公式：只染色，不渲染。
+     真把 KaTeX 的 DOM 塞进 contenteditable，退格删不掉、光标会卡住，
+     序列化还得为它单开一套。这里包一层 span，但**存的是含 $ 的完整原文** ——
+     inlineToMd 走默认分支把里面的文字原样吐出来，所以存回去一字不差。
+     存内层 tex 而丢掉定界符就糟了：切回编辑模式时公式会退化成普通文字。 */
+  const maths = [];
+  t = t.replace(/\$\$[\s\S]+?\$\$/g, (m) => { maths.push(m); return `\u0002${maths.length - 1}\u0002`; });
+  t = t.replace(/\$(?=[^\s$])[^$\n]*?[^\s$]\$/g, (m) => { maths.push(m); return `\u0002${maths.length - 1}\u0002`; });
+
   t = escapeHtml(t);
   t = t.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g,
     (_, alt, s) => {
@@ -50,6 +60,7 @@ export function inlineHtml(src) {
   t = t.replace(/(^|\W)_([^_\n]+)_(?!\w)/g, '$1<em>$2</em>');
   t = t.replace(/~~([^~]+)~~/g, '<del>$1</del>');
   t = t.replace(/\u0001(\d+)\u0001/g, (_, i) => `<code>${escapeHtml(codes[+i])}</code>`);
+  t = t.replace(/\u0002(\d+)\u0002/g, (_, i) => `<span class="w-math">${escapeHtml(maths[+i])}</span>`);
   return t;
 }
 
@@ -162,6 +173,22 @@ export function mkCode(text = '', lang = '') {
   s.textContent = text;
   if (!text) s.innerHTML = '<br>';
   b.append(bar, s);
+  return b;
+}
+
+/**
+ * 块级公式：一个整体块，内容是裸 TeX（不带 $$）。
+ * 不这么做的话 `$$` / 公式 / `$$` 会被当成三个普通段落，在富文本里走一趟
+ * 就会在它们之间塞满空行 —— 内容没丢，但存盘时全文格式已经变了。
+ * `$$` 用 CSS 伪元素画出来，不进 DOM，序列化只取 .w-text，天然不会多也不会少。
+ */
+export function mkMath(tex = '') {
+  const b = blockEl('math', 'w-mathblock');
+  const s = document.createElement('span');
+  s.className = 'w-text w-tex';
+  s.textContent = tex;
+  if (!tex) s.innerHTML = '<br>';
+  b.append(s);
   return b;
 }
 
@@ -293,6 +320,29 @@ export function parseMarkdown(md) {
       i++;
       levelOf.reset();
       frag.appendChild(mkCode(body.join('\n'), lang));
+      continue;
+    }
+
+    // 块级公式 $$ … $$：吃成**一个块**。拆成三个普通段落的话，
+    // 在富文本里过一遍再存盘，$$ 和公式之间就会多出空行。
+    if (/^\s*\$\$/.test(line)) {
+      levelOf.reset();
+      const rest = line.replace(/^\s*\$\$/, '');
+      const same = rest.match(/^([\s\S]*?)\$\$\s*$/);
+      if (same) {
+        frag.appendChild(mkMath(same[1]));
+        i++;
+        continue;
+      }
+      const buf = [rest];
+      i++;
+      while (i < lines.length) {
+        const m = lines[i].match(/^([\s\S]*?)\$\$\s*$/);
+        if (m) { buf.push(m[1]); i++; break; }
+        buf.push(lines[i]);
+        i++;
+      }
+      frag.appendChild(mkMath(buf.join('\n').trim()));
       continue;
     }
 
@@ -440,6 +490,14 @@ export function blocksToMarkdown(root) {
     if (type === 'code') {
       const text = codeToText(el.querySelector('.w-code') || el);
       chunks.push({ type, lines: ['```' + (el.dataset.lang || ''), text, '```'] });
+      cols.length = 0;
+      continue;
+    }
+
+    if (type === 'math') {
+      // $$ 由这里补回去：块里只存裸 TeX，粘贴/编辑都不会把定界符弄丢
+      const text = codeToText(el.querySelector('.w-tex') || el);
+      chunks.push({ type, lines: ['$$', text, '$$'] });
       cols.length = 0;
       continue;
     }
@@ -681,6 +739,18 @@ export class WysiwygEditor {
   /* ---------------- 基础定位 ---------------- */
 
   indexOf(block) { return [...this.root.children].indexOf(block); }
+
+  /**
+   * 按锚点找标题块（目录里的 [标题](#slug) 靠它跳转）。
+   * slug 用和渲染时同一个函数现算，不预先存在 DOM 上 ——
+   * 改标题文字之后不用重新标注，算出来自然就变了。
+   */
+  findHeadingBySlug(slug) {
+    const heads = [...this.root.querySelectorAll('.w-h')];
+    const texts = heads.map((b) => (b.querySelector('.w-text') || b).textContent || '');
+    const i = headingSlugs(texts).indexOf(String(slug));
+    return i >= 0 ? heads[i] : null;
+  }
 
   currentBlock() {
     const sel = window.getSelection();
@@ -951,7 +1021,7 @@ export class WysiwygEditor {
     const parent = node.parentElement;
     if (!parent) return false;
     const textWrap = parent.closest('.w-text');
-    if (!textWrap || textWrap.classList.contains('w-code')) return false;
+    if (!textWrap || textWrap.classList.contains('w-code') || textWrap.classList.contains('w-tex')) return false;
 
     const before = node.nodeValue.slice(0, off);
     const rules = [
@@ -1075,7 +1145,7 @@ export class WysiwygEditor {
     const type = block.dataset.type;
     if (type === 'hr' || type === 'table') { e.preventDefault(); return; }
     e.preventDefault();
-    if (type === 'code') { this.codeNewline(); return; }
+    if (type === 'code' || type === 'math') { this.codeNewline(); return; }
     this.hideHashes(block);           // 回车 = 这个标题写完了，### 收起
     this.splitBlock(block);
   }
@@ -1087,7 +1157,7 @@ export class WysiwygEditor {
     if (!block) return;
     const type = block.dataset.type;
 
-    if (type === 'code') {
+    if (type === 'code' || type === 'math') {
       if (this.isEmptyBlock(block) && this.root.children.length > 1) {
         e.preventDefault();
         this.removeBlock(block);
@@ -1525,6 +1595,23 @@ export class WysiwygEditor {
     return nb;
   }
 
+  /**
+   * 在光标所在块前/后插入一段 Markdown（「插入目录」走这条）。
+   * 用 parseMarkdown 而不是手搓 DOM：块类型、行内结构才能和正常渲染完全一致，
+   * 否则插入的列表可能缺 marker、有序列表编号也不对。
+   */
+  insertMarkdown(md, before = false) {
+    const frag = parseMarkdown(md);
+    if (!frag.firstChild) return false;
+    const block = this.currentBlock();
+    if (!block) this.root.appendChild(frag);
+    else if (before) block.before(frag);
+    else block.after(frag);
+    this.renumber();
+    this.flush();
+    return true;
+  }
+
   insertBlock(type) {
     const block = this.currentBlock();
     if (type === 'hr') {
@@ -1539,8 +1626,8 @@ export class WysiwygEditor {
       setCaretOffset(textEl(p), 0);
       return;
     }
-    if (type === 'code') {
-      const nb = mkCode('', '');
+    if (type === 'code' || type === 'math') {
+      const nb = type === 'code' ? mkCode('', '') : mkMath('');
       // 空行上直接顶替，别在代码块前留一个空段落
       if (block && block.dataset.type === 'p' && this.isEmptyBlock(block)) block.replaceWith(nb);
       else this.insertAfter(block, nb);

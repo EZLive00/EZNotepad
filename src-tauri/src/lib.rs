@@ -428,6 +428,86 @@ fn save_image_bytes(doc_path: String, bytes: Vec<u8>, ext: Option<String>) -> Re
     Ok(format!("assets/{name}"))
 }
 
+/* ---------------- 文件变化监听 ----------------
+   设计原则是「尽量少看」：只监听已打开文档所在的**那一层目录**（非递归），
+   事件到达时先拿文件名去比对，不在名单里的直接丢掉。
+   所以在一个有几万文件的目录里打开一个 md，也不会有事件涌到前端；
+   底层是系统的 ReadDirectoryChangesW / inotify，空闲时不占 CPU。 */
+
+/// 当前活着的 watcher。换成新的时旧的自动 drop（监听句柄随之释放）。
+struct WatchState(std::sync::Mutex<Option<notify::RecommendedWatcher>>);
+
+/// 让 Rust 侧重新布置监听：传进来的是所有「已存在磁盘上」的文档路径。
+/// 返回真正被监听的目录数（纯粹给前端记日志，不影响功能）。
+#[tauri::command]
+fn watch_files(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, WatchState>,
+    paths: Vec<String>,
+) -> Result<usize, String> {
+    use notify::{RecursiveMode, Watcher};
+    use std::collections::{HashMap, HashSet};
+    use tauri::Emitter;
+
+    // 1. 先撤掉旧的监听
+    *state.0.lock().map_err(|_| "监听状态锁定失败")? = None;
+    if paths.is_empty() {
+        return Ok(0);
+    }
+
+    // 2. 关心的文件名（小写）→ 原始完整路径。
+    //    Windows 大小写不敏感，事件里给的名字大小写未必和打开时一致，所以统一降为小写比对。
+    let mut wanted: HashMap<String, String> = HashMap::new();
+    let mut dirs: HashSet<PathBuf> = HashSet::new();
+    for p in &paths {
+        let pb = PathBuf::from(p);
+        let Some(name) = pb.file_name().map(|n| n.to_string_lossy().to_lowercase()) else { continue };
+        wanted.insert(name, p.clone());
+        if let Some(d) = pb.parent() {
+            dirs.insert(d.to_path_buf());
+        }
+    }
+    if dirs.is_empty() {
+        return Ok(0);
+    }
+
+    let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+        let Ok(ev) = res else { return };
+        // 读文件也会产生 Access 事件（我们自己读一遍就算），只看内容真的变了的那几种
+        if !matches!(
+            ev.kind,
+            notify::EventKind::Modify(_) | notify::EventKind::Create(_) | notify::EventKind::Remove(_)
+        ) {
+            return;
+        }
+        let mut hit: Vec<String> = Vec::new();
+        for p in &ev.paths {
+            let Some(name) = p.file_name().map(|n| n.to_string_lossy().to_lowercase()) else { continue };
+            if let Some(orig) = wanted.get(&name) {
+                if !hit.contains(orig) {
+                    hit.push(orig.clone());
+                }
+            }
+        }
+        if !hit.is_empty() {
+            // 一次写入可能拆成好几个事件（>4KB 的包），去重和合并交给前端做
+            let _ = app.emit("fs-change", hit);
+        }
+    })
+    .map_err(|e| format!("无法建立文件监听：{e}"))?;
+
+    // 3. 每个目录只监听一层。目录不存在（文件已被删）就跳过，不是错误
+    let mut n = 0;
+    for d in &dirs {
+        if watcher.watch(d, RecursiveMode::NonRecursive).is_ok() {
+            n += 1;
+        }
+    }
+
+    *state.0.lock().map_err(|_| "监听状态锁定失败")? = Some(watcher);
+    Ok(n)
+}
+
 /// Windows 11：给无边框窗口套上系统自带的圆角。
 /// 走 DWM 原生属性，不需要把窗口设为 transparent —— 圆角之外由系统裁剪，
 /// 阴影、拖动缩放全都还是系统那一套。Win10 及更早版本不认识这个属性，
@@ -463,6 +543,7 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .manage(WatchState(std::sync::Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             read_text_file,
             save_text_file,
@@ -473,7 +554,8 @@ pub fn run() {
             write_binary_file,
             copy_image_to_assets,
             save_image_bytes,
-            file_mtime
+            file_mtime,
+            watch_files
         ])
         .setup(|app| {
             #[cfg(target_os = "windows")]

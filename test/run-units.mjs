@@ -8,9 +8,11 @@
 // run-menu.mjs（菜单）。
 // ============================================================
 import { freeUntitledName, moveById } from '../src/js/taborder.js';
+import { slugify, headingSlugs, inline, renderMarkdown } from '../src/js/markdown.js';
 
 const out = [];
 const eq = (name, got, want) => out.push({ name, ok: JSON.stringify(got) === JSON.stringify(want), got, want });
+const ok = (name, v) => out.push({ name, ok: !!v, got: v, want: true });
 
 /* ---------- 未命名自动编号 ---------- */
 eq('第一个未命名', freeUntitledName([], 'md'), '未命名.md');
@@ -33,6 +35,29 @@ eq('原地不动', ids(moveById(L, 2, 2, false)), [1, 2, 3]);
 eq('拖到不存在的目标 → 落到末尾', ids(moveById(L, 1, 99, false)), [2, 3, 1]);
 eq('源不存在 → 原样返回', moveById(L, 99, 1, false), L);
 eq('不改原数组', (moveById(L, 3, 1, false), ids(L)), [1, 2, 3]);
+
+/* ---------- 标题锚点（目录靠它跳转，改规则等于让旧目录里的链接失效） ---------- */
+eq('中文标题原样保留', slugify('快速开始'), '快速开始');
+eq('空格变连字符', slugify('Quick Start'), 'quick-start');
+eq('去掉标点', slugify('Hello, World!'), 'hello-world');
+eq('去掉强调标记', slugify('**加粗**的标题'), '加粗的标题');
+eq('链接只取文字', slugify('[文档](https://a.com)'), '文档');
+eq('同名标题依次编号', headingSlugs(['说明', '说明', '说明']), ['说明', '说明-1', '说明-2']);
+eq('全是符号时兜底', slugify('***'), 'section');
+
+/* ---------- 公式保护：_ 和 * 是下标与乘号，不是斜体 ---------- */
+ok('公式里的下划线不当斜体', !inline('$x_1 * y$').includes('<em>'));
+ok('公式原样留给 KaTeX', inline('$x_1$').includes('$x_1$'));
+ok('公式里的 < 转成实体，DOM 文本仍是原文', inline('$a<b$').includes('$a&lt;b$'));
+ok('块级公式两端保留', inline('$$\\frac{a}{b}$$').includes('$$\\frac{a}{b}$$'));
+
+/* ---------- 整篇渲染：标题 id 用 slug、块级公式跨越成 div ---------- */
+const html = renderMarkdown('# 快速开始\n\n行内 $x_1$ 结束\n\n$$\na + b\n$$\n');
+ok('标题用 slug 当 id', html.includes('id="快速开始"'));
+ok('块级公式独占一行渲染', html.includes('<div class="math-block">$$a + b$$</div>'));
+ok('行内公式原样留着', html.includes('$x_1$'));
+const dupHtml = renderMarkdown('## 说明\n\n## 说明\n');
+ok('重复标题各自有 id', dupHtml.includes('id="说明"') && dupHtml.includes('id="说明-1"'));
 
 /* ---------- 汇总 ---------- */
 const fail = out.filter((r) => !r.ok);
