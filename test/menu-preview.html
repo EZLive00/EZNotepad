@@ -98,6 +98,7 @@ createAppMenu({ bar, menus: MENUS, run: (id) => { (window.__calls ||= []).push(i
 });
 
 const which = q.get('menu') || 'format';
+if (which === 'insert-table') window.__inTable = true;   // 模拟「光标在表格里」
 [...bar.querySelectorAll('.am-btn')].find((b) => b.textContent === (which === 'format' ? '格式' : '插入')).click();
 
 window.__ready = 1;

@@ -311,7 +311,9 @@ body[data-theme="dark"] .tab.active {
 }
 .am-head:first-child { padding-top: 7px; }
 .am-note {
-  padding: 6px 10px 2px; margin-top: 2px;
+  /* 左缩进对齐到菜单项的文字（7 内边距 + 18 图标槽 + 7 间隙），
+     否则说明文字会比上面的项更靠左，看起来像没缩进 */
+  padding: 6px 10px 3px 32px; margin-top: 2px;
   font-size: 11px; line-height: 1.6; color: var(--fg-faint);
 }
 
