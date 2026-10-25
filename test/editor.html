@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>PlainEditor 回归</title>
+  <link rel="stylesheet" href="../src/styles.css">
+  <style>
+    /* 测试页只关心编辑区本身，给它一个确定的高度 */
+    html, body { height: 100%; }
+    #editor { height: 460px; border: 1px solid var(--line); }
+  </style>
+</head>
+<body data-theme="light">
+  <div id="editor"></div>
+
+  <script type="module">
+    import { PlainEditor } from '../src/js/editor/plain-editor.js';
+
+    const host = document.getElementById('editor');
+    let changes = 0;
+
+    // 页面里只造一个实例，所有用例共用；每个用例自己 load 干净的文本
+    const plain = new PlainEditor(host, { onChange: () => { changes++; } });
+    window.plain = plain;
+
+    const tick = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const eq = (name, got, want) => ({ name, ok: JSON.stringify(got) === JSON.stringify(want), got, want });
+    const ok = (name, cond, info) => ({ name, ok: !!cond, got: info === undefined ? cond : info, want: true });
+    const q = (sel) => host.querySelector(sel);
+    const qa = (sel) => [...host.querySelectorAll(sel)];
+    const colorsOf = () => new Set(qa('.cm-content span').map((s) => getComputedStyle(s).color));
+
+    window.__run = async () => {
+      const R = [];
+      const initialTheme = document.body.dataset.theme || 'light';
+
+      /* ---- 1. 挂载与外壳 ---- */
+      R.push(ok('挂载出 .cm-editor', !!q('.cm-editor')));
+      R.push(ok('行号槽存在', !!q('.cm-lineNumbers')));
+      R.push(ok('折叠槽存在', !!q('.cm-foldGutter')));
+      R.push(ok('当前行高亮元素存在', !!q('.cm-activeLine')));
+
+      /* ---- 2. 内容读写 ---- */
+      const src = 'const a = 1;\nfunction f() { return "x"; }\n// 注释\nlet flag = true;';
+      plain.load(src, 'js');
+      await tick();
+      R.push(eq('value 读回一致', plain.value, src));
+      R.push(eq('lineCount', plain.lineCount, 4));
+      // 行号槽里除了行号还有一个内容为 "9" 的测宽元素（CM6 用它算数字列宽），
+      // 所以按「四个行号都出现」断言，不去数个数
+      const nums = qa('.cm-lineNumbers .cm-gutterElement')
+        .map((e) => e.textContent.trim()).filter(Boolean);
+      R.push(ok('行号 1..4 都在', ['1', '2', '3', '4'].every((n) => nums.includes(n)), nums));
+
+      /* ---- 3. 语法着色 ---- */
+      const colors = colorsOf();
+      R.push(ok('着色生效（≥3 种颜色）', colors.size >= 3, [...colors]));
+
+      /* ---- 4. 选区与光标 ---- */
+      plain.setSelection(0, 5);
+      R.push(eq('选区 from/to', plain.selection, { from: 0, to: 5 }));
+      R.push(eq('选中文本', plain.selectedText, 'const'));
+      plain.setSelection(7);
+      R.push(eq('光标行列', plain.cursor, { line: 1, col: 8, pos: 7 }));
+      plain.setSelection(20);
+      R.push(eq('跨行光标在第 2 行', plain.cursor.line, 2));
+
+      /* ---- 5. 插入 / 替换 ---- */
+      plain.load('hello world', '');
+      plain.setSelection(6, 11);
+      plain.insertText('there');
+      R.push(eq('替换选区', plain.value, 'hello there'));
+
+      plain.load('abcdef', '');
+      plain.replaceRange(1, 3, 'XY', { select: true });
+      R.push(eq('replaceRange 文本', plain.value, 'aXYdef'));
+      R.push(eq('replaceRange 选中新区间', plain.selection, { from: 1, to: 3 }));
+
+      /* ---- 6. 撤销 / 重做 ---- */
+      plain.load('abc', '');
+      plain.setSelection(0);
+      plain.insertText('X');
+      R.push(eq('插入生效', plain.value, 'Xabc'));
+      plain.undo();
+      R.push(eq('撤销回到原文', plain.value, 'abc'));
+      plain.redo();
+      R.push(eq('重做', plain.value, 'Xabc'));
+
+      /* ---- 7. 缩进单位必须是 4 空格（CM6 默认是 2，这里改过）---- */
+      plain.load('abc', '');
+      plain.setSelection(0);
+      plain.indent();
+      await tick();
+      R.push(eq('缩进是 4 空格而不是 2', plain.value, '    abc'));
+      plain.indent(true);
+      await tick();
+      R.push(eq('反缩进回到原样', plain.value, 'abc'));
+
+      /* ---- 8. 程序化写入不触发 onChange ---- */
+      const before = changes;
+      plain.value = 'programmatic';
+      await tick();
+      R.push(eq('set value 不触发 onChange', changes, before));
+      R.push(eq('set value 生效', plain.value, 'programmatic'));
+
+      /* ---- 8. load 重建文档（换文档不串撤销历史）---- */
+      plain.load('fresh', '');
+      R.push(eq('load 后内容', plain.value, 'fresh'));
+      R.push(ok('load 后旧撤销历史已清空', plain.undo() === false));
+
+      /* ---- 9. 只读 ---- */
+      plain.setReadOnly(true);
+      await tick();
+      R.push(eq('只读：contenteditable=false',
+        q('.cm-content').getAttribute('contenteditable'), 'false'));
+      plain.setReadOnly(false);
+      await tick();
+      R.push(eq('可编辑：contenteditable=true',
+        q('.cm-content').getAttribute('contenteditable'), 'true'));
+
+      /* ---- 10. 语言切换 ---- */
+      plain.load('def f():\n    return 1\n', 'py');
+      await tick();
+      R.push(eq('python 载入行数', plain.lineCount, 3));
+      R.push(ok('切语言不抛错', plain.value.includes('def f')));
+      plain.setLanguage('css');
+      await tick();
+      R.push(ok('二次切语言不抛错', plain.value.includes('def f')));
+
+      /* ---- 11. 主题跟着 CSS 变量走 ---- */
+      plain.load('const a = 1; // x', 'js');
+      document.body.dataset.theme = 'light';
+      await tick();
+      const lightColors = [...colorsOf()].sort().join('|');
+      document.body.dataset.theme = 'dark';
+      await tick();
+      const darkColors = [...colorsOf()].sort().join('|');
+      R.push(ok('切主题后着色颜色跟着变', lightColors !== darkColors, { lightColors, darkColors }));
+      document.body.dataset.theme = initialTheme;   // 还给 harness 传进来的主题（截图要用）
+
+      /* ---- 12. 字号走 --fs-editor ---- */
+      const scrollerFs = getComputedStyle(q('.cm-scroller')).fontSize;
+      document.documentElement.style.setProperty('--fs-editor', '19px');
+      await tick();
+      const vs = getComputedStyle(q('.cm-scroller')).fontSize;
+      document.documentElement.style.setProperty('--fs-editor', '13.5px');
+      R.push(eq('字号跟随 --fs-editor', vs, '19px'));
+      R.push(ok('默认字号是 13.5px', scrollerFs === '13.5px', scrollerFs));
+
+      /* ---- 13. revealOffset 滚动 ---- */
+      const longDoc = Array.from({ length: 300 }, (_, i) => 'line ' + (i + 1)).join('\n');
+      plain.load(longDoc, '');
+      await tick();
+      plain.revealOffset(longDoc.length - 20);
+      await tick();
+      R.push(ok('revealOffset 把视口滚下去了', q('.cm-scroller').scrollTop > 0,
+        q('.cm-scroller').scrollTop));
+      // 上层（gotoLine / 查找）算错偏移是可能的，越界不该炸掉整个操作
+      let threw = false;
+      try { plain.revealOffset(999999); } catch { threw = true; }
+      R.push(ok('越界偏移被钳制而不是抛异常', !threw));
+
+      /* ---- 14. 大文档：虚拟滚动 ---- */
+      const big = Array.from({ length: 100000 }, (_, i) => 'line ' + i).join('\n');
+      const t0 = performance.now();
+      plain.load(big, '');
+      const dt = performance.now() - t0;
+      await tick();
+      const domLines = qa('.cm-line').length;
+      R.push(ok(`10 万行载入 < 2000ms（实测 ${Math.round(dt)}ms）`, dt < 2000, Math.round(dt)));
+      R.push(eq('10 万行行数正确', plain.lineCount, 100000));
+      R.push(ok(`虚拟滚动：DOM 行数 ${domLines} 远小于 100000`, domLines < 300, domLines));
+
+      /* ---- 15. 长行折行（lineWrapping）---- */
+      plain.load('x'.repeat(500), '');
+      await tick();
+      const lh = parseFloat(getComputedStyle(q('.cm-line')).lineHeight);
+      const h = q('.cm-line').getBoundingClientRect().height;
+      R.push(ok(`长行折行：行高 ${Math.round(h)}px > 单行 ${Math.round(lh)}px`, h > lh * 1.5,
+        { h: Math.round(h), lh: Math.round(lh) }));
+
+      /* ---- 16. 收尾：恢复一个正常文档，给截图用 ---- */
+      plain.load(
+        '// CodeMirror 6 接管了纯文本编辑区\n'
+        + 'const greeting = "你好，世界";\n'
+        + 'function fib(n) {\n'
+        + '    if (n < 2) return n;\n'
+        + '    return fib(n - 1) + fib(n - 2);\n'
+        + '}\n'
+        + '/* 行号、当前行高亮、括号匹配、折叠都由它自己管 */\n'
+        + 'let total = 0; // 累计\n'
+        + 'for (let i = 0; i < 10; i++) total += fib(i);\n'
+        + 'console.log(total);\n',
+        'js',
+      );
+      await tick();
+      return R;
+    };
+
+    window.__ready = true;
+  </script>
+</body>
+</html>

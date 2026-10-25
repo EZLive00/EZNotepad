@@ -7,6 +7,7 @@ import * as be from './backend.js';
 import { detectKind, kindLabel, modesFor, formatByKind, lineOps, caseOps } from './format.js';
 import { renderPreview, extractOutline } from './preview.js';
 import { WysiwygEditor } from './wysiwyg.js';
+import { PlainEditor } from './editor/plain-editor.js';
 import { toast, dialog, confirmBox, contextMenu } from './ui.js';
 import { DiffPanel } from './diffpanel.js';
 import { MergeWizard } from './mergewizard.js';
@@ -32,7 +33,6 @@ const el = {
   outlinePane: $('outlinePane'),
   mid: $('midSplitter'),
   outlineSplitter: $('outlineSplitter'),
-  gutter: $('lineGutter'),
   editorPane: $('editorPane'),
   modeLabel: $('modeLabel'),
   modeIcon: $('modeIcon'),
@@ -58,6 +58,16 @@ const el = {
   whMenu: $('whMenu'),
   wBlockMenu: $('wBlockMenu'),
 };
+
+/* ---------------- 纯文本 / 代码编辑区 ----------------
+ * CodeMirror 6 实例。全项目只有 js/editor/plain-editor.js 认识 CM6，
+ * 这里拿到的只是一组「读写文本 + 选区偏移」的方法。
+ * 全应用共用一个实例（和原来的 textarea 一样），切标签时换内容。
+ */
+const plain = new PlainEditor(el.editor, {
+  onChange: () => onEditorInput(),
+  onCursor: () => updateCursorPos(),
+});
 
 const MODE_META = {
   // short 用于工具栏/标题栏这类横向空间紧张的地方
@@ -195,7 +205,7 @@ function activate(id) {
 }
 
 function clearView() {
-  el.editor.value = '';
+  plain.load('');
   el.wysiwyg.innerHTML = '';
   el.preview.innerHTML = '<div class="diff-empty">没有打开的文件</div>';
   el.outlineList.innerHTML = '<div class="outline-empty">新建或打开一个文件开始。</div>';
@@ -227,9 +237,8 @@ function setMode(mode, opt = {}) {
   const showWys = mode === 'wysiwyg';
   const showPreview = split || mode === 'preview';
 
-  el.editor.classList.toggle('hidden', !showEditor || showWys);
+  plain.setVisible(showEditor && !showWys);
   el.wysiwyg.classList.toggle('hidden', !showWys);
-  el.gutter.classList.toggle('hidden', !showEditor || showWys);
   el.previewPane.classList.remove('hidden');
   el.previewPane.classList.toggle('hidden', !showPreview);
   el.mid.classList.toggle('hidden', !(showEditor && showPreview));
@@ -239,12 +248,13 @@ function setMode(mode, opt = {}) {
 
   const docDir = t.path ? be.dirName(t.path) : '';
   if (showWys) { wys.setDocDir(docDir); wys.render(t.content); }
-  else if (showEditor) { el.editor.value = t.content; }
+  else if (showEditor) { plain.load(t.content, currentLang); }
   if (showPreview) renderPreview(kind, t.content, currentLang, el.preview, docDir);
 
   updateModeMenu(kind, allowed);
   updateOutline();
   refreshStats();
+  updateStatus();   // 切换文件/模式后格式徽标、行列数、草稿状态都要跟着变
   if (mode === 'preview') el.preview.scrollTop = t.scrollTop || 0;
   // 手柄只属于所见即所得：切到编辑/预览就收起来
   if (mode === 'wysiwyg') refreshHandle();
@@ -327,10 +337,7 @@ function gotoLine(line) {
   const lines = t.content.split('\n');
   let off = 0;
   for (let i = 0; i < line && i < lines.length; i++) off += lines[i].length + 1;
-  el.editor.focus();
-  el.editor.setSelectionRange(off, off + (lines[line] || '').length);
-  const lh = parseFloat(getComputedStyle(el.editor).lineHeight) || 22;
-  el.editor.scrollTop = Math.max(0, line * lh - el.editor.clientHeight / 2);
+  plain.revealOffset(off, off + (lines[line] || '').length);
   updateStatus();
 }
 
@@ -344,19 +351,21 @@ function refreshStats() {
   const words = (text.match(/[\u4e00-\u9fa5]/g) || []).length + (text.match(/[A-Za-z0-9_'-]+/g) || []).length;
   el.stLines.textContent = `${lines} 行`;
   el.stWords.textContent = `${words} 字 · ${chars} 字符`;
-  if (!el.gutter.classList.contains('hidden')) {
-    // 行号只渲染到实际行数，超出部分留白（与编辑器行高严格对齐）
-    const lh = parseFloat(getComputedStyle(el.editor).lineHeight) || 22;
-    const visible = Math.ceil(el.editor.clientHeight / lh) + 1;
-    const total = lines;
-    const start = Math.floor(el.editor.scrollTop / lh);
-    const end = Math.min(total + 1, start + visible);
-    const arr = [];
-    for (let i = start; i < end; i++) {
-      arr.push(i < total ? `<div>${i + 1}</div>` : '<div>&nbsp;</div>');
-    }
-    el.gutter.innerHTML = arr.join('');
-    el.gutter.style.transform = `translateY(${-(el.editor.scrollTop % lh)}px)`;
+}
+
+/**
+ * 只刷新状态栏的行列。
+ * CM6 每次选区变化（包括按方向键）都会回调，走完整 updateStatus 会连标签栏
+ * 一起重建 DOM，太亏。所以光标单独一条轻量路径。
+ */
+function updateCursorPos() {
+  const t = activeTab();
+  if (!t) return;
+  if (t.mode === 'edit') {
+    const c = plain.cursor;
+    el.stPos.textContent = `行 ${c.line}, 列 ${c.col}`;
+  } else {
+    el.stPos.textContent = '—';
   }
 }
 
@@ -366,15 +375,7 @@ function updateStatus() {
   el.stEOL.textContent = t.eol;
   el.stEncoding.textContent = t.encoding;
   el.fmtBadge.textContent = kindLabel(detectKind(t.name));
-  if (t.mode === 'wysiwyg') {
-    el.stPos.textContent = '—';
-  } else {
-    const pos = el.editor.selectionStart || 0;
-    const before = t.content.slice(0, pos);
-    const line = before.split('\n').length;
-    const col = pos - before.lastIndexOf('\n');
-    el.stPos.textContent = `行 ${line}, 列 ${col}`;
-  }
+  updateCursorPos();
   el.stDraft.textContent = isDirty(t) ? '未保存' : '已保存';
   el.stDraft.classList.toggle('dirty', isDirty(t));
   renderTabs();
@@ -447,6 +448,7 @@ async function saveTab(t = activeTab(), saveAs = false) {
     t.name = be.baseName(p);
     t.external = false;
     currentLang = (t.name.split('.').pop() || '').toLowerCase();
+    plain.setLanguage(currentLang);   // 另存为可能改了扩展名，着色要跟着换
   }
   try {
     t.content = readEditor(t);
@@ -500,7 +502,7 @@ function addRecent(path) {
 function readEditor(t) {
   if (!t) return '';
   if (t.mode === 'wysiwyg') return wys.toMarkdown();
-  if (t.mode === 'edit') return el.editor.value;
+  if (t.mode === 'edit') return plain.value;
   return t.content;
 }
 
@@ -509,7 +511,7 @@ function setContent(text, opts = {}) {
   if (!t) return;
   t.content = text;
   if (t.mode === 'wysiwyg') wys.render(text, opts.caret);
-  else el.editor.value = text;
+  else plain.value = text;
   schedulePreview();
   refreshStats();
   updateOutline();
@@ -520,7 +522,7 @@ function setContent(text, opts = {}) {
 function onEditorInput() {
   const t = activeTab();
   if (!t) return;
-  t.content = el.editor.value;
+  t.content = plain.value;
   schedulePreview();
   refreshStats();
   updateOutline();
@@ -528,46 +530,17 @@ function onEditorInput() {
   updateStatus();
 }
 
-/**
- * 纯文本编辑器的制表：
- *   Tab        → 有选区就整体缩进一行或多行；没选区插 4 个空格
- *   Shift+Tab  → 反缩进，删掉行首最多 4 个空格（或一个 tab）
- * 每行单独判断而不是字符串替换，复制粘贴来的混合缩进也能收敛整齐。
- */
-function editorIndent(dedent) {
-  const e = el.editor;
-  const s = e.selectionStart;
-  const t = e.selectionEnd;
-  const v = e.value;
-  if (!dedent && s === t) {
-    e.setRangeText('    ', s, t, 'end');
-    onEditorInput();
-    return;
-  }
-  const start = v.lastIndexOf('\n', s - 1) + 1;
-  let end = t;
-  if (end > 0 && v[end - 1] === '\n') end -= 1;   // 选区停在下一行行首时，别把那一行也带上
-  const block = v.slice(start, Math.max(start, end));
-  const out = block.split('\n')
-    .map((ln) => (dedent ? ln.replace(/^( {1,4}|\t)/, '') : '    ' + ln))
-    .join('\n');
-  if (out === block) return;
-  e.setRangeText(out, start, Math.max(start, end), 'select');
-  onEditorInput();
-}
-
-function surround(marker) {  const t = activeTab();
+function surround(marker) {
+  const t = activeTab();
   if (!t) return;
   if (t.mode === 'wysiwyg') { wys.wrapInline(marker); return; }
   if (t.mode !== 'edit') { toast('预览模式下不能编辑'); return; }
-  const s = el.editor.selectionStart;
-  const e = el.editor.selectionEnd;
-  const sel = t.content.slice(s, e);
-  const next = t.content.slice(0, s) + marker + sel + marker + t.content.slice(e);
+  const { from, to } = plain.selection;
+  const sel = plain.selectedText;
+  const next = plain.value.slice(0, from) + marker + sel + marker + plain.value.slice(to);
   setContent(next);
-  el.editor.focus();
-  el.editor.setSelectionRange(s + marker.length, s + marker.length + sel.length);
-  onEditorInput();
+  plain.setSelection(from + marker.length, from + marker.length + sel.length);
+  plain.focus();
 }
 
 function requireEditMode() {
@@ -767,16 +740,16 @@ function transformText(fn, label) {
     updateStatus();
     return;
   }
-  const s = el.editor.selectionStart;
-  const e = el.editor.selectionEnd;
+  const { from: s, to: e } = plain.selection;
   const hasSel = e > s;
-  const target = hasSel ? t.content.slice(s, e) : t.content;
-  const backup = t.content;
+  const content = plain.value;
+  const target = hasSel ? content.slice(s, e) : content;
+  const backup = content;
   const out = fn(target);
-  const next = hasSel ? t.content.slice(0, s) + out + t.content.slice(e) : out;
+  const next = hasSel ? content.slice(0, s) + out + content.slice(e) : out;
   if (next === backup) { toast('内容没有变化'); return; }
   setContent(next);
-  if (hasSel) el.editor.setSelectionRange(s, s + out.length);
+  if (hasSel) plain.setSelection(s, s + out.length);
   undoToast(`${label}已应用（${hasSel ? '选区' : '全文'}）`, backup);
 }
 
@@ -830,7 +803,7 @@ function openFind(withReplace = false) {
   $('replaceInput').classList.toggle('hidden', !withReplace);
   $('findReplaceOne').classList.toggle('hidden', !withReplace);
   $('findReplaceAll').classList.toggle('hidden', !withReplace);
-  const sel = el.editor.value.slice(el.editor.selectionStart, el.editor.selectionEnd);
+  const sel = plain.selectedText;
   if (sel && !sel.includes('\n')) $('findInput').value = sel;
   $('findInput').focus();
   $('findInput').select();
@@ -859,7 +832,7 @@ function runFind() {
     find.matches.push([m.index, m.index + m[0].length]);
     if (find.matches.length > 5000) break;
   }
-  const pos = el.editor.selectionStart || 0;
+  const pos = plain.selection.from;
   const idx = find.matches.findIndex(([a]) => a >= pos);
   find.index = idx < 0 ? 0 : idx;
   $('findCount').textContent = `${find.matches.length ? find.index + 1 : 0}/${find.matches.length}`;
@@ -870,11 +843,7 @@ function locateMatch() {
   const t = activeTab();
   const [a, b] = find.matches[find.index] || [];
   if (a == null || !t) return;
-  el.editor.focus();
-  el.editor.setSelectionRange(a, b);
-  const lh = parseFloat(getComputedStyle(el.editor).lineHeight) || 22;
-  const line = t.content.slice(0, a).split('\n').length;
-  el.editor.scrollTop = Math.max(0, (line - 1) * lh - el.editor.clientHeight / 2);
+  plain.revealOffset(a, b);
   updateStatus();
 }
 
@@ -953,7 +922,6 @@ function zoom(d) {
 function applyFont() {
   const s = settings.fontSize;
   document.documentElement.style.setProperty('--fs-editor', s + 'px');
-  el.editor.style.fontSize = s + 'px';
   el.preview.style.fontSize = s + 1.5 + 'px';
   el.wysiwyg.style.fontSize = s + 1.5 + 'px';
   refreshStats();
@@ -1072,30 +1040,52 @@ function showAbout() {
 }
 
 /* ---------------- 自绘菜单 / 窗口按钮 ---------------- */
-/** 当前可编辑元素：所见即所得是 contenteditable，其余是 textarea */
+/** 当前可编辑元素：所见即所得是 contenteditable，纯文本是 CM6 的容器 */
 function editTarget() {
   const t = activeTab();
   if (t && t.mode === 'wysiwyg') return el.wysiwyg;
   return el.editor;
 }
 
-/** 走 execCommand 的编辑命令（菜单点击会抢焦点，这里先还原焦点） */
+/**
+ * 编辑命令分派。
+ * 所见即所得没有撤销栈，走 execCommand；纯文本走 CM6 自己的 history，
+ * 它的撤销粒度比浏览器的 contenteditable 靠得住得多。
+ */
 function editCmd(cmd) {
-  const target = editTarget();
-  if (!target) return;
-  target.focus();
-  try { document.execCommand(cmd); } catch {}
-  if (target === el.editor) onEditorInput();
+  const t = activeTab();
+  if (!t) return;
+  if (t.mode === 'wysiwyg') {
+    el.wysiwyg.focus();
+    try { document.execCommand(cmd); } catch {}
+    return;
+  }
+  if (t.mode !== 'edit') { toast('预览模式下不能编辑'); return; }
+  switch (cmd) {
+    case 'undo': plain.undo(); break;
+    case 'redo': plain.redo(); break;
+    case 'selectAll': plain.selectAll(); break;
+    default:
+      // cut / copy / paste 交给浏览器：CM6 的 contenteditable 会接管这些剪贴板事件
+      plain.focus();
+      try { document.execCommand(cmd); } catch {}
+  }
 }
 
 async function pasteFromClipboard() {
-  const target = editTarget();
-  target.focus();
+  const t = activeTab();
+  if (!t) return;
+  const inWys = t.mode === 'wysiwyg';
+  if (inWys) el.wysiwyg.focus();
+  else plain.focus();
   try {
     const text = await navigator.clipboard.readText();
-    if (text) { document.execCommand('insertText', false, text); if (target === el.editor) onEditorInput(); return; }
-  } catch {}
-  toast('请按 Ctrl+V 粘贴');
+    if (!text) { toast('剪贴板是空的'); return; }
+    if (inWys) document.execCommand('insertText', false, text);
+    else plain.insertText(text);
+  } catch {
+    toast('请按 Ctrl+V 粘贴');
+  }
 }
 
 function setTheme(mode) {
@@ -1617,36 +1607,18 @@ function bindEvents() {
     }
   });
 
-  el.editor.addEventListener('input', onEditorInput);
-  el.editor.addEventListener('scroll', () => { el.gutter.scrollTop = el.editor.scrollTop; refreshStats(); });
-  el.editor.addEventListener('click', updateStatus);
-  el.editor.addEventListener('keyup', updateStatus);
-  el.editor.addEventListener('keydown', (e) => {
-    if (e.key === 'Tab') {
-      e.preventDefault();
-      editorIndent(e.shiftKey);
-      return;
-    }
-    // 回车沿用上一行的缩进：代码块、列表、缩进嵌套都能接着写，
-    // 这是纯文本编辑器最影响手感的一条（Notepad++ / VS Code 都这么做）
-    if (e.key === 'Enter' && !e.isComposing && !e.shiftKey && !e.ctrlKey && !e.altKey) {
-      const pos = el.editor.selectionStart;
-      if (pos !== el.editor.selectionEnd) return;
-      const line = el.editor.value.slice(el.editor.value.lastIndexOf('\n', pos - 1) + 1, pos);
-      const indent = (line.match(/^[ \t]*/) || [''])[0];
-      if (!indent) return;
-      e.preventDefault();
-      document.execCommand('insertText', false, '\n' + indent);
-      onEditorInput();
-    }
-  });
+  // 纯文本编辑区的内容变化、光标移动都由 PlainEditor 的 updateListener
+  // 回调进来（相当于原来的 input / keyup / click），Tab 缩进和回车继承缩进
+  // 也已由 CM6 的 keymap 接管。这里只剩右键菜单 —— CM6 不提供 UI。
   el.editor.addEventListener('contextmenu', (e) => {
     e.preventDefault();
+    // 菜单一弹出焦点就跑了，剪贴板命令前先把焦点还给编辑区
+    const clip = (cmd) => () => { plain.focus(); try { document.execCommand(cmd); } catch {} };
     contextMenu(e.clientX, e.clientY, [
-      { label: '剪切', action: () => document.execCommand('cut') },
-      { label: '复制', action: () => document.execCommand('copy') },
-      { label: '粘贴', action: () => document.execCommand('paste') },
-      { label: '全选', action: () => el.editor.select() },
+      { label: '剪切', action: clip('cut') },
+      { label: '复制', action: clip('copy') },
+      { label: '粘贴', action: clip('paste') },
+      { label: '全选', action: () => { plain.focus(); plain.selectAll(); } },
       { sep: true },
       { label: '查找…', shortcut: 'Ctrl+F', action: () => openFind(false) },
       { label: '替换…', shortcut: 'Ctrl+H', action: () => openFind(true) },
@@ -1799,7 +1771,7 @@ function persistCurrentView() {
   const t = activeTab();
   if (!t) return;
   if (t.mode === 'wysiwyg') t.content = wys.toMarkdown();
-  else if (t.mode === 'edit') t.content = el.editor.value;
+  else if (t.mode === 'edit') t.content = plain.value;
   if (el.previewPane && !el.previewPane.classList.contains('hidden')) t.scrollTop = el.preview.scrollTop;
 }
 
@@ -1811,12 +1783,12 @@ const WELCOME = `# 欢迎使用 简单记事本
 ## 三种模式
 
 - **所见即所得**：输入 \`# \` 立刻变标题（文字写好了回行首补 \`# \` 也行），\`**粗体**\` 立刻加粗；光标哪一行，左边就浮出 \`+\` 和 \`⋮⋮\` —— 插新块、换块类型不用离开正文
-- **编辑模式**：显示原始 Markdown，带行号
+- **编辑模式**：显示原始 Markdown，带行号、语法着色、括号匹配和代码折叠
 - **预览模式**：只读渲染
 
 在工具栏「模式」下拉切换，或按 \`Ctrl+1 / Ctrl+2 / Ctrl+3\`。
 
-新建时可以先选类型：Markdown、纯文本、JSON、CSV 和常见代码。非 Markdown 的文件只开放编辑 / 预览，当普通文本编辑器用（\`Tab\` 缩进、\`Shift+Tab\` 反缩进、回车沿用上一行缩进）。
+新建时可以先选类型：Markdown、纯文本、JSON、CSV 和常见代码。非 Markdown 的文件只开放编辑 / 预览，当普通文本编辑器用：\`Tab\` 缩进（4 空格）、\`Shift+Tab\` 反缩进、回车按上一行缩进自动续上（Python 里 \`def ...:\` 回车还会多缩一级）。
 
 ## 常用快捷键
 

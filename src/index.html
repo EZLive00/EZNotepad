@@ -201,8 +201,9 @@
       </div>
 
       <div class="edit-wrap" id="editWrap">
-        <div class="linegutter hidden" id="lineGutter"></div>
-        <textarea id="editor" spellcheck="false" autocomplete="off" autocapitalize="off" wrap="soft"></textarea>
+        <!-- 纯文本 / 代码编辑区：CodeMirror 6 挂在这里（见 js/editor/plain-editor.js）。
+             行号、当前行高亮、语法着色都由它自己管，所以这里不再有 linegutter -->
+        <div id="editor" class="plain-host"></div>
         <div id="wysiwyg" class="wysiwyg hidden" contenteditable="true" spellcheck="false"></div>
 
         <!-- 行首块手柄：放在编辑流之外，浏览器选不中、退格删不到。
