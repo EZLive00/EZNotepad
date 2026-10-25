@@ -150,6 +150,43 @@ await moveTo(p0.x, p0.y);
 await sleep(320);
 ok('鼠标移到段落上，行首手柄出现', await ev(`!document.getElementById('wHandle').classList.contains('hidden')`));
 
+/* ---------- 1.5 驻留：只要不换行，怎么挪都不该消失 ---------- */
+const paraRects = await ev(`(() => {
+  const ps = [...document.querySelectorAll('.w-block')].filter((n) => n.dataset.type === 'p');
+  return ps.slice(0, 2).map((b) => {
+    const r = b.getBoundingClientRect();
+    return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, cy: (r.top + r.bottom) / 2 };
+  });
+})()`);
+const handleTop = () => ev(`document.getElementById('wHandle').getBoundingClientRect().top`);
+const shown = () => ev(`!document.getElementById('wHandle').classList.contains('hidden')`);
+const topAfterFirst = await handleTop();
+
+/* a. 两段之间的空隙：既不属于上一块也不属于下一块 */
+const paraGapY = (paraRects[0].bottom + paraRects[1].top) / 2;
+await moveTo(paraRects[0].left + 120, paraGapY);
+await sleep(320);
+ok('鼠标停在两段之间的空隙，手柄没消失', await shown());
+ok('…而且还钉在原处（没有被挪到别的行）', Math.abs((await handleTop()) - topAfterFirst) < 2,
+  `${Math.round(await handleTop())} vs ${Math.round(topAfterFirst)}`);
+
+/* b. 块的左侧留白（手柄右边、正文左边这一条） */
+await moveTo(paraRects[0].left - 52, paraRects[0].cy);
+await sleep(320);
+ok('鼠标停在正文左侧的留白里，手柄没消失', await shown());
+
+/* c. 移出编辑区（去标题栏） */
+await moveTo(300, 8);
+await sleep(320);
+ok('鼠标离开编辑区，手柄仍留在最后那一行', await shown());
+
+/* d. 真的换到下一段，才跟着挪 */
+await moveTo(paraRects[1].left + 120, paraRects[1].cy);
+await sleep(320);
+const topAfterSecond = await handleTop();
+ok('鼠标换到下一段，手柄跟着挪过去', topAfterSecond > topAfterFirst + 5,
+  `${Math.round(topAfterSecond)} vs ${Math.round(topAfterFirst)}`);
+
 /* ---------- 2. 点 + 打开菜单 ---------- */
 ok('点击 + 弹出块菜单', await openMenu());
 const opened = await state();

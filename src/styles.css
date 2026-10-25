@@ -1022,13 +1022,17 @@ mark.rem { background: rgba(220, 60, 60, .32); border-radius: 2px; }
   width: 21px; height: 22px; padding: 0; flex: none;
   display: flex; align-items: center; justify-content: center;
   border: none; border-radius: var(--r-sm); background: transparent;
-  /* 曾经用 --fg-faint，浅色下对比不到 3:1，深色下更糊成一团 —— 手柄是
-     编辑区里唯一的入口，必须一眼看见，固定用次级前景色 */
-  color: var(--fg-soft); cursor: pointer;
+  /* 手柄是这个编辑器唯一的块级入口，常驻显示，颜色必须是正文级 ——
+     先试过 --fg-soft，六个点的抓手看着还是一层灰 */
+  color: var(--fg); cursor: pointer;
 }
 .wh-btn:hover { background: var(--bg-hover); color: var(--fg); }
 .wh-btn.open { background: var(--bg-hover); color: var(--accent); }
 .wh-btn .ico { width: 16px; height: 16px; }
+/* 抓手图标是六段「零长度线段」靠 stroke-linecap:round 画出来的点，
+   viewBox 24 缩到 16px 后 1.75 的线宽实际只剩 1.17px，六个点糊成一层浅灰。
+   加粗到 3 才有 2px 的实心点；加号是长线，不动 */
+.wh-btn.wh-grip .ico { stroke-width: 3; }
 
 /* ---- 块类型菜单 ---- */.w-bmenu {
   position: absolute; z-index: 60; min-width: 190px; padding: 6px;

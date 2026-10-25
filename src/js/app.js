@@ -334,8 +334,8 @@ function setMode(mode, opt = {}) {
   updateStatus();   // 切换文件/模式后格式徽标、行列数、草稿状态都要跟着变
   if (mode === 'preview') el.preview.scrollTop = t.scrollTop || 0;
   // 手柄只属于所见即所得：切到编辑/预览就收起来
-  if (mode === 'wysiwyg') refreshHandle();
-  else { hoverBlock = null; handleBusy = false; el.wHandle.classList.add('hidden'); closeBlockMenu(); }
+  if (mode === 'wysiwyg') { anchorBlock = null; refreshHandle(); }
+  else { closeBlockMenu(); hideHandle(); }
 }
 
 function updateModeMenu(kind, allowed) {
@@ -2101,9 +2101,12 @@ const BLOCK_INSERTS = [
 ];
 const SELF_INSERTING = new Set(['table', 'tablePrompt', 'image', 'link', 'hr']);
 
-let hoverBlock = null;
-let handleBlock = null;
-let handleBusy = false;      // 鼠标在手柄 / 菜单上，别自动收起
+/* 手柄锚在哪个块上。语义是「最后确定的那一行」而不是「鼠标此刻压着的行」：
+   鼠标滑到行间空隙、页边距、甚至移出编辑区，锚点都不动，手柄就钉在原地。
+   只有真的换到另一个块（或光标被键盘移走）才换锚点。 */
+let anchorBlock = null;
+let handleBlock = null;      // 当前画出手柄的那个块，由 placeHandle 写
+let pointerInside = false;   // 鼠标是否在编辑区里，决定 selectionchange 能不能抢锚点
 let handleTimer = 0;
 let bmMode = 'convert';
 
@@ -2128,8 +2131,13 @@ function placeHandle(block) {
   if (block.dataset.type === 'hr') return hideHandle();
   const host = el.editWrap.getBoundingClientRect();
   const r = block.getBoundingClientRect();
-  if (r.bottom < host.top + 4 || r.top > host.bottom - 4) return hideHandle();
+  /* 块滚出视野：只把元素藏起来，锚点留着 —— 滚回来还是它，不要重新按光标猜 */
+  if (r.bottom < host.top + 4 || r.top > host.bottom - 4) {
+    el.wHandle.classList.add('hidden');
+    return;
+  }
   handleBlock = block;
+  anchorBlock = block;              // placeHandle 是唯一真源，锚点跟它同步
   el.wHandle.classList.remove('hidden');
   // 贴着首行：块可能是多行，手柄只对齐第一行
   el.wHandle.style.top = Math.round(Math.max(2, r.top - host.top + 2)) + 'px';
@@ -2138,23 +2146,25 @@ function placeHandle(block) {
 
 function hideHandle() {
   if (blockMenuOpen()) return;      // 菜单还开着，手柄得留在原地当锚点
+  anchorBlock = null;
   handleBlock = null;
-  if (!handleBusy) el.wHandle.classList.add('hidden');
+  el.wHandle.classList.add('hidden');
 }
 
 function refreshHandle() {
   if (!isWysMode()) { hideHandle(); return; }
-  const target = hoverBlock || wys.currentBlock();
+  /* 锚点优先；还没有锚点（刚进所见即所得、鼠标没动过）时退回光标所在块 */
+  const target = anchorBlock && anchorBlock.isConnected ? anchorBlock : wys.currentBlock();
   if (target) placeHandle(target); else hideHandle();
 }
 
 function openBlockMenu(mode) {
-  if (!handleBlock) return;
+  if (!handleBlock || !handleBlock.isConnected) return;
   const box = el.wBlockMenu;
   // 同一个按钮再点一次 = 收起
   if (!box.classList.contains('hidden') && bmMode === mode) { closeBlockMenu(); return; }
   bmMode = mode;
-  handleBusy = true;
+  anchorBlock = handleBlock;        // 菜单锚在手柄上，锚点跟它对齐
   box.innerHTML = '';
   box.classList.remove('hidden');
 
@@ -2208,7 +2218,6 @@ function closeBlockMenu() {
   el.wBlockMenu.innerHTML = '';
   el.whAdd.classList.remove('open');
   el.whMenu.classList.remove('open');
-  handleBusy = false;
 }
 
 function bmRun(id) {
@@ -2230,50 +2239,48 @@ function bmRun(id) {
     commands[id]?.();
   }
   clearTimeout(handleTimer);
-  handleTimer = setTimeout(() => { hoverBlock = null; refreshHandle(); }, 0);
+  /* 操作可能换了块（插入新块 / 转换类型），锚点跟到操作后的光标处 */
+  handleTimer = setTimeout(() => {
+    anchorBlock = wys.currentBlock() || anchorBlock;
+    refreshHandle();
+  }, 0);
 }
 
 function setupBlockHandle() {
   if (!el.wHandle) return;
   el.wysiwyg.addEventListener('mousemove', (e) => {
     if (!isWysMode()) return;
+    pointerInside = true;
     /* 菜单开着时一律不响应：手柄和菜单之间有缝，鼠标从按钮挪到菜单必然
        经过编辑区，这里若继续跑就会当场把菜单收掉（用户根本来不及点）。
        关菜单只认「点编辑区别处」「Esc」「滚动」三条路。 */
     if (blockMenuOpen()) return;
     const b = e.target.closest ? e.target.closest('.w-block') : null;
-    if (b === hoverBlock) return;
-    hoverBlock = b;
-    clearTimeout(handleTimer);
+    /* 没压在任何块上（行间空隙、左右页边距、块内的 .w-text 之外）就不动锚点。
+       这是「只要不换行就不消失」的关键：以前这里会把 null 当成「离开」 */
+    if (!b || b === anchorBlock) return;
+    anchorBlock = b;
     refreshHandle();
   });
-  el.wysiwyg.addEventListener('mouseleave', () => {
-    if (blockMenuOpen()) return;
-    hoverBlock = null;
-    clearTimeout(handleTimer);
-    handleTimer = setTimeout(() => { if (!handleBusy) hideHandle(); }, 240);
-  });
+  el.wysiwyg.addEventListener('mouseenter', () => { pointerInside = true; });
+  /* 鼠标移出编辑区（去预览、去菜单、出窗口）也不收 —— 只是不再抢锚点 */
+  el.wysiwyg.addEventListener('mouseleave', () => { pointerInside = false; });
   /* 滚动会让菜单和它的块错位，这时关掉比让它悬在空中好 */
   el.wysiwyg.addEventListener('scroll', () => {
     if (blockMenuOpen()) closeBlockMenu();
-    if (!handleBusy) refreshHandle();
+    refreshHandle();
   }, { passive: true });
 
+  /* 键盘移动光标时才让锚点跟着走；鼠标在场时以鼠标压着的块为准 */
   document.addEventListener('selectionchange', () => {
-    if (hoverBlock || handleBusy || blockMenuOpen()) return;
+    if (!isWysMode() || blockMenuOpen()) return;
     clearTimeout(handleTimer);
-    handleTimer = setTimeout(refreshHandle, 0);
-  });
-
-  // 鼠标移进手柄 / 菜单不算「离开编辑区」
-  el.wHandle.addEventListener('mouseenter', () => { handleBusy = true; clearTimeout(handleTimer); });
-  el.wHandle.addEventListener('mouseleave', () => {
-    handleBusy = false;
-    clearTimeout(handleTimer);
-    if (blockMenuOpen()) return;      // 菜单开着，手柄别跟着消失
     handleTimer = setTimeout(() => {
-      if (el.wBlockMenu.classList.contains('hidden')) hideHandle();
-    }, 240);
+      if (pointerInside && anchorBlock && anchorBlock.isConnected) return;
+      const c = wys.currentBlock();
+      if (c) anchorBlock = c;
+      refreshHandle();
+    }, 0);
   });
 
   for (const b of [el.whAdd, el.whMenu]) b.addEventListener('mousedown', (e) => e.preventDefault());
