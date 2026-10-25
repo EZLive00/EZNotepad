@@ -245,6 +245,16 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
   border: none;
 }
 .tab:hover { background: var(--bg-hover); }
+/* 拖拽换位的两个状态：被拖的那颗变淡，落点用 2px 竖线提示。
+   只用 ::before —— ::after 已经给激活标签的下划线占用了 */
+.tab.dragging { opacity: .4; }
+.tab.drop-before::before,
+.tab.drop-after::before {
+  content: ""; position: absolute; top: 3px; bottom: 3px; width: 2px;
+  background: var(--accent); border-radius: 2px;
+}
+.tab.drop-before::before { left: -2px; }
+.tab.drop-after::before { left: auto; right: -2px; }
 /* 激活标签：白色实体「浮」在灰色画布上，往下和正文面接成一片 ——
    比原来的「浅灰底 + 内描边」更像一张卡片，也不会看起来像个输入框 */
 .tab.active {

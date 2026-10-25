@@ -554,6 +554,11 @@ export class WysiwygEditor {
   constructor(root, opts = {}) {
     this.root = root;
     this.onChange = opts.onChange || (() => {});
+    /* 剪贴板里是图片时交给外层落盘（wysiwyg 不碰磁盘，也不认识 Tauri）。
+       返回 Promise，完成后自己把图片插进来，所以这里只管转交。 */
+    this.onPasteImage = opts.onPasteImage || null;
+    /* Ctrl/⌘ + 点击链接：打开它。不按修饰键时仍然是「把光标放进去好改文字」 */
+    this.openLink = opts.openLink || null;
     this.silent = false;
     this.composing = false;
     this.history = [];
@@ -1813,6 +1818,15 @@ export class WysiwygEditor {
   /* ---------------- 粘贴 / 点击 ---------------- */
 
   handlePaste(e) {
+    // 先看剪贴板里有没有图片。截图后直接 Ctrl+V 是最常用的插图方式，
+    // 以前这里只读 text/plain，图片会被静默丢掉，用户完全不知道为什么没反应。
+    const files = [...((e.clipboardData && e.clipboardData.files) || [])];
+    const img = files.find((f) => f && /^image\//.test(f.type));
+    if (img && this.onPasteImage) {
+      e.preventDefault();
+      this.onPasteImage(img);
+      return;
+    }
     e.preventDefault();
     const text = (e.clipboardData || window.clipboardData).getData('text/plain');
     if (!text) return;
@@ -1846,6 +1860,13 @@ export class WysiwygEditor {
   handleClick(e) {
     const a = e.target.closest && e.target.closest('a');
     if (a) {
+      // Ctrl/⌘ + 点击 = 打开链接；直接点仍然是定位光标（否则想改链接文字就没法下手了）
+      const href = a.getAttribute('href') || '';
+      if ((e.ctrlKey || e.metaKey) && href && this.openLink) {
+        e.preventDefault();
+        this.openLink(href);
+        return;
+      }
       e.preventDefault();
       const r = document.createRange();
       r.selectNodeContents(a);

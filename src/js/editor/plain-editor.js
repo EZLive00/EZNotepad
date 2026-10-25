@@ -20,6 +20,7 @@ import {
   EditorState, EditorView, Compartment,
   lineNumbers, highlightActiveLine, highlightActiveLineGutter, highlightSpecialChars,
   drawSelection, dropCursor, keymap,
+  rectangularSelection, crosshairCursor,
   history, defaultKeymap, historyKeymap, indentWithTab,
   indentMore, indentLess, undo as cmUndo, redo as cmRedo, selectAll as cmSelectAll,
   syntaxHighlighting, indentOnInput, indentUnit, bracketMatching, foldGutter, foldKeymap,
@@ -87,9 +88,12 @@ export class PlainEditor {
       highlightActiveLine(),
       highlightSpecialChars(),
       history(),
-      foldGutter(),
       drawSelection(),
       dropCursor(),
+      /* Alt + 拖动 = 竖着选一列（改对齐的表格、批量加前缀时用得上）；
+         Alt 按住时光标变十字，提示这个模式存在 */
+      rectangularSelection(),
+      crosshairCursor(),
       indentOnInput(),
       indentUnit.of('    '),            // 默认是 2 空格，这里跟原来 textarea 的 Tab 宽度保持一致
       bracketMatching(),
@@ -99,6 +103,17 @@ export class PlainEditor {
       syntaxHighlighting(cmHighlight),
       this.langComp.of(this._langExt(this.langKey)),
       this.readOnlyComp.of(this._roExt(this.readOnly)),
+      /* 剪贴板里是图片：拦下来交给外层落盘，否则 CM6 会安静地什么都不做 */
+      EditorView.domEventHandlers({
+        paste: (e) => {
+          const files = [...((e.clipboardData && e.clipboardData.files) || [])];
+          const img = files.find((f) => f && /^image\//.test(f.type));
+          if (!img || !this.opts.onPasteImage) return false;
+          e.preventDefault();
+          this.opts.onPasteImage(img);
+          return true;
+        },
+      }),
       EditorView.updateListener.of((u) => {
         if (u.docChanged && !this.silent) this.opts.onChange?.();
         if (u.selectionSet || u.docChanged) this.opts.onCursor?.();

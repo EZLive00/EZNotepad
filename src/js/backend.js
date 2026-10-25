@@ -56,3 +56,10 @@ export async function pickImage() {
 /** 把图片复制到文档同目录的 assets/ 下，返回相对路径 */
 export const copyImageToAssets = (srcPath, docPath) =>
   invoke('copy_image_to_assets', { srcPath, docPath });
+
+/** 把内存里的图片字节写进 assets/（剪贴板截图、拖进来的 blob 走这条） */
+export const saveImageBytes = (docPath, bytes, ext) =>
+  invoke('save_image_bytes', { docPath, bytes: Array.from(bytes), ext });
+
+/** 路径是不是图片（拖拽进来的文件按这个分流：图片插进文档，其它当文档打开） */
+export const isImagePath = (p) => IMAGE_EXTS.includes(String(p).split('.').pop().toLowerCase());

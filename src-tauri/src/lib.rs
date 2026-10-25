@@ -260,6 +260,50 @@ fn copy_image_to_assets(src_path: String, doc_path: String) -> Result<String, St
     Ok(format!("assets/{file}"))
 }
 
+/// 把「字节形态」的图片（剪贴板截图、拖进来的 blob）写进 assets/，返回相对路径。
+/// 和 copy_image_to_assets 的区别：那边源是磁盘上的文件，这边源是内存里的字节，
+/// 所以名字由我们来起（img-<时间戳>），不沿用原文件名。
+#[tauri::command]
+fn save_image_bytes(doc_path: String, bytes: Vec<u8>, ext: Option<String>) -> Result<String, String> {
+    if bytes.is_empty() {
+        return Err("图片内容为空".into());
+    }
+    if bytes.len() > 64 * 1024 * 1024 {
+        return Err("图片超过 64 MB，挡住它比较好".into());
+    }
+    let doc = PathBuf::from(&doc_path);
+    let dir = doc
+        .parent()
+        .ok_or("文档路径无效")?
+        .join("assets");
+    fs::create_dir_all(&dir).map_err(|e| format!("创建 assets 目录失败：{e}"))?;
+
+    // 只认这几种扩展名，其余一律按 png 存（剪贴板里的图基本都是 png）
+    let ext = match ext.as_deref() {
+        Some("jpg") | Some("jpeg") => "jpg",
+        Some("gif") => "gif",
+        Some("webp") => "webp",
+        Some("bmp") => "bmp",
+        Some("svg") => "svg",
+        _ => "png",
+    };
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let mut name = format!("img-{stamp}.{ext}");
+    let mut i = 1;
+    while dir.join(&name).exists() {
+        name = format!("img-{stamp}-{i}.{ext}");
+        i += 1;
+        if i > 999 {
+            return Err("同名图片太多了，换个文件名吧".into());
+        }
+    }
+    fs::write(dir.join(&name), &bytes).map_err(|e| format!("写入图片失败：{e}"))?;
+    Ok(format!("assets/{name}"))
+}
+
 /// Windows 11：给无边框窗口套上系统自带的圆角。
 /// 走 DWM 原生属性，不需要把窗口设为 transparent —— 圆角之外由系统裁剪，
 /// 阴影、拖动缩放全都还是系统那一套。Win10 及更早版本不认识这个属性，
@@ -301,7 +345,8 @@ pub fn run() {
             file_stat,
             list_dir_recursive,
             write_binary_file,
-            copy_image_to_assets
+            copy_image_to_assets,
+            save_image_bytes
         ])
         .setup(|app| {
             #[cfg(target_os = "windows")]

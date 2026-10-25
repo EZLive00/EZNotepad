@@ -15,6 +15,7 @@ import { showShortcuts } from './shortcuts.js';
 import { exportPdf, printTab } from './pdf.js';
 import { iconHTML, setIcon } from './icons.js';
 import { createAppMenu } from './appmenu.js';
+import { freeUntitledName, moveById } from './taborder.js';
 import * as win from './win.js';
 
 const $ = (id) => document.getElementById(id);
@@ -67,6 +68,7 @@ const el = {
 const plain = new PlainEditor(el.editor, {
   onChange: () => onEditorInput(),
   onCursor: () => updateCursorPos(),
+  onPasteImage: (file) => insertImageFromFile(file),
 });
 
 const MODE_META = {
@@ -99,6 +101,8 @@ const wys = new WysiwygEditor(el.wysiwyg, {
       updateStatus();
     }
   },
+  onPasteImage: (file) => insertImageFromFile(file),
+  openLink: (href) => openExternal(href),
 });
 
 /* ---------------- 标签 ---------------- */
@@ -120,6 +124,8 @@ function refreshTitle() {
   titleTimer = setTimeout(() => win.setTitle(docTitle), 300);
 }
 
+let dragTabId = null;   // 正在被拖拽的标签 id（拖拽期间只存这一个）
+
 function renderTabs() {
   el.tabs.innerHTML = '';
   const act = activeTab();
@@ -127,6 +133,8 @@ function renderTabs() {
     const b = document.createElement('div');
     b.className = 'tab' + (act && t.id === act.id ? ' active' : '');
     b.title = t.path || t.name;
+    b.draggable = true;
+    b.dataset.id = String(t.id);
     const name = document.createElement('span');
     name.className = 'tab-name';
     name.textContent = t.name;
@@ -143,6 +151,44 @@ function renderTabs() {
     x.onclick = (e) => { e.stopPropagation(); closeTab(t.id); };
     b.appendChild(x);
     b.onclick = () => activate(t.id);
+    /* 中键关闭：几乎所有带标签的软件都认这个手势，缺了会一直误开新标签 */
+    b.addEventListener('auxclick', (e) => {
+      if (e.button !== 1) return;
+      e.preventDefault();
+      closeTab(t.id);
+    });
+    b.addEventListener('mousedown', (e) => { if (e.button === 1) e.preventDefault(); });
+
+    /* 拖拽换位。dragover 里按指针落在标签的左/右半边决定插到前面还是后面，
+       用一个 ::before/::after 的竖线提示落点 */
+    b.addEventListener('dragstart', (e) => {
+      dragTabId = t.id;
+      b.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      try { e.dataTransfer.setData('text/plain', String(t.id)); } catch {}
+    });
+    b.addEventListener('dragend', () => {
+      dragTabId = null;
+      el.tabs.querySelectorAll('.tab').forEach((n) => n.classList.remove('dragging', 'drop-before', 'drop-after'));
+    });
+    b.addEventListener('dragover', (e) => {
+      if (dragTabId == null || dragTabId === t.id) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      const r = b.getBoundingClientRect();
+      const after = e.clientX > r.left + r.width / 2;
+      b.classList.toggle('drop-after', after);
+      b.classList.toggle('drop-before', !after);
+    });
+    b.addEventListener('dragleave', () => b.classList.remove('drop-before', 'drop-after'));
+    b.addEventListener('drop', (e) => {
+      if (dragTabId == null) return;
+      e.preventDefault();
+      const r = b.getBoundingClientRect();
+      moveTab(dragTabId, t.id, e.clientX > r.left + r.width / 2);
+      dragTabId = null;
+    });
+
     b.oncontextmenu = (e) => {
       e.preventDefault();
       contextMenu(e.clientX, e.clientY, [
@@ -157,6 +203,14 @@ function renderTabs() {
     el.tabs.appendChild(b);
   }
   refreshTitle();
+}
+
+/** 把 fromId 这个标签挪到 toId 之前/之后（DOM 拖拽只改变顺序，不影响内容） */
+function moveTab(fromId, toId, after) {
+  const next = moveById(tabs, fromId, toId, after);
+  if (next === tabs) return;
+  tabs.splice(0, tabs.length, ...next);   // tabs 是导出的常量数组，只能原地改
+  renderTabs();
 }
 
 async function revealInFolder(p) {
@@ -487,7 +541,7 @@ async function closeTab(id) {
   }
   const wasActive = activeTab() && activeTab().id === id;
   removeTab(id);
-  if (!tabs.length) { newTab('未命名.md', ''); return; }
+  if (!tabs.length) { newTab(untitledName('md'), ''); return; }
   activate(wasActive ? activeTab().id : (activeTab() || tabs[tabs.length - 1]).id);
 }
 
@@ -668,8 +722,54 @@ async function imagePrompt() {
   }
 }
 
-/* ---------------- 新建文档：先选类型 ---------------- */
+/** 把相对路径的图片引用插到当前光标：所见即所得插 <img>，编辑模式插 ![](…) */
+function placeImageRef(rel) {
+  const t = activeTab();
+  if (!t) return;
+  if (t.mode === 'wysiwyg') wys.insertImage(rel, '');
+  else plain.insertText(`![](${rel})`);
+}
 
+/**
+ * 剪贴板截图 / 拖进来的图片文件 → 落盘到文档同目录 assets/ → 按当前模式插入引用。
+ * 未保存的文档没有「同目录」，直接提示先存盘：图片落成绝对路径换台机器就断。
+ */
+async function insertImageFromFile(file) {
+  const t = activeTab();
+  if (!t) return;
+  if (!t.path) { toast('请先保存文档，图片要放进它同目录的 assets/'); return; }
+  if (t.readonly) { toast('当前标签是只读的'); return; }
+  try {
+    const ext = (String(file.type || '').split('/')[1] || 'png').replace(/^jpeg$/, 'jpg');
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const rel = await be.saveImageBytes(t.path, bytes, ext);
+    // 截图这类没有文件名，alt 留空即可（Markdown 里就是 ![](assets/x.png)）
+    placeImageRef(rel);
+    toast('图片已存入 assets/');
+  } catch (e) {
+    toast('插入图片失败：' + e);
+  }
+}
+
+/** Ctrl/⌘+点击正文里的链接：外链交给系统浏览器，相对路径当文件打开 */
+async function openExternal(href) {
+  const u = String(href || '').trim();
+  if (!u) return;
+  if (/^(https?:|mailto:|tel:)/i.test(u)) {
+    try {
+      const { openUrl } = await import('../vendor/plugin-opener/dist-js/index.js');
+      await openUrl(u);
+    } catch { toast('无法打开链接'); }
+    return;
+  }
+  if (u.startsWith('#')) { toast('文档内锚点暂不支持跳转'); return; }
+  const t = activeTab();
+  const base = t && t.path ? be.dirName(t.path) : '';
+  const p = /^([a-zA-Z]:[\\/]|[\\/])/.test(u) ? u : `${base}/${u}`;
+  try { await openPath(p); } catch { toast('打不开：' + p); }
+}
+
+/* ---------------- 新建文档：先选类型 ---------------- */
 const NEW_TYPES = [
   { ext: 'md', name: 'Markdown', desc: '所见即所得写作' },
   { ext: 'txt', name: '纯文本', desc: '记事 / 日志' },
@@ -683,11 +783,16 @@ const NEW_TYPES = [
   { ext: 'sh', name: 'Shell 脚本' },
 ];
 
+/** 新建文档的名字：连开三个不该都叫「未命名.md」——重名时依次加序号 */
+function untitledName(ext) {
+  return freeUntitledName(tabs.map((t) => t.name), ext);
+}
+
 /** 建一个空文档。非 Markdown 的类型只会开放编辑 / 预览两种模式（普通编辑器）。 */
 function createNew(ext = 'md') {
   settings.lastNewExt = ext;
   saveSettings();
-  newTab(`未命名.${ext}`, '');
+  newTab(untitledName(ext), '');
 }
 
 /** 新建入口：类型网格，点一下直接开，回车默认上次用过的类型 */
@@ -878,6 +983,21 @@ function replaceAll() {
 
 function closeFind() { el.findbar.classList.add('hidden'); }
 
+/** 拖进来的图片文件：走「复制到 assets」那条路，和「插入图片」对话框一致 */
+async function insertImageFromPath(p) {
+  const t = activeTab();
+  if (!t) return false;
+  if (!t.path) { toast('请先保存文档，图片要放进它同目录的 assets/'); return true; }
+  try {
+    const rel = await be.copyImageToAssets(p, t.path);
+    placeImageRef(rel);
+    toast('图片已存入 assets/');
+  } catch (e) {
+    toast('插入图片失败：' + e);
+  }
+  return true;
+}
+
 /* ---------------- 拖拽 / 分栏 ---------------- */
 function setupDrop() {
   document.addEventListener('dragover', (e) => { e.preventDefault(); });
@@ -887,7 +1007,11 @@ function setupDrop() {
   import('../vendor/api/webview.js').then(({ getCurrentWebview }) => {
     getCurrentWebview().onDragDropEvent(async (ev) => {
       if (ev.payload && ev.payload.type === 'drop') {
-        for (const p of ev.payload.paths) await openPath(p);
+        // 图片拖进窗口的意图是「插到文档里」，不是「打开它」——按扩展名分流
+        for (const p of ev.payload.paths) {
+          if (be.isImagePath(p)) await insertImageFromPath(p);
+          else await openPath(p);
+        }
       }
     });
   }).catch(() => {});
