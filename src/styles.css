@@ -599,10 +599,10 @@ body[data-theme="dark"] .am-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 25
 .outline-item.h3 { padding-left: 30px; font-size: 12px; }
 .outline-item.h4 { padding-left: 42px; font-size: 12px; }
 .outline-item.h5, .outline-item.h6 { padding-left: 54px; font-size: 12px; }
-/* 当前章节：跟随滚动点亮。和 hover 用同一道左沿竖条，但常驻，
-   这样「我在哪」和「鼠标在哪」用的是同一种视觉语言 */
+/* 当前章节：跟随滚动点亮。用主题色的浅底而不是 hover 的灰底——
+   灰底看起来像「鼠标停在这儿」，浅蓝底才像「你正在读这一节」 */
 .outline-item.active {
-  color: var(--fg); background: var(--bg-hover); border-left-color: var(--accent);
+  color: var(--accent); background: var(--accent-soft); border-left-color: var(--accent);
   font-weight: 600;
 }
 .outline-empty { padding: 16px; font-size: 12px; color: var(--fg-faint); line-height: 1.7; }

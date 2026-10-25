@@ -86,4 +86,17 @@ await boot({ theme: 'dark', side: 'files', folder: ROOT });
 await ev(sleep(600));
 await shot('app-files-dark.png');
 
+// 5) 大纲页：滚到中段，当前章节自动点亮
+await boot({ theme: 'light', side: 'outline', folder: ROOT });
+const headings = Array.from({ length: 8 }, (_, i) => `## 第 ${i + 1} 章\n\n这一章的内容。\n\n再写一段，把页面撑长一点，滚动才有意义。\n`).join('\n');
+await ev(`window.__snp.newTab('长文档.md', ${JSON.stringify(headings)}, null)`);
+await ev(`window.__snp.commands.modeWysiwyg()`);
+await ev(sleep(400));
+await ev(`(() => {
+  const w = document.getElementById('wysiwyg');
+  w.scrollTop = Math.round(w.scrollHeight * 0.55);
+})()`);
+await ev(sleep(500));
+await shot('app-outline-light.png');
+
 ws.close();
