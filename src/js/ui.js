@@ -1,6 +1,7 @@
 // ============================================================
 // ui.js —— 通用 UI 组件：提示条、确认框、通用对话框
 // ============================================================
+import { iconHTML } from './icons.js';
 
 export function toast(msg, ms = 2200) {
   const wrap = document.getElementById('toasts');
@@ -60,13 +61,43 @@ export function dialog({ title = '提示', body = '', buttons = [{ id: 'ok', lab
 export const confirmBox = (title, text, okLabel = '确定', cancelLabel = '取消') =>
   dialog({ title, body: text, buttons: [{ id: 'ok', label: okLabel, primary: true }, { id: 'cancel', label: cancelLabel }] }).then((r) => r === 'ok');
 
-/** 模拟原生菜单：基于定位的浮层菜单 */
+/**
+ * 模拟原生菜单：基于定位的浮层菜单
+ *
+ * items 里每一项可以是：
+ *   { label, shortcut?, icon?, action, disabled?, danger? }   普通项
+ *   { head: '分组名' }                                         分组小标题
+ *   { sep: true }                                              分隔线
+ *   { row: [...], lead?: '插入行', danger?: true }              一行多个药丸
+ *     药丸项在普通项基础上多两个字段：checked?（点亮当前项）、iconOnly（只画图标）
+ *
+ * 定位一律以实测尺寸为准，四边都夹在窗口内；菜单比窗口还高时限高并允许滚动。
+ */
 export function contextMenu(x, y, items) {
   document.querySelectorAll('.ctx-menu').forEach((m) => m.remove());
   const menu = document.createElement('div');
   menu.className = 'ctx-menu';
-  menu.style.left = Math.min(x, window.innerWidth - 220) + 'px';
-  menu.style.top = Math.min(y, window.innerHeight - items.length * 30 - 20) + 'px';
+  menu.setAttribute('role', 'menu');
+
+  const run = (it) => {
+    close();
+    if (typeof it.action === 'function') it.action();
+  };
+
+  const mkBtn = (cls, it) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = cls + (it.danger ? ' danger' : '');
+    if (it.disabled) b.disabled = true;
+    // 菜单项文字少，光看「删行」猜不出上下文，靠 title 补一句完整说法
+    b.title = (it.hint || it.label) + (it.shortcut ? `　${it.shortcut}` : '');
+    if (it.label) b.setAttribute('aria-label', it.label);
+    // 保住编辑区焦点与选区，否则「加粗」这类命令会找不到目标
+    b.addEventListener('mousedown', (e) => e.preventDefault());
+    b.onclick = () => run(it);
+    return b;
+  };
+
   items.forEach((it) => {
     if (it.sep) {
       const s = document.createElement('div');
@@ -74,25 +105,104 @@ export function contextMenu(x, y, items) {
       menu.appendChild(s);
       return;
     }
-    const b = document.createElement('button');
-    b.textContent = it.label;
-    if (it.disabled) b.disabled = true;
-    // 保住编辑区焦点与选区，否则「加粗」这类命令会找不到目标
-    b.addEventListener('mousedown', (e) => e.preventDefault());
+
+    // 分组小标题：和主菜单共用一套样式，长菜单才有「段落感」
+    if (it.head) {
+      const h = document.createElement('div');
+      h.className = 'am-head';
+      h.textContent = it.head;
+      menu.appendChild(h);
+      return;
+    }
+
+    // 一行多个：成组的动作（加粗/斜体/…、增删行列、对齐）横排，
+    // 比竖着排省掉一大半高度，也不会让人以为它们各管一摊
+    if (Array.isArray(it.row)) {
+      const wrap = document.createElement('div');
+      wrap.className = 'ctx-row';
+      if (it.lead) {
+        const l = document.createElement('span');
+        l.className = 'ctx-lead';
+        l.textContent = it.lead;
+        wrap.appendChild(l);
+      }
+      it.row.forEach((p) => {
+        if (p.hidden && p.hidden()) return;
+        // danger 可以标在整行上（「删除」一组的三个动作都危险），也可以标在单个药丸上
+        const b = mkBtn('ctx-pill' + (it.danger || p.danger ? ' danger' : ''), p);
+        if (p.checked && p.checked()) b.classList.add('on');
+        b.innerHTML = (p.icon ? iconHTML(p.icon) : '') + (p.iconOnly ? '' : `<span>${p.label}</span>`);
+        wrap.appendChild(b);
+      });
+      if (wrap.children.length > (it.lead ? 1 : 0)) menu.appendChild(wrap);
+      return;
+    }
+
+    const b = mkBtn('ctx-item', it);
+    b.innerHTML = '<span class="ctx-label"></span>';
+    b.firstChild.textContent = it.label;
     if (it.shortcut) {
       const k = document.createElement('span');
       k.className = 'ctx-kbd';
       k.textContent = it.shortcut;
       b.appendChild(k);
     }
-    b.onclick = () => { menu.remove(); it.action && it.action(); };
     menu.appendChild(b);
   });
+
+  /* 先隐形挂上去量真实尺寸，再决定放哪儿。
+     以前用 items.length * 30 估高度，表格菜单 23 项估成 710px，
+     小窗口下 top 直接被算成负数 —— 菜单上半截跑到窗口外面去了 */
+  menu.style.visibility = 'hidden';
   document.body.appendChild(menu);
-  const off = (e) => {
-    if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener('mousedown', off); }
+
+  const pad = 8;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const w = menu.offsetWidth;
+  let h = menu.offsetHeight;
+
+  // 菜单比窗口还高：限高 + 滚动，否则无论怎么夹都有一截看不见
+  const maxH = vh - pad * 2;
+  if (h > maxH) {
+    menu.style.maxHeight = maxH + 'px';
+    h = maxH;
+  }
+
+  let left = Math.min(x, vw - pad - w);
+  if (left < pad) left = pad;
+
+  let top = y;
+  if (top + h > vh - pad) top = y - h;      // 下方放不下 → 翻到鼠标上方
+  if (top < pad) top = pad;                 // 上方也放不下 → 贴顶
+
+  menu.style.left = Math.round(left) + 'px';
+  menu.style.top = Math.round(top) + 'px';
+  menu.style.visibility = '';
+
+  function close() {
+    if (!menu.isConnected) return;
+    menu.remove();
+    document.removeEventListener('mousedown', off, true);
+    document.removeEventListener('keydown', onKey, true);
+    window.removeEventListener('scroll', close, true);
+    window.removeEventListener('resize', close);
+    window.removeEventListener('blur', close);
+  }
+
+  const off = (e) => { if (!menu.contains(e.target)) close(); };
+  const onKey = (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
   };
-  setTimeout(() => document.addEventListener('mousedown', off), 0);
+
+  setTimeout(() => {
+    document.addEventListener('mousedown', off, true);
+    document.addEventListener('keydown', onKey, true);
+    // 滚动 / 缩放窗口都会让菜单和它指向的那个格子错位，直接收掉
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    window.addEventListener('blur', close);
+  }, 0);
 }
 
 export const fmtBytes = (n) => {

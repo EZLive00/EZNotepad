@@ -1913,6 +1913,15 @@ const headingLevel = () => {
    用不上的灰项，所以统一用这个判断把它们藏起来（不是变灰，是根本不出现） */
 const noTable = () => !inTable();
 
+/** 光标所在表格列的当前对齐方式：'' | 'left' | 'center' | 'right'；不在表格里返回 null。
+    右键菜单的对齐药丸拿它点亮当前值，不用点进去试 */
+const colAlign = () => {
+  if (!canWys() || !wys.isInTable()) return null;
+  const info = wys.tableInfo();
+  if (!info) return null;
+  return ((info.table.dataset.aligns || '').split(',')[info.colIdx] || '').trim();
+};
+
 const MENU_TREE = [
   {
     label: '文件',
@@ -2368,48 +2377,67 @@ function bindEvents() {
     if (e.target.closest('.wysiwyg')) {
       e.preventDefault();
       const tbl = wys.isInTable();
+      /* 这一套是所见即所得里唯一的右键入口，原来 23 项一口气竖排、7 条分隔线，
+         表格里那一截足有 11 项，找「右对齐」得从上往下数。现在按「文字 / 段落 /
+         表格」分组，同族动作横排一行：高度从约 870px 降到约 340px，
+         当前标题级别和本列对齐方式还能点亮，不用点进去试 */
       const items = [
-        { label: '加粗', shortcut: 'Ctrl+B', action: () => commands.bold() },
-        { label: '斜体', shortcut: 'Ctrl+I', action: () => commands.italic() },
-        { label: '删除线', shortcut: 'Ctrl+Shift+X', action: () => commands.strike() },
-        { label: '行内代码', action: () => commands.inlineCode() },
-        { label: '插入链接…', shortcut: 'Ctrl+K', action: () => commands.link() },
-        { sep: true },
-        { label: '正文', shortcut: 'Ctrl+Alt+0', action: () => commands.body() },
-        { label: '一级标题', shortcut: 'Ctrl+Alt+1', action: () => commands.h1() },
-        { label: '无序列表', shortcut: 'Ctrl+Shift+8', action: () => commands.ul() },
-        { label: '有序列表', shortcut: 'Ctrl+Shift+7', action: () => commands.ol() },
-        { label: '任务列表', shortcut: 'Ctrl+Shift+9', action: () => commands.taskList() },
-        { sep: true },
+        { head: '文字' },
+        { row: [
+          { label: '加粗', hint: '加粗', icon: 'bold', iconOnly: true, shortcut: 'Ctrl+B', action: () => commands.bold() },
+          { label: '斜体', hint: '斜体', icon: 'italic', iconOnly: true, shortcut: 'Ctrl+I', action: () => commands.italic() },
+          { label: '删除线', hint: '删除线', icon: 'strikethrough', iconOnly: true, shortcut: 'Ctrl+Shift+X', action: () => commands.strike() },
+          { label: '行内代码', hint: '行内代码', icon: 'code', iconOnly: true, action: () => commands.inlineCode() },
+          { label: '插入链接', hint: '插入链接', icon: 'link', iconOnly: true, shortcut: 'Ctrl+K', action: () => commands.link() },
+        ] },
+
+        { head: '段落' },
+        { row: [
+          { label: '正文', checked: () => headingLevel() === 0, action: () => commands.body() },
+          { label: 'H1', checked: () => headingLevel() === 1, action: () => commands.h1() },
+          { label: 'H2', checked: () => headingLevel() === 2, action: () => commands.h2() },
+          { label: 'H3', checked: () => headingLevel() === 3, action: () => commands.h3() },
+        ] },
+        { row: [
+          { label: '无序列表', hint: '无序列表', icon: 'list', iconOnly: true, shortcut: 'Ctrl+Shift+8', action: () => commands.ul() },
+          { label: '有序列表', hint: '有序列表', icon: 'list-ordered', iconOnly: true, shortcut: 'Ctrl+Shift+7', action: () => commands.ol() },
+          { label: '任务列表', hint: '任务列表', icon: 'list-todo', iconOnly: true, shortcut: 'Ctrl+Shift+9', action: () => commands.taskList() },
+          { label: '引用', hint: '引用块', icon: 'text-quote', iconOnly: true, shortcut: 'Ctrl+Shift+Q', action: () => commands.quote() },
+        ] },
       ];
       if (tbl) {
         items.push(
-          { label: '上方插入行', action: () => commands.tableRowAbove() },
-          { label: '下方插入行', action: () => commands.tableRowBelow() },
-          { label: '左侧插入列', action: () => commands.tableColBefore() },
-          { label: '右侧插入列', action: () => commands.tableColAfter() },
-          { sep: true },
-          /* 四个方向的对齐都留在这里：主菜单里已经不重复列表格操作了，
+          { head: '表格' },
+          { lead: '插入', row: [
+            { label: '上方行', action: () => commands.tableRowAbove() },
+            { label: '下方行', action: () => commands.tableRowBelow() },
+            { label: '左侧列', action: () => commands.tableColBefore() },
+            { label: '右侧列', action: () => commands.tableColAfter() },
+          ] },
+          /* 四个方向的对齐都留在这里：主菜单已不再重复列表格操作，
              右键是唯一入口，少一个就等于功能丢了 */
-          { label: '本列左对齐', action: () => commands.tableAlignLeft() },
-          { label: '本列居中', action: () => commands.tableAlignCenter() },
-          { label: '本列右对齐', action: () => commands.tableAlignRight() },
-          { label: '本列取消对齐', action: () => commands.tableAlignNone() },
-          { sep: true },
-          { label: '删除本行', action: () => commands.tableDelRow() },
-          { label: '删除本列', action: () => commands.tableDelCol() },
-          { label: '删除表格', action: () => commands.tableDel() },
-          { sep: true },
+          { lead: '对齐', row: [
+            { label: '左', hint: '本列左对齐', checked: () => colAlign() === 'left', action: () => commands.tableAlignLeft() },
+            { label: '居中', hint: '本列居中', checked: () => colAlign() === 'center', action: () => commands.tableAlignCenter() },
+            { label: '右', hint: '本列右对齐', checked: () => colAlign() === 'right', action: () => commands.tableAlignRight() },
+            { label: '默认', hint: '本列取消对齐', checked: () => colAlign() === '', action: () => commands.tableAlignNone() },
+          ] },
+          { lead: '删除', danger: true, row: [
+            { label: '本行', hint: '删除光标所在行', action: () => commands.tableDelRow() },
+            { label: '本列', hint: '删除光标所在列', action: () => commands.tableDelCol() },
+            { label: '整表', hint: '删除整个表格', action: () => commands.tableDel() },
+          ] },
         );
       } else {
         items.push(
-          { label: '插入表格', shortcut: 'Ctrl+Shift+T', action: () => commands.table() },
+          { head: '插入' },
+          { label: '表格 3 × 3', shortcut: 'Ctrl+Shift+T', action: () => commands.table() },
           { label: '分割线', action: () => commands.hr() },
-          { sep: true },
         );
       }
       items.push(
-        { label: '全选', action: () => document.execCommand('selectAll') },
+        { sep: true },
+        { label: '全选', shortcut: 'Ctrl+A', action: () => document.execCommand('selectAll') },
         { label: '查找替换…', shortcut: 'Ctrl+F', action: () => openFind(false) },
       );
       contextMenu(e.clientX, e.clientY, items);

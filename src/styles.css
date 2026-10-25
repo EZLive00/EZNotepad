@@ -992,21 +992,51 @@ mark.rem { background: rgba(220, 60, 60, .32); border-radius: 2px; }
 .kbd-table td:first-child { width: 42%; color: var(--fg); font-family: var(--font-mono); font-size: 11.5px; }
 
 /* ============ 右键菜单 ============ */
+/* 表格里那一套（增删行列、对齐、删除）全压在右键上，项目多，
+   所以这里必须有分组标题和横排小按钮，否则就是一条 23 项的竖长条 */
 .ctx-menu {
-  position: fixed; z-index: 400; min-width: 190px; padding: 6px;
+  position: fixed; z-index: 400; min-width: 232px; padding: 6px;
   background: var(--bg-float); border-radius: var(--r-md);
   box-shadow: var(--shadow); animation: pop .12s var(--ease);
+  overflow-y: auto; overscroll-behavior: contain;
 }
-.ctx-menu button {
+.ctx-item {
   display: flex; justify-content: space-between; align-items: center; gap: 20px;
   width: 100%; border: none; background: transparent; text-align: left;
   padding: 6px 10px; border-radius: var(--r-sm); font-size: 12.5px; color: var(--fg);
+  white-space: nowrap;
 }
-.ctx-menu button:hover:not(:disabled) { background: var(--accent); color: #fff; }
-.ctx-menu button:hover:not(:disabled) .ctx-kbd { color: rgba(255,255,255,.8); }
-.ctx-menu button:disabled { opacity: .4; cursor: default; }
+.ctx-item:hover:not(:disabled) { background: var(--accent); color: #fff; }
+.ctx-item:hover:not(:disabled) .ctx-kbd { color: rgba(255,255,255,.8); }
+.ctx-item.danger:hover:not(:disabled) { background: #e5484d; color: #fff; }
+.ctx-item:disabled { opacity: .4; cursor: default; }
 .ctx-kbd { font-family: var(--font-mono); font-size: 10.5px; color: var(--fg-faint); }
 .ctx-sep { height: 1px; background: var(--line); margin: 5px 8px; }
+
+/* 一行多个：左侧 lead 说明这一行管什么，后面是同一族动作 */
+.ctx-row { display: flex; align-items: center; gap: 4px; padding: 2px 7px 4px; }
+.ctx-row + .ctx-row { padding-top: 0; }
+.ctx-lead {
+  flex: none; width: 34px; padding-right: 3px;
+  font-size: 11px; color: var(--fg-faint); white-space: nowrap;
+}
+.ctx-pill {
+  flex: 1; min-width: 0; height: 26px; padding: 0 3px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+  border: none; background: var(--bg-soft); border-radius: 7px;
+  /* 极淡内描边：深色下药丸和菜单底只差一两级亮度，没这条线就看不出是按钮 */
+  box-shadow: inset 0 0 0 1px var(--line);
+  font-size: 11.5px; color: var(--fg-soft); white-space: nowrap;
+  transition: background .12s var(--ease), color .12s var(--ease);
+}
+.ctx-pill .ico { width: 15px; height: 15px; flex: none; }
+.ctx-pill:hover:not(:disabled) { background: var(--bg-hover); color: var(--fg); }
+.ctx-pill.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.ctx-pill.on:hover:not(:disabled) { background: var(--accent-soft); filter: brightness(.97); }
+.ctx-pill.danger { color: var(--fg-soft); }
+.ctx-pill.danger:hover:not(:disabled) { background: #e5484d; color: #fff; }
+.ctx-pill:disabled { opacity: .34; }
+body[data-theme="dark"] .ctx-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .07); }
 
 /* ============ WYSIWYG 块级编辑视图 ============ */
 /* 注意：.wysiwyg 的 padding / 字体 / 行高统一写在「工作区」那一节，
