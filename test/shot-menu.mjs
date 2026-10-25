@@ -7,6 +7,7 @@ const OUT = path.resolve('node_modules/.tmp');
 fs.mkdirSync(OUT, { recursive: true });
 
 const cases = [
+  { tag: 'file-light', theme: 'light', menu: 'file' },
   { tag: 'format-light', theme: 'light', menu: 'format' },
   { tag: 'format-dark', theme: 'dark', menu: 'format' },
   { tag: 'insert-light', theme: 'light', menu: 'insert' },

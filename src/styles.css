@@ -300,6 +300,8 @@ body[data-theme="dark"] .tab.active {
 /* 浮层一律去描边：轮廓交给 --shadow 里的「0 0 0 1px」，比真 border 轻一半 */
 .appmenu {
   position: fixed; z-index: 500; min-width: 252px; padding: 6px;
+  /* 上限：最近打开里可能有很长的文件名 + 很长的目录名，不能让它把菜单撑成一整条 */
+  max-width: 420px;
   background: var(--bg-float);
   border-radius: 12px;
   box-shadow: var(--shadow);
@@ -344,10 +346,12 @@ body[data-theme="dark"] .tab.active {
 }
 .am-slot .ico { width: 16px; height: 16px; stroke-width: 1.7; }
 .am-slot .ico.check { width: 13px; height: 13px; stroke-width: 2.4; }
-.am-item .am-label { flex: 1; padding-left: 7px; }
+.am-item .am-label { flex: 1; padding-left: 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .am-item .am-kbd {
   font-size: 10.5px; color: var(--fg-faint); padding-left: 26px;
   letter-spacing: .03em; font-variant-numeric: tabular-nums;
+  /* 「最近打开」用它显示所在目录：文件名很长时也不能把菜单撑宽 */
+  flex: none; max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .am-item.hot { background: var(--accent); color: var(--accent-fg); }
 .am-item.hot .am-slot, .am-item.hot .am-kbd { color: var(--accent-fg); }

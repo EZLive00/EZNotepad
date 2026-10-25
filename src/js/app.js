@@ -98,6 +98,7 @@ const wys = new WysiwygEditor(el.wysiwyg, {
       refreshStats();
       updateOutline();
       scheduleDraft();
+      scheduleAutoSave();
       updateStatus();
     }
   },
@@ -475,13 +476,71 @@ async function restoreDraft() {
   return true;
 }
 
+/* ---------------- 自动保存 / 外部改动 ---------------- */
+/* 自动保存只针对「已经存在于磁盘上的文件」：未命名文档没有路径，
+   静默写盘会让人在文件管理里凭空多出一堆东西，所以仍然要手动保存。 */
+let autoSaveTimer = 0;
+function scheduleAutoSave() {
+  if (!settings.autoSave) return;
+  clearTimeout(autoSaveTimer);
+  autoSaveTimer = setTimeout(() => {
+    const t = activeTab();
+    if (t && t.path && isDirty(t)) saveTab(t, false, { silent: true });
+  }, 1200);
+}
+
+/* 窗口重新获得焦点时比对一次修改时间。别的编辑器（或生成脚本）改了同一个文件，
+   我们再保存就会把对方的改动默默抹掉——这是记事本类软件最伤数据的一种 bug。 */
+let extBusy = false;
+async function checkExternalChange() {
+  const t = activeTab();
+  if (!t || !t.path || t.mtime == null || extBusy) return;
+  extBusy = true;
+  try {
+    const m = await be.fileMtime(t.path);
+    if (m == null || m === t.mtime) return;
+    if (!isDirty(t)) {
+      await reloadTab(t, m);
+      toast('文件已在磁盘上更新，已重新载入');
+      return;
+    }
+    const reload = await confirmBox(
+      '文件已在外部修改',
+      `<b>${t.name}</b> 在打开之后被其他程序改过。<br><br>重新载入会丢掉你这里的修改。`,
+      '重新载入', '保留我的'
+    );
+    if (!reload) return;
+    await reloadTab(t, m);
+    toast('已重新载入');
+  } catch {
+    /* 读不到就算了：真正的失败留给保存时报错，别在这里弹窗打扰 */
+  } finally {
+    extBusy = false;
+  }
+}
+
+/** 把磁盘上的最新内容装回标签（不动 mtime 就让下一次检查又弹一遍） */
+async function reloadTab(t, mtime) {
+  const r = await be.readText(t.path);
+  t.mtime = mtime;
+  t.encoding = r.encoding;
+  t.eol = r.eol;
+  t.bom = r.bom;
+  t.content = r.content;
+  t.savedContent = r.content;
+  if (activeTab() && activeTab().id === t.id) setContent(r.content);
+  else updateStatus();
+}
+
 /* ---------------- 文件操作 ---------------- */
 export async function openPath(path) {
   const existing = tabs.find((t) => t.path === path);
   if (existing) { activate(existing.id); return; }
   try {
     const r = await be.readText(path);
-    newTab(r.name, r.content, r.path, { encoding: r.encoding, bom: r.bom, eol: r.eol });
+    // 先拿到修改时间再建标签：否则「刚打开就被自己当成外部改动」
+    const mtime = await be.fileMtime(path).catch(() => null);
+    newTab(r.name, r.content, r.path, { encoding: r.encoding, bom: r.bom, eol: r.eol, mtime });
     addRecent(path);
   } catch (e) {
     dialog({ title: '无法打开', body: String(e) });
@@ -493,8 +552,9 @@ async function openFileDialog() {
   if (p) openPath(p);
 }
 
-async function saveTab(t = activeTab(), saveAs = false) {
+async function saveTab(t = activeTab(), saveAs = false, opts = {}) {
   if (!t) return false;
+  const silent = !!opts.silent;
   if (!t.path || saveAs) {
     const p = await be.pickSavePath(t.path || t.name);
     if (!p) return false;
@@ -507,12 +567,26 @@ async function saveTab(t = activeTab(), saveAs = false) {
   try {
     t.content = readEditor(t);
     const content = t.eol === 'CRLF' ? t.content.replace(/\r?\n/g, '\r\n') : t.content.replace(/\r\n?/g, '\n');
+    /* 覆盖之前先对一眼修改时间：文件被别的程序改过还硬写，就是把对方的改动抹掉。
+       自动保存（silent）同样要问——它更不该悄悄覆盖别人的东西 */
+    if (!saveAs && t.mtime != null) {
+      const cur = await be.fileMtime(t.path).catch(() => null);
+      if (cur != null && cur !== t.mtime) {
+        const overwrite = await confirmBox(
+          '文件已被其他程序修改',
+          `磁盘上的 <b>${t.name}</b> 在打开之后被改过，保存会覆盖那些改动。`,
+          '仍然覆盖', '取消'
+        );
+        if (!overwrite) return false;
+      }
+    }
     await be.saveText({ path: t.path, content, encoding: t.encoding, bom: t.bom });
     t.savedContent = t.content;
+    t.mtime = await be.fileMtime(t.path).catch(() => t.mtime);
     LS.del('draft');
     addRecent(t.path);
     updateStatus();
-    toast(`已保存 ${t.name}`);
+    if (!silent) toast(`已保存 ${t.name}`);
     return true;
   } catch (e) {
     dialog({ title: '保存失败', body: String(e) });
@@ -551,6 +625,20 @@ function addRecent(path) {
   LS.set('recent', list.slice(0, 12));
 }
 
+/** 文件菜单里的「最近打开」：文件名当主文字，所在目录当右侧小字（只留末级目录名） */
+function recentMenuItems() {
+  const list = LS.get('recent', []).filter(Boolean).slice(0, 6);
+  if (!list.length) return [];
+  const items = list.map((p) => ({
+    label: be.baseName(p) || p,
+    hint: p,
+    kbd: (be.dirName(p).split(/[\\/]/).pop() || '').slice(0, 16),
+    action: () => openPath(p),
+  }));
+  items.push({ id: 'clearRecent', label: '清除记录' });
+  return [{ sep: true }, { head: '最近打开' }, ...items];
+}
+
 /* ---------------- 内容读写 ---------------- */
 /** 从当前视图读回内容（保证不丢编辑） */
 function readEditor(t) {
@@ -581,6 +669,7 @@ function onEditorInput() {
   refreshStats();
   updateOutline();
   scheduleDraft();
+  scheduleAutoSave();
   updateStatus();
 }
 
@@ -1318,6 +1407,12 @@ const commands = {
   merge: () => merge.open(),
   wordCount: showWordCount,
   reload: reloadCurrent,
+  autoSave: () => {
+    settings.autoSave = !settings.autoSave;
+    saveSettings();
+    toast(settings.autoSave ? '自动保存已开启：改动停下约 1 秒就写盘' : '自动保存已关闭');
+  },
+  clearRecent: () => { LS.del('recent'); toast('已清除最近记录'); },
   shortcuts: showShortcuts,
   about: showAbout,
   encoding: changeEncoding,
@@ -1360,12 +1455,15 @@ const noTable = () => !inTable();
 const MENU_TREE = [
   {
     label: '文件',
-    items: [
+    /* 每次展开都重算：最近打开是动态的，固定数组会永远停在打开那一刻的样子 */
+    items: () => [
       { id: 'new', label: '新建', kbd: 'Ctrl+N' },
       { id: 'open', label: '打开…', kbd: 'Ctrl+O' },
+      ...recentMenuItems(),
       { sep: true },
       { id: 'save', label: '保存', kbd: 'Ctrl+S', disabled: () => !hasTab() },
       { id: 'saveAs', label: '另存为…', kbd: 'Ctrl+Shift+S', disabled: () => !hasTab() },
+      { id: 'autoSave', label: '自动保存（约 1 秒）', checked: () => !!settings.autoSave },
       { sep: true },
       { id: 'exportPdf', label: '导出 PDF / 打印…', kbd: 'Ctrl+P', disabled: () => !hasTab() },
       { id: 'reload', label: '重新载入', disabled: () => !hasTab() },
@@ -2000,6 +2098,8 @@ async function boot() {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') { persistCurrentView(); saveDraft(); }
   });
+  /* 回到窗口时看一眼文件有没有被别的程序改过（延迟一点点，避开切换动画期间的 IO 抖动） */
+  window.addEventListener('focus', () => setTimeout(checkExternalChange, 250));
 }
 
 /* 供子面板回调 */

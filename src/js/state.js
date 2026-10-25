@@ -22,6 +22,7 @@ export const settings = Object.assign(
     showWinTitle: true,   // 标题栏中间是否显示文件名
     lastMode: {},
     lastNewExt: 'md',     // 「新建」上次选的扩展名
+    autoSave: false,      // 自动保存（只对已存在于磁盘上的文件生效）
   },
   LS.get('settings', {})
 );
@@ -44,6 +45,7 @@ export function createTab(name = '未命名.md', content = '', path = null) {
     caret: 0,
     readonly: false,
     external: false,            // 是否为外部生成（对比结果 / 合并结果）
+    mtime: null,                // 上次读/写这个文件时的修改时间（毫秒），用于发现外部改动
   };
 }
 

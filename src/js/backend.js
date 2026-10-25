@@ -63,3 +63,6 @@ export const saveImageBytes = (docPath, bytes, ext) =>
 
 /** 路径是不是图片（拖拽进来的文件按这个分流：图片插进文档，其它当文档打开） */
 export const isImagePath = (p) => IMAGE_EXTS.includes(String(p).split('.').pop().toLowerCase());
+
+/** 文件修改时间（毫秒）；文件不存在时为 null。用于发现外部改动 */
+export const fileMtime = (path) => invoke('file_mtime', { path });

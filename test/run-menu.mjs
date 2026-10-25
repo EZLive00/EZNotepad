@@ -79,6 +79,24 @@ try {
   ok('点击派发命令 id', (await ev(`JSON.stringify(window.__calls || [])`)) === '["bold"]');
   ok('点完菜单关闭', (await ev(`document.querySelector('.appmenu').hidden`)) === true);
 
+  // ---- 文件菜单：最近打开是动态渲染的 ----
+  await ev(`window.__calls = []; window.__itemsCalls = 0`);
+  await openMenu(0);
+  const heads = await ev(`[...document.querySelectorAll('.appmenu .am-head')].map(h => h.textContent).join('|')`);
+  ok('文件菜单有「最近打开」分组', heads.includes('最近打开'), heads);
+  ok('最近打开 3 条', (await ev(`document.querySelectorAll('.appmenu .am-item[title]').length`)) === 3);
+  const w = await ev(`Math.round(document.querySelector('.appmenu').getBoundingClientRect().width)`);
+  ok('长文件名不会把菜单撑宽', w <= 420, w + 'px');
+
+  await ev(`[...document.querySelectorAll('.appmenu .am-item')].find(b => b.textContent.includes('读书笔记')).click()`);
+  ok('点击最近项走 action', (await ev(`JSON.stringify(window.__calls)`)) === '["recent:读书笔记.md"]');
+  ok('点完菜单关闭（文件）', await ev(`document.querySelector('.appmenu').hidden`));
+
+  const before = await ev(`window.__itemsCalls`);
+  await openMenu(0);
+  const after = await ev(`window.__itemsCalls`);
+  ok('items 函数每次展开都重新求值', after === before + 1, `${before} → ${after}`);
+
   // ---- 插入菜单：不在表格里 ----
   await openMenu(3);
   ok('插入菜单 5 项', (await count('.am-item')) === 5);

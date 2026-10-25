@@ -53,19 +53,25 @@ export function createAppMenu({ bar, menus, run }) {
       b.className = cls;
       b.setAttribute('role', 'menuitem');
       if (it.disabled && it.disabled()) b.disabled = true;
+      if (it.hint) b.title = it.hint;
       // 阻止默认行为以保住编辑区焦点（否则「粘贴」「撤销」会找不到目标）
       b.addEventListener('mousedown', (e) => e.preventDefault());
       b.addEventListener('mousemove', () => hot(rows.indexOf(b)));
       b.addEventListener('click', () => {
         if (b.disabled) return;
         close();
-        run(it.id);
+        // action 用于「最近打开」这种条目：它们不是固定命令，而是带着一个路径的闭包
+        if (typeof it.action === 'function') it.action();
+        else run(it.id);
       });
       rows.push(b);
       return b;
     }
 
-    menu.items.forEach((it) => {
+    // items 可以是函数：最近打开这类内容每次展开都可能不一样，
+    // 固定数组只能渲染出「打开时的样子」
+    const items = typeof menu.items === 'function' ? menu.items() : menu.items;
+    items.forEach((it) => {
       if (it.hidden && it.hidden()) return;
 
       // 分组小标题：不参与键盘导航，只负责把长菜单切成几段
@@ -128,7 +134,7 @@ export function createAppMenu({ bar, menus, run }) {
 
       const lab = document.createElement('span');
       lab.className = 'am-label';
-      lab.textContent = it.label;
+      lab.textContent = typeof it.label === 'function' ? it.label() : it.label;
 
       b.append(slot, lab);
       if (it.kbd) {

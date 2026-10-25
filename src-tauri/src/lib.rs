@@ -260,6 +260,22 @@ fn copy_image_to_assets(src_path: String, doc_path: String) -> Result<String, St
     Ok(format!("assets/{file}"))
 }
 
+/// 文件的修改时间（毫秒）。用来发现「磁盘上的文件被别人改过了」：
+/// 打开/保存时记下，窗口重新获得焦点时再读一次，不一致就提示。
+/// 文件不存在返回 None（不是错误——用户可能刚把它删了）。
+#[tauri::command]
+fn file_mtime(path: String) -> Result<Option<u64>, String> {
+    match fs::metadata(&path) {
+        Ok(m) => Ok(m
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_millis() as u64)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("读取文件信息失败：{e}")),
+    }
+}
+
 /// 把「字节形态」的图片（剪贴板截图、拖进来的 blob）写进 assets/，返回相对路径。
 /// 和 copy_image_to_assets 的区别：那边源是磁盘上的文件，这边源是内存里的字节，
 /// 所以名字由我们来起（img-<时间戳>），不沿用原文件名。
@@ -346,7 +362,8 @@ pub fn run() {
             list_dir_recursive,
             write_binary_file,
             copy_image_to_assets,
-            save_image_bytes
+            save_image_bytes,
+            file_mtime
         ])
         .setup(|app| {
             #[cfg(target_os = "windows")]
