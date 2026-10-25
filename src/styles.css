@@ -18,11 +18,14 @@
 
 /* ---- 色彩分层：靠「底色深浅」分区域，而不是靠一堆 1px 边框 ----
    bg       = 画布层：标题栏、标签行、大纲栏、状态栏（比内容面暗半格）
-   bg-panel = 内容面：编辑区、预览区、浮层（最亮）
-   bg-soft  = 内容面之上的浅坑：代码块、hover 底 */
+   bg-panel = 内容面：编辑区、预览区
+   bg-soft  = 内容面之上的浅坑：代码块、hover 底
+   bg-float = 浮层：菜单、弹窗、查找条。深色下必须比内容面「亮」一档，
+              否则浮层会和编辑区糊成一片，只剩一圈阴影在硬撑 */
 body[data-theme="light"] {
   --bg: #f3f4f6;
   --bg-panel: #ffffff;
+  --bg-float: #ffffff;
   --bg-soft: #f4f5f7;
   --bg-hover: #eaecf0;
   --bg-active: #e1e4e9;
@@ -42,7 +45,7 @@ body[data-theme="light"] {
   --chg-bg: #fff5dc;
   --chg-fg: #8a5a00;
   /* 浮层轮廓用「0 0 0 1px」模拟，比真 border 更轻，且不会占布局 */
-  --shadow: 0 0 0 1px rgba(17, 24, 39, .06), 0 12px 36px rgba(17, 24, 39, .13), 0 2px 8px rgba(17, 24, 39, .05);
+  --shadow: 0 0 0 1px rgba(17, 24, 39, .07), 0 10px 28px rgba(17, 24, 39, .16), 0 3px 8px rgba(17, 24, 39, .07);
   --scroll: #cdd2da;
 
   /* 语法着色：预览（highlight.js 的 .tok-*）和编辑器（CM6 的 HighlightStyle）
@@ -64,6 +67,7 @@ body[data-theme="dark"] {
   color-scheme: dark;
   --bg: #0f1013;
   --bg-panel: #191b20;
+  --bg-float: #282c34;
   --bg-soft: #202329;
   --bg-hover: #272a31;
   --bg-active: #2f333b;
@@ -285,29 +289,80 @@ body[data-theme="dark"] .tab.active {
 /* ================= 应用菜单（自绘，替代原生菜单栏） ================= */
 /* 浮层一律去描边：轮廓交给 --shadow 里的「0 0 0 1px」，比真 border 轻一半 */
 .appmenu {
-  position: fixed; z-index: 500; min-width: 240px; padding: 6px;
-  background: var(--bg-panel);
+  position: fixed; z-index: 500; min-width: 252px; padding: 6px;
+  background: var(--bg-float);
   border-radius: 12px;
   box-shadow: var(--shadow);
   animation: pop .12s var(--ease);
   user-select: none;
+  /* 菜单再长也不会顶出窗口，超出就在面板内部滚 */
+  max-height: calc(100vh - 76px); overflow-y: auto; overscroll-behavior: contain;
 }
+.appmenu::-webkit-scrollbar { width: 8px; }
+
+/* 分组小标题：把十几项切成「标题级别 / 文字 / 段落」几段，
+   比一串分隔线好扫——分隔线只告诉你"断了"，小标题告诉你"这是哪一组" */
+.am-head {
+  /* 上间距给足（12px ≈ 一个 item 的一半高），分组才立得起来；
+     不加分隔线，靠空白分段比靠线干净 */
+  padding: 12px 10px 5px;
+  font-size: 10.5px; font-weight: 600; letter-spacing: .05em;
+  color: var(--fg-faint);
+}
+.am-head:first-child { padding-top: 7px; }
+.am-note {
+  padding: 6px 10px 2px; margin-top: 2px;
+  font-size: 11px; line-height: 1.6; color: var(--fg-faint);
+}
+
 .am-item {
-  display: flex; align-items: center; gap: 2px;
-  width: 100%; height: 29px; padding: 0 8px;
+  display: flex; align-items: center;
+  width: 100%; height: 30px; padding: 0 9px 0 7px;
   border: none; background: transparent; border-radius: 7px;
   font-size: 12.5px; color: var(--fg); text-align: left;
   white-space: nowrap;
 }
-.am-item .am-check { width: 16px; flex: none; display: grid; place-items: center; color: currentColor; }
-.am-item .am-check .ico { width: 12px; height: 12px; stroke-width: 2.6; }
-.am-item .am-label { flex: 1; }
-.am-item .am-kbd { font-size: 11px; color: var(--fg-faint); padding-left: 20px; letter-spacing: .02em; }
+/* 左侧 16px 槽同时放「勾」和「图标」：两者共用一个位置，
+   所以同一份菜单里带图标的行和带勾的行，文字左边缘永远对齐 */
+.am-slot {
+  width: 18px; flex: none; display: grid; place-items: center;
+  /* 图标用 fg-soft 而不是 fg-faint：菜单里图标是「扫读路标」，
+     比快捷键提示更需要看得见 */
+  color: var(--fg-soft);
+}
+.am-slot .ico { width: 16px; height: 16px; stroke-width: 1.7; }
+.am-slot .ico.check { width: 13px; height: 13px; stroke-width: 2.4; }
+.am-item .am-label { flex: 1; padding-left: 7px; }
+.am-item .am-kbd {
+  font-size: 10.5px; color: var(--fg-faint); padding-left: 26px;
+  letter-spacing: .03em; font-variant-numeric: tabular-nums;
+}
 .am-item.hot { background: var(--accent); color: var(--accent-fg); }
-.am-item.hot .am-kbd { color: var(--accent-fg); opacity: .72; }
-.am-item:disabled { opacity: .38; cursor: default; }
+.am-item.hot .am-slot, .am-item.hot .am-kbd { color: var(--accent-fg); }
+.am-item.hot .am-kbd { opacity: .7; }
+.am-item:disabled { opacity: .34; cursor: default; }
 .am-item:disabled.hot { background: transparent; color: var(--fg); }
-.am-sep { height: 1px; background: var(--line); margin: 5px 7px; }
+.am-item:disabled.hot .am-slot { color: var(--fg-faint); }
+.am-sep { height: 1px; background: var(--line); margin: 5px 8px; }
+
+/* 一行多个的「单选组」：标题级别这种互斥、平级、常切换的项，
+   横排比竖排省 3 行，而且一眼看出是同一组里的单选题 */
+.am-row { display: flex; gap: 4px; padding: 2px 7px 5px; }
+.am-pill {
+  flex: 1; min-width: 0; height: 27px; padding: 0 4px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+  border: none; background: var(--bg-soft); border-radius: 7px;
+  /* 极淡的内描边：深色下 pill 和菜单底只差一两级亮度，没有这条线就看不出是按钮 */
+  box-shadow: inset 0 0 0 1px var(--line);
+  font-size: 11.5px; color: var(--fg-soft); white-space: nowrap;
+  transition: background .12s var(--ease), color .12s var(--ease);
+}
+.am-pill .ico { width: 14px; height: 14px; }
+.am-pill:hover, .am-pill.hot { background: var(--bg-hover); color: var(--fg); }
+.am-pill.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.am-pill.on:hover, .am-pill.on.hot { background: var(--accent-soft); filter: brightness(.97); }
+.am-pill:disabled { opacity: .34; }
+body[data-theme="dark"] .am-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .07); }
 
 .tb {
   height: 26px; padding: 0 8px; border-radius: var(--r-sm);
@@ -341,7 +396,7 @@ body[data-theme="dark"] .tab.active {
   /* 工具行现在贴右边缘，面板改成右对齐展开，否则 250px 宽的菜单会溢出窗口 */
   position: absolute; top: 32px; right: 0; left: auto; z-index: 50;
   min-width: 250px; padding: 6px;
-  background: var(--bg-panel); border-radius: var(--r-md);
+  background: var(--bg-float); border-radius: var(--r-md);
   box-shadow: var(--shadow); display: none;
 }
 .menu-panel.open { display: block; animation: pop .14s var(--ease); }
@@ -526,7 +581,7 @@ body[data-theme="dark"] .tab.active {
 .findbar {
   position: absolute; top: 8px; right: 16px; z-index: 20;
   display: flex; align-items: center; gap: 5px; flex-wrap: wrap;
-  background: var(--bg-panel);
+  background: var(--bg-float);
   border-radius: var(--r-md); box-shadow: var(--shadow); padding: 8px 10px;
   max-width: calc(100% - 32px);
 }
@@ -581,7 +636,7 @@ body[data-theme="dark"] .tab.active {
 @keyframes fade { from { opacity: 0; } }
 .sheet {
   margin: 26px; flex: 1; max-width: 1600px;
-  background: var(--bg-panel); border-radius: var(--r-lg); box-shadow: var(--shadow);
+  background: var(--bg-float); border-radius: var(--r-lg); box-shadow: var(--shadow);
   display: flex; flex-direction: column; overflow: hidden;
 }
 .sheet-page { display: flex; flex-direction: column; flex: 1; min-height: 0; }
@@ -674,7 +729,7 @@ mark.rem { background: rgba(220, 60, 60, .32); border-radius: 2px; }
 /* ================= 模态框 ================= */
 .modal {
   margin: auto; width: 620px; max-width: calc(100vw - 60px); max-height: calc(100vh - 80px);
-  background: var(--bg-panel); border-radius: var(--r-lg); box-shadow: var(--shadow);
+  background: var(--bg-float); border-radius: var(--r-lg); box-shadow: var(--shadow);
   display: flex; flex-direction: column; animation: pop .16s var(--ease);
 }
 .modal.small { width: 460px; }
@@ -730,7 +785,7 @@ mark.rem { background: rgba(220, 60, 60, .32); border-radius: 2px; }
 /* ============ 右键菜单 ============ */
 .ctx-menu {
   position: fixed; z-index: 400; min-width: 190px; padding: 6px;
-  background: var(--bg-panel); border-radius: var(--r-md);
+  background: var(--bg-float); border-radius: var(--r-md);
   box-shadow: var(--shadow); animation: pop .12s var(--ease);
 }
 .ctx-menu button {
@@ -766,7 +821,7 @@ mark.rem { background: rgba(220, 60, 60, .32); border-radius: 2px; }
 
 /* ---- 块类型菜单 ---- */.w-bmenu {
   position: absolute; z-index: 60; min-width: 190px; padding: 6px;
-  background: var(--bg-panel); border-radius: var(--r-md);
+  background: var(--bg-float); border-radius: var(--r-md);
   box-shadow: var(--shadow);
 }
 .w-bmenu.hidden { display: none; }

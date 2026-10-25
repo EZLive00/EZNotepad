@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>菜单预览（仅截图用）</title>
+<link rel="stylesheet" href="/src/styles.css" />
+</head>
+<body data-theme="light">
+<script type="module">
+// 复用 src/index.html 的真实骨架（含图标精灵图），只去掉 app.js，
+// 灌入假数据后把菜单挂到真实的菜单栏位置上 —— 截出来的就是应用里的实际观感。
+const q = new URLSearchParams(location.search);
+const src = await (await fetch('/src/index.html')).text();
+const doc = new DOMParser().parseFromString(src, 'text/html');
+doc.body.querySelectorAll('script').forEach((s) => s.remove());
+document.body.insertAdjacentHTML('afterbegin', doc.body.innerHTML);
+document.body.dataset.theme = q.get('theme') || 'light';
+
+const $ = (s) => document.querySelector(s);
+
+$('#winTitle').textContent = '产品设计备忘.md';
+$('#tabs').innerHTML = `
+  <div class="tab active"><span class="tab-name">产品设计备忘.md</span><span class="tab-dot"></span>
+    <button class="tab-close"><svg class="ico"><use href="#i-x" /></svg></button></div>
+  <div class="tab"><span class="tab-name">读书笔记.md</span>
+    <button class="tab-close"><svg class="ico"><use href="#i-x" /></svg></button></div>`;
+$('#outlineList').innerHTML = [
+  ['h1', '产品设计备忘'], ['h2', '一、现状'], ['h3', '交互层面的问题'],
+  ['h2', '二、改造方向'], ['h3', '视觉语言'],
+].map(([lv, t]) => `<button class="outline-item ${lv}">${t}</button>`).join('');
+
+$('#editor').classList.add('hidden');
+$('#wysiwyg').classList.remove('hidden');
+$('#wysiwyg').innerHTML = `
+<div class="w-block w-h" data-type="h2"><div class="w-text">一、现状</div></div>
+<div class="w-block w-p"><div class="w-text">现在的界面足够克制，功能也都找得到。问题在于层级太平均：标题、正文、辅助信息在明度上挤在一起。</div></div>
+<div class="w-block w-li" data-list="ul"><span class="w-li-marker">•</span><div class="w-text">标题栏 40px + 标签行 40px</div></div>
+<div class="w-block w-li" data-list="ul"><span class="w-li-marker">•</span><div class="w-text">状态栏 26px 又一条边框</div></div>`;
+
+const { createAppMenu } = await import('/src/js/appmenu.js');
+
+// 和 app.js 的 MENU_TREE 同构，只保留格式 / 插入两个菜单用于看排版
+const MENUS = [
+  {
+    label: '格式',
+    items: [
+      { head: '标题级别' },
+      { row: [
+        { id: 'body', label: '正文', kbd: 'Ctrl+Alt+0' },
+        { id: 'h1', label: 'H1', kbd: 'Ctrl+Alt+1' },
+        { id: 'h2', label: 'H2', kbd: 'Ctrl+Alt+2', checked: () => true },
+        { id: 'h3', label: 'H3', kbd: 'Ctrl+Alt+3' },
+      ] },
+      { head: '文字' },
+      { id: 'bold', label: '加粗', icon: 'bold', kbd: 'Ctrl+B' },
+      { id: 'italic', label: '斜体', icon: 'italic', kbd: 'Ctrl+I' },
+      { id: 'strike', label: '删除线', icon: 'strikethrough', kbd: 'Ctrl+Shift+X' },
+      { id: 'inlineCode', label: '行内代码', icon: 'code' },
+      { head: '段落' },
+      { id: 'ul', label: '无序列表', icon: 'list', kbd: 'Ctrl+Shift+8' },
+      { id: 'ol', label: '有序列表', icon: 'list-ordered', kbd: 'Ctrl+Shift+7' },
+      { id: 'taskList', label: '任务列表', icon: 'list-todo', kbd: 'Ctrl+Shift+9' },
+      { id: 'quote', label: '引用', icon: 'text-quote', kbd: 'Ctrl+Shift+Q' },
+      { id: 'codeBlock', label: '代码块', icon: 'square-code', kbd: 'Ctrl+Shift+K' },
+      { id: 'indentIn', label: '增加缩进', icon: 'indent-increase', kbd: 'Tab' },
+      { id: 'indentOut', label: '减少缩进', icon: 'indent-decrease', kbd: 'Shift+Tab' },
+    ],
+  },
+  {
+    label: '插入',
+    items: [
+      { id: 'link', label: '链接…', icon: 'link', kbd: 'Ctrl+K' },
+      { id: 'image', label: '图片…', icon: 'image' },
+      { sep: true },
+      { id: 'table', label: '表格 3 × 3', icon: 'table', kbd: 'Ctrl+Shift+T' },
+      { id: 'tablePrompt', label: '表格（自定大小）…', icon: 'table' },
+      { id: 'hr', label: '分割线', icon: 'minus' },
+      // 光标在表格里时才出现的一句提示（测试里靠 window.__inTable 切换）
+      { note: '光标在表格内右键，可增删行列、调整对齐', hidden: () => !window.__inTable },
+    ],
+  },
+];
+
+// 菜单栏上补齐其他几个按钮，看起来才像真的
+const bar = $('#menubar');
+createAppMenu({ bar, menus: MENUS, run: (id) => { (window.__calls ||= []).push(id); } });
+['文件', '编辑'].forEach((label, i) => {
+  const b = document.createElement('button');
+  b.className = 'am-btn';
+  b.textContent = label;
+  bar.insertBefore(b, bar.children[i]);
+});
+['视图', '工具', '帮助'].forEach((label) => {
+  const b = document.createElement('button');
+  b.className = 'am-btn';
+  b.textContent = label;
+  bar.appendChild(b);
+});
+
+const which = q.get('menu') || 'format';
+[...bar.querySelectorAll('.am-btn')].find((b) => b.textContent === (which === 'format' ? '格式' : '插入')).click();
+
+window.__ready = 1;
+window.__run = () => ({ ok: true });
+</script>
+</body>
+</html>

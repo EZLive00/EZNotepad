@@ -5,7 +5,7 @@
 // ============================================================
 import { iconHTML } from './icons.js';
 
-const CHECK = iconHTML('check');
+const CHECK = iconHTML('check', 'check');
 
 /**
  * @param {object} opt
@@ -45,35 +45,15 @@ export function createAppMenu({ bar, menus, run }) {
   function render(menu) {
     panel.innerHTML = '';
     rows = [];
-    menu.items.forEach((it) => {
-      if (it.sep) {
-        const s = document.createElement('div');
-        s.className = 'am-sep';
-        panel.appendChild(s);
-        rows.push(null);
-        return;
-      }
+
+    /** 统一造一个「可点、可键盘走」的按钮 */
+    function makeBtn(cls, it) {
       const b = document.createElement('button');
       b.type = 'button';
-      b.className = 'am-item';
+      b.className = cls;
       b.setAttribute('role', 'menuitem');
       if (it.disabled && it.disabled()) b.disabled = true;
-
-      const chk = document.createElement('span');
-      chk.className = 'am-check';
-      if (it.checked && it.checked()) chk.innerHTML = CHECK;
-
-      const lab = document.createElement('span');
-      lab.className = 'am-label';
-      lab.textContent = it.label;
-
-      b.append(chk, lab);
-      if (it.kbd) {
-        const k = document.createElement('span');
-        k.className = 'am-kbd';
-        k.textContent = it.kbd;
-        b.appendChild(k);
-      }
+      // 阻止默认行为以保住编辑区焦点（否则「粘贴」「撤销」会找不到目标）
       b.addEventListener('mousedown', (e) => e.preventDefault());
       b.addEventListener('mousemove', () => hot(rows.indexOf(b)));
       b.addEventListener('click', () => {
@@ -81,8 +61,83 @@ export function createAppMenu({ bar, menus, run }) {
         close();
         run(it.id);
       });
-      panel.appendChild(b);
       rows.push(b);
+      return b;
+    }
+
+    menu.items.forEach((it) => {
+      if (it.hidden && it.hidden()) return;
+
+      // 分组小标题：不参与键盘导航，只负责把长菜单切成几段
+      if (it.head) {
+        const h = document.createElement('div');
+        h.className = 'am-head';
+        h.textContent = it.head;
+        panel.appendChild(h);
+        return;
+      }
+
+      if (it.sep) {
+        const s = document.createElement('div');
+        s.className = 'am-sep';
+        panel.appendChild(s);
+        return;
+      }
+
+      // 说明性小字：比把整片菜单变灰好——灰只会让人以为「坏了」，
+      // 一句话能说清为什么现在不能用、去哪儿用
+      if (it.note) {
+        const n = document.createElement('div');
+        n.className = 'am-note';
+        n.textContent = it.note;
+        panel.appendChild(n);
+        return;
+      }
+
+      // 一行多个：标题级别这种「互斥且平级」的选项，横排比竖排少占 3 行，
+      // 而且一眼就能看出它们是同一组里的单选题
+      if (Array.isArray(it.row)) {
+        const wrap = document.createElement('div');
+        wrap.className = 'am-row';
+        it.row.forEach((p) => {
+          if (p.hidden && p.hidden()) return;
+          const b = makeBtn('am-pill', p);
+          if (p.checked && p.checked()) b.classList.add('on');
+          b.innerHTML = (p.icon ? iconHTML(p.icon) : '') + `<span>${p.label}</span>`;
+          b.title = (p.hint || p.label) + (p.kbd ? `　${p.kbd}` : '');
+          wrap.appendChild(b);
+        });
+        if (wrap.children.length) {
+          // makeBtn 已经把按钮记进 rows 了，但这里按 DOM 顺序重排一次，
+          // 否则键盘上下走的顺序和眼睛看到的顺序对不上
+          const start = rows.length - wrap.children.length;
+          rows.splice(start, wrap.children.length, ...wrap.children);
+          panel.appendChild(wrap);
+        }
+        return;
+      }
+
+      const b = makeBtn('am-item', it);
+
+      // 左侧 16px 槽：有勾显示勾，没勾显示图标 —— 两者共用一个位置，
+      // 所以带图标的项和带勾的项左边永远对得齐
+      const slot = document.createElement('span');
+      slot.className = 'am-slot';
+      if (it.checked && it.checked()) slot.innerHTML = CHECK;
+      else if (it.icon) slot.innerHTML = iconHTML(it.icon);
+
+      const lab = document.createElement('span');
+      lab.className = 'am-label';
+      lab.textContent = it.label;
+
+      b.append(slot, lab);
+      if (it.kbd) {
+        const k = document.createElement('span');
+        k.className = 'am-kbd';
+        k.textContent = it.kbd;
+        b.appendChild(k);
+      }
+      panel.appendChild(b);
     });
   }
 

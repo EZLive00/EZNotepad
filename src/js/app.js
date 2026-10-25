@@ -1216,6 +1216,23 @@ const canWys = () => !!(activeTab() && activeTab().mode === 'wysiwyg');
 const inTable = () => canWys() && wys.isInTable();
 const wysOnly = () => !canWys();
 
+/** 光标所在块的标题级别：0=正文，1~3=标题；
+ *  光标在列表 / 引用 / 代码块 / 表格里时返回 -2（既不是正文也不是标题，四个都不点亮）；
+ *  不在所见即所得模式返回 -1 */
+const headingLevel = () => {
+  if (!canWys()) return -1;
+  const b = wys.currentBlock();
+  if (!b) return 0;
+  if (b.classList.contains('w-h')) {
+    return parseInt(String(b.dataset.type || 'h1').replace('h', ''), 10) || 1;
+  }
+  return b.dataset.type === 'p' ? 0 : -2;
+};
+
+/* 表格命令只在光标进了表格之后才需要 —— 全塞进菜单会让它常年长着一截
+   用不上的灰项，所以统一用这个判断把它们藏起来（不是变灰，是根本不出现） */
+const noTable = () => !inTable();
+
 const MENU_TREE = [
   {
     label: '文件',
@@ -1253,42 +1270,48 @@ const MENU_TREE = [
   {
     label: '格式',
     items: [
-      { id: 'body', label: '正文', kbd: 'Ctrl+Alt+0', disabled: wysOnly },
-      { id: 'h1', label: '一级标题', kbd: 'Ctrl+Alt+1', disabled: wysOnly },
-      { id: 'h2', label: '二级标题', kbd: 'Ctrl+Alt+2', disabled: wysOnly },
-      { id: 'h3', label: '三级标题', kbd: 'Ctrl+Alt+3', disabled: wysOnly },
+      /* 四级别是互斥的单选题，横排一行：比竖着占 4 行省地方，
+         而且当前级别一目了然（这是竖向文字菜单做不到的） */
+      { head: '标题级别' },
+      { row: [
+        { id: 'body', label: '正文', hint: '正文（取消标题）', kbd: 'Ctrl+Alt+0', disabled: wysOnly, checked: () => headingLevel() === 0 },
+        { id: 'h1', label: 'H1', hint: '一级标题', kbd: 'Ctrl+Alt+1', disabled: wysOnly, checked: () => headingLevel() === 1 },
+        { id: 'h2', label: 'H2', hint: '二级标题', kbd: 'Ctrl+Alt+2', disabled: wysOnly, checked: () => headingLevel() === 2 },
+        { id: 'h3', label: 'H3', hint: '三级标题', kbd: 'Ctrl+Alt+3', disabled: wysOnly, checked: () => headingLevel() === 3 },
+      ] },
+      { note: '标题与列表只在所见即所得模式下可用，Ctrl + 1 切换', hidden: () => canWys() },
+
+      { head: '文字' },
+      { id: 'bold', label: '加粗', icon: 'bold', kbd: 'Ctrl+B', disabled: () => !hasTab() },
+      { id: 'italic', label: '斜体', icon: 'italic', kbd: 'Ctrl+I', disabled: () => !hasTab() },
+      { id: 'strike', label: '删除线', icon: 'strikethrough', kbd: 'Ctrl+Shift+X', disabled: () => !hasTab() },
+      { id: 'inlineCode', label: '行内代码', icon: 'code', disabled: () => !hasTab() },
+
+      { head: '段落' },
+      { id: 'ul', label: '无序列表', icon: 'list', kbd: 'Ctrl+Shift+8', disabled: wysOnly },
+      { id: 'ol', label: '有序列表', icon: 'list-ordered', kbd: 'Ctrl+Shift+7', disabled: wysOnly },
+      { id: 'taskList', label: '任务列表', icon: 'list-todo', kbd: 'Ctrl+Shift+9', disabled: wysOnly },
+      { id: 'quote', label: '引用', icon: 'text-quote', kbd: 'Ctrl+Shift+Q', disabled: wysOnly },
+      { id: 'codeBlock', label: '代码块', icon: 'square-code', kbd: 'Ctrl+Shift+K', disabled: wysOnly },
+      { id: 'indentIn', label: '增加缩进', icon: 'indent-increase', kbd: 'Tab', disabled: wysOnly },
+      { id: 'indentOut', label: '减少缩进', icon: 'indent-decrease', kbd: 'Shift+Tab', disabled: wysOnly },
+    ],
+  },
+  {
+    /* 「加东西」和「改样子」本来就是两件事，混在一个菜单里 38 项谁都得找半天。
+       拆出去之后：格式 15 项、插入 6 项，各自一屏看完 */
+    label: '插入',
+    items: [
+      { id: 'link', label: '链接…', icon: 'link', kbd: 'Ctrl+K', disabled: wysOnly },
+      { id: 'image', label: '图片…', icon: 'image', disabled: wysOnly },
       { sep: true },
-      { id: 'bold', label: '加粗', kbd: 'Ctrl+B', disabled: () => !hasTab() },
-      { id: 'italic', label: '斜体', kbd: 'Ctrl+I', disabled: () => !hasTab() },
-      { id: 'strike', label: '删除线', kbd: 'Ctrl+Shift+X', disabled: () => !hasTab() },
-      { id: 'inlineCode', label: '行内代码', disabled: () => !hasTab() },
-      { id: 'link', label: '插入链接…', kbd: 'Ctrl+K', disabled: wysOnly },
-      { id: 'image', label: '插入图片…', disabled: wysOnly },
-      { sep: true },
-      { id: 'ul', label: '无序列表', kbd: 'Ctrl+Shift+8', disabled: wysOnly },
-      { id: 'ol', label: '有序列表', kbd: 'Ctrl+Shift+7', disabled: wysOnly },
-      { id: 'taskList', label: '任务列表', kbd: 'Ctrl+Shift+9', disabled: wysOnly },
-      { id: 'indentIn', label: '增加缩进', kbd: 'Tab', disabled: wysOnly },
-      { id: 'indentOut', label: '减少缩进', kbd: 'Shift+Tab', disabled: wysOnly },
-      { sep: true },
-      { id: 'quote', label: '引用', kbd: 'Ctrl+Shift+Q', disabled: wysOnly },
-      { id: 'codeBlock', label: '代码块', kbd: 'Ctrl+Shift+K', disabled: wysOnly },
-      { id: 'hr', label: '分割线', disabled: wysOnly },
-      { sep: true },
-      { id: 'table', label: '插入表格', kbd: 'Ctrl+Shift+T', disabled: wysOnly },
-      { id: 'tablePrompt', label: '插入表格（自定大小）…', disabled: wysOnly },
-      { id: 'tableRowAbove', label: '光标行上方插入一行', disabled: () => !inTable() },
-      { id: 'tableRowBelow', label: '光标行下方插入一行', disabled: () => !inTable() },
-      { id: 'tableColBefore', label: '光标列左侧插入一列', disabled: () => !inTable() },
-      { id: 'tableColAfter', label: '光标列右侧插入一列', disabled: () => !inTable() },
-      { id: 'tableDelRow', label: '删除本行', disabled: () => !inTable() },
-      { id: 'tableDelCol', label: '删除本列', disabled: () => !inTable() },
-      { id: 'tableDel', label: '删除整个表格', disabled: () => !inTable() },
-      { sep: true },
-      { id: 'tableAlignLeft', label: '本列左对齐', disabled: () => !inTable() },
-      { id: 'tableAlignCenter', label: '本列居中', disabled: () => !inTable() },
-      { id: 'tableAlignRight', label: '本列右对齐', disabled: () => !inTable() },
-      { id: 'tableAlignNone', label: '本列取消对齐', disabled: () => !inTable() },
+      { id: 'table', label: '表格 3 × 3', icon: 'table', kbd: 'Ctrl+Shift+T', disabled: wysOnly },
+      { id: 'tablePrompt', label: '表格（自定大小）…', icon: 'table', disabled: wysOnly },
+      { id: 'hr', label: '分割线', icon: 'minus', disabled: wysOnly },
+      /* 增删行列、调对齐这些「改已有表格」的操作不再占菜单位置：
+         右键菜单里本来就有一整套，同一个命令没必要在两个地方各列一遍。
+         这里只在光标真的进了表格时提一句，省得有人找不到 */
+      { note: '光标在表格内右键，可增删行列、调整对齐', hidden: noTable },
     ],
   },
   {
@@ -1653,7 +1676,13 @@ function bindEvents() {
           { label: '左侧插入列', action: () => commands.tableColBefore() },
           { label: '右侧插入列', action: () => commands.tableColAfter() },
           { sep: true },
+          /* 四个方向的对齐都留在这里：主菜单里已经不重复列表格操作了，
+             右键是唯一入口，少一个就等于功能丢了 */
+          { label: '本列左对齐', action: () => commands.tableAlignLeft() },
           { label: '本列居中', action: () => commands.tableAlignCenter() },
+          { label: '本列右对齐', action: () => commands.tableAlignRight() },
+          { label: '本列取消对齐', action: () => commands.tableAlignNone() },
+          { sep: true },
           { label: '删除本行', action: () => commands.tableDelRow() },
           { label: '删除本列', action: () => commands.tableDelCol() },
           { label: '删除表格', action: () => commands.tableDel() },
