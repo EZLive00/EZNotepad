@@ -46,7 +46,8 @@ try {
     localStorage.setItem('snp.settings', JSON.stringify({
       theme: 'light', fontSize: 13.5, layout: 'split', outlineVisible: true,
       showToolbar: true, showWinTitle: true, lastMode: { md: 'edit' },
-      lastNewExt: 'md', autoSave: false, folder: '', side: 'outline'
+      lastNewExt: 'md', autoSave: false, folder: '', side: 'outline',
+      __v: 2   /* 钉死设置：带上当前版本号，跳过 state.js 的默认值迁移 */
     }));
     localStorage.removeItem('snp.draft');
     location.reload();

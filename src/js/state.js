@@ -12,24 +12,33 @@ export const LS = {
   del(k) { try { localStorage.removeItem('snp.' + k); } catch {} },
 };
 
-export const settings = Object.assign(
-  {
-    theme: 'auto',        // auto | light | dark
-    fontSize: 13.5,
-    layout: 'split',      // split | single
-    outlineVisible: true,
-    showToolbar: true,
-    showWinTitle: true,   // 标题栏中间是否显示文件名
-    lastMode: {},
-    lastNewExt: 'md',     // 「新建」上次选的扩展名
-    autoSave: false,      // 自动保存（只对已存在于磁盘上的文件生效）
-    folder: '',           // 侧栏「文件」页打开的文件夹
-    side: 'outline',      // 侧栏当前页：outline | files
-    zen: false,           // 专注模式：只留标题栏和正文
-    watchFiles: true,     // 监听磁盘上的改动（别的程序改了文件实时提示）
-  },
-  LS.get('settings', {})
-);
+const DEFAULTS = {
+  theme: 'auto',        // auto | light | dark
+  fontSize: 13.5,
+  layout: 'single',     // single | split（2026-10-25 起默认单栏）
+  outlineVisible: true,
+  showToolbar: true,
+  showWinTitle: true,   // 标题栏中间是否显示文件名
+  lastMode: {},
+  lastNewExt: 'md',     // 「新建」上次选的扩展名
+  autoSave: true,       // 自动保存（只对已存在于磁盘上的文件生效）
+  folder: '',           // 侧栏「文件」页打开的文件夹
+  side: 'outline',      // 侧栏当前页：outline | files
+  zen: false,           // 专注模式：只留标题栏和正文
+  watchFiles: true,     // 监听磁盘上的改动（别的程序改了文件实时提示）
+  __v: 2,               // 设置版本：默认值变更时 +1，触发下面的迁移
+};
+
+export const settings = Object.assign({}, DEFAULTS, LS.get('settings', {}));
+
+/* 一次性迁移：老用户的 localStorage 里存着上一版的默认值（layout:split / autoSave:false），
+   光改 DEFAULTS 对他们无效。bump __v 后按新默认覆盖一次；
+   测试脚本等需要钉死设置的地方，在写入的 settings 里带上当前 __v 即可跳过。 */
+if (LS.get('settings', {}).__v !== DEFAULTS.__v) {
+  settings.layout = 'single';
+  settings.autoSave = true;
+  saveSettings();
+}
 
 export function saveSettings() { LS.set('settings', settings); }
 

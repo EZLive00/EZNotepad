@@ -680,8 +680,9 @@ function showSettings() {
     const ok = await confirmBox('恢复默认设置', '主题、字号、布局、自动保存都会回到出厂状态，文件夹设置也会清空。<br><br>确定？', '恢复', '取消');
     if (!ok) return;
     Object.assign(settings, {
-      theme: 'auto', fontSize: 13.5, layout: 'split', outlineVisible: true,
-      showToolbar: true, showWinTitle: true, autoSave: false, folder: '', side: 'outline',
+      theme: 'auto', fontSize: 13.5, layout: 'single', outlineVisible: true,
+      showToolbar: true, showWinTitle: true, autoSave: true, folder: '', side: 'outline',
+      __v: 2,
     });
     saveSettings();
     applyTheme();
@@ -693,8 +694,8 @@ function showSettings() {
     box.querySelector('#setFontSize').textContent = '13.5 px';
     box.querySelectorAll('.set-seg[data-name="theme"] button').forEach((x) => x.classList.toggle('on', x.dataset.v === 'auto'));
     box.querySelector('#setOutline').checked = true;
-    box.querySelector('#setSplit').checked = true;
-    box.querySelector('#setAutoSave').checked = false;
+    box.querySelector('#setSplit').checked = false;
+    box.querySelector('#setAutoSave').checked = true;
     toast('已恢复默认设置');
   };
 
@@ -1379,7 +1380,7 @@ function undoToast(msg, backup) {
   span.textContent = msg;
   const btn = document.createElement('button');
   btn.textContent = '撤销';
-  btn.style.cssText = 'border:none;background:var(--accent);color:#fff;border-radius:12px;padding:2px 10px;font-size:11.5px;cursor:pointer';
+  btn.style.cssText = 'border:none;background:var(--accent);color:#fff;border-radius:4px;padding:2px 10px;font-size:11.5px;cursor:pointer';
   btn.onclick = () => { setContent(backup); box.remove(); toast('已撤销'); };
   box.append(span, btn);
   wrap.appendChild(box);

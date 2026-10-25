@@ -61,7 +61,7 @@ await ev(`(() => {
   }
   const s = JSON.parse(localStorage.getItem('snp.settings') || '{}');
   s.zen = false; s.layout = 'split'; s.outlineVisible = true;
-  localStorage.setItem('snp.settings', JSON.stringify(s));
+  localStorage.setItem('snp.settings', JSON.stringify({ __v: 2, ...s }));
 })()`);
 await ev(`window.__snp.newTab('块手柄.md', ${JSON.stringify(DOC)})`);
 await ev(`window.__snp.commands.modeWysiwyg()`);

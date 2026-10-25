@@ -242,7 +242,7 @@ body{font-family:-apple-system,Segoe UI,PingFang SC,sans-serif;margin:0;padding:
 h1{font-size:20px;margin:0 0 6px}
 .meta{color:#6b7280;font-size:12.5px;margin-bottom:18px}
 .bar{display:flex;gap:18px;font-size:12.5px;margin-bottom:16px}
-.grid{display:grid;grid-template-columns:1fr 1fr;border:1px solid #e2e6ec;border-radius:8px;overflow:hidden;font-family:ui-monospace,Consolas,monospace;font-size:12.5px}
+.grid{display:grid;grid-template-columns:1fr 1fr;border:1px solid #e2e6ec;border-radius:4px;overflow:hidden;font-family:ui-monospace,Consolas,monospace;font-size:12.5px}
 .col{min-width:0}.col+.col{border-left:1px solid #e2e6ec}
 .row{display:flex;line-height:1.6}
 .ln{width:48px;flex:none;text-align:right;padding-right:10px;color:#9aa3b2;font-size:11px}
