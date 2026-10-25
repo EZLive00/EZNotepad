@@ -2107,6 +2107,9 @@ let handleBusy = false;      // 鼠标在手柄 / 菜单上，别自动收起
 let handleTimer = 0;
 let bmMode = 'convert';
 
+/** 块菜单开着的时候，手柄是它的定位锚点，不能被任何「鼠标离开」逻辑收掉 */
+const blockMenuOpen = () => !el.wBlockMenu.classList.contains('hidden');
+
 const isWysMode = () => !!activeTab() && activeTab().mode === 'wysiwyg';
 
 /** 块当前是什么类型，用来在「转换」菜单里打勾 */
@@ -2134,6 +2137,7 @@ function placeHandle(block) {
 }
 
 function hideHandle() {
+  if (blockMenuOpen()) return;      // 菜单还开着，手柄得留在原地当锚点
   handleBlock = null;
   if (!handleBusy) el.wHandle.classList.add('hidden');
 }
@@ -2188,18 +2192,21 @@ function openBlockMenu(mode) {
   const hr = el.wHandle.getBoundingClientRect();
   const mw = box.offsetWidth || 198;
   const mh = box.offsetHeight || 280;
-  let left = hr.right + 4;
+  let left = hr.right + 8;
   let top = hr.top - 5;
   if (left + mw > window.innerWidth - 8) left = Math.max(8, hr.left - mw - 4);
   if (top + mh > window.innerHeight - 8) top = Math.max(8, window.innerHeight - mh - 8);
   box.style.left = Math.round(left) + 'px';
   box.style.top = Math.round(top) + 'px';
-  el.whMenu.classList.add('open');
+  /* 高亮要落在真正被点的那个按钮上：点 + 却亮抓手，会让人以为菜单开错了 */
+  el.whAdd.classList.toggle('open', mode === 'insert');
+  el.whMenu.classList.toggle('open', mode === 'convert');
 }
 
 function closeBlockMenu() {
   el.wBlockMenu.classList.add('hidden');
   el.wBlockMenu.innerHTML = '';
+  el.whAdd.classList.remove('open');
   el.whMenu.classList.remove('open');
   handleBusy = false;
 }
@@ -2230,7 +2237,10 @@ function setupBlockHandle() {
   if (!el.wHandle) return;
   el.wysiwyg.addEventListener('mousemove', (e) => {
     if (!isWysMode()) return;
-    if (!el.wBlockMenu.classList.contains('hidden')) closeBlockMenu();
+    /* 菜单开着时一律不响应：手柄和菜单之间有缝，鼠标从按钮挪到菜单必然
+       经过编辑区，这里若继续跑就会当场把菜单收掉（用户根本来不及点）。
+       关菜单只认「点编辑区别处」「Esc」「滚动」三条路。 */
+    if (blockMenuOpen()) return;
     const b = e.target.closest ? e.target.closest('.w-block') : null;
     if (b === hoverBlock) return;
     hoverBlock = b;
@@ -2238,14 +2248,19 @@ function setupBlockHandle() {
     refreshHandle();
   });
   el.wysiwyg.addEventListener('mouseleave', () => {
+    if (blockMenuOpen()) return;
     hoverBlock = null;
     clearTimeout(handleTimer);
     handleTimer = setTimeout(() => { if (!handleBusy) hideHandle(); }, 240);
   });
-  el.wysiwyg.addEventListener('scroll', () => { if (!handleBusy) refreshHandle(); }, { passive: true });
+  /* 滚动会让菜单和它的块错位，这时关掉比让它悬在空中好 */
+  el.wysiwyg.addEventListener('scroll', () => {
+    if (blockMenuOpen()) closeBlockMenu();
+    if (!handleBusy) refreshHandle();
+  }, { passive: true });
 
   document.addEventListener('selectionchange', () => {
-    if (hoverBlock || handleBusy) return;
+    if (hoverBlock || handleBusy || blockMenuOpen()) return;
     clearTimeout(handleTimer);
     handleTimer = setTimeout(refreshHandle, 0);
   });
@@ -2255,6 +2270,7 @@ function setupBlockHandle() {
   el.wHandle.addEventListener('mouseleave', () => {
     handleBusy = false;
     clearTimeout(handleTimer);
+    if (blockMenuOpen()) return;      // 菜单开着，手柄别跟着消失
     handleTimer = setTimeout(() => {
       if (el.wBlockMenu.classList.contains('hidden')) hideHandle();
     }, 240);

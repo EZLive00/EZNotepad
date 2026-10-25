@@ -1022,14 +1022,18 @@ mark.rem { background: rgba(220, 60, 60, .32); border-radius: 2px; }
   width: 21px; height: 22px; padding: 0; flex: none;
   display: flex; align-items: center; justify-content: center;
   border: none; border-radius: var(--r-sm); background: transparent;
-  color: var(--fg-faint); cursor: pointer;
+  /* 曾经用 --fg-faint，浅色下对比不到 3:1，深色下更糊成一团 —— 手柄是
+     编辑区里唯一的入口，必须一眼看见，固定用次级前景色 */
+  color: var(--fg-soft); cursor: pointer;
 }
 .wh-btn:hover { background: var(--bg-hover); color: var(--fg); }
 .wh-btn.open { background: var(--bg-hover); color: var(--accent); }
-.wh-btn .ico { width: 15px; height: 15px; }
+.wh-btn .ico { width: 16px; height: 16px; }
 
 /* ---- 块类型菜单 ---- */.w-bmenu {
   position: absolute; z-index: 60; min-width: 190px; padding: 6px;
+  /* 「插入」模式有 14 项，窗口矮时会顶出屏幕；给个上限让它自己滚 */
+  max-height: calc(100vh - 24px); overflow: auto;
   background: var(--bg-float); border-radius: var(--r-md);
   box-shadow: var(--shadow);
 }
