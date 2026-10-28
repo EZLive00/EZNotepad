@@ -4,9 +4,10 @@
 // ============================================================
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { SHOT_DIR } from './harness.mjs';
 
 const PORT = process.env.CDP_PORT || 9333;
-const OUT = path.resolve('node_modules/.tmp');
+const OUT = SHOT_DIR;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const list = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json();

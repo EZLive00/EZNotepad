@@ -1,15 +1,16 @@
 // ============================================================
 // test/shot-app.mjs —— 给真实窗口截图（需要应用带 --remote-debugging-port=9333 启动）
 //
-//   node test/shot-app.mjs   →  node_modules/.tmp/app-*.png
+//   node test/shot-app.mjs   →  SHOT_DIR/app-*.png（默认 D://tmp//ez-shot）
 //
 // 和 shot-ui.mjs 的区别：那边是静态骨架（只看 CSS），这边是跑起来的真应用，
 // 文件树、设置面板、查找高亮这些必须有 JS 才出得来。
 // ============================================================
 import fs from 'node:fs';
 import path from 'node:path';
+import { SHOT_DIR } from './harness.mjs';
 
-const OUT = path.resolve('node_modules/.tmp');
+const OUT = SHOT_DIR;
 fs.mkdirSync(OUT, { recursive: true });
 const PORT = process.env.CDP_PORT || 9333;
 const ROOT = path.resolve('.').replace(/\\/g, '/');

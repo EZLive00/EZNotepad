@@ -7,11 +7,23 @@
 // ============================================================
 import http from 'node:http';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+/**
+ * 截图统一落这里（历史遗留：有的脚本写 node_modules/.tmp、有的写项目根，
+ * 结果同一批图散在三处，找的时候满盘搜）。
+ * 默认 D:\tmp\ez-shot（Windows）/ 系统临时目录，可用 SHOT_DIR 环境变量覆盖。
+ */
+export const SHOT_DIR = process.env.SHOT_DIR
+  || (process.platform === 'win32'
+    ? 'D:/tmp/ez-shot'
+    : path.join(os.tmpdir(), 'ez-shot'));
+fs.mkdirSync(SHOT_DIR, { recursive: true });
 
 const CHROME_CANDIDATES = [
   process.env.CHROME_PATH,

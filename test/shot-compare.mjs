@@ -1,10 +1,10 @@
 // 改版前后对照：node test/shot-compare.mjs
 // 旧样式从 git HEAD 取，写到 node_modules/.tmp/styles-old.css（由外部命令生成）
-import { runPage, shot } from './harness.mjs';
+import { runPage, shot, SHOT_DIR } from './harness.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const OUT = path.resolve('node_modules/.tmp');
+const OUT = SHOT_DIR;
 fs.mkdirSync(OUT, { recursive: true });
 
 const cases = [

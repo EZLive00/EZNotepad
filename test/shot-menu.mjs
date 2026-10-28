@@ -1,9 +1,9 @@
-// 菜单排版截图：node test/shot-menu.mjs  →  node_modules/.tmp/menu-*.png
-import { runPage, shot } from './harness.mjs';
+// 菜单排版截图：node test/shot-menu.mjs  →  SHOT_DIR/menu-*.png（默认 D://tmp//ez-shot）
+import { runPage, shot, SHOT_DIR } from './harness.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const OUT = path.resolve('node_modules/.tmp');
+const OUT = SHOT_DIR;
 fs.mkdirSync(OUT, { recursive: true });
 
 const cases = [

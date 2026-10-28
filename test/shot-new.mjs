@@ -1,7 +1,7 @@
 // ============================================================
 // test/shot-new.mjs —— 给这一轮的新功能截几张图看效果
 //
-//   node test/shot-new.mjs   →  node_modules/.tmp/new-*.png
+//   node test/shot-new.mjs   →  SHOT_DIR/new-*.png（默认 D://tmp//ez-shot）
 //
 // 前置：应用已用 --remote-debugging-port=9333 启动。
 // 截图是用来「看」的：公式排版、专注模式的留白这种东西，断言只能证明元素在，
@@ -9,8 +9,9 @@
 // ============================================================
 import fs from 'node:fs';
 import path from 'node:path';
+import { SHOT_DIR } from './harness.mjs';
 
-const OUT = path.resolve('node_modules/.tmp');
+const OUT = SHOT_DIR;
 fs.mkdirSync(OUT, { recursive: true });
 const PORT = process.env.CDP_PORT || 9333;
 

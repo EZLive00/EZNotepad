@@ -1,10 +1,10 @@
-// 样式截图：node test/shot-ui.mjs   →  .workbuddy/../shot-ui-{light,dark}.png
-// 只用于看视觉效果，不参与断言。（.workbuddy 不可写，落到 node_modules/.tmp）
-import { runPage, shot } from './harness.mjs';
+// 样式截图：node test/shot-ui.mjs   →  SHOT_DIR/ui-{light,dark}[-single].png
+// 只用于看视觉效果，不参与断言。目录默认 D://tmp//ez-shot，可用 SHOT_DIR 覆盖
+import { runPage, shot, SHOT_DIR } from './harness.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const OUT = path.resolve('node_modules/.tmp');
+const OUT = SHOT_DIR;
 fs.mkdirSync(OUT, { recursive: true });
 
 for (const theme of ['light', 'dark']) {
