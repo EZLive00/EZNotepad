@@ -3,9 +3,11 @@
   --font-ui: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
   --font-mono: "SF Mono", "JetBrains Mono", "Cascadia Mono", Consolas, "Courier New", monospace;
   --font-read: -apple-system, "PingFang SC", "Microsoft YaHei", "Noto Sans SC", "Segoe UI", sans-serif;
-  --r-sm: 4px;
-  --r-md: 7px;
-  --r-lg: 10px;
+  /* 圆角三档 —— 工具风：控件全是直角，只有浮层留一丝（0 会让描边在斜角处
+     露出锯齿，1~3px 是「刻意方正」而不是「渲染坏了」的分界线） */
+  --r-sm: 0px;    /* 按钮 / 标签 / 菜单项 / 输入框 / 行内 code */
+  --r-md: 2px;    /* 菜单面板 / 弹窗 / 代码块 / 图片 */
+  --r-lg: 3px;    /* 应用菜单 / toast / 大抽屉 */
   --ease: cubic-bezier(.2, .7, .3, 1);
   --fs-editor: 13.5px;   /* applyFont() 会在启动后覆盖成用户设置 */
 
@@ -45,7 +47,7 @@ body[data-theme="light"] {
   --chg-bg: #fff5dc;
   --chg-fg: #8a5a00;
   /* 浮层轮廓用「0 0 0 1px」模拟，比真 border 更轻，且不会占布局 */
-  --shadow: 0 0 0 1px rgba(17, 24, 39, .07), 0 10px 28px rgba(17, 24, 39, .16), 0 3px 8px rgba(17, 24, 39, .07);
+  --shadow: 0 0 0 1px rgba(17, 24, 39, .10), 0 8px 20px rgba(17, 24, 39, .13), 0 2px 6px rgba(17, 24, 39, .06);
   --scroll: #cdd2da;
 
   /* 语法着色：预览（highlight.js 的 .tok-*）和编辑器（CM6 的 HighlightStyle）
@@ -92,7 +94,7 @@ body[data-theme="dark"] {
   --del-fg: #ff8a8a;
   --chg-bg: #33280f;
   --chg-fg: #ffcf6b;
-  --shadow: 0 0 0 1px rgba(255, 255, 255, .07), 0 18px 48px rgba(0, 0, 0, .62), 0 3px 10px rgba(0, 0, 0, .45);
+  --shadow: 0 0 0 1px rgba(255, 255, 255, .09), 0 14px 34px rgba(0, 0, 0, .58), 0 2px 8px rgba(0, 0, 0, .40);
   --scroll: #3a404c;
 
   --tok-key: #b388ff;
@@ -262,7 +264,7 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
 .tab.drop-before::before,
 .tab.drop-after::before {
   content: ""; position: absolute; top: 3px; bottom: 3px; width: 2px;
-  background: var(--accent); border-radius: 2px;
+  background: var(--accent); border-radius: 0;
 }
 .tab.drop-before::before { left: -2px; }
 .tab.drop-after::before { left: auto; right: -2px; }
@@ -279,7 +281,7 @@ body[data-theme="dark"] .tab.active {
    位置固定、面积很小，所以不吵，但一眼知道「我在哪」 */
 .tab.active::after {
   content: ""; position: absolute; left: 10px; right: 10px; bottom: -1px;
-  height: 2px; border-radius: 2px 2px 0 0; background: var(--accent);
+  height: 2px; border-radius: 0; background: var(--accent);
 }
 .tab-name { overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
 .tab-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; }
@@ -570,7 +572,7 @@ body[data-theme="dark"] .am-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 25
 .set-panel { display: flex; flex-direction: column; gap: 18px; min-width: 380px; }
 .set-group { display: flex; flex-direction: column; gap: 8px; }
 .set-label { font-size: 11px; font-weight: 600; letter-spacing: .04em; color: var(--fg-faint); }
-.set-seg { display: flex; gap: 4px; background: var(--bg-soft); padding: 3px; border-radius: var(--r-md); }
+.set-seg { display: flex; gap: 4px; background: var(--bg-soft); padding: 3px; border-radius: var(--r-sm); }
 .set-seg button {
   flex: 1; height: 26px; border: none; border-radius: var(--r-sm); background: transparent;
   font-size: 12px; color: var(--fg-soft); cursor: pointer;
@@ -603,7 +605,7 @@ body[data-theme="dark"] .am-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 25
 .outline-list { flex: 1; overflow-y: auto; padding: 0 8px 16px; }
 .outline-item {
   display: block; width: 100%; text-align: left; border: none; background: transparent;
-  padding: 5px 8px; border-radius: 0 var(--r-sm) var(--r-sm) 0; color: var(--fg-soft);
+  padding: 5px 8px; border-radius: 0; color: var(--fg-soft);
   font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   line-height: 1.45; border-left: 2px solid transparent;
   transition: background .12s var(--ease), color .12s var(--ease), border-color .12s var(--ease);
@@ -706,7 +708,7 @@ body[data-theme="dark"] .am-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 25
 .md pre code { background: none; padding: 0; font-size: 13px; }
 .md blockquote {
   margin: 1.1em 0; padding: .45em 1.1em; border-left: 3px solid var(--accent);
-  color: var(--fg-soft); background: var(--accent-soft); border-radius: 0 var(--r-sm) var(--r-sm) 0;
+  color: var(--fg-soft); background: var(--accent-soft); border-radius: 0;
 }
 /* 提示块（callout）：> [!info] 这类标记升级出来的染色引用 */
 .md blockquote.md-callout { border-left-color: var(--co-c, var(--accent)); background: var(--co-bg, var(--accent-soft)); }
@@ -850,7 +852,7 @@ body[data-zen="1"] .win-title { color: var(--fg-faint); }
 .st-item { padding: 0 8px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .st-spacer { flex: 1; }
 .st-btn {
-  border: none; background: transparent; padding: 2px 7px; border-radius: 4px;
+  border: none; background: transparent; padding: 2px 7px; border-radius: var(--r-sm);
   color: var(--fg-soft); font-size: 11.5px;
 }
 .st-btn:hover { background: var(--bg-hover); color: var(--fg); }
@@ -932,12 +934,12 @@ body[data-zen="1"] .win-title { color: var(--fg-faint); }
 .d-row.chg-l { background: var(--del-bg); }
 .d-row.chg-r { background: var(--add-bg); }
 .d-row.cur { outline: 2px solid var(--accent); outline-offset: -2px; }
-mark.ins { background: rgba(46, 190, 100, .35); border-radius: 2px; }
-mark.rem { background: rgba(220, 60, 60, .32); border-radius: 2px; }
+mark.ins { background: rgba(46, 190, 100, .35); border-radius: var(--r-sm); }
+mark.rem { background: rgba(220, 60, 60, .32); border-radius: var(--r-sm); }
 .d-sync {
   position: absolute; right: 4px; top: 1px;
   border: 1px solid var(--line-strong); background: var(--bg-panel); color: var(--fg-soft);
-  border-radius: 4px; font-size: 10px; height: 17px; padding: 0 5px; line-height: 15px;
+  border-radius: var(--r-sm); font-size: 10px; height: 17px; padding: 0 5px; line-height: 15px;
   opacity: 0; transition: opacity .12s;
 }
 .d-row:hover .d-sync { opacity: 1; }
@@ -1162,7 +1164,7 @@ body[data-theme="dark"] .ctx-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 2
 .wysiwyg .w-bq {
   border-left: 3px solid var(--accent); background: var(--accent-soft);
   margin: .95em 0 .95em calc(var(--bq-indent, 0) * 1.55em);
-  padding: .5em 1em; border-radius: 0 var(--r-sm) var(--r-sm) 0; color: var(--fg-soft);
+  padding: .5em 1em; border-radius: 0; color: var(--fg-soft);
 }
 /* 连续的引用行在视觉上连成一块 */
 .wysiwyg .w-bq + .w-bq { margin-top: 0; }
@@ -1188,7 +1190,7 @@ body[data-theme="dark"] .ctx-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 2
 /* 所见即所得里的公式只染色：真渲染交给预览（往 contenteditable 塞 KaTeX
    的 DOM，退格删不掉、光标会卡住）。染色是为了让人一眼认出这是公式而不是排版符号 */
 .wysiwyg .w-math {
-  background: var(--bg-soft); border-radius: 3px; padding: 0 1px;
+  background: var(--bg-soft); border-radius: 0; padding: 0 1px;
   font-family: var(--font-mono); font-size: .94em; color: var(--fg-soft);
 }
 

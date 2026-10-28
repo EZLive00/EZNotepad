@@ -1380,7 +1380,7 @@ function undoToast(msg, backup) {
   span.textContent = msg;
   const btn = document.createElement('button');
   btn.textContent = '撤销';
-  btn.style.cssText = 'border:none;background:var(--accent);color:#fff;border-radius:4px;padding:2px 10px;font-size:11.5px;cursor:pointer';
+  btn.style.cssText = 'border:none;background:var(--accent);color:#fff;border-radius:0;padding:2px 10px;font-size:11.5px;cursor:pointer';
   btn.onclick = () => { setContent(backup); box.remove(); toast('已撤销'); };
   box.append(span, btn);
   wrap.appendChild(box);
@@ -2459,15 +2459,19 @@ function bindEvents() {
           { label: '无序列表', hint: '无序列表', icon: 'list', iconOnly: true, shortcut: 'Ctrl+Shift+8', action: () => commands.ul() },
           { label: '有序列表', hint: '有序列表', icon: 'list-ordered', iconOnly: true, shortcut: 'Ctrl+Shift+7', action: () => commands.ol() },
           { label: '任务列表', hint: '任务列表', icon: 'list-todo', iconOnly: true, shortcut: 'Ctrl+Shift+9', action: () => commands.taskList() },
-          { label: '引用', hint: '引用块', icon: 'text-quote', iconOnly: true, shortcut: 'Ctrl+Shift+Q', action: () => commands.quote() },
+          /* 引用相关的三项在表格里点了没反应（setCallout / quote 只认 bq、p、标题块，
+             表格块会被静默忽略），索性不摆出来 —— 死按钮比少一项更让人困惑 */
+          ...(tbl ? [] : [
+            { label: '引用', hint: '引用块', icon: 'text-quote', iconOnly: true, shortcut: 'Ctrl+Shift+Q', action: () => commands.quote() },
+          ]),
         ] },
-        { lead: '引用', row: [
+        ...(tbl ? [] : [{ lead: '引用', row: [
           { label: '普通', hint: '普通引用', checked: () => bqCallout() === '', action: () => commands.quote() },
           { label: '信息', hint: '信息提示块', checked: () => bqCallout() === 'info', action: () => commands.calloutInfo() },
           { label: '警告', hint: '警告提示块', checked: () => bqCallout() === 'warning', action: () => commands.calloutWarning() },
           { label: '危险', hint: '危险提示块', checked: () => bqCallout() === 'danger', action: () => commands.calloutDanger() },
           { label: '成功', hint: '成功提示块', checked: () => bqCallout() === 'success', action: () => commands.calloutSuccess() },
-        ] },
+        ] }]),
       ];
       if (tbl) {
         items.push(

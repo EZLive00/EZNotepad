@@ -245,9 +245,11 @@ const para = await ev(`(() => {
 })()`);
 await rightClick(para.x, para.y);
 m = await menu();
+/* 正文里会多一行「引用」（普通 / 信息 / 警告 / 危险 / 成功），表格里的三行则一个都不该有 */
 ok('正文右键没有表格组，插入组回来了',
-  m && !m.heads.includes('表格') && m.heads.includes('插入') && m.leads.length === 0,
-  m ? JSON.stringify(m.heads) : '-');
+  m && !m.heads.includes('表格') && m.heads.includes('插入')
+    && !m.leads.some((l) => ['插入', '对齐', '删除'].includes(l)),
+  m ? `heads=${JSON.stringify(m.heads)} leads=${JSON.stringify(m.leads)}` : '-');
 await escClose();
 
 /* ---------- 汇总 ---------- */
