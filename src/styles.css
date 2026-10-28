@@ -860,9 +860,11 @@ body[data-zen="1"] .win-title { color: var(--fg-faint); }
 }
 
 /* ================= 覆盖层面板 ================= */
+/* 遮罩不用 backdrop-filter：全屏实时模糊要 GPU 每帧重算，代价远大于
+   3px 模糊带来的那点观感差异。压深一点颜色就能盖住背后的细节。 */
 .overlay {
   position: fixed; inset: 0; z-index: 100;
-  background: rgba(15, 20, 30, .38); backdrop-filter: blur(3px);
+  background: rgba(15, 20, 30, .44);
   display: flex; align-items: stretch; justify-content: center;
   animation: fade .16s var(--ease);
 }

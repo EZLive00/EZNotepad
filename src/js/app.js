@@ -101,6 +101,21 @@ function applyTheme() {
 }
 
 /* ---------------- WYSIWYG ---------------- */
+/* 输入路径上的三件事都做节流：字数统计、大纲重建、标签栏重绘。
+   它们的结果不会随每一次击键变化（标题没动、脏标记第一次就亮了），
+   但每算一次都是全文扫描 + 重建 DOM。600 段的文档里，这是单次击键最大的一块开销。 */
+let statsTimer = 0;
+function scheduleStats() {
+  clearTimeout(statsTimer);
+  statsTimer = setTimeout(refreshStats, 150);
+}
+
+let outlineTimer = 0;
+function scheduleOutline() {
+  clearTimeout(outlineTimer);
+  outlineTimer = setTimeout(updateOutline, 250);
+}
+
 const wys = new WysiwygEditor(el.wysiwyg, {
   onChange: (md) => {
     const t = activeTab();
@@ -108,8 +123,8 @@ const wys = new WysiwygEditor(el.wysiwyg, {
     if (t.content !== md) {
       t.content = md;
       schedulePreview();
-      refreshStats();
-      updateOutline();
+      scheduleStats();
+      scheduleOutline();
       scheduleDraft();
       scheduleAutoSave();
       updateStatus();
@@ -141,9 +156,18 @@ function refreshTitle() {
 
 let dragTabId = null;   // 正在被拖拽的标签 id（拖拽期间只存这一个）
 
+/* 上一次画出来的标签栏。输入时 updateStatus 会走 renderTabs，
+   而 tag 的名字、脏标记、顺序在连打十几个字里通常一个都没变——
+   全量重建（清空 + 重建 + 重绑事件 + 重解析图标）纯属白干。 */
+let tabsSig = '';
+
 function renderTabs() {
-  el.tabs.innerHTML = '';
   const act = activeTab();
+  const sig = tabs.map((t) => `${t.id}|${t.name}|${t.path || ''}|${isDirty(t) ? 1 : 0}|${t.extChanged ? 1 : 0}`).join('~')
+    + '#' + (act ? act.id : '');
+  if (sig === tabsSig && el.tabs.children.length) return;
+  tabsSig = sig;
+  el.tabs.innerHTML = '';
   for (const t of tabs) {
     const b = document.createElement('div');
     b.className = 'tab' + (act && t.id === act.id ? ' active' : '');
@@ -282,6 +306,7 @@ function clearView() {
   plain.load('');
   el.wysiwyg.innerHTML = '';
   el.preview.innerHTML = '<div class="diff-empty">没有打开的文件</div>';
+  el.preview.__pvText = null;   // 容器被换掉了，预览的内容签名也要一起作废
   el.outlineList.innerHTML = '<div class="outline-empty">新建或打开一个文件开始。</div>';
   el.fmtBadge.textContent = '—';
 }
@@ -394,6 +419,10 @@ function schedulePreview() {
   }, 120);
 }
 
+/* 上一次画出来的大纲长什么样。签名里带上行号：标题文字没变、位置变了，
+   点进去也得跳到新行，所以不能只比文字。 */
+let outlineSig = '';
+
 function updateOutline() {
   const t = activeTab();
   if (!t) return;
@@ -405,9 +434,15 @@ function updateOutline() {
   const items = extractOutline(kind, t.content);
   outlineItems = items;
   if (!items.length) {
+    outlineSig = '';
     el.outlineList.innerHTML = `<div class="outline-empty">${kind === 'md' ? '用 # 定义标题后，这里会出现大纲。' : '当前文件没有可提取的结构。'}</div>`;
     return;
   }
+  /* 结构没变就别重建 DOM：改正文时标题几乎不动，而重建 600 个按钮
+     比跑一次正则贵得多。高亮的跟随由 scheduleOutlineSync 单独负责。 */
+  const sig = items.map((it) => `${it.level}:${it.line}:${it.text}`).join('\n');
+  if (sig === outlineSig && el.outlineList.children.length) return;
+  outlineSig = sig;
   const frag = document.createDocumentFragment();
   items.forEach((it, i) => {
     const b = document.createElement('button');
@@ -448,7 +483,15 @@ function syncOutline() {
       cur = heads.length - 1;      // 到底了：最后一个标题就是当前章节
     } else {
       const top = box.getBoundingClientRect().top + outlineBaseline(box);
-      heads.forEach((h, i) => { if (h.getBoundingClientRect().top <= top) cur = i; });
+      /* 标题在文档里自上而下排列，顶部坐标单调递增，可以二分。
+         以前是 forEach 逐个量 —— 600 个标题就是 600 次布局查询，滚动时每 70ms 一轮。 */
+      let lo = 0, hi = heads.length - 1, found = -1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (heads[mid].getBoundingClientRect().top <= top) { found = mid; lo = mid + 1; }
+        else hi = mid - 1;
+      }
+      cur = found;
     }
   } else {
     // lineAtViewportY 收窗口坐标：基准线要加上编辑器在窗口里的偏移

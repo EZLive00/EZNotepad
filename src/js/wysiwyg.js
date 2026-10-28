@@ -17,6 +17,12 @@ import { resolveDocImg, headingSlugs, CALLOUT_TYPES, RE_CALLOUT, normalizeCallou
 const MAX_INDENT = 6;
 const ZWSP = '\u200b';
 
+/** 撤销历史的总字节上限。条数上限（200）对小文档够用，长文档得靠这个兜底 */
+const HISTORY_BYTES = 8 * 1024 * 1024;
+
+/** 字符串占的字节数（V8 里 1 个 UTF-16 码元 = 2 字节，这里只用于比较量级） */
+const bytesOf = (s) => (s ? s.length * 2 : 0);
+
 /** 当前文档所在目录：图片的相对路径要按它展开成可加载的绝对地址 */
 let docDir = '';
 
@@ -67,27 +73,38 @@ export function inlineHtml(src) {
 /** DOM -> 行内 Markdown。这是「不丢样式」的关键：逐个节点还原标记 */
 export function inlineToMd(node) {
   let s = '';
-  node.childNodes.forEach((n) => {
-    if (n.nodeType === 3) { s += n.nodeValue.replace(/\u00a0/g, ' ').replace(/\u200b/g, ''); return; }
-    if (n.nodeType !== 1) return;
-    const tag = n.tagName.toLowerCase();
-    if (tag === 'br') return;
+  const kids = node.childNodes;
+  /* 用下标循环而不是 forEach：这个函数在每次击键时都要把整篇文档跑一遍，
+     闭包分配和迭代器开销在大文档里是实打实的。字符串拼接前先判断再替换，
+     因为绝大多数文本节点既没有 nbsp 也没有零宽空格。 */
+  for (let i = 0; i < kids.length; i++) {
+    const n = kids[i];
+    if (n.nodeType === 3) {
+      const v = n.nodeValue;
+      s += (v.indexOf('\u00a0') < 0 && v.indexOf('\u200b') < 0)
+        ? v
+        : v.replace(/\u00a0/g, ' ').replace(/\u200b/g, '');
+      continue;
+    }
+    if (n.nodeType !== 1) continue;
+    const tag = n.tagName;             // 直接比大写，省掉每次 toLowerCase
+    if (tag === 'BR') continue;
     // 图片：写回 Markdown 时用 data-src 里的原始地址（相对路径），
     // 不能用 src —— 那是展开成 asset:// 之后的显示用地址，存进去就搬不动了
-    if (tag === 'img') {
+    if (tag === 'IMG') {
       s += `![${n.getAttribute('alt') || ''}](${n.getAttribute('data-src') || n.getAttribute('src') || ''})`;
-      return;
+      continue;
     }
     const inner = inlineToMd(n);
     switch (tag) {
-      case 'strong': case 'b': s += inner.trim() ? `**${inner}**` : inner; break;
-      case 'em': case 'i': s += inner.trim() ? `_${inner}_` : inner; break;
-      case 'del': case 's': case 'strike': s += inner.trim() ? `~~${inner}~~` : inner; break;
-      case 'code': s += n.textContent ? '`' + n.textContent + '`' : ''; break;
-      case 'a': s += inner ? `[${inner}](${n.getAttribute('href') || ''})` : ''; break;
+      case 'STRONG': case 'B': s += inner.trim() ? `**${inner}**` : inner; break;
+      case 'EM': case 'I': s += inner.trim() ? `_${inner}_` : inner; break;
+      case 'DEL': case 'S': case 'STRIKE': s += inner.trim() ? `~~${inner}~~` : inner; break;
+      case 'CODE': s += n.textContent ? '`' + n.textContent + '`' : ''; break;
+      case 'A': s += inner ? `[${inner}](${n.getAttribute('href') || ''})` : ''; break;
       default: s += inner;
     }
-  });
+  }
   return s;
 }
 
@@ -659,6 +676,7 @@ export class WysiwygEditor {
     this.history = [];
     this.hIndex = -1;
     this.hLast = 0;
+    this.hBytes = 0;
     this.hCoalesce = true;
     // 菜单/工具栏点击时焦点可能暂时离开编辑区，记住最后所在块以保持命令有目标
     this.lastBlock = null;
@@ -688,7 +706,9 @@ export class WysiwygEditor {
 
   render(md, restore) {
     this._render(md, restore);
-    this.history = [{ md: this.toMarkdown(), caret: null }];
+    const snap = this.toMarkdown();
+    this.history = [{ md: snap, caret: null }];
+    this.hBytes = bytesOf(snap);
     this.hIndex = 0;
     this.hLast = 0;
     this.hCoalesce = false;
@@ -743,11 +763,20 @@ export class WysiwygEditor {
     if (last && last.md === md) { this.hLast = now; return; }
     const snap = { md, caret: this.caretState() };
     if (last && this.hCoalesce && now - this.hLast < 700) {
+      if (this.history[this.hIndex]) this.hBytes -= bytesOf(this.history[this.hIndex].md);
       this.history[this.hIndex] = snap;
+      this.hBytes += bytesOf(md);
     } else {
       this.history = this.history.slice(0, this.hIndex + 1);
       this.history.push(snap);
-      if (this.history.length > 200) this.history.shift();
+      this.hBytes += bytesOf(md);
+      if (this.history.length > 200) this.hBytes -= bytesOf(this.history.shift().md);
+      /* 条数上限 200 是按小文档定的。600 段的文档每份快照 60 KB，
+         200 条就是 12 MB 常驻。所以再按总字节封一道顶，超了丢最旧的：
+         长文档的撤销深度换内存，短文档完全不受影响。 */
+      while (this.hBytes > HISTORY_BYTES && this.history.length > 2) {
+        this.hBytes -= bytesOf(this.history.shift().md);
+      }
       this.hIndex = this.history.length - 1;
     }
     this.hLast = now;
@@ -775,7 +804,13 @@ export class WysiwygEditor {
 
   /* ---------------- 基础定位 ---------------- */
 
-  indexOf(block) { return [...this.root.children].indexOf(block); }
+  /* 不要写 [...this.root.children].indexOf()：每次调用都会把 600 个块复制成数组，
+     而它在每次击键的 caretState 里都要跑一次。 */
+  indexOf(block) {
+    const kids = this.root.children;
+    for (let i = 0; i < kids.length; i++) if (kids[i] === block) return i;
+    return -1;
+  }
 
   /**
    * 按锚点找标题块（目录里的 [标题](#slug) 靠它跳转）。
@@ -854,7 +889,7 @@ export class WysiwygEditor {
 
   onInput() {
     if (this.silent || this.composing) return;
-    this.normalize();
+    this.normalize(false, true);   // 只扫光标附近，见 normalize 的说明
     if (this.applyBlockRule()) return;
     this.applyInlineRule();
     this.renumber();
@@ -913,10 +948,24 @@ export class WysiwygEditor {
     absorb(after, false);
   }
 
-  normalize(all = false) {
+  /**
+   * 规范化 DOM。
+   *
+   * @param all   true = 连「光标不在的空标题」也降级（载入文档时用）
+   * @param local true = 只扫光标块与左右邻块。击键路径必须传 true：
+   *   浏览器塞的游离节点、重复的 .w-text 只会在刚编辑过的地方冒出来，
+   *   而全量扫一遍 600 个块 + 每块 sweepBlock，是单次击键最大的一块开销。
+   *   远处的问题留给下一次全量（载入 / 粘贴 / 换块）。
+   */
+  normalize(all = false, local = false) {
     const caret = this.currentBlock();
+    const near = caret
+      ? [caret.previousElementSibling, caret, caret.nextElementSibling].filter(Boolean)
+      : null;
+    const scope = local && near ? near : [...this.root.childNodes];
+
     // 顶层游离节点（浏览器偶尔会造出 div/br/text）→ 包成段落
-    for (const n of [...this.root.childNodes]) {
+    for (const n of scope) {
       if (n.nodeType === 1 && n.classList.contains('w-block')) continue;
       if (n.nodeType === 3 && !n.nodeValue.trim()) { n.remove(); continue; }
       const p = mkPara('');
@@ -927,7 +976,11 @@ export class WysiwygEditor {
       n.replaceWith(p);
     }
 
-    for (const b of [...this.root.children]) {
+    const blocks = local && near
+      ? near.filter((b) => b.nodeType === 1 && b.classList.contains('w-block'))
+      : [...this.root.children];
+
+    for (const b of blocks) {
       const type = b.dataset.type;
       if (type === 'table' || type === 'hr') continue;
       let t = b.querySelector('.w-text');

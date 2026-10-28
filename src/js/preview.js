@@ -11,6 +11,17 @@ import { jsonErrorPosition } from './format.js';
 import { renderMathIn } from './math.js';
 
 export function renderPreview(kind, text, lang, target, docDir = '') {
+  /* 同一份内容不重复渲染：切模式、切双栏、改设置都会再调一次，
+     而 600 段的文档重渲一次要 100 ms 上下，用户看到的是整块闪一下。
+     签名挂在容器上；谁把容器清空了，谁负责把 __pvText 置空
+     （app.js 的「没有打开的文件」分支就是这么做的）。 */
+  if (target.__pvText === text && target.__pvKind === kind
+      && target.__pvLang === lang && target.__pvDir === docDir) return;
+  target.__pvText = text;
+  target.__pvKind = kind;
+  target.__pvLang = lang;
+  target.__pvDir = docDir;
+
   if (kind === 'md') {
     target.innerHTML = renderMarkdown(text, {
       codeHighlight: (code, l) => highlight(code, l),
