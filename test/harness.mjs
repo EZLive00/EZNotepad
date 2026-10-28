@@ -8,7 +8,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -35,6 +35,83 @@ const MIME = {
 };
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+const TMP_DIR = path.join(ROOT, 'node_modules', '.tmp');
+
+/**
+ * 杀掉 Chrome 整棵进程树。
+ * 坑：Windows 上 child.kill() 只结束主进程，renderer/gpu/crashpad 子进程会留下来，
+ * 一直占着 profile 目录句柄（于是删不掉），几十轮测试后就是一堆后台 Chrome + 几个 G。
+ */
+function killTree(child) {
+  if (!child || !child.pid) return;
+  try {
+    if (process.platform === 'win32') {
+      spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+    }
+  } catch { /* 交给下面的 kill 兜底 */ }
+  try { child.kill(); } catch { /* ignore */ }
+}
+
+// 注意：在 Git Bash 起的 node 里 PATH 看不到 PowerShell 目录，直接 spawn('powershell')
+// 会 ENOENT（静默失败，什么也没杀）。所以优先用绝对路径。
+const PS_CANDIDATES = [
+  path.join(process.env.SystemRoot || 'C:\\Windows',
+    'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+  'powershell',
+  'pwsh',
+];
+
+/**
+ * 按命令行里的 profile 路径结束 Chrome。
+ * 为什么不用 pid：Chrome 启动后会把活儿交给真正的浏览器进程，我们 spawn 到的那个 pid
+ * 往往已经退出，taskkill /pid 就是打空——进程留一堆，profile 目录也删不掉。
+ */
+function killChromeWhere(markerWin) {
+  if (process.platform !== 'win32') return;
+  const ps = `Get-CimInstance Win32_Process -Filter "Name='chrome.exe'" | `
+    + `Where-Object { $_.CommandLine -like '*${markerWin}*' } | `
+    + `ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`;
+  for (const exe of PS_CANDIDATES) {
+    const r = spawnSync(exe, ['-NoProfile', '-NonInteractive', '-Command', ps],
+      { stdio: 'ignore', windowsHide: true });
+    if (!r.error) return;
+  }
+}
+
+/** 收掉上一轮遗留的测试用 Chrome（本仓库 .tmp 下任意 profile） */
+function killStaleChrome() {
+  killChromeWhere(TMP_DIR.split(path.sep).join('\\') + '\\chrome-');
+}
+
+/** 这个端口上有没有人在监听（有就说明上一轮的 Chrome 还活着） */
+function portBusy(port) {
+  return new Promise((resolve) => {
+    const req = http.get({ host: '127.0.0.1', port, path: '/json/version', timeout: 400 }, (res) => {
+      res.resume();
+      resolve(true);
+    });
+    req.on('error', () => resolve(false));
+    req.on('timeout', () => { req.destroy(); resolve(false); });
+  });
+}
+
+/**
+ * 清掉其它测试遗留的临时 Chrome 配置目录（keep 是本次自己的，留着）。
+ * 调用前已经 killStaleChrome()，所以这些目录没有进程占用，删得掉。
+ * 注意：本函数假设测试是串行跑的（各文件的端口本来就是写死的，并行本来也跑不了）。
+ */
+function sweepStaleProfiles(keep) {
+  let names = [];
+  try { names = fs.readdirSync(TMP_DIR); } catch { return; }
+  const mine = path.basename(keep);
+  for (const n of names) {
+    if (!/^chrome-/.test(n) || n === mine) continue;
+    try {
+      fs.rmSync(path.join(TMP_DIR, n), { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    } catch { /* 还被占着就下轮再收 */ }
+  }
+}
 
 /**
  * @param {object} o
@@ -66,7 +143,22 @@ export async function runPage(o) {
 
   await new Promise((r) => server.listen(port, '127.0.0.1', r));
 
-  const profile = path.join(ROOT, 'node_modules', '.tmp', 'chrome-cm-' + Date.now());
+  // 每次都用全新的 profile 目录（不要复用：Chrome 的磁盘缓存会把上一次的 JS/CSS 带过来，
+  // 页面拿到旧资源，测试就会莫名其妙地少几项）。关键是「用完即删 + 开跑前清场」，
+  // 以前只做「新建」不做「删除」，跑几百轮就是几个 G 的垃圾和一堆后台 Chrome。
+  const profile = path.join(TMP_DIR, `chrome-prof-${cdpPort}-${Date.now()}`);
+  killStaleChrome(); // 先收掉上轮遗留的 Chrome，它们占着目录句柄，否则下面删不掉
+  sweepStaleProfiles(profile);
+  // 端口还被占着就说明有别人的 Chrome 活着。此时 spawn 的新实例绑不上调试端口，
+  // 后面的 /json/list 会接到那个旧实例上——断言全跑在旧页面上，症状是「莫名少几项」。
+  if (await portBusy(cdpPort)) {
+    await sleep(600);
+    killStaleChrome();
+    if (await portBusy(cdpPort)) {
+      throw new Error(`调试端口 ${cdpPort} 被占用：上一轮残留的 headless Chrome 还活着，`
+        + '先结束命令行里带 --remote-debugging-port=' + cdpPort + ' 的 chrome.exe 再跑');
+    }
+  }
   const chrome = spawn(CHROME, [
     '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
     '--force-color-profile=srgb', '--hide-scrollbars', `--window-size=${width},${height}`,
@@ -75,8 +167,15 @@ export async function runPage(o) {
   ], { stdio: 'ignore' });
 
   const close = () => {
-    try { chrome.kill(); } catch { /* ignore */ }
+    // 按本次 profile 路径精确杀：Chrome 真正干活的浏览器进程不是我们 spawn 的那个 pid，
+    // taskkill /pid 会打空，留下几十个后台 chrome 占内存、也锁着 profile 目录。
+    killChromeWhere(profile.split(path.sep).join('\\'));
+    killTree(chrome);
     try { server.close(); } catch { /* ignore */ }
+    // 进程没了再删目录；删不掉也无妨，下一次 runPage 开头的 sweepStaleProfiles() 会兜底。
+    try {
+      fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    } catch { /* ignore */ }
   };
 
   const getJson = (p) => new Promise((resolve, reject) => {

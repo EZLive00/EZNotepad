@@ -12,7 +12,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -67,7 +67,58 @@ const getJson = (p) => new Promise((resolve, reject) => {
   }).on('error', reject);
 });
 
-const profile = path.join(ROOT, 'node_modules', '.tmp', 'chrome-wys-' + Date.now());
+// Windows 上 child.kill() 杀不掉 renderer/gpu 子进程，它们会一直占着 profile 目录
+const killTree = (child) => {
+  if (!child || !child.pid) return;
+  try {
+    if (process.platform === 'win32') {
+      spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+    }
+  } catch { /* ignore */ }
+  try { child.kill(); } catch { /* ignore */ }
+};
+
+// 按命令行里的 profile 路径收掉 Chrome（Chrome 会把活儿交给真正的浏览器进程，
+// spawn 拿到的 pid 常常已退出，taskkill /pid 打空）。只匹配本仓库 .tmp，不动用户的 Chrome。
+// 注意：Git Bash 起的 node 在 PATH 里看不到 PowerShell 目录，spawn('powershell') 会 ENOENT
+// （静默失败 = 什么也没杀），所以优先用绝对路径。
+const PS_CANDIDATES = [
+  path.join(process.env.SystemRoot || 'C:\\Windows',
+    'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+  'powershell',
+  'pwsh',
+];
+
+const killChromeWhere = (marker) => {
+  if (process.platform !== 'win32') return;
+  const ps = `Get-CimInstance Win32_Process -Filter "Name='chrome.exe'" | `
+    + `Where-Object { $_.CommandLine -like '*${marker}*' } | `
+    + `ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`;
+  for (const exe of PS_CANDIDATES) {
+    const r = spawnSync(exe, ['-NoProfile', '-NonInteractive', '-Command', ps],
+      { stdio: 'ignore', windowsHide: true });
+    if (!r.error) return;
+  }
+};
+
+const TMP_WIN = path.join(ROOT, 'node_modules', '.tmp').split(path.sep).join('\\');
+const killStaleChrome = () => { killChromeWhere(TMP_WIN + '\\chrome-'); };
+
+// 每次用全新 profile（复用会把上次的磁盘缓存带进来，页面拿旧资源），
+// 但开跑前先清场：收掉上轮遗留的 Chrome 并删掉它们的目录，否则垃圾只增不减。
+const profile = path.join(ROOT, 'node_modules', '.tmp', 'chrome-prof-wys-' + Date.now());
+killStaleChrome();
+try {
+  const dir = path.dirname(profile);
+  for (const n of fs.readdirSync(dir)) {
+    if (/^chrome-/.test(n) && n !== path.basename(profile)) {
+      fs.rmSync(path.join(dir, n), { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  }
+} catch { /* 删不掉就下次再收 */ }
+try {
+  fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+} catch { /* 上轮还没退干净就复用 */ }
 
 (async () => {
   await new Promise((r) => server.listen(PORT, '127.0.0.1', r));
@@ -80,9 +131,17 @@ const profile = path.join(ROOT, 'node_modules', '.tmp', 'chrome-wys-' + Date.now
   ], { stdio: 'ignore' });
 
   const finish = (code) => {
-    try { chrome.kill(); } catch { /* ignore */ }
+    // 按本次 profile 路径精确杀（killTree 只杀得到启动器，真正干活的浏览器进程会活下来）
+    killChromeWhere(profile.split(path.sep).join('\\'));
+    killTree(chrome);
     try { server.close(); } catch { /* ignore */ }
-    setTimeout(() => process.exit(code), 300);
+    setTimeout(() => {
+      // 用完即删，否则每跑一次就多一个 14MB 的临时 profile 目录。
+      try {
+        fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      } catch { /* ignore */ }
+      process.exit(code);
+    }, 400);
   };
 
   let target = null;
