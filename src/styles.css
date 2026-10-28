@@ -464,7 +464,7 @@ body[data-theme="dark"] .am-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 25
   flex: none;
 }
 
-/* ---- 侧栏头：两个页面切换 + 设置入口 ---- */
+/* ---- 侧栏头：两个页面切换（设置入口在顶部菜单栏） ---- */
 .side-head {
   height: 38px; flex: none; display: flex; align-items: center;
   justify-content: space-between; padding: 0 8px 0 10px; gap: 6px;
@@ -478,11 +478,6 @@ body[data-theme="dark"] .am-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 25
 }
 .side-tab:hover { background: var(--bg-hover); color: var(--fg-soft); }
 .side-tab.active { background: var(--bg-panel); color: var(--fg); box-shadow: 0 1px 2px rgba(17, 24, 39, .07); }
-.side-act {
-  width: 24px; height: 24px; flex: none; display: grid; place-items: center;
-  border: none; border-radius: var(--r-sm); background: transparent; color: var(--fg-faint); cursor: pointer;
-}
-.side-act:hover { background: var(--bg-hover); color: var(--fg); }
 .side-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 
 /* ---- 文件树 ---- */

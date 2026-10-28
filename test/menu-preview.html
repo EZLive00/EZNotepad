@@ -39,7 +39,8 @@ $('#wysiwyg').innerHTML = `
 
 const { createAppMenu } = await import('/src/js/appmenu.js');
 
-// 和 app.js 的 MENU_TREE 同构，只保留文件 / 格式 / 插入三个菜单用于看排版
+// 和 app.js 的 MENU_TREE 同构、同序（文件 编辑 格式 插入 视图 工具 设置 帮助）。
+// 除了前三个，其余只占位——测试按索引点菜单，顺序必须跟真应用一致。
 const MENUS = [
   {
     /* 「最近打开」是动态的，所以 items 写成函数：每次展开重算一遍。
@@ -66,6 +67,7 @@ const MENUS = [
       ];
     },
   },
+  { label: '编辑', items: [] },
   {
     label: '格式',
     items: [
@@ -107,28 +109,20 @@ const MENUS = [
       { note: '光标在表格内右键，可增删行列、调整对齐', hidden: () => !window.__inTable },
     ],
   },
+  { label: '视图', items: [] },
+  { label: '工具', items: [] },
+  /* 动作型顶级项：不带下拉，点一下直接执行（真应用里是打开设置面板） */
+  { label: '设置', action: () => { (window.__calls ||= []).push('settings'); } },
+  { label: '帮助', items: [] },
 ];
 
-// 菜单栏上补齐其他几个按钮，看起来才像真的
 const bar = $('#menubar');
 createAppMenu({ bar, menus: MENUS, run: (id) => { (window.__calls ||= []).push(id); } });
-['编辑'].forEach((label, i) => {
-  const b = document.createElement('button');
-  b.className = 'am-btn';
-  b.textContent = label;
-  bar.insertBefore(b, bar.children[i + 1]);
-});
-['视图', '工具', '帮助'].forEach((label) => {
-  const b = document.createElement('button');
-  b.className = 'am-btn';
-  b.textContent = label;
-  bar.appendChild(b);
-});
 
 const which = q.get('menu') || 'format';
 if (which === 'insert-table') window.__inTable = true;   // 模拟「光标在表格里」
 if (which === 'file') window.__itemsCalls = 0;
-const MENU_NAME = { format: '格式', insert: '插入', 'insert-table': '插入', file: '文件' }[which] || '格式';
+const MENU_NAME = { format: '格式', insert: '插入', 'insert-table': '插入', file: '文件', settings: '设置' }[which] || '格式';
 [...bar.querySelectorAll('.am-btn')].find((b) => b.textContent === MENU_NAME).click();
 
 window.__ready = 1;

@@ -551,7 +551,8 @@ function clearFolder() {
 function setupSidebar() {
   el.sideTabs.forEach((b) => { b.onclick = () => setSide(b.dataset.side); });
   el.ftPick.onclick = pickFolder;
-  $('sideSettings').onclick = showSettings;
+  /* 设置入口只在两处：顶部菜单栏的「设置」和 Ctrl+,（同一个 showSettings）。
+     侧栏那个齿轮去掉了——它紧挨「大纲/文件」，看着像「这一栏的设置」。 */
 
   let ftTimer = 0;
   el.ftQuery.addEventListener('input', () => {
@@ -2109,9 +2110,14 @@ const MENU_TREE = [
       { id: 'wordCount', label: '字数统计', disabled: () => !hasTab() },
       { id: 'encoding', label: '文件编码…', disabled: () => !hasTab() },
       { id: 'eol', label: '切换换行符', disabled: () => !hasTab() },
-      { sep: true },
-      { id: 'settings', label: '设置…', icon: 'settings', kbd: 'Ctrl+,' },
     ],
+  },
+  {
+    /* 设置原本塞在「工具」最后一项，位置不对：工具是「处理文本」（排序、去重、对比），
+       设置是「配置软件」。提成顶级项后，它有了自己的位置，点一下直接开面板——
+       没有下拉，所以不跟别的菜单抢「展开/收起」那套交互。 */
+    label: '设置',
+    action: () => showSettings(),
   },
   {
     label: '帮助',

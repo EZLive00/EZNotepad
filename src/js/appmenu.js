@@ -10,7 +10,9 @@ const CHECK = iconHTML('check', 'check');
 /**
  * @param {object} opt
  * @param {HTMLElement} opt.bar      放菜单按钮的容器
- * @param {Array} opt.menus          [{ label, items: [{ id, label, kbd, checked?, disabled? } | { sep:true }] }]
+ * @param {Array} opt.menus          [{ label, items: [...] }] 或 [{ label, action }]
+ *   items 元素：{ id, label, kbd, checked?, disabled? } | { sep:true } | { head } | { row:[] } | { note }
+ *   action：顶级项不带下拉，点一下直接执行（「设置」就是这种）
  * @param {(id:string)=>void} opt.run 执行命令
  */
 export function createAppMenu({ bar, menus, run }) {
@@ -30,14 +32,22 @@ export function createAppMenu({ bar, menus, run }) {
     b.type = 'button';
     b.className = 'am-btn';
     b.textContent = m.label;
+    // 顶级项也可以是「动作」而不是下拉：点一下直接开面板，不弹空菜单。
+    // 鼠标横向滑过时只把别的菜单收掉，别给它弹一个没有内容的框。
+    const isAction = typeof m.action === 'function';
     // 阻止默认行为以保住编辑区焦点（否则「粘贴」「撤销」会找不到目标）
     b.addEventListener('mousedown', (e) => e.preventDefault());
     b.addEventListener('click', (e) => {
       e.stopPropagation();
+      if (isAction) { close(); m.action(); return; }
       if (openIndex === i) close();
       else open(i);
     });
-    b.addEventListener('mouseenter', () => { if (openIndex >= 0 && openIndex !== i) open(i); });
+    b.addEventListener('mouseenter', () => {
+      if (openIndex < 0 || openIndex === i) return;
+      if (isAction) close();
+      else open(i);
+    });
     bar.appendChild(b);
     buttons.push(b);
   });
@@ -160,6 +170,8 @@ export function createAppMenu({ bar, menus, run }) {
   }
 
   function open(i) {
+    // 动作型顶级项没有面板，别 render 出一个空框
+    if (typeof menus[i].action === 'function') return;
     openIndex = i;
     buttons.forEach((b, n) => b.classList.toggle('open', n === i));
     render(menus[i]);
@@ -191,6 +203,15 @@ export function createAppMenu({ bar, menus, run }) {
     }
   }
 
+  /** 左右换菜单时跳过「动作型」顶级项——它没有下拉，停在那儿等于卡住 */
+  function stepMenu(dir) {
+    let i = openIndex;
+    for (let k = 0; k < menus.length; k++) {
+      i = (i + dir + menus.length) % menus.length;
+      if (typeof menus[i].action !== 'function') { open(i); return; }
+    }
+  }
+
   document.addEventListener('mousedown', (e) => {
     if (openIndex < 0) return;
     if (panel.contains(e.target) || bar.contains(e.target)) return;
@@ -206,8 +227,8 @@ export function createAppMenu({ bar, menus, run }) {
     if (k === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
     else if (k === 'ArrowDown') { e.preventDefault(); e.stopPropagation(); step(1); }
     else if (k === 'ArrowUp') { e.preventDefault(); e.stopPropagation(); step(-1); }
-    else if (k === 'ArrowRight') { e.preventDefault(); e.stopPropagation(); open((openIndex + 1) % menus.length); }
-    else if (k === 'ArrowLeft') { e.preventDefault(); e.stopPropagation(); open((openIndex - 1 + menus.length) % menus.length); }
+    else if (k === 'ArrowRight') { e.preventDefault(); e.stopPropagation(); stepMenu(1); }
+    else if (k === 'ArrowLeft') { e.preventDefault(); e.stopPropagation(); stepMenu(-1); }
     else if ((k === 'Enter' || k === ' ') && hotIndex >= 0 && rows[hotIndex]) {
       e.preventDefault(); e.stopPropagation();
       rows[hotIndex].click();

@@ -110,6 +110,18 @@ try {
   ok('表格内出现提示', (await count('.am-note')) === 1);
   ok('提示说明去右键', (await text('.am-note')).includes('右键'));
 
+  // ---- 设置：动作型顶级项（没有下拉，点一下直接执行）----
+  await ev(`window.__calls = []`);
+  await openMenu(6);
+  ok('设置不弹菜单面板', await ev(`document.querySelector('.appmenu').hidden`));
+  ok('设置点击直接派发命令', (await ev(`JSON.stringify(window.__calls)`)) === '["settings"]');
+
+  // 左右换菜单要跳过它，否则键盘会停在「没有面板」的项上，看起来像卡住
+  await openMenu(5);
+  await ev(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))`);
+  ok('左右切换跳过「设置」',
+    (await ev(`document.querySelectorAll('#menubar .am-btn')[7].classList.contains('open')`)) === true);
+
   // ---- 长菜单不会顶出窗口 ----
   const fits = await ev(`(() => {
     const p = document.querySelector('.appmenu');
