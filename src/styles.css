@@ -155,8 +155,8 @@ input { font-family: inherit; font-size: inherit; color: inherit; }
    品牌图标 + 菜单 + 文档标题 + 窗口按钮；空白处可拖动，双击最大化 */
 .appbar {
   flex: none;
-  /* 顶部整块（标题栏 + 标签行）与正文同色，区域分界全靠这道 1px 线；
-     激活标签在下方用同色引脚把线「顶断」，保持「标签与正文相连」的隐喻 */
+  /* 顶部整块（标题栏 + 标签行）与正文同色，区域分界全靠这道 1px 线
+     （整条连续，标签行下也不例外） */
   background: var(--bg);
   border-bottom: 1px solid var(--line-strong);
   position: relative;
@@ -231,16 +231,15 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
 /* 标签与工具同行：左边标签，中间留白（可拖窗口），右边是高频操作。
    这样内容区上方只有一行，比原来"标签栏 + 工具栏"两行更干净。 */
 .tabbar {
-  height: 40px;
+  height: 32px;
   display: flex; align-items: center; gap: 2px;
   padding: 0 6px 0 8px;
 }
 .tabs {
   display: flex; gap: 0; overflow-x: auto; overflow-y: hidden;
   scrollbar-width: none; min-width: 0; flex: 0 1 auto;
-  /* 高度顶到 appbar 底线（多出的 1px 压在边框上），标签 stretch 到整行高、
-     底沿直接落在分界线上 —— 标签行和内容区之间不留空带 */
-  align-self: stretch; margin-bottom: -1px;
+  /* 标签 stretch 到整行高；不压到 appbar 边框上，底线保持完整连续 */
+  align-self: stretch;
   align-items: stretch;
 }
 .tabs::-webkit-scrollbar { display: none; }
@@ -274,16 +273,10 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
 }
 .tab.drop-before::before { left: -2px; }
 .tab.drop-after::before { left: auto; right: -2px; }
-/* 激活标签：同色平面上的激活态靠字重 + 全亮文字 + 引脚断线表达，
+/* 激活标签：同色平面上的激活态靠字重 + 全亮文字表达，
    不再另铺底色（全域同色后底色差已不存在） */
 .tab.active {
   background: var(--bg-panel); color: var(--fg); font-weight: 600;
-}
-/* 「引脚」：标签已 stretch 到压在分界线上，只需一块同色实体盖掉
-   身下那 1px 线（多留 1px 余量防缩放取整露缝）—— 标签和正文真正相连 */
-.tab.active::after {
-  content: ""; position: absolute; top: 100%; left: 0; right: 0;
-  height: 2px; background: var(--bg-panel);
 }
 /* 加粗宽度占位：正常态也预留 600 字重的宽度，激活切换时文字宽了但布局不动。
    伪元素是同文本的加粗版，高度压成 0 且不可见，只贡献宽度 */
