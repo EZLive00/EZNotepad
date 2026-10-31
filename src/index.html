@@ -72,6 +72,11 @@
     <symbol id="i-folder-open" viewBox="0 0 24 24">
       <path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2" />
     </symbol>
+    <symbol id="i-folder-plus" viewBox="0 0 24 24">
+      <path d="M12 10v6" />
+      <path d="M9 13h6" />
+      <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+    </symbol>
     <symbol id="i-folder" viewBox="0 0 24 24">
       <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
     </symbol>
@@ -181,6 +186,10 @@
       <path d="M12 8v4" />
       <path d="M15.312 2a2 2 0 0 1 1.414.586l4.688 4.688A2 2 0 0 1 22 8.688v6.624a2 2 0 0 1-.586 1.414l-4.688 4.688a2 2 0 0 1-1.414.586H8.688a2 2 0 0 1-1.414-.586l-4.688-4.688A2 2 0 0 1 2 15.312V8.688a2 2 0 0 1 .586-1.414l4.688-4.688A2 2 0 0 1 8.688 2z" />
     </symbol>
+    <symbol id="i-pencil" viewBox="0 0 24 24">
+      <path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z" />
+      <path d="m15 5 4 4" />
+    </symbol>
     <symbol id="i-pilcrow" viewBox="0 0 24 24">
       <path d="M13 4v16" />
       <path d="M17 4v16" />
@@ -242,6 +251,13 @@
       <path d="M21 12H8" />
       <path d="M21 19H8" />
       <path d="M3 12v7" />
+    </symbol>
+    <symbol id="i-trash-2" viewBox="0 0 24 24">
+      <path d="M10 11v6" />
+      <path d="M14 11v6" />
+      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+      <path d="M3 6h18" />
+      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
     </symbol>
     <symbol id="i-triangle-alert" viewBox="0 0 24 24">
       <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" />
@@ -331,9 +347,15 @@
         <div class="ft-search">
           <svg class="ico" aria-hidden="true"><use href="#i-search" /></svg>
           <input id="ftQuery" placeholder="在这个文件夹里搜内容" spellcheck="false" />
+          <button type="button" class="ft-tog" id="ftRegex" title="按正则表达式匹配">.*</button>
           <button type="button" class="ft-x icon-only hidden" id="ftClear" title="清除搜索">
             <svg class="ico" aria-hidden="true"><use href="#i-x" /></svg>
           </button>
+        </div>
+        <div class="ft-search ft-replace hidden" id="ftReplaceRow">
+          <input id="ftReplaceInput" placeholder="替换为（留空即删除）" spellcheck="false" />
+          <button type="button" class="ft-tog" id="ftCase" title="区分大小写">Aa</button>
+          <button type="button" class="ft-rep-all" id="ftReplaceAll">全部替换</button>
         </div>
         <div class="ft-path">
           <span id="ftPathText" title="">未打开文件夹</span>

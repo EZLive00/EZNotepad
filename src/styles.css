@@ -501,6 +501,26 @@ body[data-theme="dark"] .am-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 25
 .ft-x:hover { background: var(--bg-hover); color: var(--fg); }
 .ft-x .ico { width: 12px; height: 12px; }
 
+/* 正则开关：一个字宽的小方块，开着时点亮。
+   放搜索框里而不是菜单里，是因为它改的是「这一次搜索」的语义 */
+.ft-tog {
+  flex: none; height: 19px; padding: 0 4px; font-size: 10.5px; line-height: 1;
+  font-family: var(--font-mono); color: var(--fg-faint);
+  background: transparent; border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm); cursor: pointer;
+}
+.ft-tog:hover { color: var(--fg); }
+.ft-tog.on { color: var(--accent); border-color: var(--accent); background: transparent; }
+
+/* 替换行：和搜索行同一套骨架，只是多一颗按钮 */
+.ft-replace { box-shadow: inset 0 0 0 1px var(--line); }
+.ft-rep-all {
+  flex: none; height: 19px; padding: 0 8px; font-size: 11.5px;
+  color: var(--fg-soft); background: transparent;
+  border: 1px solid var(--line-strong); border-radius: var(--r-sm); cursor: pointer;
+}
+.ft-rep-all:hover { color: var(--accent); border-color: var(--accent); }
+
 .ft-path {
   flex: none; display: flex; align-items: center; gap: 6px;
   padding: 0 10px 6px; font-size: 11.5px; color: var(--fg-faint);
@@ -1000,6 +1020,50 @@ mark.rem { background: rgba(220, 60, 60, .32); border-radius: var(--r-sm); }
 .dlg-row .dlg-input { width: 64px; margin: 0; text-align: center; }
 .dlg-row span { font-size: 12.5px; color: var(--fg-soft); }
 
+/* 历史版本列表：一行一个版本，右侧两个动作。
+   时间与大小同一行左右分开，扫一眼就能找到「刚才那版」 */
+.hist { display: flex; flex-direction: column; gap: 10px; min-width: 380px; }
+.hist-list {
+  display: flex; flex-direction: column; max-height: 320px; overflow: auto;
+  border-radius: var(--r-md); background: var(--bg-soft);
+}
+.hist-item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 7px 10px; font-size: 12.5px; color: var(--fg);
+}
+.hist-item + .hist-item { box-shadow: inset 0 1px 0 var(--line); }
+.hist-item:hover { background: var(--bg-panel); }
+.hist-time { flex: 1; }
+.hist-size { color: var(--fg-faint); font-variant-numeric: tabular-nums; }
+.hist-acts { display: flex; gap: 6px; }
+.hist-btn {
+  padding: 3px 10px; font-size: 12px; color: var(--fg-soft);
+  background: transparent; border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm); cursor: pointer;
+}
+.hist-btn:hover { color: var(--fg); border-color: var(--accent); }
+.hist-btn.primary { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+
+/* 设置面板里的快捷键表：一屏能看十几条，超了在框里滚，
+   别把整个设置面板顶出去 */
+.keys-list {
+  max-height: 232px; overflow-y: auto;
+  border-radius: var(--r-md); background: var(--bg-soft);
+}
+.key-row { display: flex; align-items: center; gap: 8px; padding: 5px 9px; font-size: 12.5px; }
+.key-row + .key-row { box-shadow: inset 0 1px 0 var(--line); }
+.key-name {
+  flex: 1; min-width: 0; color: var(--fg);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.key-kbd {
+  min-width: 108px; text-align: right;
+  font-family: var(--font-mono); font-size: 11px; color: var(--fg-faint);
+}
+.key-kbd.custom { color: var(--accent); }
+.key-row .mini.waiting { color: var(--accent); border-color: var(--accent); }
+
+
 /* Toast */
 .toast-wrap {
   position: fixed; bottom: 40px; left: 50%; transform: translateX(-50%);
@@ -1038,6 +1102,39 @@ mark.rem { background: rgba(220, 60, 60, .32); border-radius: var(--r-sm); }
 .ctx-item:disabled { opacity: .4; cursor: default; }
 .ctx-kbd { font-family: var(--font-mono); font-size: 10.5px; color: var(--fg-faint); }
 .ctx-sep { height: 1px; background: var(--line); margin: 5px 8px; }
+
+/* 命令面板：和右键菜单同一套浮层规则（不写 border，轮廓走 --shadow） */
+.palette {
+  position: fixed; inset: 0; z-index: 420;
+  background: rgba(0, 0, 0, .16);
+  display: flex; justify-content: center; align-items: flex-start;
+  padding-top: 82px;
+}
+.palette-box {
+  width: min(560px, 90vw); overflow: hidden;
+  background: var(--bg-float); border-radius: var(--r-md);
+  box-shadow: var(--shadow); animation: pop .12s var(--ease);
+}
+.palette-input {
+  width: 100%; padding: 12px 14px; font-size: 14px; font-family: var(--font-ui);
+  color: var(--fg); background: transparent; border: none; outline: none;
+  border-bottom: 1px solid var(--line);
+}
+.palette-input::placeholder { color: var(--fg-faint); }
+.palette-list { max-height: 336px; overflow-y: auto; padding: 6px; overscroll-behavior: contain; }
+.palette-item {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 7px 10px; border: none; background: transparent; text-align: left;
+  border-radius: var(--r-sm); font-size: 13px; color: var(--fg); cursor: pointer;
+}
+.palette-item.on { background: var(--accent); color: #fff; }
+.palette-item.off { opacity: .42; }
+.palette-item .p-group { font-size: 10.5px; color: var(--fg-faint); }
+.palette-item .p-kbd {
+  margin-left: auto; font-family: var(--font-mono); font-size: 10.5px; color: var(--fg-faint);
+}
+.palette-item.on .p-group, .palette-item.on .p-kbd { color: rgba(255, 255, 255, .82); }
+.palette-empty { padding: 18px; text-align: center; font-size: 12.5px; color: var(--fg-faint); }
 
 /* 一行多个：左侧 lead 说明这一行管什么，后面是同一族动作 */
 .ctx-row { display: flex; align-items: center; gap: 4px; padding: 2px 7px 4px; }
@@ -1209,6 +1306,8 @@ body[data-theme="dark"] .ctx-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 2
 .wysiwyg code { background: var(--code-bg); padding: .12em .4em; border-radius: var(--r-sm); font-family: var(--font-mono); font-size: .88em; box-shadow: inset 0 0 0 1px var(--line); }
 .wysiwyg a { color: var(--accent); }
 .wysiwyg .w-img { max-width: 100%; max-height: 320px; border-radius: var(--r-md); margin: .3em 0; }
+/* 手动指定了尺寸就按尺寸来，别再被 320px 的天花板压回去 */
+.wysiwyg .w-img[width], .wysiwyg .w-img[height] { max-height: none; }
 
 /* 表格：编辑态 */
 /* 编辑态保留竖线（单元格边界要靠它定位光标），但压到最淡的一档 */

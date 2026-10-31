@@ -14,10 +14,12 @@ import { DiffPanel } from './diffpanel.js';
 import { MergeWizard } from './mergewizard.js';
 import { showShortcuts } from './shortcuts.js';
 import { exportPdf, printTab } from './pdf.js';
+import { exportHtml } from './exporthtml.js';
 import { iconHTML, setIcon } from './icons.js';
 import { createAppMenu } from './appmenu.js';
 import * as domfind from './domfind.js';
 import { FileTree } from './filetree.js';
+import { showHistory } from './history.js';
 import { freeUntitledName, moveById } from './taborder.js';
 import { listen } from '../vendor/api/event.js';
 import * as win from './win.js';
@@ -66,6 +68,11 @@ const el = {
   sideFiles: $('sideFiles'),
   sideTabs: [...document.querySelectorAll('.side-tab')],
   ftQuery: $('ftQuery'),
+  ftReplaceRow: $('ftReplaceRow'),
+  ftReplaceInput: $('ftReplaceInput'),
+  ftReplaceAll: $('ftReplaceAll'),
+  ftRegex: $('ftRegex'),
+  ftCase: $('ftCase'),
   ftBody: $('ftBody'),
   ftPathText: $('ftPathText'),
   ftPick: $('ftPick'),
@@ -357,7 +364,17 @@ function setMode(mode, opt = {}) {
   updateOutline();
   refreshStats();
   updateStatus();   // 切换文件/模式后格式徽标、行列数、草稿状态都要跟着变
-  if (mode === 'preview') el.preview.scrollTop = t.scrollTop || 0;
+  if (mode === 'preview') el.preview.scrollTop = t.previewScroll || 0;
+  else if (showPreview) el.preview.scrollTop = t.previewScroll || 0;
+  /* 切回这个标签时把光标和滚动放回原处。只在「切标签」这条路上做，
+     手动换模式（Ctrl+2）不该把视图拽走 */
+  if (opt.fromActivate && showEditor && !showWys && t.caret != null) {
+    const pos = Math.min(t.caret, plain.value.length);
+    plain.setSelection(pos);
+    plain.scrollTop = t.scrollTop || 0;
+  } else if (opt.fromActivate && showWys && t.scrollTop) {
+    el.wysiwyg.scrollTop = t.scrollTop;
+  }
   // 手柄只属于所见即所得：切到编辑/预览就收起来
   if (mode === 'wysiwyg') { anchorBlock = null; refreshHandle(); }
   else { closeBlockMenu(); hideHandle(); }
@@ -554,7 +571,54 @@ const tree = new FileTree({
   be,
   toast,
   onOpen: (p, line) => openPathAt(p, line),
+  menu: contextMenu,
+  ask: askText,
+  confirm: (title, html) => confirmBox(title, html, '删除', '取消'),
+  onReveal: (p) => revealInFolder(p),
+  /* 改名/删除要带着已打开的标签一起走，否则标签还指着旧路径，
+     下次保存就凭空造出一个同名文件（删除的情况则是把内容写回已删位置）。 */
+  onRenamed: (oldPath, newPath) => {
+    const t = tabs.find((x) => x.path === oldPath);
+    if (!t) return;
+    t.path = newPath;
+    t.name = be.baseName(newPath);
+    t.mtime = null;
+    t.extChanged = false;
+    currentLang = (t.name.split('.').pop() || '').toLowerCase();
+    renderTabs();
+    refreshTitle();
+    syncWatches();
+  },
+  onDeleted: (p) => {
+    const t = tabs.find((x) => x.path === p);
+    if (!t) return;
+    /* 文件没了，内容还留在标签里：断掉磁盘关系，别让人一保存又把它写回来 */
+    t.path = null;
+    t.mtime = null;
+    t.extChanged = false;
+    if (!t.name.includes('（已删除）')) t.name += '（已删除）';
+    renderTabs();
+    refreshTitle();
+    syncWatches();
+    toast('文件已删除，标签内容保留，可另存为新文件');
+  },
 });
+
+/** 单行文本输入框。dialog 的 body 支持塞 DOM，和「跳转到行」走同一套 */
+function askText(title, label, value, okLabel = '确定') {
+  const box = document.createElement('div');
+  box.innerHTML = `<div class="dlg-text"></div><input class="dlg-input" id="askInput">`;
+  box.querySelector('.dlg-text').textContent = label;
+  const input = box.querySelector('#askInput');
+  input.value = value || '';
+  const p = dialog({
+    title,
+    body: box,
+    buttons: [{ id: 'ok', label: okLabel, primary: true }, { id: 'cancel', label: '取消' }],
+  }).then((r) => (r === 'ok' ? input.value.trim() : null));
+  setTimeout(() => { input.focus(); input.select(); }, 40);
+  return p;
+}
 
 /** 侧栏两个页面互斥显示；记住上次用的是哪个 */
 function setSide(side) {
@@ -588,7 +652,48 @@ function clearFolder() {
   saveSettings();
   el.ftQuery.value = '';
   el.ftClear.classList.add('hidden');
+  el.ftReplaceRow.classList.add('hidden');
   tree.setRoot('');
+}
+
+/* 全目录批量替换。安全边界：先问一次、说明会直接改磁盘、告诉用户历史快照在哪；
+   后端只碰 UTF-8 文件，改每个文件前都留快照。 */
+async function replaceInFolderNow() {
+  const root = tree.root || settings.folder;
+  const q = el.ftQuery.value;
+  if (!root) { toast('先打开一个文件夹'); return; }
+  if (!q) { toast('先在上面填要搜索的内容'); return; }
+  const rep = el.ftReplaceInput.value;
+  const htmlEsc = (s) => String(s).replace(/[&<>"]/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const ok = await confirmBox(
+    '在整个文件夹里替换',
+    `把 <code>${htmlEsc(q)}</code> 换成 <code>${htmlEsc(rep) || '（删除）'}</code>。<br><br>`
+    + '这会<b>直接改动磁盘上的文件</b>，不是只改当前文档。<br>'
+    + '每个文件改动前都会留一份历史快照，出问题可以从「文件 → 历史版本」找回。',
+    '开始替换', '取消'
+  );
+  if (!ok) return;
+
+  let r;
+  try {
+    r = await be.replaceInFolder(root, q, rep, tree.regex, tree.caseSensitive);
+  } catch (e) {
+    dialog({ title: '替换失败', body: String(e) });
+    return;
+  }
+  toast(`替换完成：${r.files} 个文件、${r.hits} 处${r.skipped ? `（跳过 ${r.skipped} 个）` : ''}`);
+
+  await tree.search(q);
+  /* 打开的标签跟着走：不脏就静默重载，脏就打个点等用户切过去再问 */
+  for (const p of r.paths || []) {
+    const t = tabs.find((x) => x.path === p);
+    if (!t) continue;
+    if (isDirty(t)) { t.extChanged = true; continue; }
+    const m = await be.fileMtime(p).catch(() => null);
+    await reloadTab(t, m).catch(() => {});
+  }
+  renderTabs();
 }
 
 function setupSidebar() {
@@ -600,6 +705,7 @@ function setupSidebar() {
   let ftTimer = 0;
   el.ftQuery.addEventListener('input', () => {
     el.ftClear.classList.toggle('hidden', !el.ftQuery.value);
+    el.ftReplaceRow.classList.toggle('hidden', !el.ftQuery.value);
     clearTimeout(ftTimer);
     ftTimer = setTimeout(() => tree.search(el.ftQuery.value), 320);
   });
@@ -609,8 +715,38 @@ function setupSidebar() {
   el.ftClear.onclick = () => {
     el.ftQuery.value = '';
     el.ftClear.classList.add('hidden');
+    el.ftReplaceRow.classList.add('hidden');
     tree.render();
   };
+
+  /* ---- 跨文件替换 ----
+     搜索一直是「只能看」的：找到 200 处命中，还是得一个一个点开改。
+     这里补上批量替换，改之前先问、每个文件留历史快照、改完把打开的标签刷新。 */
+  const htmlEsc = (s) => String(s).replace(/[&<>"]/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+  const syncSearchMode = () => {
+    tree.regex = el.ftRegex.classList.contains('on');
+    tree.caseSensitive = el.ftCase.classList.contains('on');
+  };
+  const rerunSearch = () => {
+    clearTimeout(ftTimer);
+    ftTimer = setTimeout(() => tree.search(el.ftQuery.value), 60);
+  };
+  el.ftRegex.onclick = () => {
+    el.ftRegex.classList.toggle('on');
+    el.ftRegex.title = tree.regex ? '按正则表达式匹配（已开启）' : '按正则表达式匹配';
+    syncSearchMode();
+    if (el.ftQuery.value) rerunSearch();
+  };
+  el.ftCase.onclick = () => {
+    el.ftCase.classList.toggle('on');
+    syncSearchMode();
+  };
+  el.ftReplaceInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); replaceInFolderNow(); }
+  });
+  el.ftReplaceAll.onclick = () => replaceInFolderNow();
 
   setSide(settings.side || 'outline');
   // 有记住的文件夹就直接画出来；没有也要画一次（显示「还没打开文件夹」的引导）
@@ -661,6 +797,12 @@ function showSettings() {
       <div class="set-hint">当前打开的文件夹，用于左侧「文件」页浏览与搜索。</div>
     </div>
 
+    <div class="set-group">
+      <div class="set-label">快捷键</div>
+      <div class="keys-list" id="setKeysList"></div>
+      <div class="set-hint">点「改」后直接按新的组合键（要带 Ctrl / Alt，或单用 F1–F12），Esc 取消。自定义优先于默认键位。</div>
+    </div>
+
     <div class="set-foot">
       <button type="button" class="mini ghost" id="setReset">恢复默认设置</button>
     </div>
@@ -674,6 +816,7 @@ function showSettings() {
     n.classList.toggle('faint', !settings.folder);
   };
   paintFolder();
+  paintKeyList(box.querySelector('#setKeysList'));
 
   box.querySelectorAll('.set-seg button').forEach((b) => {
     b.onclick = () => {
@@ -726,6 +869,7 @@ function showSettings() {
     Object.assign(settings, {
       theme: 'auto', fontSize: 13.5, layout: 'single', outlineVisible: true,
       showToolbar: true, showWinTitle: true, autoSave: true, folder: '', side: 'outline',
+      keymap: {},               // 自定义键位也算「出厂状态」的一部分
       __v: 2,
     });
     saveSettings();
@@ -735,6 +879,7 @@ function showSettings() {
     updateOutline();
     clearFolder();
     paintFolder();
+    paintKeyList(box.querySelector('#setKeysList'));
     box.querySelector('#setFontSize').textContent = '13.5 px';
     box.querySelectorAll('.set-seg[data-name="theme"] button').forEach((x) => x.classList.toggle('on', x.dataset.v === 'auto'));
     box.querySelector('#setOutline').checked = true;
@@ -793,37 +938,111 @@ function scheduleDraft() {
   draftTimer = setTimeout(saveDraft, 400);
 }
 
+/* 草稿存**所有**脏标签，不再是「只存当前这个」。
+   旧实现有两个致命处：切到一个干净的已保存文件时走 `LS.del('draft')`，
+   把上一个标签的草稿顺手删了；退出时也只看得见活动标签，其余标签的改动
+   连声招呼都不打就没了。 */
+const DRAFT_MAX_BYTES = 4 * 1024 * 1024;   // localStorage 一般 5MB，给设置和会话留余量
+
 function saveDraft() {
-  const t = activeTab();
-  if (!t) return;
-  const openTabs = tabs.map((x) => ({ path: x.path, name: x.name }));
-  if (t.path && !isDirty(t)) { LS.set('session', openTabs); LS.del('draft'); return; }
-  LS.set('draft', {
-    path: t.path, name: t.name, content: t.content,
-    encoding: t.encoding, eol: t.eol, mode: t.mode, time: Date.now(),
-  });
-  LS.set('session', openTabs);
+  const session = tabs.map((t) => ({
+    path: t.path, name: t.name, mode: t.mode,
+    scrollTop: t.scrollTop || 0, previewScroll: t.previewScroll || 0, caret: t.caret ?? null,
+  }));
+  LS.set('session', session);
+  const act = activeTab();
+  LS.set('sessionActive', act ? (act.path || act.name) : '');
+
+  const dirty = tabs.filter(isDirty);
+  if (!dirty.length) { LS.del('drafts'); LS.del('draft'); return; }
+  /* 容量不够时从最前面的开始放弃：最近改的那个一定保得住 */
+  let budget = DRAFT_MAX_BYTES;
+  const list = [];
+  for (let i = dirty.length - 1; i >= 0; i--) {
+    const t = dirty[i];
+    const size = (t.content || '').length * 2;   // UTF-16 粗算
+    if (size > budget) continue;
+    budget -= size;
+    list.unshift({
+      path: t.path, name: t.name, content: t.content,
+      encoding: t.encoding, bom: t.bom, eol: t.eol, mode: t.mode,
+      scrollTop: t.scrollTop || 0, caret: t.caret ?? null, time: Date.now(),
+    });
+  }
+  LS.set('drafts', list);
+  LS.del('draft');            // 老版本的单份草稿键，读完就清掉
 }
 
-async function restoreDraft() {
-  const d = LS.get('draft', null);
-  if (!d || !d.content) return false;
-  if (d.path) {
-    try {
-      const r = await be.readText(d.path);
-      if (r.content === d.content) { LS.del('draft'); return false; }
-    } catch {}
+/* 返回恢复了几份。没有草稿返回 0 */
+async function restoreDrafts() {
+  /* 老版本只有一个 draft 对象，读到就升级成数组 */
+  const list = LS.get('drafts', null) || (LS.get('draft', null) ? [LS.get('draft')] : []);
+  if (!list.length) return 0;
+
+  const valid = [];
+  for (const d of list) {
+    if (!d || !d.content) continue;
+    if (d.path) {
+      /* 磁盘内容和草稿一样 → 其实已经存过了，不算未保存 */
+      try { const r = await be.readText(d.path); if (r.content === d.content) continue; } catch {}
+      valid.push(d);
+    } else if (d.content.trim()) {
+      valid.push(d);           // 未命名文档：有字就值得留
+    }
   }
-  const when = new Date(d.time).toLocaleString();
+  if (!valid.length) { LS.del('drafts'); LS.del('draft'); return 0; }
+
+  const names = valid.map((d) => `<b>${d.name}</b>`).join('、');
+  const when = new Date(valid[valid.length - 1].time || Date.now()).toLocaleString();
   const keep = await confirmBox(
-    '恢复上次的草稿',
-    `发现一份未保存的内容：<b>${d.name}</b>（${when}）。<br><br>是否恢复？`,
-    '恢复草稿', '丢弃'
+    valid.length === 1 ? '恢复上次的草稿' : `恢复 ${valid.length} 份未保存的内容`,
+    `上次关闭时（${when}）还有没保存的内容：${names}。<br><br>是否全部恢复？`,
+    '恢复', '丢弃'
   );
-  if (!keep) { LS.del('draft'); return false; }
-  newTab(d.name, d.content, d.path, { encoding: d.encoding || 'UTF-8', eol: d.eol || 'LF', mode: d.mode });
-  toast('草稿已恢复');
-  return true;
+  if (!keep) { LS.del('drafts'); LS.del('draft'); return 0; }
+
+  for (const d of valid) {
+    const t = newTab(d.name, d.content, d.path, {
+      encoding: d.encoding || 'UTF-8', bom: !!d.bom, eol: d.eol || 'LF', mode: d.mode,
+      scrollTop: d.scrollTop || 0, caret: d.caret ?? null,
+    });
+    /* 恢复出来的内容要和磁盘比，而不是和它自己比 —— 否则一打开就是「已保存」，
+       关窗时也不会提醒，等于把草稿又还回去了 */
+    t.savedContent = '';
+    if (d.path) {
+      try { const r = await be.readText(d.path); t.savedContent = r.content; } catch {}
+    }
+  }
+  renderTabs();
+  LS.del('drafts'); LS.del('draft');
+  saveDraft();          // 恢复过程中 activate 覆盖过 session，这里写回完整状态
+  toast(valid.length === 1 ? '草稿已恢复' : `已恢复 ${valid.length} 份草稿`);
+  return valid.length;
+}
+
+/* 按会话里的顺序重开标签，并把光标/滚动位置放回去 */
+async function restoreSession() {
+  const session = LS.get('session', null);
+  if (!Array.isArray(session) || !session.length) return 0;
+  const activeKey = LS.get('sessionActive', '');
+  let n = 0;
+  let last = null;
+  let activeId2 = null;
+  for (const s of session) {
+    if (!s || !s.path) continue;            // 未命名的走草稿那条路
+    const t = await openPath(s.path);
+    if (!t) continue;
+    if (s.mode && modesFor(detectKind(t.name)).includes(s.mode)) t.mode = s.mode;
+    t.scrollTop = s.scrollTop || 0;
+    t.previewScroll = s.previewScroll || 0;
+    t.caret = s.caret ?? null;
+    n++;
+    last = t;
+    if (s.path === activeKey) activeId2 = t.id;
+  }
+  const goal = activeId2 || (last && last.id);
+  if (goal) activate(goal);
+  return n;
 }
 
 /* ---------------- 自动保存 / 外部改动 ---------------- */
@@ -924,15 +1143,17 @@ async function reloadTab(t, mtime) {
 /* ---------------- 文件操作 ---------------- */
 export async function openPath(path) {
   const existing = tabs.find((t) => t.path === path);
-  if (existing) { activate(existing.id); return; }
+  if (existing) { activate(existing.id); return existing; }
   try {
     const r = await be.readText(path);
     // 先拿到修改时间再建标签：否则「刚打开就被自己当成外部改动」
     const mtime = await be.fileMtime(path).catch(() => null);
-    newTab(r.name, r.content, r.path, { encoding: r.encoding, bom: r.bom, eol: r.eol, mtime });
+    const t = newTab(r.name, r.content, r.path, { encoding: r.encoding, bom: r.bom, eol: r.eol, mtime });
     addRecent(path);
+    return t;
   } catch (e) {
     dialog({ title: '无法打开', body: String(e) });
+    return null;
   }
 }
 
@@ -970,10 +1191,15 @@ async function saveTab(t = activeTab(), saveAs = false, opts = {}) {
         if (!overwrite) return false;
       }
     }
+    /* 落盘之前先留一份旧的：一键格式化、排序去重、批量替换之后想反悔，
+       撤销栈未必翻得回去（还有 8MB 上限），这是最后一道 */
+    if (t.savedContent && t.savedContent !== t.content) {
+      await be.saveHistory(t.path, t.savedContent).catch(() => {});
+    }
     await be.saveText({ path: t.path, content, encoding: t.encoding, bom: t.bom });
     t.savedContent = t.content;
     t.mtime = await be.fileMtime(t.path).catch(() => t.mtime);
-    LS.del('draft');
+    saveDraft();               // 这个标签干净了，把它从草稿堆里摘掉
     addRecent(t.path);
     updateStatus();
     if (!silent) toast(`已保存 ${t.name}`);
@@ -985,6 +1211,54 @@ async function saveTab(t = activeTab(), saveAs = false, opts = {}) {
 }
 
 const saveTabAs = (t) => saveTab(t, true);
+
+/* 我们自己已经确认过一次关闭时，让 close-requested 直接放行，避免二次弹窗 */
+let forceClose = false;
+
+/* 退出前把**所有**标签看一遍。以前只检查活动标签：开三个未命名文档各写一段，
+   退出时只有一个进了草稿，其余静默消失。 */
+async function confirmQuit() {
+  const dirty = tabs.filter(isDirty);
+  if (!dirty.length) return true;
+  const names = dirty.map((t) => `<b>${t.name}</b>`).join('、');
+  const noPath = dirty.filter((t) => !t.path).length;
+  const r = await dialog({
+    title: '还有未保存的内容',
+    body: `${dirty.length} 个标签有未保存的修改：${names}。`
+      + (noPath ? `<br><br>其中 ${noPath} 个还没保存过文件，会作为草稿留在本机，下次启动可以恢复。` : '')
+      + '<br><br>要如何处理？',
+    buttons: [
+      { id: 'save', label: '全部保存并退出', primary: true },
+      { id: 'draft', label: '存为草稿并退出' },
+      { id: 'cancel', label: '取消' },
+    ],
+  });
+  if (r === 'cancel') return false;
+  if (r === 'save') await saveAllQuiet(dirty);
+  return true;
+}
+
+/* 批量保存不能走 saveTab()：它靠 readEditor(t) 取内容，而那只对屏幕上那个
+   标签成立，拿去写别的文件就是把 A 的正文灌进 B。这里统一用各标签自己的
+   t.content（切走时已经同步过）。写不进去的（文件被外部改过 / 权限不足）
+   不阻塞退出，交给草稿兜底。 */
+async function saveAllQuiet(list) {
+  for (const t of list) {
+    if (!t.path) continue;
+    try {
+      const cur = await be.fileMtime(t.path).catch(() => null);
+      if (t.mtime != null && cur != null && cur !== t.mtime) continue;   // 被别处改过，不覆盖
+      const content = t.eol === 'CRLF'
+        ? t.content.replace(/\r?\n/g, '\r\n')
+        : t.content.replace(/\r\n?/g, '\n');
+      await be.saveText({ path: t.path, content, encoding: t.encoding, bom: t.bom });
+      t.savedContent = t.content;
+      t.mtime = cur;
+    } catch { /* 留给草稿 */ }
+  }
+  renderTabs();
+  updateStatus();
+}
 
 async function closeTab(id) {
   const t = tabs.find((x) => x.id === id);
@@ -1688,6 +1962,30 @@ function gotoLinePrompt() {
   setTimeout(() => document.getElementById('gotoInput')?.select(), 40);
 }
 
+/* 历史版本：快照住在应用数据目录，回滚一律「开成新标签」或「写回编辑器」，
+   这个文件在按 Ctrl+S 之前一个字都不会变 */
+function showHistoryPanel() {
+  const t = activeTab();
+  if (!t) return;
+  if (!t.path) { toast('这个文件还没保存过，没有历史版本'); return; }
+  showHistory({
+    path: t.path,
+    onOpen: ({ text, time }) => {
+      const d = new Date(time);
+      const stamp = `${d.getMonth() + 1}-${String(d.getDate()).padStart(2, '0')} `
+        + `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+      newTab(`历史 · ${t.name}`, text, null);
+      toast(`已打开 ${stamp} 的版本，要留下就「另存为」`);
+    },
+    onApply: (text) => {
+      t.content = text;
+      setContent(text);
+      updateStatus();
+      toast('已写回编辑器，按 Ctrl+S 才会改动文件');
+    },
+  });
+}
+
 function cycleEol() {
   const t = activeTab();
   if (!t) return;
@@ -1848,7 +2146,9 @@ const commands = {
   closeTab: () => activeTab() && closeTab(activeTab().id),
   quit: async () => {
     persistCurrentView();
+    if (!(await confirmQuit())) return;
     saveDraft();
+    forceClose = true;
     await win.closeWindow();
   },
   undo: () => editCmd('undo'),
@@ -1858,7 +2158,10 @@ const commands = {
   paste: pasteFromClipboard,
   selectAll: () => editCmd('selectAll'),
   exportPdf,
+  exportHtml,
   print: () => printTab(activeTab()),
+  palette: openPalette,
+  history: showHistoryPanel,
   find: () => openFind(false),
   replace: () => openFind(true),
   gotoLine: gotoLinePrompt,
@@ -2027,6 +2330,8 @@ const MENU_TREE = [
       { id: 'autoSave', label: '自动保存（约 1 秒）', checked: () => !!settings.autoSave },
       { sep: true },
       { id: 'exportPdf', label: '导出 PDF / 打印…', kbd: 'Ctrl+P', disabled: () => !hasTab() },
+      { id: 'exportHtml', label: '导出网页（HTML）…', disabled: () => !hasTab() },
+      { id: 'history', label: '历史版本…', disabled: () => !hasTab() },
       { id: 'reload', label: '重新载入', disabled: () => !hasTab() },
       { sep: true },
       { id: 'closeTab', label: '关闭标签', kbd: 'Ctrl+W', disabled: () => !hasTab() },
@@ -2133,6 +2438,8 @@ const MENU_TREE = [
   {
     label: '工具',
     items: [
+      { id: 'palette', label: '命令面板…', kbd: 'Ctrl+Shift+P' },
+      { sep: true },
       { id: 'format', label: '一键格式化', kbd: 'Ctrl+Shift+F', disabled: () => !hasTab() },
       { sep: true },
       { id: 'sortAsc', label: '按行升序排序', disabled: () => !hasTab() },
@@ -2589,8 +2896,277 @@ function bindEvents() {
 }
 
 /* ---------------- 快捷键 ---------------- */
+/* ---------------- 命令面板 ----------------
+   命令表里已经有一百多条，靠菜单一层层找太慢。Ctrl+Shift+P 打开，
+   输几个字就定位。列表直接从 MENU_TREE 抽 —— 以后菜单加了新命令，
+   这里自动就有，不用维护第二份清单。 */
+const pal = { el: null, sel: 0 };
+
+function paletteItems() {
+  const out = [];
+  const seen = new Set();
+  const walk = (items, group) => {
+    for (const it of items) {
+      if (!it || it.sep || it.head || it.note) continue;
+      if (it.row) { walk(it.row, group); continue; }
+      if (!it.id || !commands[it.id] || seen.has(it.id)) continue;
+      seen.add(it.id);
+      out.push({
+        id: it.id,
+        label: String(it.label || it.id).replace(/…$/, ''),
+        group,
+        kbd: it.kbd || '',
+        off: typeof it.disabled === 'function' ? !!it.disabled() : !!it.disabled,
+      });
+    }
+  };
+  for (const m of MENU_TREE) {
+    if (!m.items) continue;
+    walk(typeof m.items === 'function' ? m.items() : m.items, m.label);
+  }
+  return out;
+}
+
+/** 子序列打分：连续命中、词首都加分。中文按字匹配，和拼音输入法一样「打几个字就行」 */
+function fuzzyScore(text, q) {
+  if (!q) return 1;
+  const t = String(text).toLowerCase();
+  const s = String(q).toLowerCase();
+  let i = 0;
+  let last = -2;
+  let score = 0;
+  for (const ch of s) {
+    const idx = t.indexOf(ch, i);
+    if (idx < 0) return 0;
+    score += idx === last + 1 ? 3 : 1;
+    if (idx === 0 || /[\s/·-]/.test(t[idx - 1])) score += 2;
+    last = idx;
+    i = idx + 1;
+  }
+  return score;
+}
+
+function closePalette() {
+  if (!pal.el) return;
+  pal.el.remove();
+  pal.el = null;
+}
+
+function openPalette() {
+  if (pal.el) { closePalette(); return; }
+  const items = paletteItems();
+  const wrap = document.createElement('div');
+  wrap.className = 'palette';
+  wrap.innerHTML = `<div class="palette-box" role="dialog" aria-label="命令面板">
+      <input class="palette-input" placeholder="输入命令名…（↑↓ 选择，Enter 执行，Esc 关闭）" spellcheck="false">
+      <div class="palette-list"></div>
+    </div>`;
+  const input = wrap.querySelector('.palette-input');
+  const list = wrap.querySelector('.palette-list');
+  let rows = [];
+  let sel = 0;
+
+  const mark = () => {
+    [...list.children].forEach((c, i) => c.classList.toggle('on', i === sel));
+    list.children[sel]?.scrollIntoView({ block: 'nearest' });
+  };
+
+  const draw = () => {
+    const q = input.value.trim();
+    rows = items
+      .map((it) => ({ it, s: fuzzyScore(it.label + ' ' + it.group, q) }))
+      .filter((r) => r.s > 0)
+      .sort((a, b) => b.s - a.s || a.it.label.length - b.it.label.length)
+      .slice(0, 14)
+      .map((r) => r.it);
+    if (sel >= rows.length) sel = Math.max(0, rows.length - 1);
+    list.innerHTML = '';
+    if (!rows.length) {
+      list.innerHTML = '<div class="palette-empty">没有匹配的命令</div>';
+      return;
+    }
+    rows.forEach((it, i) => {
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'palette-item' + (i === sel ? ' on' : '') + (it.off ? ' off' : '');
+      row.innerHTML = '<span class="p-label"></span><span class="p-group"></span><span class="p-kbd"></span>';
+      row.querySelector('.p-label').textContent = it.label;
+      row.querySelector('.p-group').textContent = it.group;
+      row.querySelector('.p-kbd').textContent = it.kbd;
+      row.addEventListener('mouseenter', () => { sel = i; mark(); });
+      row.addEventListener('click', () => run(i));
+      list.append(row);
+    });
+  };
+
+  const run = (i) => {
+    const it = rows[i];
+    if (!it) return;
+    if (it.off) { toast(`「${it.label}」在当前状态下不可用`); return; }
+    closePalette();
+    commands[it.id]?.();
+  };
+
+  input.addEventListener('input', () => { sel = 0; draw(); });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); e.stopPropagation(); sel = Math.min(sel + 1, rows.length - 1); mark(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); e.stopPropagation(); sel = Math.max(sel - 1, 0); mark(); }
+    else if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); run(sel); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closePalette(); }
+  });
+  wrap.addEventListener('mousedown', (e) => { if (e.target === wrap) closePalette(); });
+
+  document.body.append(wrap);
+  pal.el = wrap;
+  draw();
+  input.focus();
+}
+
+/* ---------------- 快捷键自定义 ----------------
+   默认键位写死在下面那串 if 里（一眼能看完、也不依赖配置）。
+   自定义是一层「覆盖」：先查 settings.keymap，命中就执行并截断；
+   没命中再走原来的判断。这样默认行为零改动，用户改坏了删掉配置即可复原。 */
+const MOD_KEYS = { ctrl: 'mod', meta: 'mod', cmd: 'mod' };
+
+/** 把一个 keydown 事件折成 "mod+shift+k" 这种稳定的字符串 */
+function comboOf(e) {
+  const parts = [];
+  if (e.ctrlKey || e.metaKey) parts.push('mod');
+  if (e.altKey) parts.push('alt');
+  if (e.shiftKey) parts.push('shift');
+  let k = e.key;
+  if (k === ' ') k = 'space';
+  else if (k.length === 1) k = k.toLowerCase();
+  else k = k.toLowerCase();
+  parts.push(k);
+  return parts.join('+');
+}
+
+/** 菜单里写的 "Ctrl+Shift+8" → "mod+shift+8" */
+function kbdToCombo(str) {
+  if (!str) return '';
+  const parts = String(str).split('+').map((p) => p.trim().toLowerCase()).filter(Boolean);
+  return parts.map((p) => MOD_KEYS[p] || p).join('+');
+}
+
+/** "mod+shift+8" → "Ctrl+Shift+8"，给界面看 */
+function comboToKbd(combo) {
+  return String(combo || '').split('+').map((p) => {
+    if (p === 'mod') return 'Ctrl';
+    if (p === 'alt') return 'Alt';
+    if (p === 'shift') return 'Shift';
+    return p.length === 1 ? p.toUpperCase() : p.charAt(0).toUpperCase() + p.slice(1);
+  }).join('+');
+}
+
+/** 菜单里所有带快捷键的命令（顺序和菜单一致） */
+function keyRows() {
+  const rows = [];
+  for (const m of MENU_TREE) {
+    if (!m.items) continue;
+    const items = typeof m.items === 'function' ? m.items() : m.items;
+    const walk = (arr) => arr.forEach((it) => {
+      if (!it) return;
+      if (it.row) { walk(it.row); return; }
+      if (it.id && it.kbd && commands[it.id]) {
+        rows.push({ id: it.id, label: it.label, kbd: it.kbd, group: m.label });
+      }
+    });
+    walk(items);
+  }
+  return rows;
+}
+
+function keymap() {
+  if (!settings.keymap) settings.keymap = {};
+  return settings.keymap;
+}
+
+/** 这个命令身上挂着的自定义键（可能有多个） */
+function customKeysOf(id) {
+  return Object.keys(keymap()).filter((c) => keymap()[c] === id);
+}
+
+function paintKeyList(list) {
+  const rows = keyRows();
+  list.innerHTML = '';
+  for (const r of rows) {
+    const mine = customKeysOf(r.id);
+    const row = document.createElement('div');
+    row.className = 'key-row';
+    row.innerHTML = '<span class="key-name"></span><span class="key-kbd"></span>';
+    row.querySelector('.key-name').textContent = r.label.replace(/…$/, '');
+    row.querySelector('.key-kbd').textContent = mine.length
+      ? mine.map(comboToKbd).join(' / ')
+      : r.kbd;
+    row.querySelector('.key-kbd').classList.toggle('custom', mine.length > 0);
+
+    const rec = document.createElement('button');
+    rec.type = 'button';
+    rec.className = 'mini';
+    rec.textContent = '改';
+    rec.onclick = () => {
+      rec.textContent = '按键…';
+      rec.classList.add('waiting');
+      recordCombo((combo) => {
+        rec.textContent = '改';
+        rec.classList.remove('waiting');
+        if (!combo) return;
+        /* 一个命令只留一个自定义键；新键若被别的命令占着，直接接管 */
+        for (const c of customKeysOf(r.id)) delete keymap()[c];
+        keymap()[combo] = r.id;
+        saveSettings();
+        paintKeyList(list);
+        toast(`${r.label.replace(/…$/, '')} → ${comboToKbd(combo)}`);
+      });
+    };
+
+    const reset = document.createElement('button');
+    reset.type = 'button';
+    reset.className = 'mini ghost';
+    reset.textContent = '恢复';
+    reset.disabled = !mine.length;
+    reset.onclick = () => {
+      for (const c of customKeysOf(r.id)) delete keymap()[c];
+      saveSettings();
+      paintKeyList(list);
+    };
+
+    row.append(rec, reset);
+    list.append(row);
+  }
+}
+
+/** 捕获下一组按键。catch 阶段抢在全局快捷键前面，免得边录边触发命令 */
+function recordCombo(cb) {
+  const onKey = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.key === 'Escape') { finish(null); return; }
+    const hasMod = e.ctrlKey || e.metaKey || e.altKey;
+    const isFn = /^F([1-9]|1[0-2])$/.test(e.key);
+    if (!hasMod && !isFn) return;        // 光按字母会误吞输入，必须带修饰键或用功能键
+    finish(comboOf(e));
+  };
+  const finish = (v) => {
+    window.removeEventListener('keydown', onKey, true);
+    cb(v);
+  };
+  window.addEventListener('keydown', onKey, true);
+}
+
 function setupKeys() {
   window.addEventListener('keydown', (e) => {
+    /* 自定义键位最优先：命中就执行并结束，不再往下走 */
+    const combo = comboOf(e);
+    const map = keymap();
+    if (Object.prototype.hasOwnProperty.call(map, combo)) {
+      e.preventDefault();
+      const id = map[combo];
+      if (id && commands[id]) commands[id]();
+      return;
+    }
+
     const mod = e.metaKey || e.ctrlKey;
     const k = e.key.toLowerCase();
     if (!mod) {
@@ -2646,7 +3222,7 @@ function setupKeys() {
     else if (k === '-') commands.zoomOut();
     else if (k === '0') commands.zoomReset();
     else if (k === 'tab') cycleTab(shift ? -1 : 1);
-    else if (k === 'p' && shift) commands.print();
+    else if (k === 'p' && shift) openPalette();
     else if (k === 'p') commands.exportPdf();
     else handled = false;
     if (handled) e.preventDefault();
@@ -2665,9 +3241,16 @@ function cycleTab(dir) {
 function persistCurrentView() {
   const t = activeTab();
   if (!t) return;
-  if (t.mode === 'wysiwyg') t.content = wys.toMarkdown();
-  else if (t.mode === 'edit') t.content = plain.value;
-  if (el.previewPane && !el.previewPane.classList.contains('hidden')) t.scrollTop = el.preview.scrollTop;
+  if (t.mode === 'wysiwyg') {
+    t.content = wys.toMarkdown();
+    t.scrollTop = el.wysiwyg.scrollTop;
+    t.caret = null;              // 所见即所得的 DOM 光标映射回源码偏移不可靠，只记住滚动位置
+  } else if (t.mode === 'edit') {
+    t.content = plain.value;
+    t.scrollTop = plain.scrollTop;
+    t.caret = plain.selection.from;
+  }
+  if (el.previewPane && !el.previewPane.classList.contains('hidden')) t.previewScroll = el.preview.scrollTop;
 }
 
 /* ---------------- 启动 ---------------- */
@@ -2738,22 +3321,31 @@ async function boot() {
     if (settings.theme === 'auto') applyTheme();
   });
 
-  const restored = await restoreDraft().catch(() => false);
-  if (!restored) {
-    const session = LS.get('session', null);
-    const recent = LS.get('recent', []);
-    const toOpen = session && session.length ? session.filter((s) => s.path && recent.slice(0, 5).includes(s.path)) : [];
-    let opened = false;
-    for (const s of toOpen) {
-      try { await be.readText(s.path); await openPath(s.path); opened = true; } catch {}
-    }
-    if (!opened) newTab('欢迎.md', WELCOME);
-  }
+  /* 先按上次的标签列表开文件，再把没保存的内容捞回来。
+     两件事各管一段：会话管「开过哪些文件」，草稿管「哪些还没存」。
+     以前这里只恢复最近 5 个文件里的标签，第 6 个开始就静默消失。 */
+  const cliFiles = await be.initialFiles().catch(() => []);
+  const opened = await restoreSession().catch(() => 0);
+  const drafts = await restoreDrafts().catch(() => 0);
+  /* 命令行/文件关联带进来的文件：双击 .md 时系统把路径塞进 argv */
+  for (const p of cliFiles || []) await openPath(p);
+  if (!opened && !drafts && !(cliFiles || []).length) newTab('欢迎.md', WELCOME);
   setLayout(settings.layout);
   updateOutline();
   applyZen();
 
   window.addEventListener('beforeunload', () => { persistCurrentView(); saveDraft(); });
+
+  /* Alt+F4 / 任务栏关闭不走标题栏那个按钮，不拦一下就绕过上面那套检查 */
+  win.onCloseRequested(async (event) => {
+    if (forceClose) return;
+    event.preventDefault();
+    persistCurrentView();
+    if (!(await confirmQuit())) return;
+    saveDraft();
+    forceClose = true;
+    win.closeWindow();
+  });
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') { persistCurrentView(); saveDraft(); }
   });
@@ -2763,6 +3355,10 @@ async function boot() {
   /* 文件变化监听：后端推过来的是「命中名单的绝对路径」。
      拿不到事件源也不影响任何编辑功能，所以静默失败即可。 */
   try { await listen('fs-change', (e) => onFsChange(e.payload)); } catch {}
+  /* 第二个实例双击文件时，单实例插件把路径转过来，在这个窗口里打开 */
+  try {
+    await listen('open-files', (e) => { (e.payload || []).forEach((p) => openPath(p)); });
+  } catch {}
   syncWatches();
 }
 
