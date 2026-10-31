@@ -931,6 +931,21 @@ export class WysiwygEditor {
     return offsetIn(t) >= t.textContent.length;
   }
 
+  /* 光标是否停在「空末行」：isCaretAtEnd 且最后一个 <br> 之后没有可见文字
+     （零宽空格不算 —— codeNewline 垫的那个正是它的藏身处）。
+     代码/公式块用它决定 Enter 是换行还是出块 */
+  caretOnEmptyLastLine(block) {
+    if (!this.isCaretAtEnd(block)) return false;
+    const kids = textEl(block).childNodes;
+    let lastBr = -1;
+    for (let i = kids.length - 1; i >= 0; i--) {
+      if (kids[i].nodeName === 'BR') { lastBr = i; break; }
+    }
+    let txt = '';
+    for (let j = lastBr + 1; j < kids.length; j++) txt += kids[j].textContent || '';
+    return txt.replace(/\u200b/g, '').trim() === '';
+  }
+
   isEmptyBlock(block) { return isEmptyText(textEl(block)); }
 
   /* ---------------- 输入主流程 ---------------- */
@@ -1356,8 +1371,10 @@ export class WysiwygEditor {
     }
     e.preventDefault();
     if (type === 'code' || type === 'math') {
-      // 末尾回车 = 离开块，在下方开新段落（Typora 的约定）；否则永远多一行
-      if (this.isCaretAtEnd(block)) {
+      // 块内回车 = 换行；只有停在「空末行」时回车才是离开块（Typora 约定：
+      // 连按两次 Enter —— 第一下开空行，第二下出块）。↓ 方向键也可出块。
+      // 之前「末尾回车直接出块」是错的：写完一行想换行就被弹出去
+      if (this.caretOnEmptyLastLine(block)) {
         const p = this.insertEmptyAfter(block);
         this.placeCaretStart(p);
         this.flush();

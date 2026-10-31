@@ -319,16 +319,18 @@ window.__run = () => {
   root.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
   eq('多行粘贴保留结构', T.out(), '## 小标题\n\n- 甲\n- 乙');
 
-  // 19. 代码块内回车：中间 = 块内换行；末尾 = 出块（Typora 约定，不然出不来）
+  // 19. 代码块内回车：永远块内换行；空末行再回车才出块（Typora 约定）
   T.reset('```js\nconst a = 1;\n```');
   ed.restoreCaret({ blockIndex: 0, offset: 5 });
   T.key('Enter');
   eq('代码块中间回车换行', T.out(), '```js\nconst\n a = 1;\n```');
   T.reset('```js\nconst a = 1;\n```');
   ed.restoreCaret({ blockIndex: 0, offset: 12 });
-  T.key('Enter');
+  T.key('Enter');          // 末尾回车 = 开空行，留在块内
+  eq('代码块末尾回车换行', T.out(), '```js\nconst a = 1;\n\n```');
+  T.key('Enter');          // 空末行回车 = 出块
   T.type('const b = 2;');
-  eq('代码块末尾回车出块', T.out(), '```js\nconst a = 1;\n```\n\nconst b = 2;');
+  eq('代码块空末行回车出块', T.out(), '```js\nconst a = 1;\n\n```\n\nconst b = 2;');
 
   // 19b. 代码块换行后行首退格：一次删掉换行（零宽空格垫片不许白按一次）
   T.reset('```js\nab\n```');
