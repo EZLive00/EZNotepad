@@ -12,7 +12,7 @@
 //      在下次编辑时会被抹平成纯文本（** 丢了）。
 // ============================================================
 
-import { resolveDocImg, headingSlugs, CALLOUT_TYPES, RE_CALLOUT, normalizeCallout } from './markdown.js';
+import { resolveDocImg, headingSlugs, CALLOUT_TYPES, RE_CALLOUT, normalizeCallout, splitImgAlt } from './markdown.js';
 
 const MAX_INDENT = 6;
 const ZWSP = '\u200b';
@@ -55,7 +55,11 @@ export function inlineHtml(src) {
   t = t.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g,
     (_, alt, s) => {
       const shown = resolveDocImg(s, docDir);
-      return `<img class="w-img" src="${escapeAttr(shown)}" data-src="${escapeAttr(s)}" alt="${escapeAttr(alt)}">`;
+      /* 尺寸写在 alt 里（`![说明|300](a.png)`），渲染成 width / height，
+         所见即所得里立刻就能看到缩过的样子 */
+      const { text, width, height } = splitImgAlt(alt);
+      const dim = (width ? ` width="${width}"` : '') + (height ? ` height="${height}"` : '');
+      return `<img class="w-img" src="${escapeAttr(shown)}" data-src="${escapeAttr(s)}" alt="${escapeAttr(text)}"${dim}>`;
     });
   t = t.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g,
     (_, txt, href) => `<a href="${escapeAttr(href)}">${txt}</a>`);
@@ -92,7 +96,14 @@ export function inlineToMd(node) {
     // 图片：写回 Markdown 时用 data-src 里的原始地址（相对路径），
     // 不能用 src —— 那是展开成 asset:// 之后的显示用地址，存进去就搬不动了
     if (tag === 'IMG') {
-      s += `![${n.getAttribute('alt') || ''}](${n.getAttribute('data-src') || n.getAttribute('src') || ''})`;
+      /* 尺寸存回 alt 后缀，和 mdToHtml 里的拆解规则对称：
+         width 有值就写 `|宽`，宽高都有就写 `|宽x高` */
+      const w = parseInt(n.getAttribute('width') || '', 10) || 0;
+      const h = parseInt(n.getAttribute('height') || '', 10) || 0;
+      const alt = n.getAttribute('alt') || '';
+      const dim = w && h ? `${w}x${h}` : (w ? String(w) : (h ? `x${h}` : ''));
+      const suffix = dim ? `|${dim}` : '';
+      s += `![${alt}${suffix}](${n.getAttribute('data-src') || n.getAttribute('src') || ''})`;
       continue;
     }
     const inner = inlineToMd(n);

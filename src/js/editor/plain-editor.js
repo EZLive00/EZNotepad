@@ -24,15 +24,17 @@ import {
   history, defaultKeymap, historyKeymap, indentWithTab,
   indentMore, indentLess, undo as cmUndo, redo as cmRedo, selectAll as cmSelectAll,
   syntaxHighlighting, indentOnInput, indentUnit, bracketMatching, foldGutter, foldKeymap,
-  javascript, python, rust, go, json, css, html, sql, yaml, markdown,
+  closeBrackets, closeBracketsKeymap, StreamLanguage,
+  javascript, python, rust, go, json, css, html, sql, yaml, markdown, java, cpp,
+  shell, properties,
 } from '../../vendor/cm6.js';
 import { cmTheme, cmHighlight } from './theme.js';
 import { normalizeLang } from '../highlight.js';
 
 /**
  * 扩展名（经 normalizeLang 归一）→ CM6 语言工厂。
- * 表里没有的（java / c / cpp / sh / ini …）退回纯文本，不报错。
- * CM6 官方的语言包就这些，加新语言要同时装包、改 cm6-entry.js、再重新打包。
+ * sh / ini 官方没出 lezer 语法，用 legacy-modes 的 stream 版本包一层照样高亮；
+ * c 和 cpp 共用一个语法（C 本来就是 C++ 的子集，高亮层面没有差别）。
  */
 const LANGS = {
   js: () => javascript(),
@@ -48,6 +50,11 @@ const LANGS = {
   sql: () => sql(),
   yaml: () => yaml(),
   md: () => markdown(),
+  java: () => java(),
+  c: () => cpp(),
+  cpp: () => cpp(),
+  sh: () => StreamLanguage.define(shell),
+  ini: () => StreamLanguage.define(properties),
 };
 
 export class PlainEditor {
@@ -99,8 +106,11 @@ export class PlainEditor {
       indentOnInput(),
       indentUnit.of('    '),            // 默认是 2 空格，这里跟原来 textarea 的 Tab 宽度保持一致
       bracketMatching(),
+      /* 打 ( 自动补 )：写代码和写 Markdown 链接都用得上。
+         光标放在一对括号中间时，再打右括号是「跳过去」而不是插入一个 */
+      closeBrackets(),
       EditorView.lineWrapping,          // 记事本的默认行为：长行折着显示
-      keymap.of([...defaultKeymap, ...historyKeymap, ...foldKeymap, indentWithTab]),
+      keymap.of([...closeBracketsKeymap, ...defaultKeymap, ...historyKeymap, ...foldKeymap, indentWithTab]),
       cmTheme,
       syntaxHighlighting(cmHighlight),
       this.langComp.of(this._langExt(this.langKey)),

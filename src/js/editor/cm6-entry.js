@@ -51,7 +51,11 @@ export {
   bracketMatching,
   foldGutter,
   foldKeymap,
+  StreamLanguage,
 } from '@codemirror/language';
+
+/* ---- 自动补全括号 / 引号 ---- */
+export { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
 
 export { tags } from '@lezer/highlight';
 
@@ -66,3 +70,9 @@ export { html } from '@codemirror/lang-html';
 export { sql } from '@codemirror/lang-sql';
 export { yaml } from '@codemirror/lang-yaml';
 export { markdown } from '@codemirror/lang-markdown';
+export { java } from '@codemirror/lang-java';
+export { cpp } from '@codemirror/lang-cpp';
+
+/* ---- 只做了 stream 版本的老语言（shell / ini），包一层照样有高亮 ---- */
+export { shell } from '@codemirror/legacy-modes/mode/shell';
+export { properties } from '@codemirror/legacy-modes/mode/properties';

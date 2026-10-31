@@ -38,6 +38,17 @@ export function resolveDocImg(src, docDir) {
  * 标题锚点用的 slug（GitHub 风格，但对中文友好：中日韩字符原样保留）。
  * 目录跳转靠它，所以规则必须稳定 —— 改这里等于让旧目录里的链接失效。
  */
+/**
+ * 图片 alt 里可以带尺寸：`![示意图|300](a.png)`、`![示意图|300x200](a.png)`。
+ * 用 alt 承载而不是另发明一套语法，是因为 alt 本来就是「图片的描述」，
+ * 换成 <img width> 之后任何 Markdown 阅读器都能原样接受。
+ */
+export function splitImgAlt(alt) {
+  const m = /^(.*?)\s*\|\s*(\d{1,4})(?:\s*x\s*(\d{1,4}))?\s*$/.exec(alt || '');
+  if (!m) return { text: alt || '', width: 0, height: 0 };
+  return { text: m[1], width: Number(m[2]) || 0, height: Number(m[3]) || 0 };
+}
+
 export function slugify(text) {
   const s = String(text)
     .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')   // 链接 / 图片只取文字
@@ -72,11 +83,13 @@ export function inline(text, imgResolver) {
 
   s = escapeHtml(s);
 
-  // 图片 ![alt](src "title")
+  // 图片 ![alt](src "title")，alt 里可以带尺寸：![说明|300](a.png) 或 |300x200
   s = s.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+&quot;([^&]*)&quot;)?\)/g,
     (_, alt, src, title) => {
+      const { text, width, height } = splitImgAlt(alt);
       const shown = imgResolver ? imgResolver(src) : src;
-      return `<img src="${shown}" alt="${alt}"${title ? ` title="${title}"` : ''}>`;
+      const dim = (width ? ` width="${width}"` : '') + (height ? ` height="${height}"` : '');
+      return `<img src="${shown}" alt="${text}"${dim}${title ? ` title="${title}"` : ''}>`;
     });
 
   // 链接 [text](href)
