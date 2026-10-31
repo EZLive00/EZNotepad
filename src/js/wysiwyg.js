@@ -76,7 +76,7 @@ export function inlineHtml(src) {
 }
 
 /** DOM -> 行内 Markdown。这是「不丢样式」的关键：逐个节点还原标记 */
-export function inlineToMd(node) {
+export function inlineToMd(node, brText = '') {
   let s = '';
   const kids = node.childNodes;
   /* 用下标循环而不是 forEach：这个函数在每次击键时都要把整篇文档跑一遍，
@@ -93,7 +93,7 @@ export function inlineToMd(node) {
     }
     if (n.nodeType !== 1) continue;
     const tag = n.tagName;             // 直接比大写，省掉每次 toLowerCase
-    if (tag === 'BR') continue;
+    if (tag === 'BR') { s += brText; continue; }   // brText: 表格单元格里换行写 <br>，正文里丢弃
     // 图片：写回 Markdown 时用 data-src 里的原始地址（相对路径），
     // 不能用 src —— 那是展开成 asset:// 之后的显示用地址，存进去就搬不动了
     if (tag === 'IMG') {
@@ -249,8 +249,13 @@ export function mkHr() {
 function mkCell(tag, text, align) {
   const c = document.createElement(tag);
   if (align) { c.dataset.align = align; c.style.textAlign = align; }
-  if (text) c.innerHTML = inlineHtml(text);
-  else c.innerHTML = '<br>';
+  if (text) {
+    /* 单元格里的换行约定存成 <br>（Markdown 表格格不了多行，GitHub/Typora 同款）。
+       先换成占位符躲过 inlineHtml 的转义，再还原成真 <br> 元素 */
+    let k = 0;
+    c.innerHTML = inlineHtml(String(text).replace(/<br\s*\/?>/gi, () => `\u0001B${k++}\u0001`))
+      .replace(/\u0001B(\d+)\u0001/g, '<br>');
+  } else c.innerHTML = '<br>';
   return c;
 }
 
@@ -514,7 +519,11 @@ function tableToMarkdown(block) {
   const rows = [...table.querySelectorAll('tr')];
   const cols = rows.length ? rows[0].children.length : 0;
   const aligns = (table.dataset.aligns || '').split(',').slice(0, cols);
-  const cellText = (c) => inlineToMd(c).replace(/\|/g, '\\|');
+  /* 空单元格里的 <br> 是光标占位，不是内容 —— 只有格子里真有文字才写 <br> */
+  const cellText = (c) => {
+    const hasText = (c.textContent || '').replace(/[\u200b\s]/g, '') !== '';
+    return (hasText ? inlineToMd(c, '<br>') : '').replace(/\|/g, '\\|');
+  };
   const line = (cells) => '| ' + cells.join(' | ') + ' |';
 
   const out = [];
@@ -1114,6 +1123,28 @@ export class WysiwygEditor {
   applyBlockRule() {
     const block = this.currentBlock();
     if (!block) return false;
+    if (block.dataset.type === 'bq') {
+      /* 引用行里直接敲 [!info] 空格：本行升级为提示块，光标后的文字当标题
+         （GitHub 习惯写法 > [!info] 标题）。只对引用行放行，其余块维持原路 */
+      const sel0 = window.getSelection();
+      if (!sel0.rangeCount || !sel0.isCollapsed) return this.upgradeTaskItem(block);
+      const bt = textEl(block);
+      if (!bt.contains(sel0.getRangeAt(0).startContainer)) return this.upgradeTaskItem(block);
+      const mark = (bt.textContent || '').slice(0, offsetIn(bt));
+      const m = mark.match(/^\[!(info|warning|danger|success|note|tip|important|caution)\]\s$/i);
+      if (!m) return this.upgradeTaskItem(block);
+      const r = sel0.getRangeAt(0);
+      const tail = document.createRange();
+      tail.setStart(r.endContainer, r.endOffset);
+      tail.setEnd(bt, bt.childNodes.length);
+      const title = tail.toString().replace(/\u200b/g, '').trim();
+      const nb = mkQuote('', +block.dataset.indent || 0, normalizeCallout(m[1]), title);
+      block.replaceWith(nb);
+      this.placeCaretStart(nb);
+      this.hCoalesce = false;
+      this.flush();
+      return true;
+    }
     if (block.dataset.type !== 'p') return this.upgradeTaskItem(block);
     const t = textEl(block);
     const sel = window.getSelection();
@@ -1365,7 +1396,12 @@ export class WysiwygEditor {
   }
 
   handleEnter(e, block, cell) {
-    if (cell) { e.preventDefault(); this.cellEnter(); return; }
+    if (cell) {
+      e.preventDefault();
+      if (e.shiftKey) { document.execCommand('insertLineBreak'); this.flush(); return; }  // 格内换行
+      this.cellEnter();
+      return;
+    }
     if (!block) return;
     const type = block.dataset.type;
     // 块级结构上回车：在它下方开新段落继续写。不然表格、分割线就是死路 ——
@@ -2118,6 +2154,17 @@ export class WysiwygEditor {
     const info = this.tableInfo();
     if (!info) return;
     const { table, rowIdx, colIdx, rows } = info;
+    // 整行都空时回车 = 退出表格，在下方开段落（Typora 约定，和引用/列表的
+    // 「空行回车退出」是同一套双击模式）。不然空行回车只会不停加行，出不来。
+    const row = rows[rowIdx];
+    const rowEmpty = [...row.children].every((c) => !(c.textContent || '').replace(/\u200b/g, '').trim());
+    if (rowEmpty) {
+      const block = table.closest('.w-block');
+      const p = this.insertEmptyAfter(block);
+      this.placeCaretStart(p);
+      this.flush();
+      return;
+    }
     if (rowIdx >= rows.length - 1) this.addRow('below');
     const rows2 = [...table.querySelectorAll('tr')];
     const target = rows2[rowIdx + 1] && rows2[rowIdx + 1].children[colIdx];

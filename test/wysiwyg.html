@@ -386,6 +386,37 @@ window.__run = () => {
   T.key('ArrowDown');
   eq('表格末格方向键出表', T.blocks().join(','), 'table=1,p=');
 
+  // 19f. 表格空行回车 = 退出表格（双击模式：空行上是第二下，出表开段落）
+  T.reset('| a | b |\n|---|---|\n|  |  |');
+  ed.focusCell(root.querySelector('.w-table'), 1, 0);
+  T.key('Enter');
+  eq('表格空行回车出表', T.blocks().join(','), 'table=,p=');
+
+  // 19g. 表格非空行回车 = 跳到下一行同列，不加行
+  T.reset('| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |');
+  ed.focusCell(root.querySelector('.w-table'), 1, 0);
+  T.key('Enter');
+  eq('表格回车跳行不加行', T.cells().length, 3);
+
+  // 19h. 单元格换行往返：序列化写 <br>，解析还原真换行
+  T.reset('| a | b |\n|---|---|\n| 1 | 2 |');
+  {
+    const c0 = root.querySelectorAll('tbody td')[0];
+    c0.appendChild(document.createElement('br'));
+    c0.appendChild(document.createTextNode('二'));
+  }
+  eq('单元格换行序列化', T.out().split('\n')[2], '| 1<br>二 | 2 |');
+  T.reset('| a | b |\n|---|---|\n| x<br>y | 2 |');
+  eq('单元格 br 解析还原', !!root.querySelector('tbody td br'), true);
+  eq('单元格 br 往返不丢', T.out().split('\n')[2], '| x<br>y | 2 |');
+
+  // 19i. 引用行内敲 [!info] 空格：本行升级提示块，光标后的文字当标题
+  T.reset('> 甲乙');
+  T.caret(0, 0);
+  T.type('[!info] ');
+  eq('引用行内升级提示块', root.querySelector('.w-bq').dataset.callout || '', 'info');
+  eq('提示块标题取光标后文字', T.out(), '> [!info] 甲乙');
+
   // 20. 四空格缩进的嵌套列表：结构要读对（序列化会规范化列宽）
   T.reset('- 父\n    - 子');
   eq('四空格缩进识别为一级子项', T.blocks()[1], 'li:ul@1=子');

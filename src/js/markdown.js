@@ -345,15 +345,19 @@ export function renderMarkdown(md, opts = {}) {
       const head = splitRow(line);
       const aligns = splitRow(lines[i + 1]).map(tableAlign);
       const sty = (k) => (aligns[k] ? ` style="text-align:${aligns[k]}"` : '');
+      /* 单元格换行约定：<br> 字面文本 → 真换行（与编辑器的 mkCell 对称）。
+         占位符躲过 escapeHtml，inline 之后再还原 */
+      const cellInline = (c) => inline(String(c).replace(/<br\s*\/?>/gi, '\u0001BR\u0001'), resolveImg)
+        .replace(/\u0001BR\u0001/g, '<br>');
       i += 2;
       const rows = [];
       while (i < lines.length && lines[i].includes('|') && !/^\s*$/.test(lines[i])) {
         rows.push(splitRow(lines[i]));
         i++;
       }
-      out.push('<table><thead><tr>' + head.map((c, k) => `<th${sty(k)}>${inline(c, resolveImg)}</th>`).join('') + '</tr></thead><tbody>');
+      out.push('<table><thead><tr>' + head.map((c, k) => `<th${sty(k)}>${cellInline(c)}</th>`).join('') + '</tr></thead><tbody>');
       for (const r of rows) {
-        out.push('<tr>' + head.map((_, k) => `<td${sty(k)}>${inline(r[k] || '', resolveImg)}</td>`).join('') + '</tr>');
+        out.push('<tr>' + head.map((_, k) => `<td${sty(k)}>${cellInline(r[k] || '')}</td>`).join('') + '</tr>');
       }
       out.push('</tbody></table>');
       continue;
