@@ -2805,7 +2805,9 @@ function setupBlockHandle() {
 
 /* ---------------- 事件绑定 ---------------- */
 function bindEvents() {
-  const on = (id, fn) => { const n = $(id); if (n) n.onclick = fn; };
+  /* 用 addEventListener 而不是 onclick：覆盖式赋值一旦被后续代码碰上就悄悄失效，
+     而 addEventListener 至少不会互相顶掉 */
+  const on = (id, fn) => { const n = $(id); if (n) n.addEventListener('click', fn); };
 
   /* 自绘标题栏：窗口按钮 + 最大化状态同步 */
   on('wcMin', () => win.minimize());
@@ -2982,6 +2984,26 @@ function bindEvents() {
   on('findRegex', runFind);
   on('findWord', runFind);
   on('findScope', runFind);
+
+  /* 查找条上的 Alt 组合键。这三项的 title 里一直写着 Alt+C / Alt+R / Alt+W，
+     但代码从来没实现过 —— 按下去什么也不发生，等于骗人。
+     Alt+A 是 IDEA 的「全部替换」，补上之后不用鼠标也够得着。 */
+  document.addEventListener('keydown', (e) => {
+    if (el.findbar.classList.contains('hidden')) return;
+    if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    const toggle = (id) => {
+      const n = $(id);
+      if (!n || n.disabled) return;
+      n.checked = !n.checked;
+      runFind();
+    };
+    const k = (e.key || '').toLowerCase();
+    if (k === 'c') { e.preventDefault(); toggle('findCase'); return; }
+    if (k === 'r') { e.preventDefault(); toggle('findRegex'); return; }
+    if (k === 'w') { e.preventDefault(); toggle('findWord'); return; }
+    /* 只在替换行展开时才认：收起时替换框是空的，Alt+A 等于「全部删掉」 */
+    if (k === 'a' && el.findbar.classList.contains('expanded')) { e.preventDefault(); replaceAll(); }
+  });
 
   on('stEOL', cycleEol);
   on('stEncoding', changeEncoding);
