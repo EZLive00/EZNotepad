@@ -725,6 +725,14 @@ export class WysiwygEditor {
     root.addEventListener('click', (e) => this.handleClick(e));
     root.addEventListener('pointerdown', (e) => this.handlePointerDown(e));
     root.addEventListener('pointermove', (e) => this.hoverImgCorner(e));
+    // 块尾插入指示线：鼠标移到最后一个块下方的空白处时出现，点击插入一行。
+    // 线挂在滚动容器（root 父层，自带 position:relative）上 —— 不能挂进 root，
+    // 块遍历/序列化都假定 root 的孩子全是 .w-block
+    this.insertLine = document.createElement('div');
+    this.insertLine.className = 'w-insert-line';
+    (root.parentElement || root).appendChild(this.insertLine);
+    root.addEventListener('pointermove', (e) => this.hoverInsertLine(e));
+    root.addEventListener('mouseleave', () => this.hideInsertLine());
     root.addEventListener('dragstart', (e) => {
       // 图片别被浏览器原生拖走（拖出去会变成「把图拖到别的程序」），
       // 右下角改宽用的是自己的指针逻辑
@@ -2431,12 +2439,21 @@ export class WysiwygEditor {
       this.flush();
       return;
     }
-    // 点正文空白：聚焦到最后一个块。最后一块若是代码/表格/公式/分割线，
-    // 光标放进里面也没法打字 —— 在它下方开个空段落当落脚点
+    // 点正文空白：落在最后一个块下方（指示线区域）= 插入一个空段落当新行；
+    // 落在块旁（块没占满行宽）= 聚焦到最后一个块。最后一块若是代码/表格/
+    // 公式/分割线，光标放进里面也没法打字 —— 在它下方开个空段落当落脚点
     if (e.target === this.root) {
       this.root.focus();
       const last = this.root.lastElementChild;
       if (!last) return;
+      const lastRect = last.getBoundingClientRect();
+      if (e.clientY > lastRect.bottom + 2) {
+        this.hideInsertLine();
+        const p = this.insertEmptyAfter(last);
+        this.placeCaretStart(p);
+        this.flush();
+        return;
+      }
       const lt = last.dataset.type;
       if (lt === 'code' || lt === 'table' || lt === 'math' || lt === 'hr') {
         const p = this.insertEmptyAfter(last);
@@ -2446,6 +2463,27 @@ export class WysiwygEditor {
         this.placeCaretEnd(last);
       }
     }
+  }
+
+  /* ---------------- 块尾插入指示线 ---------------- */
+  /* 鼠标在最后一个块下方的空白里移动时，显示一条插入位置线；
+     点击即在该处插入空段落。对所有块类型一致 —— 不用先想想
+     「这块能不能点进去」 */
+  hoverInsertLine(e) {
+    const ind = this.insertLine;
+    const last = this.root.lastElementChild;
+    if (!last) { this.hideInsertLine(); return; }
+    const lastRect = last.getBoundingClientRect();
+    if (e.clientY <= lastRect.bottom + 2) { this.hideInsertLine(); return; }
+    const rootRect = this.root.getBoundingClientRect();
+    ind.style.display = 'block';
+    ind.style.top = (lastRect.bottom - rootRect.top + this.root.scrollTop - 1) + 'px';
+    ind.style.left = (lastRect.left - rootRect.left) + 'px';
+    ind.style.width = lastRect.width + 'px';
+  }
+
+  hideInsertLine() {
+    if (this.insertLine) this.insertLine.style.display = 'none';
   }
 }
 

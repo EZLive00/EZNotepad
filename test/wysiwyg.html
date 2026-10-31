@@ -38,6 +38,11 @@ const T = {
     root.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...o }));
     return ed.toMarkdown();
   },
+  /* 模拟「点最后一个块下方的空白」：jsdom 里矩形都是 0，clientY 给个大值即可命中插入分支 */
+  clickRootBelow() {
+    root.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientY: 100 }));
+    return ed.toMarkdown();
+  },
   blocks: () => [...root.children].map((b) => {
     const t = (b.querySelector('.w-text') || b.querySelector('td') || b).textContent;
     const li = b.dataset.type === 'li' ? `:${b.dataset.list}` : '';
@@ -344,6 +349,18 @@ window.__run = () => {
   ed.restoreCaret({ blockIndex: 0, offset: 1 });
   T.key('ArrowDown');
   eq('代码块底方向键出块', T.blocks().join(','), 'code=x,p=');
+
+  // 19c2. 点最后一个块下方 = 插入空段落（对任何块类型一致）
+  T.reset('```js\nx\n```');
+  {
+    const r4 = document.createRange();
+    r4.selectNodeContents(root.querySelector('.w-code'));
+    r4.collapse(false);
+    const s4 = getSelection();
+    s4.removeAllRanges(); s4.addRange(r4);
+  }
+  T.clickRootBelow();
+  eq('点块尾下方插入空段落', T.blocks().join(','), 'code=x,p=');
 
   // 19d. 提示块回车 = 同框续行（染同色），序列化不重写 [!x]；续行行首退格并回上一行
   T.reset('> [!info] 标题\n> 正文');

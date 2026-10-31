@@ -681,6 +681,13 @@ body[data-theme="dark"] .am-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 25
 }
 .wysiwyg:empty::before { content: "开始输入… 输入 # 加空格变成标题"; color: var(--fg-faint); }
 
+/* 块尾插入指示线：鼠标移到最后一个块下方的空白处出现，点击插入一行。
+   挂在 .edit-wrap 上（编辑器的滚动容器），不是 .wysiwyg 的子元素 */
+.w-insert-line {
+  position: absolute; height: 2px; background: var(--accent); opacity: .4;
+  pointer-events: none; display: none; z-index: 6;
+}
+
 /* ================= 预览 ================= */
 /* 预览和编辑都算「内容面」，用同一个白色；两栏之间只留一条极淡的分割线，
    不再给预览整块换底色（那会让双栏看起来是两套东西） */
