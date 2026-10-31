@@ -18,16 +18,16 @@
   --read-gutter: 54px;
 }
 
-/* ---- 色彩分层：纯色 + 线条 ----
-   全程序不用渐变、不用投影浮起，区域之间靠 1px 线（--line/--line-strong）
-   和纯色底（可以有色深差）划分。浮层同样只靠描边，不靠阴影。
-   bg       = 画布层：标题栏、标签行、大纲栏、状态栏（比内容面暗半格）
-   bg-panel = 内容面：编辑区、预览区
-   bg-soft  = 内容面之上的浅坑：代码块、hover 底
+/* ---- 纯色 + 线条 ----
+   全程序不用渐变、不用投影浮起。整个主界面（标题栏、标签行、大纲栏、
+   编辑区、预览、状态栏）是一张同色平面（--bg = --bg-panel），
+   功能区域之间只靠 1px 线（--line/--line-strong）划分。
+   bg-panel = 内容面（也是全局面）
+   bg-soft  = 面上的浅坑：代码块、hover 底
    bg-float = 浮层：菜单、弹窗、查找条。深色下必须比内容面「亮」一档，
               否则浮层会和编辑区糊成一片 */
 body[data-theme="light"] {
-  --bg: #f3f4f6;
+  --bg: #ffffff;
   --bg-panel: #ffffff;
   --bg-float: #ffffff;
   --bg-soft: #f4f5f7;
@@ -75,7 +75,7 @@ body[data-theme="light"] {
 body[data-theme="dark"] {
   /* 让复选框、滚动条等原生控件跟随深色，否则是刺眼的白块 */
   color-scheme: dark;
-  --bg: #0f1013;
+  --bg: #191b20;
   --bg-panel: #191b20;
   --bg-float: #282c34;
   --bg-soft: #202329;
@@ -155,9 +155,8 @@ input { font-family: inherit; font-size: inherit; color: inherit; }
    品牌图标 + 菜单 + 文档标题 + 窗口按钮；空白处可拖动，双击最大化 */
 .appbar {
   flex: none;
-  /* 顶部整块（标题栏 + 标签行）和左侧大纲栏同属「画布层」，比正文面暗半格。
-     区域分界画一道 1px 线；激活标签在下方用同色引脚把线「顶断」，
-     保持「标签与正文相连」的隐喻 */
+  /* 顶部整块（标题栏 + 标签行）与正文同色，区域分界全靠这道 1px 线；
+     激活标签在下方用同色引脚把线「顶断」，保持「标签与正文相连」的隐喻 */
   background: var(--bg);
   border-bottom: 1px solid var(--line-strong);
   position: relative;
@@ -275,8 +274,8 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
 }
 .tab.drop-before::before { left: -2px; }
 .tab.drop-after::before { left: auto; right: -2px; }
-/* 激活标签：扁平纯色块。不加阴影不加下划线，与下方正文面（同 --bg-panel）
-   靠同色连成一片；分界交给相邻标签的细线，整体更安静 */
+/* 激活标签：同色平面上的激活态靠字重 + 全亮文字 + 引脚断线表达，
+   不再另铺底色（全域同色后底色差已不存在） */
 .tab.active {
   background: var(--bg-panel); color: var(--fg); font-weight: 600;
 }
@@ -464,8 +463,8 @@ body[data-theme="dark"] .am-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 25
 
 .outline {
   width: 220px; min-width: 140px; max-width: 420px; flex: none;
-  /* 大纲栏和顶栏同属画布层：比正文面暗半格，一眼能分出「导航 / 内容」；
-     与编辑区的分界由 outlineSplitter 的 1px 线给出（不在此处画边框，避免双线） */
+  /* 与正文同色，「导航 / 内容」的分界由 outlineSplitter 的 1px 线给出
+     （不在此处画边框，避免双线） */
   background: var(--bg); display: flex; flex-direction: column;
 }
 .pane-head {
@@ -908,7 +907,7 @@ body[data-zen="1"] .titlebar:hover .win-ctrl { opacity: 1; }
 body[data-zen="1"] .win-title { color: var(--fg-faint); }
 
 /* ================= 状态栏 ================= */
-/* 和顶栏对称：同属画布层，与正文的分界画一道 1px 上边线 */
+/* 与正文同色，分界只靠这道 1px 上边线 */
 .statusbar {
   flex: none; height: 27px; display: flex; align-items: center; gap: 2px;
   padding: 0 10px; background: var(--bg);
