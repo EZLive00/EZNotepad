@@ -237,7 +237,7 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
   padding: 0 6px 0 8px;
 }
 .tabs {
-  display: flex; gap: 3px; overflow-x: auto; overflow-y: hidden;
+  display: flex; gap: 0; overflow-x: auto; overflow-y: hidden;
   scrollbar-width: none; min-width: 0; flex: 0 1 auto;
 }
 .tabs::-webkit-scrollbar { display: none; }
@@ -258,8 +258,11 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
   border: none;
 }
 .tab:hover { background: var(--bg-hover); }
-/* 拖拽换位的两个状态：被拖的那颗变淡，落点用 2px 竖线提示。
-   只用 ::before —— ::after 已经给激活标签的下划线占用了 */
+/* 标签之间的 1px 分隔线：紧贴相邻标签左缘（gap 收零后线条才算「分割」）。
+   激活标签自身和它的右邻不画线，让实体面完整独立出来 */
+.tab + .tab { border-left: 1px solid var(--line); }
+.tab.active, .tab.active + .tab { border-left-color: transparent; }
+/* 拖拽换位的两个状态：被拖的那颗变淡，落点用 2px 竖线提示 */
 .tab.dragging { opacity: .4; }
 .tab.drop-before::before,
 .tab.drop-after::before {
@@ -268,20 +271,10 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
 }
 .tab.drop-before::before { left: -2px; }
 .tab.drop-after::before { left: auto; right: -2px; }
-/* 激活标签：白色实体「浮」在灰色画布上，往下和正文面接成一片 ——
-   比原来的「浅灰底 + 内描边」更像一张卡片，也不会看起来像个输入框 */
+/* 激活标签：扁平纯色块。不加阴影不加下划线，与下方正文面（同 --bg-panel）
+   靠同色连成一片；分界交给相邻标签的细线，整体更安静 */
 .tab.active {
   background: var(--bg-panel); color: var(--fg); font-weight: 600;
-  box-shadow: 0 1px 3px rgba(17, 24, 39, .09), 0 0 0 1px rgba(17, 24, 39, .045);
-}
-body[data-theme="dark"] .tab.active {
-  box-shadow: 0 1px 3px rgba(0, 0, 0, .5), 0 0 0 1px rgba(255, 255, 255, .055);
-}
-/* 当前文档的「锚点」：标签底沿一道 2px 主题色。整屏唯一的饱和色块，
-   位置固定、面积很小，所以不吵，但一眼知道「我在哪」 */
-.tab.active::after {
-  content: ""; position: absolute; left: 10px; right: 10px; bottom: -1px;
-  height: 2px; border-radius: 0; background: var(--accent);
 }
 /* 加粗宽度占位：正常态也预留 600 字重的宽度，激活切换时文字宽了但布局不动。
    伪元素是同文本的加粗版，高度压成 0 且不可见，只贡献宽度 */
