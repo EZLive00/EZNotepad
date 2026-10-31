@@ -185,6 +185,8 @@ function renderTabs() {
     const name = document.createElement('span');
     name.className = 'tab-name';
     name.textContent = t.name;
+    // data-bold 供 CSS 伪元素预留加粗宽度，渲染签名已含 t.name，名字变了会跟着重建
+    name.dataset.bold = t.name;
     b.appendChild(name);
     if (isDirty(t)) {
       const d = document.createElement('span');

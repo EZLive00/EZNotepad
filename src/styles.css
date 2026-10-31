@@ -283,6 +283,13 @@ body[data-theme="dark"] .tab.active {
   content: ""; position: absolute; left: 10px; right: 10px; bottom: -1px;
   height: 2px; border-radius: 0; background: var(--accent);
 }
+/* 加粗宽度占位：正常态也预留 600 字重的宽度，激活切换时文字宽了但布局不动。
+   伪元素是同文本的加粗版，高度压成 0 且不可见，只贡献宽度 */
+.tab-name::before {
+  content: attr(data-bold);
+  display: block; height: 0; overflow: hidden;
+  font-weight: 600; visibility: hidden;
+}
 .tab-name { overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
 .tab-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; }
 /* 后台标签被别的程序改过：琥珀点，和「未保存」的蓝点分开看 */
