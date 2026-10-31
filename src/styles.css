@@ -1274,6 +1274,13 @@ body[data-theme="dark"] .ctx-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 2
    只把后行的 margin-top 置 0 的话，折叠结果仍是前行的 .95em，框会断成一节一节 */
 .wysiwyg .w-bq + .w-bq { margin-top: 0; }
 .wysiwyg .w-bq:has(+ .w-bq) { margin-bottom: 0; border-bottom-right-radius: 0; }
+/* 组内续行把上下 padding 也清掉：每块自带 .5em，叠两份就是「两个块」的行距。
+   清掉后行距与普通段落完全一致 */
+.wysiwyg .w-bq + .w-bq:not([data-bq-start]) { padding-top: 0; }
+.wysiwyg .w-bq:has(+ .w-bq:not([data-bq-start])) { padding-bottom: 0; }
+/* data-bq-start = 空行断出来的独立引用：恢复与上一条的间距，两个框各自完整 */
+.wysiwyg .w-bq + .w-bq[data-bq-start] { margin-top: .95em; padding-top: .5em; }
+.wysiwyg .w-bq:has(+ .w-bq[data-bq-start]) { margin-bottom: .95em; padding-bottom: .5em; }
 /* 提示块：引用块 + [!info] 标记，四色染色 + 标题行（.w-co-head 非可编辑）。
    data-co-follow = 提示块的正文续行，染同一色让整个框看起来是一块 */
 .wysiwyg .w-bq[data-callout],

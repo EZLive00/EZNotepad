@@ -214,6 +214,26 @@ window.__run = () => {
   T.key('Enter');
   T.type('续行');
   eq('引用内回车继续引用', T.out(), '> 引用\n> 续行');
+  has('回车续行无 bqStart 标记', !root.querySelectorAll('.w-bq')[1].dataset.bqStart);
+
+  // 7b. 两条独立引用：空行断组，第二组打 bqStart —— 视觉分开、序列化也不并段
+  T.reset('> 第一条\n\n> 第二条');
+  eq('空行断出两条引用往返', T.out(), '> 第一条\n\n> 第二条');
+  const tq = root.querySelectorAll('.w-bq');
+  has('第二条带 bqStart', tq[1].dataset.bqStart === '1');
+  has('第一条无标记', !tq[0].dataset.bqStart);
+
+  // 紧连两行 = 同一条引用，无标记
+  T.reset('> 同一条\n> 续行');
+  has('续行不打 bqStart', !root.querySelectorAll('.w-bq')[1].dataset.bqStart);
+  eq('同一条引用紧凑往返', T.out(), '> 同一条\n> 续行');
+
+  // 引用后面紧跟的段落转引用 = 新独立引用
+  T.reset('> 已有引用\n\n新段落');
+  T.caret(1, 0);
+  ed.insertBlock('quote');
+  has('段转引用且紧跟引用时打标记', root.querySelectorAll('.w-bq')[1].dataset.bqStart === '1');
+  eq('两条独立引用存盘不并段', T.out(), '> 已有引用\n\n> 新段落');
 
   // 8. 表格
   T.reset('');

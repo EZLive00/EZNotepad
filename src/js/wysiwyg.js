@@ -457,7 +457,14 @@ export function parseMarkdown(md) {
         rest = '';
       }
       levelOf.reset();
-      frag.appendChild(mkQuote(rest, Math.max(0, level), callout, coTitle));
+      const qb = mkQuote(rest, Math.max(0, level), callout, coTitle);
+      // 空行断组：上一块是引用、但紧邻的上一行不是引用行 → 这是新的独立引用，
+      // 打 bqStart。没有它，两条独立引用在 DOM 里和一条引用的续行无法区分，
+      // 视觉上连成一框，存盘还会并成一段
+      const lastEl = frag.lastElementChild;
+      if (lastEl && lastEl.dataset && lastEl.dataset.type === 'bq'
+        && !(i > 0 && RE_QUOTE.test(lines[i - 1]))) qb.dataset.bqStart = '1';
+      frag.appendChild(qb);
       i++;
       continue;
     }
@@ -613,7 +620,7 @@ export function blocksToMarkdown(root) {
         if (text.trim()) lines.push(prefix + text);
         chunks.push({ type, lines, co: true });
       } else {
-        chunks.push({ type, lines: [prefix + text] });
+        chunks.push({ type, lines: [prefix + text], bqStart: !!el.dataset.bqStart });
       }
       cols.length = 0;
     } else {
@@ -625,15 +632,16 @@ export function blocksToMarkdown(root) {
   // 块之间要不要空行：列表项之间、连续引用之间必须紧凑（空行会变成 loose list、
   // 或者把一段引用拆成两段），其余块之间补一个空行 —— Markdown 靠它断块。
   // 例外：引用后面跟的是**提示块**时必须断开 —— 不然两个 [!xx] 标记会进同一段
-  // 引用，预览里第二个标记变成普通文字，往返一次就丢了类型。
-  const tight = (a, b, co) => (a === 'li' && b === 'li')
-    || (a === 'bq' && b === 'bq' && !co);
+  // 引用，预览里第二个标记变成普通文字，往返一次就丢了类型；
+  // 带 bqStart 的引用是空行断出来的独立条目，也要断开
+  const tight = (a, c) => (a === 'li' && c.type === 'li')
+    || (a === 'bq' && c.type === 'bq' && !c.co && !c.bqStart);
   const lines = [];
   let prev = null;
   for (const c of chunks) {
     // 空段落本身就是一行空行，别再额外补一行（否则两个空行越攒越多）
     const isBlankBlock = c.lines.length === 1 && c.lines[0] === '';
-    if (lines.length && prev && !tight(prev, c.type, c.co) && !isBlankBlock) lines.push('');
+    if (lines.length && prev && !tight(prev, c) && !isBlankBlock) lines.push('');
     lines.push(...c.lines);
     prev = c.type;
   }
@@ -2078,6 +2086,9 @@ export class WysiwygEditor {
       if (block && block.dataset.type === 'bq') { this.toParagraph(block, null); return; }  // 再点一次取消
       if (block && (block.dataset.type === 'p' || /^h[1-6]$/.test(block.dataset.type))) {
         const nb = mkQuote(textEl(block).textContent, 0);
+        // 紧跟着另一条引用转出来的 = 新的独立引用，不是上一条的续行
+        const pb = block.previousElementSibling;
+        if (pb && pb.dataset && pb.dataset.type === 'bq') nb.dataset.bqStart = '1';
         block.replaceWith(nb);
         this.placeCaretEnd(nb);
         this.hCoalesce = false;
