@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>文件树预览</title>
+<link rel="stylesheet" href="/src/styles.css">
+<style>
+  body { margin: 0; padding: 16px; background: var(--bg); color: var(--fg); font-family: var(--font-ui); }
+  #path { font-size: 12px; color: var(--fg-soft); margin-bottom: 8px; }
+  #ftBody { min-height: 200px; }
+</style>
+</head>
+<body>
+<div id="path">仓库</div>
+<div id="ftBody"></div>
+<script type="module">
+/* harness 的约定：__ready 表示页面可以断言了，__run() 返回断言数组。
+   这里自己维护断言（写在 run-filetree.mjs 里），__run 只出来占位 */
+window.__ready = true;
+window.__run = () => [];
+
+let FileTree;
+try {
+  ({ FileTree } = await import('/src/js/filetree.js'));
+} catch (e) {
+  window.__bootError = 'import 失败：' + (e && e.message);
+  window.__ready = true;
+  throw e;
+}
+window.__FT_OK = true;
+
+/* 目录内容按路径给：树是懒加载的，展开一层读一层 */
+const fs = {
+  'C:/demo': [
+    { name: 'assets', path: 'C:/demo/assets', is_dir: true, ext: '', size: 0, mtime: 0 },
+    { name: '笔记.md', path: 'C:/demo/笔记.md', is_dir: false, ext: 'md', size: 12, mtime: 0 },
+    { name: '日志.txt', path: 'C:/demo/日志.txt', is_dir: false, ext: 'txt', size: 8, mtime: 0 },
+  ],
+  'C:/demo/assets': [
+    { name: 'a.png', path: 'C:/demo/assets/a.png', is_dir: false, ext: 'png', size: 100, mtime: 0 },
+  ],
+};
+
+const calls = [];
+window.__calls = calls;
+window.__opened = [];
+window.__renamed = [];
+window.__deleted = [];
+
+const be = {
+  readDirShallow: async (p) => (fs[p] || []).map((e) => ({ ...e })),
+  searchInFolder: async () => [],
+  createEntry: async (dir, name, isDir) => {
+    calls.push(['create', dir, name, isDir]);
+    const p = `${dir}/${name}`;
+    (fs[dir] = fs[dir] || []).push({
+      name, path: p, is_dir: isDir, ext: (name.split('.').pop() || ''), size: 0, mtime: 0,
+    });
+    return p;
+  },
+  renameEntry: async (p, n) => {
+    calls.push(['rename', p, n]);
+    const np = p.replace(/[^/]+$/, n);
+    for (const k of Object.keys(fs)) {
+      const i = fs[k].findIndex((e) => e.path === p);
+      if (i >= 0) fs[k][i] = { ...fs[k][i], name: n, path: np };
+    }
+    return np;
+  },
+  deleteEntry: async (p) => {
+    calls.push(['delete', p]);
+    for (const k of Object.keys(fs)) fs[k] = fs[k].filter((e) => e.path !== p);
+  },
+};
+
+/* 行内动作都要走这四样：菜单、输入框、确认框、提示 */
+window.__nextName = '新名字.md';
+window.__confirm = true;
+const menuItems = [];
+window.__menuItems = menuItems;
+
+const tree = new FileTree({
+  body: document.getElementById('ftBody'),
+  pathText: document.getElementById('path'),
+  be,
+  toast: (m) => calls.push(['toast', String(m)]),
+  menu: (x, y, items) => { menuItems.length = 0; menuItems.push(...items); },
+  ask: async () => window.__nextName,
+  confirm: async () => window.__confirm,
+  onOpen: (p) => window.__opened.push(p),
+  onRenamed: (a, b) => window.__renamed.push([a, b]),
+  onDeleted: (p) => window.__deleted.push(p),
+});
+
+window.__tree = tree;
+try {
+  await tree.setRoot('C:/demo');
+} catch (e) {
+  window.__bootError = String((e && e.stack) || e);
+}
+</script>
+</body>
+</html>
