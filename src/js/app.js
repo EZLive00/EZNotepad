@@ -281,8 +281,9 @@ function closeRight(id) {
 
 export function newTab(name = '未命名.md', content = '', path = null, opts = {}) {
   const t = createTab(name, content, path);
-  // 新标签默认从「编辑模式」开始（Markdown 可自行切到所见即所得）
-  t.mode = settings.lastMode[detectKind(name)] || 'edit';
+  // 默认模式 = 该类型支持列表的第一项（Markdown 是所见即所得，其余是编辑模式）；
+  // 用户手动切过模式后按 lastMode 记忆
+  t.mode = settings.lastMode[detectKind(name)] || modesFor(detectKind(name))[0];
   Object.assign(t, opts);
   tabs.push(t);
   activate(t.id);
@@ -302,7 +303,7 @@ function activate(id) {
   let mode = t.mode;
   if (!mode || !allowed.includes(mode)) {
     const last = settings.lastMode[kind];
-    mode = allowed.includes(last) ? last : (allowed.includes('edit') ? 'edit' : allowed[0]);
+    mode = allowed.includes(last) ? last : allowed[0];
   }
   setMode(mode, { fromActivate: true });
   tree.setActive(t.path);
@@ -327,15 +328,17 @@ function setMode(mode, opt = {}) {
   const kind = detectKind(t.name);
   const allowed = modesFor(kind);
   if (!allowed.includes(mode)) {
-    const fallback = allowed.includes(settings.lastMode[kind]) ? settings.lastMode[kind] : 'edit';
+    const fallback = allowed.includes(settings.lastMode[kind]) ? settings.lastMode[kind] : allowed[0];
     toast(`${kindLabel(kind)} 不支持「${MODE_META[mode].label}」，已切到「${MODE_META[fallback].label}」`);
     mode = fallback;
   }
   const changedTab = !opt.fromActivate;
   if (t.mode !== mode) changedTab || (t.content = readEditor(t));
   t.mode = mode;
-  settings.lastMode[kind] = mode;
-  saveSettings();
+  /* 只记忆用户手动切换的模式。激活标签时的自动落位不算「选择」——
+     否则默认模式在第一次打开文件时就被写进 lastMode 变成粘滞值，
+     以后改默认永远轮不到生效 */
+  if (!opt.fromActivate) { settings.lastMode[kind] = mode; saveSettings(); }
 
   el.modeLabel.textContent = MODE_META[mode].short || MODE_META[mode].label;
   setIcon(el.modeIcon, MODE_META[mode].icon);

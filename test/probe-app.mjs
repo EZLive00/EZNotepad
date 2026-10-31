@@ -47,7 +47,7 @@ try {
       theme: 'light', fontSize: 13.5, layout: 'split', outlineVisible: true,
       showToolbar: true, showWinTitle: true, lastMode: { md: 'edit' },
       lastNewExt: 'md', autoSave: false, folder: '', side: 'outline',
-      __v: 2   /* 钉死设置：带上当前版本号，跳过 state.js 的默认值迁移 */
+      __v: 3   /* 钉死设置：带上当前版本号，跳过 state.js 的默认值迁移 */
     }));
     localStorage.removeItem('snp.draft');
     location.reload();

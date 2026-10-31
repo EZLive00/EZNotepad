@@ -27,7 +27,7 @@ const DEFAULTS = {
   zen: false,           // 专注模式：只留标题栏和正文
   watchFiles: true,     // 监听磁盘上的改动（别的程序改了文件实时提示）
   keymap: {},           // 自定义快捷键：{ 'mod+shift+k': 'commandId' }，优先于默认键位
-  __v: 2,               // 设置版本：默认值变更时 +1，触发下面的迁移
+  __v: 3,               // 设置版本：默认值变更时 +1，触发下面的迁移
 };
 
 export const settings = Object.assign({}, DEFAULTS, LS.get('settings', {}));
@@ -38,6 +38,9 @@ export const settings = Object.assign({}, DEFAULTS, LS.get('settings', {}));
 if (LS.get('settings', {}).__v !== DEFAULTS.__v) {
   settings.layout = 'single';
   settings.autoSave = true;
+  /* __v3：默认模式改为「所见即所得」（Markdown）。旧版把自动落位也写进 lastMode，
+     'edit' 已成粘滞值 → 一次性清掉，之后只记忆用户手动切换的模式 */
+  settings.lastMode = {};
   saveSettings();
 }
 
