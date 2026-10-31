@@ -488,6 +488,19 @@ export function parseMarkdown(md) {
   }
 
   if (!frag.firstElementChild) frag.appendChild(mkPara(''));
+
+  // 提示块的续行：callout 头行后面连着的普通引用行 = 同一个框的正文。
+  // 打上 coFollow 标记（纯视觉染色），序列化只认 data-callout，不会写重 [!x]
+  const kids = [...frag.children];
+  for (let k = 0; k < kids.length; k++) {
+    const el = kids[k];
+    if (!el.dataset || el.dataset.type !== 'bq' || !el.dataset.callout) continue;
+    for (let m = k + 1; m < kids.length; m++) {
+      const s = kids[m];
+      if (!s.dataset || s.dataset.type !== 'bq' || s.dataset.callout) break;
+      s.dataset.coFollow = el.dataset.callout;
+    }
+  }
   return frag;
 }
 
@@ -1299,6 +1312,7 @@ export class WysiwygEditor {
     if (e.key === 'Enter') return this.handleEnter(e, block, cell);
     if (e.key === 'Backspace') return this.handleBackspace(e, block, cell);
     if (e.key === 'Delete') return this.handleDelete(e, block, cell);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') return this.handleArrow(e, block, cell);
   }
 
   handleTab(e, block, cell) {
@@ -1331,9 +1345,27 @@ export class WysiwygEditor {
     if (cell) { e.preventDefault(); this.cellEnter(); return; }
     if (!block) return;
     const type = block.dataset.type;
-    if (type === 'hr' || type === 'table') { e.preventDefault(); return; }
+    // 块级结构上回车：在它下方开新段落继续写。不然表格、分割线就是死路 ——
+    // 进得去出不来，只能靠点别处才能脱身
+    if (type === 'hr' || type === 'table') {
+      e.preventDefault();
+      const p = this.insertEmptyAfter(block);
+      this.placeCaretStart(p);
+      this.flush();
+      return;
+    }
     e.preventDefault();
-    if (type === 'code' || type === 'math') { this.codeNewline(); return; }
+    if (type === 'code' || type === 'math') {
+      // 末尾回车 = 离开块，在下方开新段落（Typora 的约定）；否则永远多一行
+      if (this.isCaretAtEnd(block)) {
+        const p = this.insertEmptyAfter(block);
+        this.placeCaretStart(p);
+        this.flush();
+        return;
+      }
+      this.codeNewline();
+      return;
+    }
 
     // 段落里整行就是 ``` 或 ```js，回车开代码块（Typora 的习惯写法）。
     // 语言名在这里才拿得到：逐字输入时不会提前把块转掉。
@@ -1365,7 +1397,11 @@ export class WysiwygEditor {
       if (this.isEmptyBlock(block) && this.root.children.length > 1) {
         e.preventDefault();
         this.removeBlock(block);
+        return;
       }
+      // 行首是「<br> + 零宽空格」垫出来的：浏览器第一次退格只会吃掉
+      // 看不见的零宽空格，等于白按。识别这个形态自己删干净
+      if (this.codeBackspace()) e.preventDefault();
       return;
     }
     if (type === 'table') return;
@@ -1382,7 +1418,13 @@ export class WysiwygEditor {
       e.preventDefault();
       const lvl = +block.dataset.indent || 0;
       if (lvl > 0) this.setQuoteLevel(block, lvl - 1);
-      else this.toParagraph(block, 0);
+      else {
+        // 引用组的续行（含提示块正文）：行首退格并回上一行，而不是整个逃出引用。
+        // 只有引用组的第一行才「退回普通段落」
+        const prev = block.previousElementSibling;
+        if (prev && prev.dataset.type === 'bq' && !(+prev.dataset.indent || 0)) this.mergeBack(block, prev);
+        else this.toParagraph(block, 0);
+      }
       return;
     }
 
@@ -1413,6 +1455,99 @@ export class WysiwygEditor {
     if (next.dataset.type === 'hr') { next.remove(); this.hCoalesce = false; this.flush(); return; }
     if (next.dataset.type === 'table' || next.dataset.type === 'code') return false;
     this.mergeForward(block, next);
+  }
+
+  /**
+   * 代码/公式块内的退格。codeNewline 换行时垫了「<br> + 零宽空格」，
+   * 新行行首退格时浏览器会先吃掉看不见的零宽空格 —— 用户感觉按了没反应。
+   * 这里识别该形态自己删：返回 true 表示已处理（调用方 preventDefault）。
+   */
+  codeBackspace() {
+    const sel = window.getSelection();
+    if (!sel.rangeCount || !sel.isCollapsed) return false;
+    const r = sel.getRangeAt(0);
+    const node = r.startContainer;
+    if (node.nodeType !== 3) return false;
+    const off = r.startOffset;
+    const v = node.nodeValue;
+
+    // 前一个字符是零宽空格（行首垫片）：删掉它并接回上一行
+    if (off > 0 && v[off - 1] === ZWSP) {
+      const atLineStart = off === 1 && (!v.slice(0, off - 1).length);
+      node.nodeValue = v.slice(0, off - 1) + v.slice(off);
+      const br = atLineStart ? node.previousSibling : null;
+      if (atLineStart && br && br.nodeName === 'BR') {
+        br.remove();
+        if (!node.nodeValue) node.remove();
+        this.caretToPrevLine(node.previousSibling, r.startContainer);
+      } else {
+        const rng = document.createRange();
+        rng.setStart(node, off - 1);
+        rng.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(rng);
+      }
+      this.hCoalesce = false;
+      return true;
+    }
+
+    // 光标在节点最前、前一个兄弟就是 <br>：删 <br> 接行
+    if (off === 0 && node.previousSibling && node.previousSibling.nodeName === 'BR') {
+      const br = node.previousSibling;
+      br.remove();
+      this.caretToPrevLine(node.previousSibling, node);
+      this.hCoalesce = false;
+      return true;
+    }
+    return false;
+  }
+
+  /** 删掉换行后把光标放到上一行末尾（prev = 被删位置前的节点） */
+  caretToPrevLine(prev, removed) {
+    const sel = window.getSelection();
+    const rng = document.createRange();
+    if (prev && prev.nodeType === 3) rng.setStart(prev, prev.nodeValue.length);
+    else if (prev) { rng.selectNodeContents(prev); rng.collapse(false); }
+    else if (removed && removed.parentNode) rng.setStart(removed.parentNode, 0);
+    else return;
+    rng.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(rng);
+  }
+
+  /**
+   * 表格 / 代码块边缘的方向键逃生口：
+   * 最后一格末尾 ↓ 跳到表格下方，第一格开头 ↑ 跳到上方，代码块底 ↓ 出块。
+   * 没有这条路的话，这些块只能靠鼠标点击才能离开。
+   */
+  handleArrow(e, block, cell) {
+    if (cell) {
+      const info = this.tableInfo();
+      if (!info) return;
+      const row = cell.parentElement;
+      if (e.key === 'ArrowDown'
+        && info.rowIdx === info.rows.length - 1
+        && info.colIdx === row.children.length - 1
+        && this.isCaretAtEnd(cell)) {
+        e.preventDefault();
+        const p = this.insertEmptyAfter(info.block);
+        this.placeCaretStart(p);
+        this.flush();
+      }
+      return;
+    }
+    if (e.key !== 'ArrowDown' || !block) return;
+    const type = block.dataset.type;
+    if (type !== 'code' && type !== 'math') return;
+    if (!this.isCaretAtEnd(block)) return;
+    e.preventDefault();
+    const next = block.nextElementSibling;
+    if (next) this.placeCaretStart(next);
+    else {
+      const p = this.insertEmptyAfter(block);
+      this.placeCaretStart(p);
+      this.flush();
+    }
   }
 
   /* ---------------- 结构操作 ---------------- */
@@ -1603,6 +1738,12 @@ export class WysiwygEditor {
     ensurePlaceholder(nt);
 
     block.after(nb);
+    // 提示块（callout）的续行：给新行染上同一色，视觉上还是同一个框。
+    // 纯展示标记 —— 序列化只认 data-callout，不会把 [!x] 写重
+    if (type === 'bq') {
+      if (block.dataset.callout) nb.dataset.coFollow = block.dataset.callout;
+      else if (block.dataset.coFollow) nb.dataset.coFollow = block.dataset.coFollow;
+    }
     this.placeCaretStart(nb);
     this.renumber();
     this.hCoalesce = false;
@@ -2273,10 +2414,20 @@ export class WysiwygEditor {
       this.flush();
       return;
     }
-    // 点正文空白：聚焦到最后一个块
+    // 点正文空白：聚焦到最后一个块。最后一块若是代码/表格/公式/分割线，
+    // 光标放进里面也没法打字 —— 在它下方开个空段落当落脚点
     if (e.target === this.root) {
+      this.root.focus();
       const last = this.root.lastElementChild;
-      if (last) { this.root.focus(); this.placeCaretEnd(last); }
+      if (!last) return;
+      const lt = last.dataset.type;
+      if (lt === 'code' || lt === 'table' || lt === 'math' || lt === 'hr') {
+        const p = this.insertEmptyAfter(last);
+        this.placeCaretStart(p);
+        this.flush();
+      } else {
+        this.placeCaretEnd(last);
+      }
     }
   }
 }

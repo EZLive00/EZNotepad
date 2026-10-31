@@ -319,12 +319,53 @@ window.__run = () => {
   root.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
   eq('多行粘贴保留结构', T.out(), '## 小标题\n\n- 甲\n- 乙');
 
-  // 19. 代码块内回车
+  // 19. 代码块内回车：中间 = 块内换行；末尾 = 出块（Typora 约定，不然出不来）
+  T.reset('```js\nconst a = 1;\n```');
+  ed.restoreCaret({ blockIndex: 0, offset: 5 });
+  T.key('Enter');
+  eq('代码块中间回车换行', T.out(), '```js\nconst\n a = 1;\n```');
   T.reset('```js\nconst a = 1;\n```');
   ed.restoreCaret({ blockIndex: 0, offset: 12 });
   T.key('Enter');
   T.type('const b = 2;');
-  eq('代码块回车换行', T.out(), '```js\nconst a = 1;\nconst b = 2;\n```');
+  eq('代码块末尾回车出块', T.out(), '```js\nconst a = 1;\n```\n\nconst b = 2;');
+
+  // 19b. 代码块换行后行首退格：一次删掉换行（零宽空格垫片不许白按一次）
+  T.reset('```js\nab\n```');
+  ed.restoreCaret({ blockIndex: 0, offset: 2 });
+  T.key('Enter');
+  T.key('Backspace');
+  eq('代码块行首退格接行', T.out(), '```js\nab\n```');
+
+  // 19c. 代码块底部 ↓ 方向键出块；点空白在代码块后开段落
+  T.reset('```js\nx\n```');
+  ed.restoreCaret({ blockIndex: 0, offset: 1 });
+  T.key('ArrowDown');
+  eq('代码块底方向键出块', T.blocks().join(','), 'code=x,p=');
+
+  // 19d. 提示块回车 = 同框续行（染同色），序列化不重写 [!x]；续行行首退格并回上一行
+  T.reset('> [!info] 标题\n> 正文');
+  ed.restoreCaret({ blockIndex: 1, offset: 2 });
+  T.key('Enter');
+  eq('提示块续行染色', root.querySelectorAll('.w-bq')[1].dataset.coFollow || '', 'info');
+  T.type('续');
+  eq('提示块续行序列化', T.out(), '> [!info] 标题\n> 正文\n> 续');
+  T.caret(2, 0);
+  T.key('Backspace');
+  eq('提示块续行行首退格并行', T.out(), '> [!info] 标题\n> 正文续');
+
+  // 19e. 表格末格末尾 ↓ 出表
+  T.reset('| a | b |\n|---|---|\n| 1 | 2 |');
+  ed.focusCell(root.querySelector('.w-table'), 1, 1);
+  {
+    const lastCell = root.querySelectorAll('tbody td')[1];
+    const r3 = document.createRange();
+    r3.selectNodeContents(lastCell); r3.collapse(false);
+    const s3 = getSelection();
+    s3.removeAllRanges(); s3.addRange(r3);
+  }
+  T.key('ArrowDown');
+  eq('表格末格方向键出表', T.blocks().join(','), 'table=1,p=');
 
   // 20. 四空格缩进的嵌套列表：结构要读对（序列化会规范化列宽）
   T.reset('- 父\n    - 子');
