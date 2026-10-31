@@ -18,12 +18,14 @@
   --read-gutter: 54px;
 }
 
-/* ---- 色彩分层：靠「底色深浅」分区域，而不是靠一堆 1px 边框 ----
+/* ---- 色彩分层：纯色 + 线条 ----
+   全程序不用渐变、不用投影浮起，区域之间靠 1px 线（--line/--line-strong）
+   和纯色底（可以有色深差）划分。浮层同样只靠描边，不靠阴影。
    bg       = 画布层：标题栏、标签行、大纲栏、状态栏（比内容面暗半格）
    bg-panel = 内容面：编辑区、预览区
    bg-soft  = 内容面之上的浅坑：代码块、hover 底
    bg-float = 浮层：菜单、弹窗、查找条。深色下必须比内容面「亮」一档，
-              否则浮层会和编辑区糊成一片，只剩一圈阴影在硬撑 */
+              否则浮层会和编辑区糊成一片 */
 body[data-theme="light"] {
   --bg: #f3f4f6;
   --bg-panel: #ffffff;
@@ -46,8 +48,8 @@ body[data-theme="light"] {
   --del-fg: #b4232a;
   --chg-bg: #fff5dc;
   --chg-fg: #8a5a00;
-  /* 浮层轮廓用「0 0 0 1px」模拟，比真 border 更轻，且不会占布局 */
-  --shadow: 0 0 0 1px rgba(17, 24, 39, .10), 0 8px 20px rgba(17, 24, 39, .13), 0 2px 6px rgba(17, 24, 39, .06);
+  /* 浮层轮廓 = 一圈 1px 线描边，扁平风格不叠加任何投影 */
+  --shadow: 0 0 0 1px rgba(17, 24, 39, .12);
   --scroll: #cdd2da;
 
   /* 语法着色：预览（highlight.js 的 .tok-*）和编辑器（CM6 的 HighlightStyle）
@@ -94,7 +96,7 @@ body[data-theme="dark"] {
   --del-fg: #ff8a8a;
   --chg-bg: #33280f;
   --chg-fg: #ffcf6b;
-  --shadow: 0 0 0 1px rgba(255, 255, 255, .09), 0 14px 34px rgba(0, 0, 0, .58), 0 2px 8px rgba(0, 0, 0, .40);
+  --shadow: 0 0 0 1px rgba(255, 255, 255, .10);
   --scroll: #3a404c;
 
   --tok-key: #b388ff;
@@ -154,8 +156,10 @@ input { font-family: inherit; font-size: inherit; color: inherit; }
 .appbar {
   flex: none;
   /* 顶部整块（标题栏 + 标签行）和左侧大纲栏同属「画布层」，比正文面暗半格。
-     不加下边框 —— 与正文的边界由底色差本身给出，少一条线就少一层噪音 */
+     区域分界画一道 1px 线；激活标签在下方用同色引脚把线「顶断」，
+     保持「标签与正文相连」的隐喻 */
   background: var(--bg);
+  border-bottom: 1px solid var(--line);
   position: relative;
   z-index: 30;
 }
@@ -167,10 +171,7 @@ input { font-family: inherit; font-size: inherit; color: inherit; }
   gap: 3px;
   padding-left: 10px;
   position: relative;
-  /* 顶部一道极淡的高光，模仿 Win11 标题栏的立体感（深色模式下几乎不可见） */
-  background-image: linear-gradient(180deg, rgba(255, 255, 255, .34), rgba(255, 255, 255, 0) 70%);
 }
-body[data-theme="dark"] .titlebar { background-image: none; }
 
 /* 窗口失焦：标题与窗口按钮变淡，和系统原生标题栏的行为一致 */
 body.win-blur .win-title { opacity: .55; }
@@ -181,9 +182,8 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
 .brand-mark {
   width: 22px; height: 22px; border-radius: var(--r-sm);
   display: grid; place-items: center;
-  background: linear-gradient(150deg, #6b95ff 0%, #3a63ef 100%);
+  background: var(--accent);
   color: #fff;
-  box-shadow: 0 1px 2px rgba(30, 60, 160, .28), inset 0 1px 0 rgba(255, 255, 255, .28);
   transition: filter .15s var(--ease);
 }
 .brand-mark .ico { width: 13px; height: 13px; stroke-width: 2.1; }
@@ -239,6 +239,10 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
 .tabs {
   display: flex; gap: 0; overflow-x: auto; overflow-y: hidden;
   scrollbar-width: none; min-width: 0; flex: 0 1 auto;
+  /* 高度顶到 appbar 底线（多出的 1px 压在边框上），激活标签的引脚才盖得到线；
+     padding-top 保持标签原来的垂直位置不变 */
+  align-self: stretch; margin-bottom: -1px;
+  align-items: flex-start; padding-top: 6px;
 }
 .tabs::-webkit-scrollbar { display: none; }
 .tabbar-fill { flex: 1; align-self: stretch; min-width: 12px; }
@@ -275,6 +279,12 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
    靠同色连成一片；分界交给相邻标签的细线，整体更安静 */
 .tab.active {
   background: var(--bg-panel); color: var(--fg); font-weight: 600;
+}
+/* 「引脚」：从标签底沿伸出一块同色实体，跨过标签行余白、
+   把 appbar 的底线顶断 —— 标签和正文在视觉上真正相连 */
+.tab.active::after {
+  content: ""; position: absolute; top: 100%; left: 0; right: 0;
+  height: 7px; background: var(--bg-panel);
 }
 /* 加粗宽度占位：正常态也预留 600 字重的宽度，激活切换时文字宽了但布局不动。
    伪元素是同文本的加粗版，高度压成 0 且不可见，只贡献宽度 */
@@ -315,7 +325,7 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
 }
 
 /* ================= 应用菜单（自绘，替代原生菜单栏） ================= */
-/* 浮层一律去描边：轮廓交给 --shadow 里的「0 0 0 1px」，比真 border 轻一半 */
+/* 浮层纯色 + 一圈 1px 描边（--shadow），不叠投影 */
 .appmenu {
   position: fixed; z-index: 500; min-width: 252px; padding: 6px;
   /* 上限：最近打开里可能有很长的文件名 + 很长的目录名，不能让它把菜单撑成一整条 */
@@ -477,7 +487,7 @@ body[data-theme="dark"] .am-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 25
   transition: background .12s var(--ease), color .12s var(--ease);
 }
 .side-tab:hover { background: var(--bg-hover); color: var(--fg-soft); }
-.side-tab.active { background: var(--bg-panel); color: var(--fg); box-shadow: 0 1px 2px rgba(17, 24, 39, .07); }
+.side-tab.active { background: var(--bg-panel); color: var(--fg); }
 .side-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 
 /* ---- 文件树 ---- */
@@ -594,7 +604,7 @@ body[data-theme="dark"] .am-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 25
   transition: background .12s var(--ease), color .12s var(--ease);
 }
 .set-seg button:hover { color: var(--fg); }
-.set-seg button.on { background: var(--bg-panel); color: var(--fg); font-weight: 600; box-shadow: 0 1px 2px rgba(17, 24, 39, .08); }
+.set-seg button.on { background: var(--bg-panel); color: var(--fg); font-weight: 600; }
 .set-zoom { display: flex; align-items: center; gap: 8px; }
 .set-step {
   width: 28px; height: 26px; border: none; border-radius: var(--r-sm); cursor: pointer;
@@ -690,6 +700,7 @@ body[data-theme="dark"] .am-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 25
   height: 34px; flex: none; display: flex; align-items: center; padding: 0 18px;
   font-size: 11px; font-weight: 600; letter-spacing: .02em; color: var(--fg-faint);
   background: transparent;
+  border-bottom: 1px solid var(--line);
 }
 .preview-body {
   flex: 1; overflow-y: auto;
@@ -897,10 +908,11 @@ body[data-zen="1"] .titlebar:hover .win-ctrl { opacity: 1; }
 body[data-zen="1"] .win-title { color: var(--fg-faint); }
 
 /* ================= 状态栏 ================= */
-/* 和顶栏对称：同属画布层、不画上边框，靠底色差和正文分开 */
+/* 和顶栏对称：同属画布层，与正文的分界画一道 1px 上边线 */
 .statusbar {
   flex: none; height: 27px; display: flex; align-items: center; gap: 2px;
   padding: 0 10px; background: var(--bg);
+  border-top: 1px solid var(--line);
   /* 行/列、字数这些是常看的信息，用 fg-soft；「草稿已同步」才是纯背景噪音 */
   font-size: 11.5px; color: var(--fg-soft);
 }
