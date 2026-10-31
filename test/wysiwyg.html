@@ -564,6 +564,12 @@ window.__run = () => {
   T.reset('甲结尾\n\n开头乙');
   eq('不会跨块拼出假匹配', df.findInDom(root, /尾开/g).length, 0);
 
+  // 带换行的查询要能跨块命中（查找框的 ↵ 按钮就是干这个的）
+  const cross = df.findInDom(root, /尾\n开/g);
+  eq('换行查询跨块命中', cross.length, 1);
+  has('跨块匹配能还原成 Range', !!df.rangeFor(cross[0]));
+  eq('不带换行仍然分块各算各的', df.findInDom(root, /甲结尾/g).length, 1);
+
   // 高亮：CSS Custom Highlight 是渲染层的东西，DOM 结构不能被改动
   const before = root.innerHTML;
   df.paint(dm, 1);

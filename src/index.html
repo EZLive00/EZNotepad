@@ -368,23 +368,36 @@
 
     <section class="editor-pane" id="editorPane">
       <div class="findbar hidden" id="findbar">
+        <!-- 箭头展开替换行：折叠时只有查找，展开后多一行「替换为」。
+             模式开关做成输入框右侧的小方格，不再另起一行复选框 -->
         <div class="fb-row">
-          <input id="findInput" placeholder="查找" spellcheck="false" />
-          <input id="replaceInput" class="hidden" placeholder="替换为" spellcheck="false" />
+          <button class="fb icon-only fb-arrow" id="findExpand" title="展开替换（Ctrl+H）" aria-expanded="false">
+            <svg class="ico" aria-hidden="true"><use href="#i-chevron-right" /></svg>
+          </button>
+          <span class="fb-field">
+            <textarea id="findInput" rows="1" placeholder="查找" spellcheck="false"></textarea>
+            <button class="fb-mini" id="findNewline" title="插入换行（Ctrl+Enter）">↵</button>
+          </span>
+          <span class="fb-modes">
+            <label class="fb-toggle" title="区分大小写（Alt+C）"><input type="checkbox" id="findCase" /><span>Aa</span></label>
+            <label class="fb-toggle" title="正则表达式（Alt+R）"><input type="checkbox" id="findRegex" /><span class="fb-mono">.*</span></label>
+            <label class="fb-toggle" title="整词匹配（Alt+W）"><input type="checkbox" id="findWord" /><span>全词</span></label>
+            <label class="fb-toggle" id="findScopeWrap" title="只在选中的文字里查找"><input type="checkbox" id="findScope" /><span>选区</span></label>
+          </span>
           <span class="find-count" id="findCount">0/0</span>
           <button class="fb icon-only" id="findPrev" title="上一个 (Shift+Enter)"><svg class="ico" aria-hidden="true"><use href="#i-chevron-up" /></svg></button>
           <button class="fb icon-only" id="findNext" title="下一个 (Enter)"><svg class="ico" aria-hidden="true"><use href="#i-chevron-down" /></svg></button>
-          <button class="fb" id="findReplaceOne" title="替换">替换</button>
-          <button class="fb" id="findReplaceAll" title="全部替换">全部</button>
           <button class="fb close" id="findClose" title="关闭 (Esc)"><svg class="ico" aria-hidden="true"><use href="#i-x" /></svg></button>
         </div>
-        <!-- 选项单独一行：挤在同一行时新加的「整词 / 选区内」会被折到下一行，
-             排版变成上半截四个、下半截一个，很丑 -->
-        <div class="fb-opts">
-          <label class="fb-check"><input type="checkbox" id="findCase" /> 区分大小写</label>
-          <label class="fb-check"><input type="checkbox" id="findWord" /> 整词</label>
-          <label class="fb-check"><input type="checkbox" id="findRegex" /> 正则</label>
-          <label class="fb-check" id="findScopeWrap"><input type="checkbox" id="findScope" /> 选区内</label>
+        <div class="fb-row fb-replace-row hidden" id="findReplaceRow">
+          <span class="fb-field">
+            <textarea id="replaceInput" rows="1" placeholder="替换为" spellcheck="false"></textarea>
+            <button class="fb-mini" id="replaceNewline" title="插入换行（Ctrl+Enter）">↵</button>
+          </span>
+          <span class="fb-rep-btns">
+            <button class="fb" id="findReplaceOne" title="替换这一处（Enter）">替换</button>
+            <button class="fb" id="findReplaceAll" title="全部替换">全部</button>
+          </span>
         </div>
       </div>
 

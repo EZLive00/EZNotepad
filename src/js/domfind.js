@@ -16,31 +16,63 @@ const HL_CUR = 'sn-find-cur';
 /** 这些子树里的文字不参与查找（列表符号、任务框、块标记、代码块语言标签） */
 const SKIP = '.w-li-marker, .w-check, .w-hash, .w-codebar';
 
-function blockRoots(root) {
-  // 每个顶层块单独建索引：跨块拼字符串会造出「上一段结尾 + 下一段开头」这种假匹配
-  return [...root.querySelectorAll('.w-block')];
-}
+const NL = '\n';
 
-function indexOfBlock(block) {
-  const nodes = [];
+/**
+ * 整篇建一份索引，块与块之间插一个 \n。
+ *
+ * 为什么不再「一个块一份索引」：查询串里带换行时（查找框的换行按钮就是干这个的），
+ * `甲\n乙` 要能匹配上下两段，而块内文本里根本没有换行符，永远命中不到。
+ * 显式插入分隔符后，不带换行的查询照样不可能匹配到「上一段结尾 + 下一段开头」
+ * 这种假命中——和以前按块隔离是同一个效果。
+ */
+function indexOfDoc(root) {
+  const nodes = [];    // 文本节点 → 在全文中的起点
+  const spans = [];    // 块 → 在全文中的范围（滚动与定位用）
   let text = '';
-  const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, {
-    acceptNode(n) {
-      if (!n.nodeValue) return NodeFilter.FILTER_REJECT;
-      if (n.parentElement && n.parentElement.closest(SKIP)) return NodeFilter.FILTER_REJECT;
-      return NodeFilter.FILTER_ACCEPT;
-    },
-  });
-  let n;
-  while ((n = walker.nextNode())) {
-    nodes.push({ node: n, start: text.length });
-    text += n.nodeValue;
+  let first = true;
+  for (const block of root.children) {
+    if (!block.classList || !block.classList.contains('w-block')) continue;
+    if (!first) text += NL;
+    first = false;
+    const start = text.length;
+    const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, {
+      acceptNode(n) {
+        if (!n.nodeValue) return NodeFilter.FILTER_REJECT;
+        if (n.parentElement && n.parentElement.closest(SKIP)) return NodeFilter.FILTER_REJECT;
+        return NodeFilter.FILTER_ACCEPT;
+      },
+    });
+    let n;
+    while ((n = walker.nextNode())) {
+      nodes.push({ node: n, start: text.length });
+      text += n.nodeValue;
+    }
+    spans.push({ block, start, end: text.length });
   }
-  return { block, text, nodes };
+  return { text, nodes, spans };
 }
 
-/** 找出某个绝对偏移落在哪个文本节点上（返回节点 + 节点内偏移） */
-function locate(nodes, offset) {
+/** 某个绝对偏移落在哪个块上（spans 单调递增，二分） */
+function blockAt(idx, offset) {
+  let lo = 0;
+  let hi = idx.spans.length - 1;
+  let pick = null;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (idx.spans[mid].start <= offset) { pick = idx.spans[mid]; lo = mid + 1; } else hi = mid - 1;
+  }
+  return pick ? pick.block : null;
+}
+
+/**
+ * 找出某个绝对偏移落在哪个文本节点上（返回节点 + 节点内偏移）。
+ * @param {boolean} [asEnd] 取匹配结尾时用：偏移正好落在两个节点的接缝上，
+ *   要落在**前一个节点的末尾**，而不是后一个节点的开头。
+ *   落在后一个节点开头的话，`粗体` 这种「整段就是一个 <strong>」的匹配会
+ *   算成跨节点，替换时就被误判成「劈开了格式」。
+ */
+function locate(nodes, offset, asEnd) {
   if (!nodes.length) return null;
   // nodes[].start 单调递增，二分即可（长文档里匹配很多时别每match 都线性扫）
   let lo = 0;
@@ -48,7 +80,8 @@ function locate(nodes, offset) {
   let pick = 0;
   while (lo <= hi) {
     const mid = (lo + hi) >> 1;
-    if (nodes[mid].start <= offset) { pick = mid; lo = mid + 1; } else hi = mid - 1;
+    const hit = asEnd ? nodes[mid].start < offset : nodes[mid].start <= offset;
+    if (hit) { pick = mid; lo = mid + 1; } else hi = mid - 1;
   }
   const n = nodes[pick];
   const len = n.node.nodeValue.length;
@@ -57,8 +90,8 @@ function locate(nodes, offset) {
 }
 
 function rangeOf(idx, start, end) {
-  const a = locate(idx.nodes, start);
-  const b = locate(idx.nodes, end);
+  const a = locate(idx.nodes, start, false);
+  const b = locate(idx.nodes, end, true);
   if (!a || !b) return null;
   try {
     const r = document.createRange();
@@ -71,22 +104,20 @@ function rangeOf(idx, start, end) {
 }
 
 /**
- * 在 root 里找全部匹配。
- * @returns {Array<{block:Element, start:number, end:number}>} 块内字符偏移
+ * 在 root 里找全部匹配。一个匹配可以横跨多个块（查询里带换行时）。
+ * @returns {Array<{block:Element, start:number, end:number, idx:object}>} 全文字符偏移
  */
 export function findInDom(root, re) {
   const out = [];
   if (!root || !re) return out;
-  for (const block of blockRoots(root)) {
-    const idx = indexOfBlock(block);
-    if (!idx.text) continue;
-    re.lastIndex = 0;
-    let m;
-    while ((m = re.exec(idx.text))) {
-      if (m[0].length === 0) { re.lastIndex++; continue; }
-      out.push({ block, start: m.index, end: m.index + m[0].length, idx });
-      if (out.length >= 2000) return out;
-    }
+  const idx = indexOfDoc(root);
+  if (!idx.text) return out;
+  re.lastIndex = 0;
+  let m;
+  while ((m = re.exec(idx.text))) {
+    if (m[0].length === 0) { re.lastIndex++; continue; }
+    out.push({ block: blockAt(idx, m.index), start: m.index, end: m.index + m[0].length, idx });
+    if (out.length >= 2000) return out;
   }
   return out;
 }

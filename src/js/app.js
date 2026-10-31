@@ -1713,18 +1713,55 @@ function undoToast(msg, backup) {
    现在两套并存，替换才需要回源码（改 DOM 会破坏行内样式）。 */
 const find = { matches: [], index: 0, dom: false };
 
-function openFind(withReplace = false) {
+/* 输入框按内容长高：一行起步，插了换行就多一行，到四行封顶后内部滚动。
+   查找框改成 textarea 是为了能看见换行——单行 input 里塞不进换行符，
+   用户根本无从判断自己查的是「两个词」还是「跨行」。 */
+function autoGrow(ta) {
+  if (!ta) return;
+  const MAX = 88;                       // ≈ 四行
+  ta.style.height = 'auto';
+  const h = Math.min(MAX, ta.scrollHeight || 26);
+  ta.style.height = `${h}px`;
+  ta.style.overflowY = (ta.scrollHeight || 0) > MAX ? 'auto' : 'hidden';
+}
+
+/* 在光标处插一个换行。IE 时代的 execCommand 不用管，textarea 手动切最稳 */
+function insertNewlineIn(ta) {
+  const a = ta.selectionStart ?? ta.value.length;
+  const b = ta.selectionEnd ?? a;
+  ta.value = `${ta.value.slice(0, a)}\n${ta.value.slice(b)}`;
+  ta.selectionStart = a + 1;
+  ta.selectionEnd = a + 1;
+  autoGrow(ta);
+  ta.dispatchEvent(new Event('input', { bubbles: true }));
+  ta.focus();
+}
+
+/* 折叠 = 只查找，展开 = 多一行替换。箭头转 90°，和展开语义一致 */
+function setFindExpanded(on) {
+  el.findbar.classList.toggle('expanded', !!on);
+  $('findReplaceRow').classList.toggle('hidden', !on);
+  $('findExpand').setAttribute('aria-expanded', on ? 'true' : 'false');
+  $('findExpand').title = on ? '收起替换（Ctrl+F）' : '展开替换（Ctrl+H）';
+  if (on) autoGrow($('replaceInput'));
+}
+
+/**
+ * @param {boolean} [expand] true 展开替换行 / false 收起 / 不传则保持现状
+ *   ——Ctrl+F 只管聚焦，不该把用户已经展开的替换行收回去。
+ */
+function openFind(expand) {
   const t = activeTab();
   if (!t) return;
   el.findbar.classList.remove('hidden');
-  $('replaceInput').classList.toggle('hidden', !withReplace);
-  $('findReplaceOne').classList.toggle('hidden', !withReplace);
-  $('findReplaceAll').classList.toggle('hidden', !withReplace);
+  if (expand != null) setFindExpanded(expand);
   // 「选区内」只在真的选了东西时才可用，否则勾了也没意义还让人困惑
   const sel = t.mode === 'wysiwyg' ? '' : plain.selectedText;
   $('findScope').disabled = !sel;
   if (!sel) $('findScope').checked = false;
-  if (sel && !sel.includes('\n')) $('findInput').value = sel;
+  // 选中的文字直接填进查找框（含换行也行，跨块匹配现在支持）
+  if (sel && sel.length <= 500) $('findInput').value = sel;
+  autoGrow($('findInput'));
   $('findInput').focus();
   $('findInput').select();
   runFind();
@@ -1828,7 +1865,7 @@ async function switchToEditForReplace() {
   if (!t || t.mode !== 'wysiwyg') return true;
   const go = await confirmBox(
     '替换需要编辑模式',
-    '所见即所得里直接替换会破坏加粗、链接这些格式。<br><br>切到编辑模式（Ctrl+2）继续替换？',
+    '这一处匹配跨越了加粗、链接这类格式，在所见即所得里直接改会把它们弄乱。<br><br>切到编辑模式（Ctrl+2）继续替换？',
     '切换并替换', '取消'
   );
   if (!go) return false;
@@ -1837,13 +1874,36 @@ async function switchToEditForReplace() {
   return true;
 }
 
+/**
+ * 所见即所得里就地替换一处：命中落在同一个文本节点内时直接改这个节点。
+ * 行内样式（加粗 / 链接 / 行内代码）是节点边界，没被劈开就不会坏，
+ * 改完 flush 一次让 md 重新序列化即可——比弹窗逼用户切模式顺手得多。
+ * 命中劈开了一个 <strong> 时才返回 false，交给上层走「切到编辑模式」。
+ * @param {boolean} [quiet] 批量时先攒着，最后统一 flush
+ */
+function replaceInDom(match, rep, quiet) {
+  const r = domfind.rangeFor(match);
+  if (!r || r.startContainer !== r.endContainer) return false;
+  r.deleteContents();
+  r.insertNode(document.createTextNode(rep));
+  if (!quiet) {
+    wys.hCoalesce = false;   // 一次替换 = 一步撤销
+    wys.flush();
+  }
+  return true;
+}
+
 async function replaceOne() {
   const t = activeTab();
   if (!t || !find.matches.length) return;
-  if (!(await switchToEditForReplace())) return;
+  const rep = $('replaceInput').value;
+  if (find.dom) {
+    if (replaceInDom(find.matches[find.index], rep)) { runFind(); return; }
+    if (!(await switchToEditForReplace())) return;
+    if (!find.matches.length) return;
+  }
   if (find.dom || !find.matches.length) return;
   const [a, b] = find.matches[find.index];
-  const rep = $('replaceInput').value;
   setContent(t.content.slice(0, a) + rep + t.content.slice(b));
   runFind();
 }
@@ -1851,10 +1911,31 @@ async function replaceOne() {
 async function replaceAll() {
   const t = activeTab();
   if (!t) return;
+  const rep = $('replaceInput').value;
+
+  /* 所见即所得：从后往前就地替换，前面的偏移不会被改动影响。
+     跨格式的那几处单独数出来，一个都不剩才不必退回编辑模式。 */
+  if (find.dom) {
+    const list = find.matches.slice();
+    let ok = 0;
+    for (let i = list.length - 1; i >= 0; i--) {
+      if (replaceInDom(list[i], rep, true)) ok++;
+    }
+    if (ok) {
+      wys.hCoalesce = false;
+      wys.flush();
+      runFind();
+    }
+    const rest = list.length - ok;
+    if (!list.length) { toast('没有找到匹配项'); return; }
+    if (rest) toast(`已替换 ${ok} 处；另有 ${rest} 处跨越了格式，请切到编辑模式处理`);
+    else toast(`已替换 ${ok} 处`);
+    return;
+  }
+
   if (!(await switchToEditForReplace())) return;
   const re = buildRegex();
   if (!re) return;
-  const rep = $('replaceInput').value;
   const sel = plain.selection;
   const onlySel = $('findScope').checked && sel.to > sel.from;
   let n = 0;
@@ -2162,7 +2243,7 @@ const commands = {
   print: () => printTab(activeTab()),
   palette: openPalette,
   history: showHistoryPanel,
-  find: () => openFind(false),
+  find: () => openFind(),
   replace: () => openFind(true),
   gotoLine: gotoLinePrompt,
   bold: () => surround('**'),
@@ -2747,7 +2828,7 @@ function bindEvents() {
   window.addEventListener('focus', () => { setBlur(false); syncMaxState(); });
   document.addEventListener('visibilitychange', () => setBlur(document.hidden));
 
-  on('btnFind', () => openFind(false));
+  on('btnFind', () => openFind());
   on('btnSave', commands.save);
   on('tabAdd', commands.new);
 
@@ -2778,7 +2859,7 @@ function bindEvents() {
       { label: '粘贴', action: clip('paste') },
       { label: '全选', action: () => { plain.focus(); plain.selectAll(); } },
       { sep: true },
-      { label: '查找…', shortcut: 'Ctrl+F', action: () => openFind(false) },
+      { label: '查找…', shortcut: 'Ctrl+F', action: () => openFind() },
       { label: '替换…', shortcut: 'Ctrl+H', action: () => openFind(true) },
       { label: '一键格式化', shortcut: 'Ctrl+Shift+F', action: commands.format },
       { sep: true },
@@ -2862,21 +2943,36 @@ function bindEvents() {
       items.push(
         { sep: true },
         { label: '全选', shortcut: 'Ctrl+A', action: () => document.execCommand('selectAll') },
-        { label: '查找替换…', shortcut: 'Ctrl+F', action: () => openFind(false) },
+        { label: '查找替换…', shortcut: 'Ctrl+F', action: () => openFind() },
       );
       contextMenu(e.clientX, e.clientY, items);
     }
   });
 
-  $('findInput').addEventListener('input', runFind);
+  $('findInput').addEventListener('input', () => { autoGrow($('findInput')); runFind(); });
   $('findInput').addEventListener('keydown', (e) => {
+    // Ctrl/⌘+Enter 插换行（和 IDEA 一致）；光按 Enter 仍然是跳到下一处
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      insertNewlineIn($('findInput'));
+      return;
+    }
     if (e.key === 'Enter') { e.preventDefault(); findStep(e.shiftKey ? -1 : 1); }
     if (e.key === 'Escape') { closeFind(); }
   });
+  $('replaceInput').addEventListener('input', () => autoGrow($('replaceInput')));
   $('replaceInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      insertNewlineIn($('replaceInput'));
+      return;
+    }
     if (e.key === 'Enter') { e.preventDefault(); replaceOne(); }
     if (e.key === 'Escape') { closeFind(); }
   });
+  on('findNewline', () => insertNewlineIn($('findInput')));
+  on('replaceNewline', () => insertNewlineIn($('replaceInput')));
+  on('findExpand', () => setFindExpanded(!el.findbar.classList.contains('expanded')));
   on('findNext', () => findStep(1));
   on('findPrev', () => findStep(-1));
   on('findReplaceOne', replaceOne);
@@ -3205,7 +3301,7 @@ function setupKeys() {
     else if (k === 's') commands.save();
     else if (k === 'w') commands.closeTab();
     else if (k === 'f' && shift) commands.format();
-    else if (k === 'f') openFind(false);
+    else if (k === 'f') openFind();
     else if (k === 'h') openFind(true);
     else if (k === 'd') diff.openText();
     else if (k === 'g') commands.gotoLine();

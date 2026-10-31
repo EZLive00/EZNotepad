@@ -16,8 +16,12 @@
     "test:editor": "node test/run-editor.mjs",
     "test:menu": "node test/run-menu.mjs",
     "test:filetree": "node test/run-filetree.mjs",
+    "test:app": "node test/run-app.mjs",
+    "test:app": "node test/run-app.mjs",
     "test:units": "node test/run-units.mjs",
-    "build:katex": "node scripts/build-katex.mjs"
+    "build:katex": "node scripts/build-katex.mjs",
+    "shot:find": "node test/shot-find.mjs",
+    "shot:find": "node test/shot-find.mjs"
   },
   "devDependencies": {
     "@codemirror/autocomplete": "^6.20.4",

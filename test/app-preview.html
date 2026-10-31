@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>app.js 假后端冒烟（仅测试用）</title>
+<link rel="stylesheet" href="/src/styles.css" />
+</head>
+<body data-theme="light">
+<div id="mount"></div>
+<script>
+  /* ---------------------------------------------------------------
+     假 Tauri 内部接口：让 app.js 在纯浏览器里也能跑起来。
+     真机调试端口加不了（加了应用直接静默退出），所以 app.js 里的
+     界面接线一直只有读代码这一种验证手段；把 invoke 换成假的之后，
+     boot 能走完、bindEvents 能跑，就能对界面行为下断言了。
+     --------------------------------------------------------------- */
+  let cbId = 1;
+  const callbacks = new Map();
+  window.__calls = [];
+  window.__TAURI_INTERNALS__ = {
+    transformCallback(fn, once) {
+      const id = cbId++;
+      callbacks.set(id, once ? (payload) => { callbacks.delete(id); fn(payload); } : fn);
+      return id;
+    },
+    unregisterCallback(id) { callbacks.delete(id); },
+    convertFileSrc(p) { return p; },
+    async invoke(cmd) {
+      window.__calls.push(cmd);
+      switch (cmd) {
+        case 'initial_files': return [];
+        case 'read_dir_shallow': return [];
+        case 'list_history': return [];
+        default: return null;
+      }
+    },
+  };
+  /* 测试里「后端推事件」用：把 payload 丢给所有注册过的回调 */
+  window.__emit = (payload) => { for (const fn of callbacks.values()) fn({ event: 'x', id: 0, payload }); };
+</script>
+<script type="module">
+  const src = await (await fetch('/src/index.html')).text();
+  const doc = new DOMParser().parseFromString(src, 'text/html');
+  doc.body.querySelectorAll('script').forEach((s) => s.remove());
+  document.body.insertAdjacentHTML('afterbegin', doc.body.innerHTML);
+
+  window.__ready = false;
+  try {
+    await import('/src/js/app.js');
+    window.__booted = true;
+  } catch (e) {
+    window.__bootError = String((e && e.stack) || e);
+  }
+  window.__ready = true;
+  /* harness 的约定：__ready 表示可以断言了，__run() 返回断言数组。
+     这个页面自己不做断言（写在 run-app.mjs 里），所以只出来占位 */
+  window.__run = () => [];
+</script>
+</body>
+</html>
