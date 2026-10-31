@@ -23,6 +23,15 @@ foreach ($raw in $lines) {
   if ($sp -lt 0) { $verb = $line; $rest = "" } else { $verb = $line.Substring(0, $sp); $rest = $line.Substring($sp + 1).Trim() }
   [void]$log.Add(">> " + $line)
   try {
+    # Input verbs must run with the app actually in the foreground: SendInput
+    # goes to whatever owns the focus, and a covered app window swallows the
+    # click silently. Verify, and fail the step loudly when it can't be done.
+    $inputVerbs = @("relclick","reldclick","relbr","reldrag","type","key","combo",
+                    "save","menu","uia","uirclick","uiainvoke")
+    if ($inputVerbs -contains $verb) {
+      $f = Focus-App
+      if ($f -ne "ok") { [void]$log.Add("   !! focus " + $f); $failed = $true }
+    }
     switch ($verb) {
       "launch"   {
         # launch <file> [fresh|keep]
@@ -156,6 +165,19 @@ foreach ($raw in $lines) {
         $path = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($rest))
         Write-Output ("DLGPICK " + (Dlg-Pick $path))
         Start-Sleep -Milliseconds 900
+      }
+      "dlgdump" {
+        # dump every child control of the dialog: class#id:<b64 text>
+        Write-Output ("DLGDUMP " + (Dlg-Dump))
+      }
+      "uiainvoke" {
+        # uiainvoke <b64 name> [index] -- click the index-th matching element
+        $pr = $rest.Split(" ")
+        $nm = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($pr[0]))
+        $ix = 0
+        if ($pr.Length -gt 1) { $ix = [int]$pr[1] }
+        Write-Output ("UIAINV " + (Uia-InvokeAt $nm $ix))
+        Start-Sleep -Milliseconds 400
       }
       "uianames" {
         # uianames <max> -- dump the accessible names present right now
