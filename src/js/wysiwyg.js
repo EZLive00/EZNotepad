@@ -226,8 +226,11 @@ export function mkCode(text = '', lang = '') {
  * 就会在它们之间塞满空行 —— 内容没丢，但存盘时全文格式已经变了。
  * `$$` 用 CSS 伪元素画出来，不进 DOM，序列化只取 .w-text，天然不会多也不会少。
  */
-export function mkMath(tex = '') {
+export function mkMath(tex = '', inline = false) {
   const b = blockEl('math', 'w-mathblock');
+  // 记下原文是 `$$x$$` 一行写完还是三行块。不记的话单行公式一过手就变三行，
+  // 打开文档立刻被标脏，按一次保存就把用户的文件改了。
+  if (inline) b.dataset.mathInline = '1';
   const s = document.createElement('span');
   s.className = 'w-text w-tex';
   s.textContent = tex;
@@ -374,7 +377,7 @@ export function parseMarkdown(md) {
       const rest = line.replace(/^\s*\$\$/, '');
       const same = rest.match(/^([\s\S]*?)\$\$\s*$/);
       if (same) {
-        frag.appendChild(mkMath(same[1]));
+        frag.appendChild(mkMath(same[1], true));
         i++;
         continue;
       }
@@ -550,7 +553,11 @@ export function blocksToMarkdown(root) {
     if (type === 'math') {
       // $$ 由这里补回去：块里只存裸 TeX，粘贴/编辑都不会把定界符弄丢
       const text = codeToText(el.querySelector('.w-tex') || el);
-      chunks.push({ type, lines: ['$$', text, '$$'] });
+      if (el.dataset.mathInline === '1' && !text.includes('\n')) {
+        chunks.push({ type, lines: ['$$' + text + '$$'] });
+      } else {
+        chunks.push({ type, lines: ['$$', text, '$$'] });
+      }
       cols.length = 0;
       continue;
     }
@@ -685,6 +692,8 @@ export class WysiwygEditor {
     this.openLink = opts.openLink || null;
     this.silent = false;
     this.composing = false;
+    // 新文档默认按「以换行结尾」存（POSIX 惯例），载入文件时再按实际内容修正
+    this.trailingNewline = true;
     this.history = [];
     this.hIndex = -1;
     this.hLast = 0;
@@ -734,6 +743,11 @@ export class WysiwygEditor {
   }
 
   _render(md, restore) {
+    /* 记下原文有没有结尾换行：序列化只吐「行」，补不补最后那个 \n 得看原来的样子。
+       不记的话每次编辑都会把文件的结尾换行吃掉，git 立刻给你一行
+       "\ No newline at end of file"。
+       空文档不改这个标记 —— 用户清空重写时不该顺手把文件的换行习惯改掉。 */
+    if (md) this.trailingNewline = md.endsWith('\n');
     this.silent = true;
     this.root.innerHTML = '';
     this.lastBlock = null;
@@ -746,7 +760,9 @@ export class WysiwygEditor {
   }
 
   toMarkdown() {
-    return blocksToMarkdown(this.root);
+    const md = blocksToMarkdown(this.root);
+    if (this.trailingNewline && md && !md.endsWith('\n')) return md + '\n';
+    return md;
   }
 
   caretState() {
@@ -1015,9 +1031,18 @@ export class WysiwygEditor {
       if (/^h[1-6]$/.test(type) && !this.hashEl(b) && isEmptyText(t) && !t.querySelector('img') && (all || b === caret)) {
         this.degradeHeading(b);
       }
-      // 清掉空的行内包裹（删字后常见的 <strong></strong>）
+      // 清掉空的行内包裹（删字后常见的 <strong></strong>）。
+      // 判空必须忽略零宽空格 —— contenteditable 会往空元素里塞 \u200b 当落脚点，
+      // 有它在 textContent 就不为空，于是这个 <strong> 活下来，
+      // 接下来打的字全被它包成粗体（表现为「删光重打还是粗的」）。
+      const blankInline = (el) => !el.textContent.replace(/\u200b/g, '') && !el.querySelector('img');
+      const r0 = window.getSelection();
+      const caret0 = r0 && r0.rangeCount ? r0.getRangeAt(0) : null;
+      let caretInBlank = false;
       t.querySelectorAll('strong,em,code,del,b,i,strike,a').forEach((el) => {
-        if (!el.textContent && !el.querySelector('img')) el.remove();
+        if (!blankInline(el)) return;
+        if (caret0 && el.contains(caret0.startContainer)) caretInBlank = true;
+        el.remove();
       });
       // 相邻同标签合并，避免 **a****b**
       for (const el of [...t.children]) {
@@ -1032,6 +1057,8 @@ export class WysiwygEditor {
       } else {
         ensurePlaceholder(t);
       }
+      // 删掉的那个空元素如果正夹着光标，光标现在悬空了，放回块里
+      if (caretInBlank) setCaretOffset(t, 0);
     }
 
     if (!this.root.firstElementChild) this.root.appendChild(mkPara(''));
@@ -1050,7 +1077,8 @@ export class WysiwygEditor {
    */
   applyBlockRule() {
     const block = this.currentBlock();
-    if (!block || block.dataset.type !== 'p') return false;
+    if (!block) return false;
+    if (block.dataset.type !== 'p') return this.upgradeTaskItem(block);
     const t = textEl(block);
     const sel = window.getSelection();
     if (!sel.rangeCount || !sel.isCollapsed) return false;
@@ -1105,7 +1133,10 @@ export class WysiwygEditor {
 
     const rules = [
       [/^(#{1,6})\s$/, (m) => mkHeading(m[1].length)],
-      [/^```([\w#+.-]*)\s?$/, (m) => mkCode('', m[1] || '')],
+      /* 空格才是触发条件，单看 ``` 就转的话语言名会被吃掉：
+         打到第三个反引号时块已经变成代码块，紧接着敲的 js 只能落在正文里。
+         不带空格的写法（```js + 回车）由 handleEnter 接住。 */
+      [/^```([\w#+.-]*)\s$/, (m) => mkCode('', m[1] || '')],
       [/^>\s$/, () => mkQuote('')],
       /* [!info] 这类标记 + 空格 → 提示块。> 开头的走上面那条，所以这里不用带 >；
          文件里来的 > [!info] 由 parseMarkdown 认 */
@@ -1122,6 +1153,49 @@ export class WysiwygEditor {
       return takeover(build(m));
     }
     return false;
+  }
+
+  /**
+   * 无序项里接着打 "[ ] "（或 "[x] "）就升级成任务项。
+   *
+   * 逐字输入时 "- " 会先把段落变成无序列表，后面那截 "[ ] " 就再也碰不到
+   * 段首规则了（此时块已经不是 p）—— 表现为一个圆点后面跟着字面的 "[ ]"，
+   * 任务列表只能靠「粘贴整行」或格式菜单才做得出来。
+   */
+  upgradeTaskItem(block) {
+    if (block.dataset.type !== 'li' || block.dataset.list !== 'ul') return false;
+    const t = textEl(block);
+    const sel = window.getSelection();
+    if (!sel.rangeCount || !sel.isCollapsed) return false;
+    const here = sel.getRangeAt(0);
+    if (!t.contains(here.startContainer)) return false;
+    const off = offsetIn(t);
+    const m = t.textContent.slice(0, off).match(/^\[([ xX])\]\s$/);
+    if (!m) return false;
+
+    const nb = mkLi('task', '', Number(block.dataset.indent) || 0, m[1].toLowerCase() === 'x');
+    const nt = textEl(nb);
+    const r = document.createRange();
+    r.setStart(here.startContainer, here.startOffset);
+    r.setEnd(t, t.childNodes.length);
+    if (!r.collapsed) {
+      const frag = r.extractContents();
+      // 空项里那个占位 <br> 别搬过去，否则任务项开头多一个空行
+      for (const n of [...frag.childNodes]) {
+        if (n.nodeType === 1 && n.tagName === 'BR') n.remove();
+      }
+      if ([...frag.childNodes].some((n) => n.nodeType === 1
+        || (n.nodeValue || '').replace(/[\s\u200b]/g, ''))) {
+        nt.innerHTML = '';
+        nt.appendChild(frag);
+      }
+    }
+    block.replaceWith(nb);
+    this.placeCaretStart(nb);
+    this.hCoalesce = false;
+    this.renumber();
+    this.flush();
+    return true;
   }
 
   /** 行内标记：输入到收尾符时立刻变成真正的样式 */
@@ -1260,6 +1334,22 @@ export class WysiwygEditor {
     if (type === 'hr' || type === 'table') { e.preventDefault(); return; }
     e.preventDefault();
     if (type === 'code' || type === 'math') { this.codeNewline(); return; }
+
+    // 段落里整行就是 ``` 或 ```js，回车开代码块（Typora 的习惯写法）。
+    // 语言名在这里才拿得到：逐字输入时不会提前把块转掉。
+    if (type === 'p') {
+      const ct = textEl(block);
+      const fence = (ct.textContent || '').match(/^```([\w#+.-]*)$/);
+      if (fence && !ct.querySelector('*')) {
+        const nb = mkCode('', fence[1] || '');
+        block.replaceWith(nb);
+        this.placeCaretStart(nb);
+        this.hCoalesce = false;
+        this.renumber();
+        this.flush();
+        return;
+      }
+    }
     this.hideHashes(block);           // 回车 = 这个标题写完了，### 收起
     this.splitBlock(block);
   }

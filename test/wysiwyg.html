@@ -103,6 +103,15 @@ window.__run = () => {
   T.key('Enter');
   eq('再回车退出列表', T.blocks()[2].startsWith('p'), true);
 
+  // 2a. 逐字打 "- [ ] "：光标第一个空格就先把段落转成无序列表，
+  // 后面这截 "[ ] " 得把已存在的无序项升级成任务项（否则圆点后面挂着一坨字面 "[ ]"）
+  T.reset('');
+  T.type('- ');
+  T.type('[ ] ');
+  eq('逐字输入 "- [ ] " 变任务项', T.blocks()[0], 'li:task@0=');
+  T.type('待办');
+  eq('任务项文字跟上', T.out(), '- [ ] 待办');
+
   // 2b. 已有文字前面补标记（光标在文字前，不是行尾）
   T.reset('已经写好的文字');
   T.caret(0, 0);
@@ -131,6 +140,22 @@ window.__run = () => {
   T.caret(0, 0);
   T.type('- [ ] ');
   eq('文字前面输入 "- [ ] " 变任务项', T.blocks()[0], 'li:task@0=待办事项');
+
+  T.reset('');
+  T.type('```js');
+  T.key('Enter');
+  eq('"```js" + 回车 开代码块（语言名不丢）', root.children[0].dataset.lang, 'js');
+  T.type('const a = 1;');
+  eq('代码块内容跟上', T.out(), '```js\nconst a = 1;\n```');
+
+  T.reset('');
+  T.type('```');
+  T.key('Enter');
+  eq('裸三个反引号 + 回车 也开代码块', T.blocks()[0], 'code=');
+
+  T.reset('');
+  T.type('```');
+  eq('只打三个反引号时还是普通段落（否则语言名无处可打）', T.blocks()[0], 'p=```');
 
   T.reset('const a = 1;');
   T.caret(0, 0);
@@ -530,6 +555,11 @@ window.__run = () => {
 
   const span = df.findInDom(root, /个加粗/g);
   eq('跨行内标签的匹配能还原成 Range', span.length ? df.rangeFor(span[0]).toString() : '（没找到）', '个加粗');
+
+  // 32b. 往返：公式块 + 表格 + 行内公式放在一篇里（真机打开这类文档会被标脏）
+  const RTC = '# 公式演示\n\n$$E = mc^2$$\n\n行内公式 $\\frac{a}{b}$ 与 $x^2 + y^2 = z^2$。\n\n| 列一 | 列二 |\n| --- | --- |\n| 甲 | 乙 |';
+  T.reset(RTC);
+  eq('公式+表格+行内公式往返一致', T.out(), RTC);
 
   // 33. 提示块（callout）：> [!info] 扩展引用
   T.reset('> [!warning] 注意\n> 正文行');
