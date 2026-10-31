@@ -1747,6 +1747,16 @@ function setFindExpanded(on) {
 }
 
 /**
+ * 文本对比改成独立窗口：两栏并排 + 侧边预览条，塞在主窗口的浮层里
+ * 宽度永远不够（两栏各要 600 起步）。当前文件自动带进左侧。
+ */
+function openCompareWindow() {
+  const t = activeTab();
+  const left = t && t.path ? t.path : null;
+  be.openCompareWindow(left, null).catch((e) => toast('打不开对比窗口：' + e));
+}
+
+/**
  * @param {boolean} [expand] true 展开替换行 / false 收起 / 不传则保持现状
  *   ——Ctrl+F 只管聚焦，不该把用户已经展开的替换行收回去。
  */
@@ -2325,7 +2335,7 @@ const commands = {
   modeWysiwyg: () => setMode('wysiwyg', { fromActivate: true }),
   modeEdit: () => setMode('edit', { fromActivate: true }),
   modePreview: () => setMode('preview', { fromActivate: true }),
-  textCompare: () => diff.openText(),
+  textCompare: () => openCompareWindow(),
   folderCompare: () => diff.openFolder(),
   merge: () => merge.open(),
   wordCount: showWordCount,
@@ -3288,8 +3298,7 @@ function setupKeys() {
     const mod = e.metaKey || e.ctrlKey;
     const k = e.key.toLowerCase();
     if (!mod) {
-      if (e.key === 'F7') { diff.step(-1); return; }
-      if (e.key === 'F8') { diff.step(1); return; }
+      // F7 / F8 是「上一处 / 下一处差异」，只在对比窗口里有意义，那边自己处理
       if (e.key === 'F11') { e.preventDefault(); commands.fullscreen(); return; }
       if (e.key === 'F9') { e.preventDefault(); commands.toggleZen(); return; }
       if (e.key === 'F3') { findStep(e.shiftKey ? -1 : 1); e.preventDefault(); return; }
@@ -3314,7 +3323,7 @@ function setupKeys() {
     if (shift && e.code === 'Digit8') { commands.ul(); e.preventDefault(); return; }
     if (shift && e.code === 'Digit9') { commands.taskList(); e.preventDefault(); return; }
 
-    if (k === 'n' && shift) diff.openText();
+    if (k === 'n' && shift) openCompareWindow();
     else if (k === 'n') commands.new();
     else if (k === ',' && !shift) commands.settings();
     else if (k === 'o' && shift) commands.toggleOutline();
@@ -3325,7 +3334,7 @@ function setupKeys() {
     else if (k === 'f' && shift) commands.format();
     else if (k === 'f') openFind();
     else if (k === 'h') openFind(true);
-    else if (k === 'd') diff.openText();
+    else if (k === 'd') openCompareWindow();
     else if (k === 'g') commands.gotoLine();
     else if (k === 'l' && shift) commands.toggleLayout();
     else if (k === 'k' && shift) commands.codeBlock();

@@ -439,36 +439,8 @@
   <!-- ============ 独立面板：文本对比 / 文件夹对比 ============ -->
   <div class="overlay hidden" id="overlay">
     <div class="sheet" id="sheet">
-      <!-- 文本对比 -->
-      <div class="sheet-page hidden" id="pageDiff">
-        <div class="sheet-head">
-          <div class="sheet-title">文本对比</div>
-          <div class="diff-src">
-            <div class="src-slot">
-              <button class="mini" id="pickLeft">选择文件</button>
-              <span class="src-name" id="nameLeft">未选择</span>
-            </div>
-            <button class="mini ghost icon-only" id="swapDiff" title="交换左右"><svg class="ico" aria-hidden="true"><use href="#i-arrow-left-right" /></svg></button>
-            <div class="src-slot">
-              <button class="mini" id="pickRight">选择文件</button>
-              <span class="src-name" id="nameRight">未选择</span>
-            </div>
-          </div>
-          <div class="sheet-actions">
-            <label class="chk"><input type="checkbox" id="diffIgnoreWS" checked /> 忽略空白</label>
-            <label class="chk"><input type="checkbox" id="diffIgnoreCase" /> 忽略大小写</label>
-            <span class="diff-stat" id="diffStat"></span>
-            <button class="mini" id="diffPrev" title="上一处差异 (F7)"><svg class="ico" aria-hidden="true"><use href="#i-chevron-up" /></svg>上一处</button>
-            <button class="mini" id="diffNext" title="下一处差异 (F8)"><svg class="ico" aria-hidden="true"><use href="#i-chevron-down" /></svg>下一处</button>
-            <button class="mini primary" id="diffSaveReport">导出报告</button>
-            <button class="mini ghost close-sheet">关闭</button>
-          </div>
-        </div>
-        <div class="diff-body" id="diffBody"></div>
-      </div>
-
-      <!-- 文件夹对比 -->
-      <div class="sheet-page hidden" id="pageFolder">
+      <!-- 文件夹对比（文本对比已搬到独立窗口 compare.html） -->
+      <div class="sheet-page" id="pageFolder">
         <div class="sheet-head">
           <div class="sheet-title">文件夹对比</div>
           <div class="diff-src">
@@ -488,26 +460,6 @@
           </div>
         </div>
         <div class="folder-body" id="folderBody"></div>
-      </div>
-
-      <!-- 对比中心首页 -->
-      <div class="sheet-page" id="pageHub">
-        <div class="sheet-head">
-          <div class="sheet-title">对比中心</div>
-          <div class="sheet-actions"><button class="mini ghost close-sheet">关闭</button></div>
-        </div>
-        <div class="hub">
-          <button class="hub-card" id="hubText">
-            <span class="hub-icon"><svg class="ico" aria-hidden="true"><use href="#i-file-diff" /></svg></span>
-            <b>文本对比</b>
-            <small>两个文件并排比对，差异高亮，可左右同步</small>
-          </button>
-          <button class="hub-card" id="hubFolder">
-            <span class="hub-icon"><svg class="ico" aria-hidden="true"><use href="#i-folders" /></svg></span>
-            <b>文件夹对比</b>
-            <small>递归比两个目录，列出新增 / 删除 / 修改</small>
-          </button>
-        </div>
       </div>
     </div>
   </div>

@@ -1,0 +1,410 @@
+/* ============================================================
+   compare.css —— 文本对比独立窗口（compare.html）
+   两栏并排 + 右侧预览条。视觉沿用主窗口：三层底色分区域、
+   控件直角、浮层只靠阴影。差异一律用红：行底淡红、行内改动的
+   字加深红、行号栏一条红竖条、预览条上红点。
+   ============================================================ */
+
+body {
+  /* 行高要和方法里的 ROW_H 严格一致，虚拟滚动靠它算位置 */
+  --cmp-row: 20px;
+  --cmp-fs: 12.5px;
+  --cmp-red: #d92b2b;
+  --cmp-line: rgba(217, 43, 43, .5);
+  --cmp-wash: rgba(217, 43, 43, .065);
+  --cmp-wash-2: rgba(217, 43, 43, .12);
+  --cmp-mark: rgba(217, 43, 43, .2);
+  --cmp-mark-2: rgba(217, 43, 43, .32);
+  --cmp-ln-w: 54px;
+  --cmp-cur-bg: rgba(51, 102, 240, .045);
+}
+
+body[data-theme="dark"] {
+  --cmp-red: #ff6b6b;
+  --cmp-line: rgba(255, 107, 107, .42);
+  --cmp-wash: rgba(255, 107, 107, .09);
+  --cmp-wash-2: rgba(255, 107, 107, .16);
+  --cmp-mark: rgba(255, 107, 107, .26);
+  --cmp-mark-2: rgba(255, 107, 107, .38);
+  --cmp-cur-bg: rgba(109, 141, 255, .08);
+}
+
+.cmp {
+  position: relative;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+/* ---------- 第一行：标题 / 左右文件 / 窗口按钮 ---------- */
+.cmp-top {
+  height: 34px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-left: 12px;
+}
+
+.cmp-brand {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg-soft);
+  white-space: nowrap;
+  padding-right: 4px;
+}
+
+.cmp-ico {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.cmp-slots {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.cmp-slot {
+  height: 22px;
+  max-width: 320px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 9px;
+  background: var(--bg-soft);
+  color: var(--fg-soft);
+  border: 0;
+  border-radius: var(--r-sm);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.cmp-slot:hover { background: var(--bg-hover); color: var(--fg); }
+.cmp-slot-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 有未保存改动时点亮的小圆点 */
+.cmp-dot {
+  width: 5px;
+  height: 5px;
+  flex: none;
+  border-radius: 50%;
+  background: transparent;
+}
+
+.cmp-dot.on { background: var(--cmp-red); }
+
+.cmp-swap {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  border: 0;
+  color: var(--fg-faint);
+  cursor: pointer;
+}
+
+.cmp-swap:hover { background: var(--bg-hover); color: var(--fg); }
+.cmp-swap .cmp-ico { width: 13px; height: 13px; }
+
+.cmp-wbtns { display: flex; flex: none; align-self: flex-start; }
+
+.cmp-wbtn {
+  width: 44px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  border: 0;
+  color: var(--fg-soft);
+  cursor: pointer;
+}
+
+.cmp-wbtn svg {
+  width: 11px;
+  height: 11px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.1;
+  stroke-linecap: round;
+}
+
+.cmp-wbtn:hover { background: var(--bg-hover); color: var(--fg); }
+.cmp-wbtn.danger:hover { background: #e03b3b; color: #fff; }
+
+/* ---------- 第二行：统计 / 选项 / 导航 ---------- */
+.cmp-tools {
+  height: 38px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  overflow: hidden;
+}
+
+.cmp-stat {
+  font-size: 12px;
+  color: var(--fg-soft);
+  white-space: nowrap;
+}
+
+.cmp-cur {
+  font-size: 12px;
+  color: var(--fg-faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cmp-tools-gap { flex: 1; }
+
+.cmp-chk {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--fg-soft);
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+
+.cmp-chk input { margin: 0; accent-color: var(--accent); }
+
+.cmp-sep {
+  width: 1px;
+  height: 16px;
+  flex: none;
+  background: var(--line-strong);
+  opacity: .7;
+}
+
+.cmp-btn {
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 9px;
+  background: var(--bg-soft);
+  color: var(--fg-soft);
+  border: 0;
+  border-radius: var(--r-sm);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.cmp-btn:hover { background: var(--bg-hover); color: var(--fg); }
+.cmp-btn:disabled { opacity: .45; cursor: default; background: var(--bg-soft); }
+
+.cmp-btn.primary { background: var(--accent); color: var(--accent-fg); }
+.cmp-btn.primary:hover { filter: brightness(1.07); }
+
+.cmp-btn .cmp-ico { width: 12px; height: 12px; }
+
+/* 编辑态：按钮变成「亮着的」样子，提醒现在是可写模式 */
+.cmp-btn.on {
+  background: var(--accent-soft);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+/* ---------- 正文 ---------- */
+.cmp-main {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr 1px 1fr 16px;
+  background: var(--bg-panel);
+  position: relative;
+}
+
+.cmp-pane {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  overflow: hidden;
+}
+
+.cmp-div { background: var(--line-strong); }
+
+/* 每栏顶部的文件名条：滚动时钉住，长文件翻到下面也知道自己在看谁 */
+.cmp-ph {
+  height: 26px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 0 12px;
+  background: var(--bg);
+  font-size: 11.5px;
+  color: var(--fg-soft);
+}
+
+.cmp-ph-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cmp-ph-meta {
+  color: var(--fg-faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  margin-left: auto;
+}
+
+.cmp-sc {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  position: relative;
+  user-select: text;
+}
+
+.cmp-cv { position: relative; min-height: 100%; }
+
+/* 一行 = 一个绝对定位的块，行高由 --cmp-row 决定（虚拟滚动按它算） */
+.cmp-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: var(--cmp-row);
+  display: flex;
+  font-family: var(--font-mono);
+  font-size: var(--cmp-fs);
+  line-height: var(--cmp-row);
+  color: var(--fg);
+}
+
+.cmp-ln {
+  width: var(--cmp-ln-w);
+  flex: none;
+  padding-right: 9px;
+  text-align: right;
+  font-size: 11px;
+  color: var(--fg-faint);
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.cmp-tx {
+  flex: 1;
+  padding-right: 14px;
+  white-space: pre;
+  outline: none;
+  min-width: 0;
+}
+
+/* ---- 差异：一律红 ---- */
+.cmp-row.diff { background: var(--cmp-wash); }
+.cmp-row.diff .cmp-ln { color: var(--cmp-red); box-shadow: inset -2px 0 0 var(--cmp-red); }
+.cmp-row.diff .cmp-ln { font-weight: 600; }
+.cmp-row.b-start { box-shadow: inset 0 1px 0 var(--cmp-line); }
+.cmp-row.b-end { box-shadow: inset 0 -1px 0 var(--cmp-line); }
+.cmp-row.b-start.b-end {
+  box-shadow: inset 0 1px 0 var(--cmp-line), inset 0 -1px 0 var(--cmp-line);
+}
+
+/* 行内改动：左栏被替换/删掉的字加删除线，右栏新写的字只有红底 */
+.cmp-tx mark {
+  background: var(--cmp-mark);
+  color: inherit;
+  border-radius: 1px;
+  padding: 0 1px;
+  box-decoration-break: clone;
+}
+
+.cmp-tx mark.rem {
+  background: var(--cmp-mark-2);
+  text-decoration: line-through;
+  text-decoration-color: var(--cmp-red);
+  opacity: .82;
+}
+
+/* 当前定位到的那一处：整块一个框，压在行上面（逐行画会变成表格格子） */
+.cmp-curbox {
+  position: absolute;
+  left: 0;
+  right: 0;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 1px var(--accent);
+  background: var(--cmp-cur-bg);
+}
+
+.cmp-curbox[hidden] { display: none; }
+
+.cmp-pane.editing .cmp-tx { caret-color: var(--fg); }
+.cmp-pane.editing .cmp-row:hover { background: var(--bg-soft); }
+.cmp-pane.editing .cmp-row.diff:hover { background: var(--cmp-wash-2); }
+
+/* ---------- 预览条 ---------- */
+.cmp-ruler {
+  background: var(--bg);
+  position: relative;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.cmp-ruler canvas { display: block; width: 100%; height: 100%; }
+
+/* ---------- 空状态 ---------- */
+.cmp-empty {
+  position: absolute;
+  inset: 72px 0 0 0;
+  display: grid;
+  place-items: center;
+  background: var(--bg-panel);
+  z-index: 3;
+}
+
+.cmp-empty[hidden] { display: none; }
+
+.cmp-empty-box { text-align: center; }
+
+.cmp-empty-t {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--fg);
+  margin-bottom: 6px;
+}
+
+.cmp-empty-s {
+  font-size: 12.5px;
+  color: var(--fg-faint);
+  margin-bottom: 18px;
+}
+
+.cmp-empty-btns { display: flex; gap: 8px; justify-content: center; }
+
+/* ---------- 横向滚动条：细一点，跟主窗口一致 ---------- */
+.cmp-sc::-webkit-scrollbar { width: 11px; height: 11px; }
+.cmp-sc::-webkit-scrollbar-thumb {
+  background: var(--scroll);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 6px;
+}
+.cmp-sc::-webkit-scrollbar-thumb:hover { background-clip: content-box; filter: brightness(.92); }
+.cmp-sc::-webkit-scrollbar-track { background: transparent; }

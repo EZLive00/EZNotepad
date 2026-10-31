@@ -36,6 +36,13 @@ foreach ($raw in $lines) {
       }
       "relclick" { $p = $rest.Split(" "); RelClick ([int]$p[0]) ([int]$p[1]) }
       "reldclick"{ $p = $rest.Split(" "); RelDClick ([int]$p[0]) ([int]$p[1]) }
+      "relbr"    {
+        # relbr <dx> <dy> -- click measured from the window's bottom-right corner
+        $p = $rest.Split(" ")
+        $r = [Win32Drv]::Rect((Get-AppHwnd)).Split(",")
+        [Win32Drv]::ClickAt([int]$r[2] - [int]$p[0], [int]$r[3] - [int]$p[1])
+        Start-Sleep -Milliseconds 250
+      }
       "reldrag"  { $p = $rest.Split(" "); RelDrag ([int]$p[0]) ([int]$p[1]) ([int]$p[2]) ([int]$p[3]) }
       "type"     { TypeB64 $rest }
       "key"      { [Win32Drv]::Tap($rest); Start-Sleep -Milliseconds 110 }
@@ -76,6 +83,40 @@ foreach ($raw in $lines) {
         } else {
           Write-Output ("DUMP " + $label + " MISSING")
         }
+      }
+      "win" {
+        # win <base64 title> -- retarget all relative verbs at that window
+        $t = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($rest))
+        $h = [Win32Drv]::FindTitled([uint32]$script:AppPid, $t)
+        if ($h -eq [IntPtr]::Zero) {
+          [void]$log.Add("   !! no window titled " + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($t)))
+          $failed = $true
+        } else {
+          $script:AppHwnd = $h
+          [Win32Drv]::Focus($h)
+          Start-Sleep -Milliseconds 350
+          [void]$log.Add("   win " + [Win32Drv]::Status($h))
+        }
+      }
+      "startcmp" {
+        # startcmp <b64 title> <b64 left> <b64 right> -- boot straight into compare
+        $p = $rest.Split(" ")
+        $ti = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($p[0]))
+        $lf = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($p[1]))
+        $rt = ""
+        if ($p.Length -gt 2 -and $p[2] -ne "-") { $rt = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($p[2])) }
+        $st = Start-Compare $lf $rt $ti
+        [void]$log.Add("   cmp " + $st)
+      }
+      "wins" {
+        # list every window the process owns, so a missing one is obvious
+        Write-Output ("WINS " + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([Win32Drv]::Titles([uint32]$script:AppPid))))
+      }
+      "fullshot" {
+        # whole-screen grab: proves whether a maximized borderless window
+        # covered the taskbar or not
+        $sz = [Win32Drv]::ShotDesktop($rest)
+        [void]$log.Add("   fullshot " + $rest + " " + $sz)
       }
       "kill"     { Stop-App }
       "uia" {

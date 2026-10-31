@@ -12,6 +12,7 @@ using System;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
+using System.Text;
 
 [StructLayout(LayoutKind.Sequential)]
 public struct MOUSEINPUT { public int dx; public int dy; public uint mouseData; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
@@ -43,6 +44,11 @@ public class Win32Drv {
   [DllImport("user32.dll")] public static extern void mouse_event(uint f, int dx, int dy, uint d, UIntPtr e);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern uint SendInput(uint n, INPUT[] inputs, int cb);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowTextW(IntPtr h, StringBuilder sb, int n);
+  [DllImport("user32.dll")] public static extern IntPtr GetWindowDC(IntPtr h);
+  [DllImport("user32.dll")] public static extern int ReleaseDC(IntPtr h, IntPtr dc);
+  [DllImport("user32.dll")] public static extern int GetSystemMetrics(int idx);
+  [DllImport("gdi32.dll")] public static extern bool BitBlt(IntPtr d, int x, int y, int w, int h, IntPtr s, int sx, int sy, uint rop);
 
   [StructLayout(LayoutKind.Sequential)]
   public struct RECT { public int Left, Top, Right, Bottom; }
@@ -57,6 +63,36 @@ public class Win32Drv {
         GetWindowRect(h, out r);
         if ((r.Right - r.Left) > 200 && (r.Bottom - r.Top) > 200) { found = h; return false; }
       }
+      return true;
+    }, IntPtr.Zero);
+    return found;
+  }
+
+  // Every window the process owns, as "title<hwnd>" lines. The compare board
+  // runs in a second top-level window, so Find(pid) alone is ambiguous.
+  public static string Titles(uint pid) {
+    StringBuilder outSb = new StringBuilder();
+    EnumWindows(delegate(IntPtr h, IntPtr l) {
+      uint p;
+      GetWindowThreadProcessId(h, out p);
+      if (p != pid || !IsWindowVisible(h)) return true;
+      StringBuilder sb = new StringBuilder(256);
+      GetWindowTextW(h, sb, 256);
+      outSb.Append(sb.ToString()).Append("#").Append(h.ToInt64()).Append("|");
+      return true;
+    }, IntPtr.Zero);
+    return outSb.ToString();
+  }
+
+  public static IntPtr FindTitled(uint pid, string title) {
+    IntPtr found = IntPtr.Zero;
+    EnumWindows(delegate(IntPtr h, IntPtr l) {
+      uint p;
+      GetWindowThreadProcessId(h, out p);
+      if (p != pid || !IsWindowVisible(h)) return true;
+      StringBuilder sb = new StringBuilder(256);
+      GetWindowTextW(h, sb, 256);
+      if (sb.ToString() == title) { found = h; return false; }
       return true;
     }, IntPtr.Zero);
     return found;
@@ -88,6 +124,25 @@ public class Win32Drv {
     string fg = (GetForegroundWindow() == h) ? "1" : "0";
     return "rect=" + r.Left + "," + r.Top + "," + r.Right + "," + r.Bottom
          + " size=" + (r.Right - r.Left) + "x" + (r.Bottom - r.Top) + " fg=" + fg;
+  }
+
+  // Whole desktop, not just one window: a borderless maximized window that
+  // covers the taskbar is only visible in a screen grab.
+  public static string ShotDesktop(string path) {
+    int w = GetSystemMetrics(0);
+    int ht = GetSystemMetrics(1);
+    if (w <= 0 || ht <= 0) return "bad-metrics";
+    using (Bitmap bmp = new Bitmap(w, ht)) {
+      using (Graphics g = Graphics.FromImage(bmp)) {
+        IntPtr dc = g.GetHdc();
+        IntPtr src = GetWindowDC(IntPtr.Zero);
+        BitBlt(dc, 0, 0, w, ht, src, 0, 0, 0x00CC0020);
+        ReleaseDC(IntPtr.Zero, src);
+        g.ReleaseHdc(dc);
+      }
+      bmp.Save(path, ImageFormat.Png);
+    }
+    return w + "x" + ht;
   }
 
   public static string Shot(IntPtr h, string path) {
@@ -296,6 +351,29 @@ function Start-App([string]$file, [int]$winW = 1180, [int]$winH = 780) {
   [Win32Drv]::Focus($script:AppHwnd)
   Start-Sleep -Milliseconds 400
   return $proc.Id
+}
+
+# Start the app straight into the compare window: "exe --compare L R".
+# The compare board lives in its own top-level window, so this waits for the
+# title rather than for "any window of the process".
+function Start-Compare([string]$left, [string]$right, [string]$title) {
+  Stop-App
+  Start-Sleep -Milliseconds 800
+  $argList = @('--compare', ('"' + $left + '"'))
+  if ($right -ne "") { $argList += ('"' + $right + '"') }
+  $proc = Start-Process -FilePath $script:AppExe -ArgumentList $argList -PassThru
+  $script:AppPid = [int]$proc.Id
+  $script:AppHwnd = [IntPtr]::Zero
+  for ($i = 0; $i -lt 160; $i++) {
+    $h = [Win32Drv]::FindTitled([uint32]$proc.Id, $title)
+    if ($h -ne [IntPtr]::Zero) { $script:AppHwnd = $h; break }
+    Start-Sleep -Milliseconds 100
+  }
+  if ($script:AppHwnd -eq [IntPtr]::Zero) { throw "compare window never appeared" }
+  Start-Sleep -Milliseconds 1600
+  [Win32Drv]::Focus($script:AppHwnd)
+  Start-Sleep -Milliseconds 400
+  return [Win32Drv]::Status($script:AppHwnd)
 }
 
 function Stop-App {

@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>文本对比</title>
+<link rel="stylesheet" href="styles.css" />
+<link rel="stylesheet" href="css/compare.css" />
+</head>
+<body data-theme="light">
+
+<div class="cmp">
+  <!-- 第一行：标题 + 左右文件 + 窗口按钮（整行可拖动窗口） -->
+  <header class="cmp-top" data-tauri-drag-region>
+    <div class="cmp-brand" data-tauri-drag-region>
+      <svg class="cmp-ico" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z" />
+        <path d="M9 10h6M12 13V7M9 17h6" />
+      </svg>
+      <span>文本对比</span>
+    </div>
+
+    <div class="cmp-slots" data-tauri-drag-region>
+      <button class="cmp-slot" id="slotL" title="选择左侧文件">
+        <span class="cmp-dot" id="dotL"></span>
+        <span class="cmp-slot-name" id="nameL">左侧未选择</span>
+      </button>
+      <button class="cmp-swap" id="swap" title="交换左右">
+        <svg class="cmp-ico" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M8 3 4 7l4 4M4 7h16m-4 14 4-4-4-4M20 17H4" />
+        </svg>
+      </button>
+      <button class="cmp-slot" id="slotR" title="选择右侧文件">
+        <span class="cmp-dot" id="dotR"></span>
+        <span class="cmp-slot-name" id="nameR">右侧未选择</span>
+      </button>
+    </div>
+
+    <div class="cmp-wbtns">
+      <button class="cmp-wbtn" id="wmin" title="最小化">
+        <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 6h7" /></svg>
+      </button>
+      <button class="cmp-wbtn" id="wmax" title="最大化 / 还原">
+        <svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2.5" y="2.5" width="7" height="7" /></svg>
+      </button>
+      <button class="cmp-wbtn danger" id="wclose" title="关闭">
+        <svg viewBox="0 0 12 12" aria-hidden="true"><path d="m3 3 6 6M9 3 3 9" /></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- 第二行：统计 + 选项 + 导航 + 动作 -->
+  <div class="cmp-tools">
+    <span class="cmp-stat" id="stat">选择左右两个文件开始对比</span>
+    <span class="cmp-cur" id="curInfo"></span>
+    <div class="cmp-tools-gap"></div>
+
+    <label class="cmp-chk" title="比较时忽略行首行尾空白与连续空格"><input type="checkbox" id="optWS" checked /><span>忽略空白</span></label>
+    <label class="cmp-chk" title="比较时忽略大小写"><input type="checkbox" id="optCase" /><span>忽略大小写</span></label>
+
+    <div class="cmp-sep"></div>
+
+    <button class="cmp-btn" id="prev" title="上一处差异 (Shift+F7)"><svg class="cmp-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="m18 15-6-6-6 6" /></svg>上一处</button>
+    <button class="cmp-btn" id="next" title="下一处差异 (F8)"><svg class="cmp-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>下一处</button>
+
+    <div class="cmp-sep"></div>
+
+    <button class="cmp-btn" id="toggleEdit" title="允许直接改写左右两侧的文本（E）">编辑</button>
+    <button class="cmp-btn" id="save" title="把改动写回磁盘 (Ctrl+S)" disabled>保存</button>
+    <button class="cmp-btn" id="report" title="导出为独立的 HTML 对比报告" disabled>导出报告</button>
+  </div>
+
+  <!-- 正文：左栏 / 右栏 / 预览条 -->
+  <div class="cmp-main" id="main">
+    <section class="cmp-pane" id="paneL">
+      <div class="cmp-ph">
+        <span class="cmp-ph-name" id="phL">左侧</span>
+        <span class="cmp-ph-meta" id="metaL"></span>
+      </div>
+      <div class="cmp-sc" id="scrollL">
+        <div class="cmp-cv" id="canvasL"><div class="cmp-rows" id="rowsL"></div><div class="cmp-curbox" id="curL" hidden></div></div>
+      </div>
+    </section>
+
+    <div class="cmp-div"></div>
+
+    <section class="cmp-pane" id="paneR">
+      <div class="cmp-ph">
+        <span class="cmp-ph-name" id="phR">右侧</span>
+        <span class="cmp-ph-meta" id="metaR"></span>
+      </div>
+      <div class="cmp-sc" id="scrollR">
+        <div class="cmp-cv" id="canvasR"><div class="cmp-rows" id="rowsR"></div><div class="cmp-curbox" id="curR" hidden></div></div>
+      </div>
+    </section>
+
+    <aside class="cmp-ruler" id="ruler" title="点击或拖动可快速定位">
+      <canvas id="rulerC"></canvas>
+    </aside>
+  </div>
+
+  <div class="cmp-empty" id="empty">
+    <div class="cmp-empty-box">
+      <div class="cmp-empty-t">没有可对比的内容</div>
+      <div class="cmp-empty-s">选两个文件，或者把它当作左右并排的阅读器</div>
+      <div class="cmp-empty-btns">
+        <button class="cmp-btn primary" id="pickL">选择左侧文件</button>
+        <button class="cmp-btn primary" id="pickR">选择右侧文件</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toasts"></div>
+<script type="module" src="js/compare.js"></script>
+</body>
+</html>

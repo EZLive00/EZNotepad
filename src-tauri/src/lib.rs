@@ -244,11 +244,30 @@ fn delete_entry(path: String) -> Result<(), String> {
 
 /// 启动参数里带的文件（双击 .md 时系统会把路径塞进来）
 fn file_args(argv: &[String]) -> Vec<String> {
+    // `--compare a.md b.md`：这两个是给对比窗口的，主窗口别再各开一个标签
+    let mut skip = (usize::MAX, usize::MAX);
+    if let Some(p) = argv.iter().position(|a| a == "--compare") {
+        skip = (p + 1, p + 2);
+    }
     argv.iter()
+        .enumerate()
         .skip(1) // argv[0] 是 exe 自己
-        .filter(|a| !a.starts_with('-') && Path::new(a).is_file())
-        .cloned()
+        .filter(|(i, _)| *i != skip.0 && *i != skip.1)
+        .filter(|(_, a)| !a.starts_with('-') && Path::new(a).is_file())
+        .map(|(_, a)| a.clone())
         .collect()
+}
+
+/// `--compare 左 右`：直接开对比窗口，不开主窗口（命令行 / 快捷方式用）
+fn compare_args(argv: &[String]) -> Option<(Option<String>, Option<String>)> {
+    let p = argv.iter().position(|a| a == "--compare")?;
+    let at = |i: usize| argv.get(i).filter(|a| Path::new(a).is_file()).cloned();
+    let left = at(p + 1);
+    let right = at(p + 2);
+    if left.is_none() && right.is_none() {
+        return None;
+    }
+    Some((left, right))
 }
 
 #[tauri::command]
@@ -941,6 +960,317 @@ fn apply_rounded_corners(window: &tauri::WebviewWindow) {
     }
 }
 
+/* ---------------- 对比窗口 ----------------
+   文本对比要独占屏幕：两栏并排 + 预览条，塞在主窗口的浮层里永远不够宽。
+   所以单独开一个窗口，主窗口不用管它，关掉就没了。
+
+   左右路径不走 URL 传递：中文路径要转义、Tauri 的 App 协议还会再编码一次，
+   两边对不上就会出现「打开的文件不存在」。改成进程内挂一个待取请求，
+   新窗口加载完主动取一次。 */
+
+#[derive(Default)]
+struct CompareRequest(std::sync::Mutex<Option<(Option<String>, Option<String>)>>);
+
+#[derive(Serialize, Clone)]
+struct ComparePayload {
+    left: Option<String>,
+    right: Option<String>,
+}
+
+#[tauri::command]
+async fn open_compare_window(
+    app: tauri::AppHandle,
+    left: Option<String>,
+    right: Option<String>,
+) -> Result<(), String> {
+    // 必须是 async 命令。同步命令由 Tauri 在主线程上执行，而建窗口时要等
+    // WebView2 那边回调，得让主线程继续转 —— 主线程被自己占着，build() 就
+    // 卡在那儿不返回：窗口壳子出来了（标题、尺寸都对），页面永远不加载，
+    // 整扇窗子停在纯白，连 <title> 里的静态文字都不显示（实测，日志停在
+    // "building" 之后再无下文）。async 命令跑在运行时线程上，主线程继续转，
+    // 一切正常。命令行 --compare 走的是 setup()，天生不受这个影响。
+    spawn_compare_window(&app, left, right)
+}
+
+fn spawn_compare_window(
+    app: &tauri::AppHandle,
+    left: Option<String>,
+    right: Option<String>,
+) -> Result<(), String> {
+    use tauri::{Emitter, Manager};
+
+    // 已经开着就复用：把新的一对文件推过去，而不是再开一个窗口
+    if let Some(w) = app.get_webview_window("compare") {
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_focus();
+        let _ = w.emit("compare:load", ComparePayload { left, right });
+        return Ok(());
+    }
+
+    let state = app.state::<CompareRequest>();
+    *state.0.lock().map_err(|_| "对比请求锁定失败")? = Some((left, right));
+
+    // 出生尺寸就按工作区给：后面的 SetWindowPos 只是把「DWM 隐形边框」那几像素
+    // 也吃掉，不能指望它单独完成铺满（见 fill_work_area 的注释）
+    #[cfg(target_os = "windows")]
+    let (bx, by, bw, bh) = work_area();
+    #[cfg(not(target_os = "windows"))]
+    let (bx, by, bw, bh) = (0i32, 0i32, 1280i32, 860i32);
+
+    let mut builder = tauri::WebviewWindowBuilder::new(
+        app,
+        "compare",
+        tauri::WebviewUrl::App("compare.html".into()),
+    )
+    .title("文本对比")
+    .inner_size(bw as f64, bh as f64)
+    .position(bx as f64, by as f64)
+    .min_inner_size(760.0, 460.0)
+    .decorations(false)
+    .shadow(true)
+    .visible(true);
+
+    // 页面加载完再补一次：tao 应用 inner_size 比我们晚，第一次铺满可能被顶回来
+    let app_load = app.clone();
+    builder = builder.on_page_load(move |_w, payload| {
+        if payload.event() == tauri::webview::PageLoadEvent::Finished {
+            #[cfg(target_os = "windows")]
+            fill_work_area_when_ready(app_load.clone(), "compare");
+        }
+    });
+
+    // 和主窗口用同一组浏览器参数：GPU 沙箱崩溃的问题在这里一样会犯
+    #[cfg(target_os = "windows")]
+    {
+        builder = builder.additional_browser_args(
+            "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-gpu-sandbox",
+        );
+    }
+
+    let win = builder.build().map_err(|e| e.to_string())?;
+    #[cfg(target_os = "windows")]
+    {
+        apply_rounded_corners(&win);
+        // 先把矩形摆好（此时还不可见），页面加载完那一轮再收个尾
+        fill_work_area_when_ready(app.clone(), "compare");
+    }
+    Ok(())
+}
+
+/// 新窗口加载完取走待处理的对比请求（取一次就清空）
+#[tauri::command]
+fn take_compare_request(app: tauri::AppHandle) -> ComparePayload {
+    use tauri::Manager;
+    let state = app.state::<CompareRequest>();
+    let taken = state
+        .0
+        .lock()
+        .ok()
+        .and_then(|mut g| g.take());
+    match taken {
+        Some((left, right)) => ComparePayload { left, right },
+        None => ComparePayload { left: None, right: None },
+    }
+}
+
+/// 取窗口句柄并直接改窗口矩形。Windows 上无边框窗口（WS_POPUP）没法靠
+/// maximize() 完成铺满，只能自己算矩形。
+#[cfg(target_os = "windows")]
+fn set_window_rect(window: &tauri::WebviewWindow, x: i32, y: i32, w: i32, h: i32) -> bool {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER,
+    };
+
+    let Ok(handle) = window.window_handle() else { return false };
+    let RawWindowHandle::Win32(win32) = handle.as_raw() else { return false };
+    let hwnd = win32.hwnd.get() as *mut core::ffi::c_void;
+    if hwnd.is_null() {
+        return false;
+    }
+    unsafe {
+        SetWindowPos(hwnd, std::ptr::null_mut(), x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+    true
+}
+
+/// 屏幕工作区（已去掉任务栏）。取不到时回落到 1920x1080。
+#[cfg(target_os = "windows")]
+fn work_area() -> (i32, i32, i32, i32) {
+    use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{SystemParametersInfoW, SPI_GETWORKAREA};
+
+    let mut r = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    let ok = unsafe {
+        SystemParametersInfoW(SPI_GETWORKAREA, 0, &mut r as *mut RECT as *mut core::ffi::c_void, 0)
+    };
+    if ok == 0 || r.right <= r.left || r.bottom <= r.top {
+        return (0, 0, 1920, 1080);
+    }
+    (r.left, r.top, r.right - r.left, r.bottom - r.top)
+}
+
+/// 把窗口铺满「工作区」（屏幕减去任务栏）。
+///
+/// 为什么不用 maximize()：tao 的 `WindowState` 在窗口还没 VISIBLE 时会把
+/// MAXIMIZED 标志位写成 true，却跳过 `ShowWindow(SW_MAXIMIZE)`，之后任何
+/// maximize 都因为「标志位没变化」被直接忽略。实测 builder / 建完立刻 /
+/// 页面加载完三种时序窗口都停在 1280x860。这里完全绕开 tao 的窗口状态。
+///
+/// 尺寸按「可见那圈」对齐：Windows 给带阴影的无边框窗口留了一圈透明边
+/// （GetWindowRect 比看得见的范围大 8px 左右），系统最大化时这圈是溢出到屏幕
+/// 外的。所以这里把窗口矩形按隐形边扩出去，让内容正好贴住工作区。
+#[cfg(target_os = "windows")]
+fn fill_work_area(window: &tauri::WebviewWindow) -> bool {
+    let (wx, wy, ww, wh) = work_area();
+    let (l, t, r, b) = frame_insets(window);
+    set_window_rect(window, wx - l, wy - t, ww + l + r, wh + t + b)
+}
+
+/// 隐形边框厚度：(左, 上, 右, 下)。量不出来就当 0。
+#[cfg(target_os = "windows")]
+fn frame_insets(window: &tauri::WebviewWindow) -> (i32, i32, i32, i32) {
+    let Some((ox, oy, ow, oh)) = outer_rect(window) else { return (0, 0, 0, 0) };
+    let Some((vx, vy, vw, vh)) = visible_rect(window) else { return (0, 0, 0, 0) };
+    let l = vx - ox;
+    let t = vy - oy;
+    let r = (ox + ow) - (vx + vw);
+    let b = (oy + oh) - (vy + vh);
+    // 离谱值（还没画出来时 DWM 会返回 0 矩形）直接放弃，别把窗口撑飞
+    if !(0..=40).contains(&l) || !(0..=40).contains(&t) || !(0..=40).contains(&r) || !(0..=40).contains(&b) {
+        return (0, 0, 0, 0);
+    }
+    (l, t, r, b)
+}
+
+/// 读窗口矩形（含隐形边框），用来核对 SetWindowPos 到底生没生效
+#[cfg(target_os = "windows")]
+fn outer_rect(window: &tauri::WebviewWindow) -> Option<(i32, i32, i32, i32)> {
+    use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetWindowRect;
+
+    let hwnd = raw_hwnd(window)?;
+    let mut r = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    if unsafe { GetWindowRect(hwnd, &mut r) } == 0 {
+        return None;
+    }
+    Some((r.left, r.top, r.right - r.left, r.bottom - r.top))
+}
+
+/// 读「看得见的那圈」矩形，取不到就退回 GetWindowRect
+#[cfg(target_os = "windows")]
+fn visible_rect(window: &tauri::WebviewWindow) -> Option<(i32, i32, i32, i32)> {
+    use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::Graphics::Dwm::DwmGetWindowAttribute;
+
+    // DWMWA_EXTENDED_FRAME_BOUNDS = 9
+    const DWMWA_EXTENDED_FRAME_BOUNDS: u32 = 9;
+    let hwnd = raw_hwnd(window)?;
+    let mut r = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    let hr = unsafe {
+        DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_EXTENDED_FRAME_BOUNDS,
+            &mut r as *mut RECT as *mut core::ffi::c_void,
+            std::mem::size_of::<RECT>() as u32,
+        )
+    };
+    if hr < 0 || r.right <= r.left || r.bottom <= r.top {
+        return outer_rect(window);
+    }
+    Some((r.left, r.top, r.right - r.left, r.bottom - r.top))
+}
+
+#[cfg(target_os = "windows")]
+fn raw_hwnd(window: &tauri::WebviewWindow) -> Option<*mut core::ffi::c_void> {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    let handle = window.window_handle().ok()?;
+    let RawWindowHandle::Win32(win32) = handle.as_raw() else { return None };
+    let hwnd = win32.hwnd.get() as *mut core::ffi::c_void;
+    if hwnd.is_null() {
+        None
+    } else {
+        Some(hwnd)
+    }
+}
+
+/// 从命令里建窗口时，`build()` 返回的句柄对应的原生窗口可能还没创建出来
+/// （创建被排到事件循环里），这时 window_handle() 拿不到 HWND，铺满会静默失败。
+/// 而且 tao 把 builder 上的 inner_size 应用得比我们晚 —— 从菜单打开时实测，
+/// SetWindowPos 明明已经改成 1860x973，稍后又被 inner_size 顶回 1876x982。
+/// 所以这里不认「一次成功」，要看到连续几次观测都是工作区尺寸才收工；
+/// 每次真正动手都丢回主线程执行，跨线程改别人的窗口容易碰上消息泵的时序问题。
+#[cfg(target_os = "windows")]
+fn fill_work_area_when_ready(app: tauri::AppHandle, label: &'static str) {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    std::thread::spawn(move || {
+        let (_, _, ww, wh) = work_area();
+        let mut streak = 0;
+        for _ in 0..40u32 {
+            let (tx, rx) = mpsc::channel();
+            let a = app.clone();
+            let queued = app.run_on_main_thread(move || {
+                use tauri::Manager;
+                let out = match a.get_webview_window(label) {
+                    Some(w) => (fill_work_area(&w), visible_rect(&w)),
+                    None => (false, None),
+                };
+                let _ = tx.send(out);
+            });
+            if queued.is_err() {
+                return;
+            }
+            match rx.recv_timeout(Duration::from_millis(700)) {
+                Ok((true, Some(r))) if (r.2 - ww).abs() <= 2 && (r.3 - wh).abs() <= 2 => {
+                    streak += 1;
+                    if streak >= 3 {
+                        return;
+                    }
+                }
+                _ => streak = 0,
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    });
+}
+
+/// 对比窗口的「最大化 / 还原」。
+///
+/// 无边框窗口没有系统标题栏，也没有真正的最大化状态可切，所以这一对动作
+/// 就是两个矩形：铺满工作区，或者居中一个 1280x860 的常规尺寸。
+#[tauri::command]
+fn compare_set_fullscreen(app: tauri::AppHandle, fill: bool) -> Result<(), String> {
+    use tauri::Manager;
+    let Some(w) = app.get_webview_window("compare") else {
+        return Err("对比窗口不在".into());
+    };
+    #[cfg(target_os = "windows")]
+    {
+        let (wx, wy, ww, wh) = work_area();
+        if fill {
+            fill_work_area(&w);
+        } else {
+            // 还原：工作区正中一个 1280x860（换到小屏时按工作区收一收）
+            let (l, t, r, b) = frame_insets(&w);
+            let cw = 1280.min(ww - 80) + l + r;
+            let ch = 860.min(wh - 80) + t + b;
+            set_window_rect(&w, wx + (ww - cw) / 2, wy + (wh - ch) / 2, cw, ch);
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        if fill {
+            w.maximize().map_err(|e| e.to_string())
+        } else {
+            w.unmaximize().map_err(|e| e.to_string())
+        }
+    }
+}
+
 /// 原生菜单已移除：窗口改为无边框自绘标题栏（decorations=false），
 /// 菜单由前端 appmenu.js 渲染，命令仍统一走前端 commands 表。
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -963,6 +1293,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(WatchState(std::sync::Mutex::new(None)))
+        .manage(CompareRequest::default())
         .invoke_handler(tauri::generate_handler![
             read_text_file,
             save_text_file,
@@ -984,12 +1315,21 @@ pub fn run() {
             save_history,
             list_history,
             read_history,
-            clear_history
+            clear_history,
+            open_compare_window,
+            take_compare_request,
+            compare_set_fullscreen
         ])
         .setup(|app| {
             #[cfg(target_os = "windows")]
             if let Some(w) = tauri::Manager::get_webview_window(app, "main") {
                 apply_rounded_corners(&w);
+            }
+            // 命令行直接对比：--compare 左 右
+            let argv: Vec<String> = std::env::args().collect();
+            if let Some((left, right)) = compare_args(&argv) {
+                let handle = app.handle().clone();
+                let _ = spawn_compare_window(&handle, left, right);
             }
             Ok(())
         })
@@ -1053,6 +1393,27 @@ mod tests {
         let got = file_args(&args);
         assert_eq!(got.len(), 1, "{got:?}");
         assert!(got[0].ends_with("Cargo.toml"));
+    }
+
+    #[test]
+    fn compare_args_take_two_files_and_hide_them_from_tabs() {
+        let args = vec![
+            "app.exe".to_string(),
+            "--compare".to_string(),
+            "Cargo.toml".to_string(),
+            "build.rs".to_string(),
+        ];
+        assert_eq!(file_args(&args).len(), 0, "给对比窗口的两个文件不该再开标签");
+        let (l, r) = compare_args(&args).unwrap();
+        assert!(l.unwrap().ends_with("Cargo.toml"));
+        assert!(r.unwrap().ends_with("build.rs"));
+        // 只有一个文件也行：另一侧留空
+        let one = vec!["app.exe".to_string(), "--compare".to_string(), "Cargo.toml".to_string()];
+        let (l, r) = compare_args(&one).unwrap();
+        assert!(l.is_some());
+        assert!(r.is_none());
+        // 没有 --compare 就不是对比启动
+        assert!(compare_args(&["app.exe".to_string()]).is_none());
     }
 
     #[test]

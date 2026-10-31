@@ -40,6 +40,16 @@ export const saveText = (opts) => invoke('save_text_file', { opts });
 export const listDir = (path) => invoke('list_dir_recursive', { path, maxFiles: 20000 });
 /** 只列一层：侧栏文件树按需展开用 */
 export const readDirShallow = (path) => invoke('read_dir_shallow', { path });
+
+/* ---------------- 对比窗口 ----------------
+   文本对比跑在独立窗口里（两栏并排 + 预览条），窗口由 Rust 侧创建：
+   前端创建窗口要额外开权限，而且拿不到「已存在就复用」的语义。
+   左右路径不走 URL，改成开窗前登记、新窗口加载完自己取一次。 */
+export const openCompareWindow = (left, right) =>
+  invoke('open_compare_window', { left: left || null, right: right || null });
+export const takeCompareRequest = () => invoke('take_compare_request');
+/** 对比窗口的「最大化 / 还原」：无边框窗口没有系统最大化状态，改成两个矩形 */
+export const setCompareFill = (fill) => invoke('compare_set_fullscreen', { fill: !!fill });
 /** 全目录搜文本（在 Rust 里扫，别把每个文件都搬到前端）。regex=true 按正则匹配 */
 export const searchInFolder = (root, query, maxResults = 300, regex = false, caseSensitive = false) =>
   invoke('search_in_folder', { root, query, maxResults, regex, caseSensitive });
