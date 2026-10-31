@@ -44,6 +44,36 @@
       "icons/icon.ico"
     ],
     "resources": [],
+    "fileAssociations": [
+      {
+        "ext": ["md", "markdown"],
+        "name": "Markdown",
+        "description": "Markdown 文档",
+        "mimeType": "text/markdown",
+        "role": "Editor"
+      },
+      {
+        "ext": ["txt", "log"],
+        "name": "Text",
+        "description": "纯文本",
+        "mimeType": "text/plain",
+        "role": "Editor"
+      },
+      {
+        "ext": ["json"],
+        "name": "JSON",
+        "description": "JSON 文件",
+        "mimeType": "application/json",
+        "role": "Editor"
+      },
+      {
+        "ext": ["csv"],
+        "name": "CSV",
+        "description": "逗号分隔表格",
+        "mimeType": "text/csv",
+        "role": "Editor"
+      }
+    ],
     "windows": {
       "nsis": {
         "installMode": "currentUser"

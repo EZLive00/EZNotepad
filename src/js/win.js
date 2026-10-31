@@ -36,6 +36,16 @@ export const toggleMaximize = () => call('toggleMaximize');
 export const closeWindow = () => call('close');
 export const setTitle = (t) => call('setTitle', t);
 
+/**
+ * 拦截系统关闭（Alt+F4、任务栏右键关闭）。handler 里可以 preventDefault() 拦下来。
+ * 返回是否挂上了监听（浏览器里调试时为 false）。
+ */
+export async function onCloseRequested(handler) {
+  const w = await api();
+  if (!w || typeof w.onCloseRequested !== 'function') return false;
+  try { await w.onCloseRequested(handler); return true; } catch { return false; }
+}
+
 /** 全屏切换（F11）：返回切换后的状态 */
 export async function toggleFullscreen() {
   const now = await isFullscreen();

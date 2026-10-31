@@ -17,9 +17,13 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
+# 单实例：双击第二个文件时交给已开的窗口，而不是再起一个进程互相覆盖
+tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 encoding_rs = "0.8"
+# 跨文件搜索 / 替换的正则支持（可选开启，默认仍是字面匹配）
+regex = "1"
 # 文件变化监听：只监听已打开文档所在目录这一层，靠系统原生的
 # ReadDirectoryChangesW / inotify，空闲时零 CPU。
 notify = "8"
@@ -27,7 +31,11 @@ notify = "8"
 # 无边框窗口的系统圆角（Win11 DWM）。只在 Windows 上参与编译。
 [target.'cfg(windows)'.dependencies]
 raw-window-handle = "0.6"
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm"] }
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_UI_Shell",
+] }
 
 [profile.release]
 panic = "abort"

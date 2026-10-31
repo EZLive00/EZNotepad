@@ -30,8 +30,8 @@ export async function pickFolder(title = '选择文件夹') {
   return typeof r === 'string' ? r : (r && r.path) || null;
 }
 
-export async function pickSavePath(defaultName = '未命名.md') {
-  return (await saveDialog({ title: '另存为', defaultPath: defaultName, filters: FILTERS })) || null;
+export async function pickSavePath(defaultName = '未命名.md', filters = null) {
+  return (await saveDialog({ title: '另存为', defaultPath: defaultName, filters: filters || FILTERS })) || null;
 }
 
 export const readText = (path, encoding = null) => invoke('read_text_file', { path, encoding });
@@ -40,10 +40,17 @@ export const saveText = (opts) => invoke('save_text_file', { opts });
 export const listDir = (path) => invoke('list_dir_recursive', { path, maxFiles: 20000 });
 /** 只列一层：侧栏文件树按需展开用 */
 export const readDirShallow = (path) => invoke('read_dir_shallow', { path });
-/** 全目录搜文本（在 Rust 里扫，别把每个文件都搬到前端） */
-export const searchInFolder = (root, query, maxResults = 300) =>
-  invoke('search_in_folder', { root, query, maxResults });
+/** 全目录搜文本（在 Rust 里扫，别把每个文件都搬到前端）。regex=true 按正则匹配 */
+export const searchInFolder = (root, query, maxResults = 300, regex = false, caseSensitive = false) =>
+  invoke('search_in_folder', { root, query, maxResults, regex, caseSensitive });
+
+/** 全目录替换。只在用户明确确认后调用；每个文件改之前后端会先留历史快照 */
+export const replaceInFolder = (root, query, replacement, regex = false, caseSensitive = false) =>
+  invoke('replace_in_folder', { root, query, replacement, regex, caseSensitive });
 export const writeBinary = (path, bytes) => invoke('write_binary_file', { path, bytes: Array.from(bytes) });
+/** 读文件转 base64（导出 HTML 时把图片内嵌成 data URI 用） */
+export const readFileBase64 = (path, maxBytes = 4 * 1024 * 1024) =>
+  invoke('read_file_base64', { path, maxBytes });
 
 const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'ico', 'avif'];
 
@@ -78,3 +85,19 @@ export const fileMtime = (path) => invoke('file_mtime', { path });
  * 传空数组等于全撤。
  */
 export const watchFiles = (paths) => invoke('watch_files', { paths });
+
+/* ---------------- 文件树的写操作 ----------------
+   名字只允许单层，路径分隔符由后端拒绝；删除进系统回收站。 */
+export const createEntry = (parent, name, dir) => invoke('create_entry', { parent, name, dir });
+export const renameEntry = (path, newName) => invoke('rename_entry', { path, newName });
+export const deleteEntry = (path) => invoke('delete_entry', { path });
+
+/** 启动参数里带的文件（双击 .md 打开时由系统传进来） */
+export const initialFiles = () => invoke('initial_files');
+
+/* ---------------- 本地历史 ----------------
+   每次保存前把旧内容留一份，存在应用数据目录（不进文档目录，不污染仓库） */
+export const saveHistory = (path, content) => invoke('save_history', { path, content });
+export const listHistory = (path) => invoke('list_history', { path });
+export const readHistory = (path) => invoke('read_history', { path });
+export const clearHistory = (path) => invoke('clear_history', { path });

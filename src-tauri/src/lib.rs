@@ -139,6 +139,123 @@ fn file_stat(path: String) -> Result<bool, String> {
     Ok(Path::new(&path).is_dir())
 }
 
+/* ---------------- 文件树写操作 ----------------
+   只接受**单层名字**：路径分隔符一律拒绝，免得前端传个 "../.." 就把操作范围
+   伸到工作目录外面。删除走系统回收站，误点了还能捞回来。 */
+
+fn check_simple_name(name: &str) -> Result<String, String> {
+    let n = name.trim();
+    if n.is_empty() {
+        return Err("名字不能为空".into());
+    }
+    if n.contains('/') || n.contains('\\') || n == "." || n == ".." {
+        return Err("名字里不能带路径分隔符".into());
+    }
+    if n.chars().any(|c| matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*')) {
+        return Err("名字里有不允许的字符（< > : \" | ? *）".into());
+    }
+    Ok(n.to_string())
+}
+
+/// 在 parent 下新建空文件或空目录，返回新条目的完整路径
+#[tauri::command]
+fn create_entry(parent: String, name: String, dir: bool) -> Result<String, String> {
+    let parent = PathBuf::from(&parent);
+    if !parent.is_dir() {
+        return Err("目标文件夹不存在".into());
+    }
+    let name = check_simple_name(&name)?;
+    let p = parent.join(&name);
+    if p.exists() {
+        return Err(format!("「{name}」已经存在"));
+    }
+    if dir {
+        fs::create_dir(&p)
+    } else {
+        fs::write(&p, b"")
+    }
+    .map_err(|e| format!("创建失败：{e}"))?;
+    Ok(p.to_string_lossy().to_string())
+}
+
+/// 原地改名（父目录不变），返回新路径
+#[tauri::command]
+fn rename_entry(path: String, new_name: String) -> Result<String, String> {
+    let src = PathBuf::from(&path);
+    if !src.exists() {
+        return Err("这个条目已经不存在了".into());
+    }
+    let name = check_simple_name(&new_name)?;
+    let parent = src.parent().ok_or("找不到所在文件夹")?;
+    let dst = parent.join(&name);
+    if dst == src {
+        return Ok(path);
+    }
+    if dst.exists() {
+        return Err(format!("「{name}」已经存在"));
+    }
+    fs::rename(&src, &dst).map_err(|e| format!("重命名失败：{e}"))?;
+    Ok(dst.to_string_lossy().to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn delete_file_impl(p: &Path) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::UI::Shell::{
+        SHFileOperationW, SHFILEOPSTRUCTW, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NOERRORUI,
+        FOF_SILENT, FO_DELETE,
+    };
+
+    let mut from: Vec<u16> = p.as_os_str().encode_wide().collect();
+    from.push(0);
+    from.push(0); // 双 NUL 结尾，这是 SHFileOperationW 的硬要求
+    let mut op: SHFILEOPSTRUCTW = unsafe { std::mem::zeroed() };
+    op.wFunc = FO_DELETE;
+    op.pFrom = from.as_ptr();
+    op.fFlags = (FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI) as u16;
+    let rc = unsafe { SHFileOperationW(&mut op) };
+    if rc != 0 {
+        return Err(format!("移入回收站失败（错误码 {rc}）"));
+    }
+    if op.fAnyOperationsAborted != 0 {
+        return Err("操作已取消".into());
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn delete_file_impl(p: &Path) -> Result<(), String> {
+    fs::remove_file(p).map_err(|e| format!("删除失败：{e}"))
+}
+
+/// 删除文件（进回收站）或空目录
+#[tauri::command]
+fn delete_entry(path: String) -> Result<(), String> {
+    let p = PathBuf::from(&path);
+    if !p.exists() {
+        return Err("这个条目已经不存在了".into());
+    }
+    if p.is_dir() {
+        // 目录只删空的：递归删除风险太大，让人先在里面清干净
+        return fs::remove_dir(&p).map_err(|e| format!("目录里还有东西，无法删除：{e}"));
+    }
+    delete_file_impl(&p)
+}
+
+/// 启动参数里带的文件（双击 .md 时系统会把路径塞进来）
+fn file_args(argv: &[String]) -> Vec<String> {
+    argv.iter()
+        .skip(1) // argv[0] 是 exe 自己
+        .filter(|a| !a.starts_with('-') && Path::new(a).is_file())
+        .cloned()
+        .collect()
+}
+
+#[tauri::command]
+fn initial_files() -> Vec<String> {
+    file_args(&std::env::args().collect::<Vec<_>>())
+}
+
 #[derive(Serialize)]
 struct DirEntryInfo {
     name: String,
@@ -269,16 +386,25 @@ struct SearchHit {
 /// 在整个文件夹里搜文本。放在 Rust 里做是为了不把每个文件都通过 IPC 搬到前端
 /// 再丢掉——一个几百个文件的目录走前端搜索会明显卡顿。
 /// 跳过二进制（含 NUL 字节）、跳过超大文件、单次最多返回 limit 条。
+/// regex=true 时按正则匹配（写错会直接报错，不静默返回空）。
 #[tauri::command]
 fn search_in_folder(
     root: String,
     query: String,
     max_results: Option<usize>,
+    regex: Option<bool>,
+    case_sensitive: Option<bool>,
 ) -> Result<Vec<SearchHit>, String> {
-    let needle = query.to_lowercase();
-    if needle.trim().is_empty() {
+    if query.trim().is_empty() {
         return Ok(Vec::new());
     }
+    let cs = case_sensitive.unwrap_or(false);
+    let pat = if regex.unwrap_or(false) {
+        Some(regex::Regex::new(&query).map_err(|e| format!("正则写错了：{e}"))?)
+    } else {
+        None
+    };
+    let needle = query.to_lowercase();
     let root_path = PathBuf::from(&root);
     if !root_path.is_dir() {
         return Err("不是文件夹".into());
@@ -301,7 +427,11 @@ fn search_in_folder(
         }
         let text = String::from_utf8_lossy(&bytes);
         for (i, line) in text.lines().enumerate() {
-            if line.to_lowercase().contains(&needle) {
+            let hit = match &pat {
+                Some(p) => p.is_match(line),
+                None => if cs { line.contains(&query) } else { line.to_lowercase().contains(&needle) },
+            };
+            if hit {
                 hits.push(SearchHit {
                     path: f.path.clone(),
                     name: f.name.clone(),
@@ -317,10 +447,150 @@ fn search_in_folder(
     Ok(hits)
 }
 
+#[derive(Serialize)]
+struct ReplaceResult {
+    files: usize,
+    hits: usize,
+    skipped: usize,
+    paths: Vec<String>,
+}
+
+/// 跨文件替换。默认字面匹配、不区分大小写（和搜索一致）；regex=true 才走正则，
+/// 正则写错直接返回错误，不会改到一半停下。
+/// 只处理能按 UTF-8 读通的文件——GBK 那些硬转会在用户不知情时换掉整个文件的编码，
+/// 宁可不改，也不悄悄改错。每个文件落盘前先留一份历史快照。
+#[tauri::command]
+fn replace_in_folder(
+    app: tauri::AppHandle,
+    root: String,
+    query: String,
+    replacement: String,
+    regex: Option<bool>,
+    case_sensitive: Option<bool>,
+) -> Result<ReplaceResult, String> {
+    if query.is_empty() {
+        return Err("要找的内容是空的".into());
+    }
+    let root_path = PathBuf::from(&root);
+    if !root_path.is_dir() {
+        return Err("不是文件夹".into());
+    }
+    let use_regex = regex.unwrap_or(false);
+    let pat = if use_regex {
+        regex::Regex::new(&query).map_err(|e| format!("正则写错了：{e}"))?
+    } else {
+        let src = if case_sensitive.unwrap_or(false) {
+            regex::escape(&query)
+        } else {
+            format!("(?i){}", regex::escape(&query))
+        };
+        regex::Regex::new(&src).map_err(|e| format!("匹配式无效：{e}"))?
+    };
+    /* 字面替换里用户输的 $ 是普通字符，不该被当成捕获组引用 */
+    let rep = if use_regex {
+        replacement.clone()
+    } else {
+        replacement.replace('$', "$$")
+    };
+
+    let mut files = Vec::new();
+    walk(&root_path, &mut files, 4000, 0)?;
+
+    let mut out = ReplaceResult { files: 0, hits: 0, skipped: 0, paths: Vec::new() };
+    for f in files {
+        match plan_replace(&f, &pat, &rep, f.size) {
+            Planned::Skip => {
+                out.skipped += 1;
+                continue;
+            }
+            Planned::Keep => continue,
+            Planned::Write { prev, next, hits } => {
+                let _ = write_history_snapshot(&app, &f.path, &prev);
+                match fs::write(&f.path, next.as_bytes()) {
+                    Ok(_) => {
+                        out.files += 1;
+                        out.hits += hits;
+                        out.paths.push(f.path.clone());
+                    }
+                    Err(_) => out.skipped += 1,
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// 一个文件的替换结论：跳过（二进制/太大/非 UTF-8）、没命中、或者要写成什么
+enum Planned {
+    Skip,
+    Keep,
+    Write { prev: String, next: String, hits: usize },
+}
+
+/// 纯逻辑：读一个文件、判断能不能改、算出改完的内容。
+/// 抽出来是为了能单测 —— 命令那层要 app handle，测不了。
+fn plan_replace(f: &DirEntryInfo, pat: &regex::Regex, rep: &str, size: u64) -> Planned {
+    if size > 4 * 1024 * 1024 {
+        return Planned::Skip;
+    }
+    let bytes = match fs::read(&f.path) {
+        Ok(b) => b,
+        Err(_) => return Planned::Skip,
+    };
+    if bytes.iter().take(8000).any(|b| *b == 0) {
+        return Planned::Skip;
+    }
+    let text = match String::from_utf8(bytes) {
+        Ok(t) => t,
+        Err(_) => return Planned::Skip,   // GBK 之类：宁可不动，也不悄悄改编码
+    };
+    let hits = pat.find_iter(&text).count();
+    if hits == 0 {
+        return Planned::Keep;
+    }
+    Planned::Write {
+        prev: text.clone(),
+        next: pat.replace_all(&text, rep).to_string(),
+        hits,
+    }
+}
+
 #[tauri::command]
 fn write_binary_file(path: String, bytes: Vec<u8>) -> Result<String, String> {
     fs::write(&path, &bytes).map_err(|e| format!("写入失败：{e}"))?;
     Ok(path)
+}
+
+/* 导出单文件 HTML 时把图片内嵌成 data URI：不内嵌的话，
+   另存到别处就只剩一堆断链。手写编码，省一个依赖。 */
+fn b64_encode(bytes: &[u8]) -> String {
+    const T: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b1 = *chunk.get(1).unwrap_or(&0) as u32;
+        let b2 = *chunk.get(2).unwrap_or(&0) as u32;
+        let n = ((chunk[0] as u32) << 16) | (b1 << 8) | b2;
+        out.push(T[(n >> 18) as usize & 63] as char);
+        out.push(T[(n >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 { T[(n >> 6) as usize & 63] as char } else { '=' });
+        out.push(if chunk.len() > 2 { T[n as usize & 63] as char } else { '=' });
+    }
+    out
+}
+
+/// 读二进制文件转 base64（导出 HTML 内嵌图片用）。超限直接报错，不静默截断。
+#[tauri::command]
+fn read_file_base64(path: String, max_bytes: Option<usize>) -> Result<String, String> {
+    let p = PathBuf::from(&path);
+    let size = fs::metadata(&p)
+        .map_err(|e| format!("读不到文件：{e}"))?
+        .len() as usize;
+    let limit = max_bytes.unwrap_or(4 * 1024 * 1024);
+    if size > limit {
+        return Err(format!("图片超过 {}MB，没有内嵌", limit / 1024 / 1024));
+    }
+    let bytes = fs::read(&p).map_err(|e| format!("读不到文件：{e}"))?;
+    Ok(b64_encode(&bytes))
 }
 
 /// 把一张图片复制到「文档同目录 / assets」下，返回相对路径（assets/xxx.png）。
@@ -426,6 +696,141 @@ fn save_image_bytes(doc_path: String, bytes: Vec<u8>, ext: Option<String>) -> Re
     }
     fs::write(dir.join(&name), &bytes).map_err(|e| format!("写入图片失败：{e}"))?;
     Ok(format!("assets/{name}"))
+}
+
+/* ---------------- 本地历史 ----------------
+   每保存一次，就把**保存前**的内容留一份在应用数据目录里。
+   自动保存、一键格式化、排序去重、批量替换之后想反悔，Ctrl+Z 已经翻不回去了，
+   这是最后一道。快照只写不读原文件，回滚永远是「开成新标签 / 写回编辑器」，
+   绝不直接覆盖磁盘。 */
+
+#[derive(Serialize)]
+struct HistoryEntry {
+    path: String,
+    time: u64,
+    size: u64,
+}
+
+fn fnv1a(s: &str) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in s.as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    h
+}
+
+fn history_dir(app: &tauri::AppHandle, path: &str) -> Result<PathBuf, String> {
+    use tauri::Manager;
+    let base = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("找不到应用数据目录：{e}"))?;
+    Ok(base.join("history").join(format!("{:016x}", fnv1a(path))))
+}
+
+/// 留一份快照。内容和最新那份一样时直接跳过，不制造一堆重复。
+fn write_history_snapshot(app: &tauri::AppHandle, path: &str, content: &str) -> Result<(), String> {
+    if content.is_empty() {
+        return Ok(());
+    }
+    let dir = history_dir(app, path)?;
+    fs::create_dir_all(&dir).map_err(|e| format!("建立历史目录失败：{e}"))?;
+    // 记下来源文件名，方便在文件夹里认
+    let _ = fs::write(
+        dir.join("name.txt"),
+        Path::new(path)
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default(),
+    );
+
+    let mut snaps: Vec<(u64, PathBuf)> = fs::read_dir(&dir)
+        .map_err(|e| format!("读历史目录失败：{e}"))?
+        .flatten()
+        .filter_map(|e| {
+            let p = e.path();
+            let name = p.file_name()?.to_str()?.to_string();
+            let ts: u64 = name.strip_suffix(".txt")?.parse().ok()?;
+            if ts == 0 {
+                return None;
+            }
+            Some((ts, p))
+        })
+        .collect();
+    snaps.sort_by(|a, b| b.0.cmp(&a.0));
+
+    // 和最新那份一模一样就不存了（自动保存会反复触发）
+    if let Some((_, newest)) = snaps.first() {
+        if let Ok(prev) = fs::read_to_string(newest) {
+            if prev == content {
+                return Ok(());
+            }
+        }
+    }
+
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    fs::write(dir.join(format!("{stamp}.txt")), content.as_bytes())
+        .map_err(|e| format!("写历史快照失败：{e}"))?;
+
+    // 只留最近 60 份，再按总量 20MB 兜一道
+    snaps.insert(0, (stamp, dir.join(format!("{stamp}.txt"))));
+    let mut total: u64 = 0;
+    for (i, (_, p)) in snaps.iter().enumerate() {
+        let size = fs::metadata(p).map(|m| m.len()).unwrap_or(0);
+        total += size;
+        if i >= 60 || total > 20 * 1024 * 1024 {
+            let _ = fs::remove_file(p);
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn save_history(app: tauri::AppHandle, path: String, content: String) -> Result<(), String> {
+    write_history_snapshot(&app, &path, &content)
+}
+
+#[tauri::command]
+fn list_history(app: tauri::AppHandle, path: String) -> Result<Vec<HistoryEntry>, String> {
+    let dir = history_dir(&app, &path)?;
+    if !dir.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut out: Vec<HistoryEntry> = fs::read_dir(&dir)
+        .map_err(|e| format!("读历史目录失败：{e}"))?
+        .flatten()
+        .filter_map(|e| {
+            let p = e.path();
+            let name = p.file_name()?.to_str()?.to_string();
+            let ts: u64 = name.strip_suffix(".txt")?.parse().ok()?;
+            if ts == 0 { return None; }
+            let size = fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
+            Some(HistoryEntry { path: p.to_string_lossy().to_string(), time: ts, size })
+        })
+        .collect();
+    out.sort_by(|a, b| b.time.cmp(&a.time));
+    Ok(out)
+}
+
+#[tauri::command]
+fn read_history(path: String) -> Result<String, String> {
+    let bytes = fs::read(&path).map_err(|e| format!("读快照失败：{e}"))?;
+    let (text, _, _) = decode_bytes(&bytes);
+    Ok(text)
+}
+
+/// 清掉某个文件的全部历史（用户主动「清除历史」时用）
+#[tauri::command]
+fn clear_history(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    let dir = history_dir(&app, &path)?;
+    if dir.is_dir() {
+        fs::remove_dir_all(&dir).map_err(|e| format!("清除历史失败：{e}"))?;
+    }
+    Ok(())
 }
 
 /* ---------------- 文件变化监听 ----------------
@@ -541,6 +946,20 @@ fn apply_rounded_corners(window: &tauri::WebviewWindow) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
+        /* 单实例要第一个装：得赶在窗口创建前认出「已经有一个在跑」，
+           否则第二次双击会老老实实再起一个进程，两个窗口改同一个文件 */
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            use tauri::{Emitter, Manager};
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.unminimize();
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+            let files = file_args(&argv);
+            if !files.is_empty() {
+                let _ = app.emit("open-files", files);
+            }
+        }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(WatchState(std::sync::Mutex::new(None)))
@@ -551,11 +970,21 @@ pub fn run() {
             list_dir_recursive,
             read_dir_shallow,
             search_in_folder,
+            replace_in_folder,
             write_binary_file,
+            read_file_base64,
             copy_image_to_assets,
             save_image_bytes,
             file_mtime,
-            watch_files
+            watch_files,
+            create_entry,
+            rename_entry,
+            delete_entry,
+            initial_files,
+            save_history,
+            list_history,
+            read_history,
+            clear_history
         ])
         .setup(|app| {
             #[cfg(target_os = "windows")]
@@ -568,4 +997,132 @@ pub fn run() {
         .expect("error while building tauri application");
 
     app.run(|_, _| {});
+}
+
+/* ---------------- 后端单测 ----------------
+   只测不依赖窗口的部分：名字校验、base64、argv 过滤、替换计划。
+   命令那一层要 AppHandle（写历史快照），在 GUI 里由 probe 覆盖。 */
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tmp_file(name: &str, content: &[u8]) -> DirEntryInfo {
+        let dir = std::env::temp_dir().join("ez-snp-test");
+        fs::create_dir_all(&dir).unwrap();
+        let p = dir.join(name);
+        fs::write(&p, content).unwrap();
+        DirEntryInfo {
+            name: name.into(),
+            path: p.to_string_lossy().to_string(),
+            is_dir: false,
+            ext: "md".into(),
+            size: content.len() as u64,
+            mtime: 0,
+        }
+    }
+
+    #[test]
+    fn simple_names_reject_paths() {
+        assert!(check_simple_name("笔记.md").is_ok());
+        assert!(check_simple_name("  ").is_err());
+        assert!(check_simple_name("../x.md").is_err());
+        assert!(check_simple_name("a/b.md").is_err());
+        assert!(check_simple_name("a\\b.md").is_err());
+        assert!(check_simple_name("a:b.md").is_err());
+        assert!(check_simple_name("..").is_err());
+    }
+
+    #[test]
+    fn base64_known_vectors() {
+        assert_eq!(b64_encode(b""), "");
+        assert_eq!(b64_encode(b"a"), "YQ==");
+        assert_eq!(b64_encode(b"ab"), "YWI=");
+        assert_eq!(b64_encode(b"abc"), "YWJj");
+        assert_eq!(b64_encode(b"abcd"), "YWJjZA==");
+        assert_eq!(b64_encode(b"hello world"), "aGVsbG8gd29ybGQ=");
+    }
+
+    #[test]
+    fn file_args_skips_flags_and_missing() {
+        let args = vec![
+            "app.exe".to_string(),
+            "--flag".to_string(),
+            "Cargo.toml".to_string(),
+            "definitely-missing.xyz".to_string(),
+        ];
+        let got = file_args(&args);
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert!(got[0].ends_with("Cargo.toml"));
+    }
+
+    #[test]
+    fn regex_replace_expands_groups() {
+        let f = tmp_file("re.md", "v1\nv2\n".as_bytes());
+        let pat = regex::Regex::new("v(\\d)").unwrap();
+        match plan_replace(&f, &pat, "V$1", f.size) {
+            Planned::Write { next, hits, .. } => {
+                assert_eq!(hits, 2);
+                assert_eq!(next, "V1\nV2\n");
+            }
+            _ => panic!("应该要写回"),
+        }
+    }
+
+    #[test]
+    fn literal_replacement_keeps_dollar() {
+        let f = tmp_file("dollar.md", "cost: 5\n".as_bytes());
+        let pat = regex::Regex::new(&format!("(?i){}", regex::escape("cost"))).unwrap();
+        // 字面替换时必须把 $ 转义，否则会被当成组引用
+        let rep = "price $9".replace('$', "$$");
+        match plan_replace(&f, &pat, &rep, f.size) {
+            Planned::Write { next, hits, .. } => {
+                assert_eq!(hits, 1);
+                assert_eq!(next, "price $9: 5\n");
+            }
+            _ => panic!("应该要写回"),
+        }
+    }
+
+    #[test]
+    fn binary_and_oversize_are_skipped() {
+        let f = tmp_file("bin.md", &[0u8, 1, 2, 3]);
+        let pat = regex::Regex::new("a").unwrap();
+        assert!(matches!(plan_replace(&f, &pat, "", f.size), Planned::Skip));
+
+        let big = tmp_file("big.md", b"abc");
+        assert!(matches!(plan_replace(&big, &pat, "", 5 * 1024 * 1024), Planned::Skip));
+    }
+
+    #[test]
+    fn non_utf8_is_left_alone() {
+        // GB18030 的「中文」：改成 UTF-8 会悄悄换掉整个文件的编码
+        let f = tmp_file("gbk.md", &[0xD6, 0xD0, 0xCE, 0xC4]);
+        let pat = regex::Regex::new("中").unwrap();
+        assert!(matches!(plan_replace(&f, &pat, "", f.size), Planned::Skip));
+    }
+
+    #[test]
+    fn no_hit_keeps_file() {
+        let f = tmp_file("none.md", "zzz\n".as_bytes());
+        let pat = regex::Regex::new("abc").unwrap();
+        assert!(matches!(plan_replace(&f, &pat, "", f.size), Planned::Keep));
+    }
+
+    #[test]
+    fn create_then_rename() {
+        let base = std::env::temp_dir().join("ez-snp-test");
+        fs::create_dir_all(&base).unwrap();
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let name = format!("t{stamp}.md");
+        let p = create_entry(base.to_string_lossy().to_string(), name, false).unwrap();
+        assert!(Path::new(&p).is_file());
+
+        let np = rename_entry(p.clone(), format!("r{stamp}.md")).unwrap();
+        assert!(np.ends_with(&format!("r{stamp}.md")));
+        assert!(!Path::new(&p).exists());
+        fs::remove_file(&np).unwrap();
+    }
 }
