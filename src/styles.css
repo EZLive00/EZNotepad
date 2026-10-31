@@ -1308,6 +1308,10 @@ body[data-theme="dark"] .ctx-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 2
 .wysiwyg .w-img { max-width: 100%; max-height: 320px; border-radius: var(--r-md); margin: .3em 0; }
 /* 手动指定了尺寸就按尺寸来，别再被 320px 的天花板压回去 */
 .wysiwyg .w-img[width], .wysiwyg .w-img[height] { max-height: none; }
+/* 右下角 14px 是改宽的抓手（命中判定在 wysiwyg.handlePointerDown），
+   光标由 JS 在悬停时切；拖拽中给一圈 accent 描边，确认操作落在这张图上 */
+.wysiwyg .w-img { -webkit-user-drag: none; }
+.wysiwyg .w-img.w-img-resizing { outline: 1px solid var(--accent); outline-offset: 2px; }
 
 /* 表格：编辑态 */
 /* 编辑态保留竖线（单元格边界要靠它定位光标），但压到最淡的一档 */

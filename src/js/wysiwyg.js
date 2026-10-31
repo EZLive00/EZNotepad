@@ -59,7 +59,8 @@ export function inlineHtml(src) {
          所见即所得里立刻就能看到缩过的样子 */
       const { text, width, height } = splitImgAlt(alt);
       const dim = (width ? ` width="${width}"` : '') + (height ? ` height="${height}"` : '');
-      return `<img class="w-img" src="${escapeAttr(shown)}" data-src="${escapeAttr(s)}" alt="${escapeAttr(text)}"${dim}>`;
+      /* draggable=否：浏览器默认的图片拖拽会和右下角改宽抢同一串指针事件 */
+      return `<img class="w-img" draggable="false" src="${escapeAttr(shown)}" data-src="${escapeAttr(s)}" alt="${escapeAttr(text)}"${dim}>`;
     });
   t = t.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g,
     (_, txt, href) => `<a href="${escapeAttr(href)}">${txt}</a>`);
@@ -700,6 +701,13 @@ export class WysiwygEditor {
     root.addEventListener('paste', (e) => this.handlePaste(e));
     root.addEventListener('blur', () => this.flush());
     root.addEventListener('click', (e) => this.handleClick(e));
+    root.addEventListener('pointerdown', (e) => this.handlePointerDown(e));
+    root.addEventListener('pointermove', (e) => this.hoverImgCorner(e));
+    root.addEventListener('dragstart', (e) => {
+      // 图片别被浏览器原生拖走（拖出去会变成「把图拖到别的程序」），
+      // 右下角改宽用的是自己的指针逻辑
+      if (e.target && e.target.tagName === 'IMG') e.preventDefault();
+    });
     root.addEventListener('dragover', (e) => e.preventDefault());
     root.addEventListener('drop', (e) => {
       if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) return;
@@ -2038,6 +2046,71 @@ export class WysiwygEditor {
     this.placeCaretEnd(block);
     this.hCoalesce = false;
     this.flush();
+  }
+
+  /**
+   * 只写 width 属性，高度删掉交给浏览器按原比例算——两个都写死会在换图后
+   * 拉变形。上限取编辑区宽度：拖过头的尺寸存进 md 也没意义，正文又是
+   * max-width:100%，存 900 只会得到一张被压回去的图。
+   */
+  applyImgSize(img, w) {
+    const maxW = Math.max(120, Math.round(this.root.clientWidth || 0));
+    const px = Math.min(Math.max(24, Math.round(w)), maxW);
+    img.setAttribute('width', String(px));
+    img.removeAttribute('height');
+    return px;
+  }
+
+  /* 图片右下角拖拽改宽。拖的时候用内联样式实时反馈，松手才落 md。 */
+  startImgResize(img, startX) {
+    const rect = img.getBoundingClientRect();
+    const startW = rect.width || img.naturalWidth || 320;
+    const move = (ev) => {
+      const px = this.applyImgSize(img, startW + (ev.clientX - startX));
+      img.style.width = `${px}px`;
+      img.style.height = 'auto';
+    };
+    const up = () => {
+      document.removeEventListener('pointermove', move);
+      document.removeEventListener('pointerup', up);
+      document.removeEventListener('pointercancel', up);
+      img.style.width = '';
+      img.style.height = '';
+      img.style.cursor = '';
+      img.classList.remove('w-img-resizing');
+      this.resizing = false;
+      this.hCoalesce = false;   // 一次拖拽 = 一步撤销，不和前面的输入合并
+      this.flush();
+    };
+    this.resizing = true;
+    img.classList.add('w-img-resizing');
+    img.style.cursor = 'nwse-resize';
+    document.addEventListener('pointermove', move);
+    document.addEventListener('pointerup', up);
+    document.addEventListener('pointercancel', up);
+  }
+
+  handlePointerDown(e) {
+    const img = e.target;
+    if (!img || img.tagName !== 'IMG' || !img.classList.contains('w-img')) return;
+    const r = img.getBoundingClientRect();
+    // 只有右下角 14px 见方算「抓手」，点在图上其它位置仍然是正常定位光标
+    if (r.right - e.clientX > 14 || r.bottom - e.clientY > 14) return;
+    e.preventDefault();
+    this.startImgResize(img, e.clientX);
+  }
+
+  hoverImgCorner(e) {
+    const img = e.target && e.target.tagName === 'IMG' ? e.target : null;
+    if (this.hoverImg && this.hoverImg !== img) {
+      this.hoverImg.style.cursor = '';
+      this.hoverImg = null;
+    }
+    if (!img || this.resizing) return;
+    const r = img.getBoundingClientRect();
+    const corner = r.right - e.clientX < 14 && r.bottom - e.clientY < 14;
+    img.style.cursor = corner ? 'nwse-resize' : '';
+    this.hoverImg = corner ? img : null;
   }
 
   /* ---------------- 粘贴 / 点击 ---------------- */

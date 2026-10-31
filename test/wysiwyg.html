@@ -573,6 +573,40 @@ window.__run = () => {
   df.clear();
   has('清除后没有残留', !CSS.highlights.get('sn-find') && !CSS.highlights.get('sn-find-cur'));
 
+  // 35. 图片拖拽改宽（右下角抓手 → applyImgSize → alt 后缀）
+  T.reset('![说明](a.png)');
+  const im = root.querySelector('img.w-img');
+  has('图片禁掉浏览器原生拖拽', im.getAttribute('draggable') === 'false');
+  eq('拖拽改宽写回 alt 后缀', (ed.applyImgSize(im, 300), ed.hCoalesce = false, ed.flush(), T.out()), '![说明|300](a.png)');
+  eq('改宽后不再保留旧高度', im.getAttribute('height'), 'null');
+  ed.applyImgSize(im, 99999);
+  has('宽度不会超过编辑区', Number(im.getAttribute('width')) <= root.clientWidth);
+  eq('最小宽度有兜底', ed.applyImgSize(im, 8), 24);
+
+  // 真按一遍指针事件：右下角抓手 → 拖动 → 松手落 md
+  T.reset('x');
+  const box = root.querySelector('.w-text');
+  const im2 = document.createElement('img');
+  im2.className = 'w-img';
+  im2.setAttribute('data-src', 'a.png');
+  im2.setAttribute('draggable', 'false');
+  // 1×1 的透明 gif：只要能撑出 300px 宽的盒子就够了，不用等真实图片解码
+  im2.setAttribute('src', 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7');
+  im2.setAttribute('width', '300');
+  box.appendChild(im2);
+  const r2 = im2.getBoundingClientRect();
+  const fire = (type, x, y) => im2.dispatchEvent(new PointerEvent(type, {
+    bubbles: true, cancelable: true, clientX: x, clientY: y, pointerId: 1,
+  }));
+  const hitMove = (x, y) => document.dispatchEvent(new PointerEvent('pointermove', {
+    bubbles: true, cancelable: true, clientX: x, clientY: y, pointerId: 1,
+  }));
+  fire('pointerdown', r2.right - 4, r2.bottom - 2);
+  hitMove(r2.right - 4 + 60, r2.bottom - 2);
+  document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: r2.right + 56, clientY: r2.bottom - 2 }));
+  eq('拖 60px 宽度增加 60', im2.getAttribute('width'), 360);
+  has('松手后尺寸落进 markdown', /\|360\]\(a\.png\)/.test(ed.toMarkdown()));
+
   return R;
 };
 
