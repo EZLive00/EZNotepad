@@ -235,6 +235,13 @@ window.__run = () => {
   has('段转引用且紧跟引用时打标记', root.querySelectorAll('.w-bq')[1].dataset.bqStart === '1');
   eq('两条独立引用存盘不并段', T.out(), '> 已有引用\n\n> 新段落');
 
+  // 7c. 紧跟引用的段落上敲 "> "（输入转换路径）= 新独立引用，同样要打标记
+  T.reset('> 已有\n\n新段');
+  T.caret(1, 0);
+  T.type('> ');
+  has('敲 "> " 转引用打 bqStart', root.querySelectorAll('.w-bq')[1].dataset.bqStart === '1');
+  eq('敲出的独立引用往返', T.out(), '> 已有\n\n> 新段');
+
   // 8. 表格
   T.reset('');
   ed.insertTable(3, 3);

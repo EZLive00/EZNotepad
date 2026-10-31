@@ -1186,6 +1186,12 @@ export class WysiwygEditor {
         }
       }
       block.replaceWith(nb);
+      // 紧跟着上一条引用敲 "> " 转出来的 = 新的独立引用。不打标记的话
+      // .w-bq + .w-bq 的紧凑规则会把它粘进上面的框（视觉连体、序列化并段）
+      if (nb.dataset.type === 'bq') {
+        const pb = nb.previousElementSibling;
+        if (pb && pb.dataset && pb.dataset.type === 'bq') nb.dataset.bqStart = '1';
+      }
       this.placeCaretStart(nb);
       this.hCoalesce = false;
       this.renumber();
