@@ -12,8 +12,12 @@
   --fs-editor: 13.5px;   /* applyFont() 会在启动后覆盖成用户设置 */
 
   /* 正文栏宽：宽窗口下正文不再一路拉到底，超过这个宽度就居中留白。
-     46rem ≈ 690px，中文 15px 下大约 30~34 字一行，是最舒服的阅读行长 */
-  --read-measure: 46rem;
+     --rw 是用户设置（设置面板「正文宽度」，applyReadWidth() 写进来），
+     --read-measure 是真正生效的值 —— 分成两个变量是为了让专注模式能用
+     calc() 在用户值上收一档（同一个变量自引用会被浏览器判成无效）。
+     默认 800px：15px 中文约 53 字一行，宽屏下也比原来的 736px 舒展 */
+  --rw: 800px;
+  --read-measure: var(--rw);
   /* 编辑 / 预览两侧的最小内边距 */
   --read-gutter: 54px;
 }
@@ -943,7 +947,9 @@ body[data-zen="1"] #outlineSplitter,
 body[data-zen="1"] .statusbar,
 body[data-zen="1"] .menubar { display: none; }
 
-body[data-zen="1"] { --read-measure: 42rem; }   /* 少了两侧栏，行长收一点更好读 */
+/* 少了两侧栏，可视宽度一下变大，行长按用户设定的 92% 收一点更好读。
+   引用 --rw 而不是 --read-measure：后者在这个元素上已被重定义，自引用会被判无效 */
+body[data-zen="1"] { --read-measure: calc(var(--rw) * .92); }
 
 body[data-zen="1"] .titlebar { background: transparent; }
 /* 品牌和窗口按钮压到半隐而不是全隐：全隐之后想关窗口得先「猜」上面有东西，

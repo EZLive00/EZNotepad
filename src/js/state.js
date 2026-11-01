@@ -12,9 +12,10 @@ export const LS = {
   del(k) { try { localStorage.removeItem('snp.' + k); } catch {} },
 };
 
-const DEFAULTS = {
+export const DEFAULTS = {
   theme: 'auto',        // auto | light | dark
   fontSize: 13.5,
+  readWidth: 800,       // 正文栏宽（px）：宽窗口下正文居中的最大宽度，见 applyReadWidth()
   layout: 'single',     // single | split（2026-10-25 起默认单栏）
   outlineVisible: true,
   showToolbar: true,

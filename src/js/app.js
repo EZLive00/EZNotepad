@@ -2,7 +2,7 @@
 // app.js —— 应用主控：标签、视图、模式、命令、快捷键
 // 各业务能力（渲染 / 对比 / 合并 / 格式化）独立成模块，这里只做编排
 // ============================================================
-import { createTab, tabs, settings, saveSettings, LS, isDirty, activeTab, setActive, removeTab } from './state.js';
+import { createTab, tabs, settings, saveSettings, LS, isDirty, activeTab, setActive, removeTab, DEFAULTS } from './state.js';
 import * as be from './backend.js';
 import { detectKind, kindLabel, modesFor, formatByKind, lineOps, caseOps } from './format.js';
 import { renderPreview, extractOutline } from './preview.js';
@@ -909,6 +909,17 @@ function showSettings() {
     </div>
 
     <div class="set-group">
+      <div class="set-label">正文宽度</div>
+      <div class="set-zoom">
+        <button type="button" class="set-step" data-rw="-1" title="窄一点">−</button>
+        <span class="set-value" id="setReadWidth">${settings.readWidth} px</span>
+        <button type="button" class="set-step" data-rw="1" title="宽一点">+</button>
+        <button type="button" class="set-link" id="setReadReset">默认</button>
+      </div>
+      <div class="set-hint">Markdown 正文在宽窗口下居中的最大宽度（编辑与预览都按这个来）。窗口或分栏不够宽时自动收回到两侧留白，专注模式在此基础上再收 8%。</div>
+    </div>
+
+    <div class="set-group">
       <div class="set-label">界面</div>
       <label class="set-row"><input type="checkbox" id="setOutline" ${settings.outlineVisible ? 'checked' : ''} /> 显示大纲 / 文件栏</label>
       <label class="set-row"><input type="checkbox" id="setSplit" ${settings.layout === 'split' ? 'checked' : ''} /> 双栏（编辑 + 预览）</label>
@@ -962,10 +973,25 @@ function showSettings() {
     };
   });
   box.querySelector('#setFontReset').onclick = () => {
-    settings.fontSize = 13.5;
+    settings.fontSize = DEFAULTS.fontSize;
     saveSettings();
     applyFont();
-    box.querySelector('#setFontSize').textContent = '13.5 px';
+    box.querySelector('#setFontSize').textContent = `${DEFAULTS.fontSize} px`;
+  };
+  box.querySelectorAll('[data-rw]').forEach((b) => {
+    b.onclick = () => {
+      const next = (Number(settings.readWidth) || DEFAULTS.readWidth) + Number(b.dataset.rw) * READ_W_STEP;
+      settings.readWidth = Math.min(READ_W_MAX, Math.max(READ_W_MIN, next));
+      saveSettings();
+      applyReadWidth();
+      box.querySelector('#setReadWidth').textContent = `${settings.readWidth} px`;
+    };
+  });
+  box.querySelector('#setReadReset').onclick = () => {
+    settings.readWidth = DEFAULTS.readWidth;
+    saveSettings();
+    applyReadWidth();
+    box.querySelector('#setReadWidth').textContent = `${DEFAULTS.readWidth} px`;
   };
   box.querySelector('#setOutline').onchange = (e) => {
     settings.outlineVisible = e.target.checked;
@@ -993,14 +1019,12 @@ function showSettings() {
   };
   box.querySelector('#setClearFolder').onclick = () => { clearFolder(); paintFolder(); };
   box.querySelector('#setReset').onclick = async () => {
-    const ok = await confirmBox('恢复默认设置', '主题、字号、布局、自动保存都会回到出厂状态，文件夹设置也会清空。<br><br>确定？', '恢复', '取消');
+    const ok = await confirmBox('恢复默认设置', '主题、字号、正文宽度、布局、自动保存都会回到出厂状态，文件夹设置也会清空。<br><br>确定？', '恢复', '取消');
     if (!ok) return;
-    Object.assign(settings, {
-      theme: 'auto', fontSize: 13.5, layout: 'single', outlineVisible: true,
-      showToolbar: true, showWinTitle: true, autoSave: true, folder: '', side: 'outline',
-      keymap: {},               // 自定义键位也算「出厂状态」的一部分
-      __v: 2,
-    });
+    /* 直接铺 DEFAULTS：字段增删只维护一处，不会漏项。
+       keymap / lastMode 必须换成新对象 —— 否则 settings 和 DEFAULTS 共用同一份引用，
+       以后改自定义键位会反过来改掉默认值 */
+    Object.assign(settings, DEFAULTS, { keymap: {}, lastMode: {} });
     saveSettings();
     applyTheme();
     applyFont();
@@ -1009,7 +1033,8 @@ function showSettings() {
     clearFolder();
     paintFolder();
     paintKeyList(box.querySelector('#setKeysList'));
-    box.querySelector('#setFontSize').textContent = '13.5 px';
+    box.querySelector('#setFontSize').textContent = `${settings.fontSize} px`;
+    box.querySelector('#setReadWidth').textContent = `${settings.readWidth} px`;
     box.querySelectorAll('.set-seg[data-name="theme"] button').forEach((x) => x.classList.toggle('on', x.dataset.v === 'auto'));
     box.querySelector('#setOutline').checked = true;
     box.querySelector('#setSplit').checked = false;
@@ -2219,7 +2244,21 @@ function applyFont() {
   document.documentElement.style.setProperty('--fs-editor', s + 'px');
   el.preview.style.fontSize = s + 1.5 + 'px';
   el.wysiwyg.style.fontSize = s + 1.5 + 'px';
+  applyReadWidth();
   refreshStats();
+}
+
+/* 正文栏宽：只写用户值 --rw，真正生效的 --read-measure 由 CSS 派生
+   （专注模式要在用户值上乘 0.92，写死在这里就没法两者同时成立）。
+   宽度不够时 CSS 的 max(--read-gutter, …) 会自动退回固定留白，不需要 JS 兜。 */
+const READ_W_MIN = 560;
+const READ_W_MAX = 1600;
+const READ_W_STEP = 40;
+
+function applyReadWidth() {
+  const raw = Number(settings.readWidth) || DEFAULTS.readWidth;
+  const w = Math.min(READ_W_MAX, Math.max(READ_W_MIN, raw));
+  document.documentElement.style.setProperty('--rw', w + 'px');
 }
 
 function gotoLinePrompt() {
@@ -2523,7 +2562,7 @@ const commands = {
   toggleZen: () => toggleZen(),
   zoomIn: () => zoom(1),
   zoomOut: () => zoom(-1),
-  zoomReset: () => { settings.fontSize = 13.5; saveSettings(); applyFont(); },
+  zoomReset: () => { settings.fontSize = DEFAULTS.fontSize; saveSettings(); applyFont(); },
   setMode,
   modeWysiwyg: () => setMode('wysiwyg', { fromActivate: true }),
   modeEdit: () => setMode('edit', { fromActivate: true }),
