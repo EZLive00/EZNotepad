@@ -253,11 +253,15 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
 .wc.danger:active { background: #cf3b40; color: #fff; }
 
 /* 标签与工具同行：左边标签，中间留白（可拖窗口），右边是高频操作。
-   这样内容区上方只有一行，比原来"标签栏 + 工具栏"两行更干净。 */
+   这样内容区上方只有一行，比原来"标签栏 + 工具栏"两行更干净。
+   上沿这一道线把它和标题栏分开——同色平面不画线，两行就糊成一片。
+   高度 33 = 内容 32 + 上边线 1，保证标签还是 32px 高（若写 32，
+   内容只剩 31px，奇高会让 12.5px 的字落在半像素上发虚） */
 .tabbar {
-  height: 32px;
+  height: 33px;
   display: flex; align-items: center; gap: 2px;
   padding: 0 6px 0 8px;
+  border-top: 1px solid var(--line-strong);
 }
 .tabs {
   display: flex; gap: 0; overflow-x: auto; overflow-y: hidden;
