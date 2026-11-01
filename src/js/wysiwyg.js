@@ -22,6 +22,9 @@ const HISTORY_BYTES = 8 * 1024 * 1024;
 /* 超过这个块数的文档按「大文档」对待：分块插入 + 跳过载入期全量扫描。
    阈值取 5000 块（约几千行），常规文档完全走不到这条路径。 */
 const BIG_DOC_BLOCKS = 5000;
+/* 超过这个字符数走渐进载入：首段先上屏、其余 bulk 插入。
+   parse 是载入期最大的单笔阻塞（~0.4ms/千字符），1MB 起感知明显。 */
+const BIG_DOC_CHARS = 1000 * 1000;
 
 /** 字符串占的字节数（V8 里 1 个 UTF-16 码元 = 2 字节，这里只用于比较量级） */
 const bytesOf = (s) => (s ? s.length * 2 : 0);
@@ -352,6 +355,66 @@ function parseAlign(cell) {
   if (r) return 'right';
   if (l) return 'left';
   return '';
+}
+
+/** 等一帧真正画完。rAF 在窗口被遮挡时不会触发，挂个 setTimeout 兜底。 */
+function nextFrame() {
+  return new Promise((resolve) => {
+    const done = () => { clearTimeout(timer); resolve(); };
+    const timer = setTimeout(done, 64);
+    requestAnimationFrame(() => requestAnimationFrame(done));
+  });
+}
+
+/** 把长文档按空行切成可独立 parse 的段（渐进载入用，每段约 target 字符）。
+ *  正确性只依赖三条切割禁令 —— 跨段就会改变语义的构造一律不切：
+ *  1. 围栏代码块（``` / ~~~）内不切：正文会被当成代码或反之；
+ *  2. $$ 块级公式内不切：公式体会被拆碎；
+ *  3. 空行后紧跟列表项不切（松散列表被拆成两段）、空行前是引用行不切
+ *     （callout 的 coFollow 染色跨组生效）。连续多个空行也不切
+ *     （「连着的第二个空行」在 parse 里会合成空段落块，切开后会丢）。 */
+export function splitParseChunks(md, target = 512 * 1024) {
+  if (md.length <= target + (target >> 1)) return [md];
+  const lines = md.split('\n');
+  const chunks = [];
+  let segStart = 0;
+  let segChars = 0;
+  let fence = null;        // { ch, n } 当前开启的围栏
+  let inMath = false;      // $$ 块级公式是否开启
+  let lastBlank = -1;      // 段内最近一个空行的下标
+  let blankRun = 0;
+  let prevQuote = false;   // 上一非空行是否引用行
+  const isListLine = (l) => RE_TASK.test(l) || RE_UL.test(l) || RE_OL.test(l);
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (fence) {
+      const m = line.match(/^\s*(`{3,}|~{3,})\s*$/);
+      if (m && m[1][0] === fence.ch && m[1].length >= fence.n) fence = null;
+      continue;
+    }
+    if (inMath) {
+      if (/\$\$\s*$/.test(line)) inMath = false;
+      continue;
+    }
+    const fo = line.match(RE_FENCE);
+    if (fo) { fence = { ch: fo[1][0], n: fo[1].length }; lastBlank = -1; continue; }
+    if (/^\s*\$\$/.test(line)) {
+      if (!/\$\$\s*$/.test(line.replace(/^\s*\$\$/, '')) || line.replace(/^\s*\$\$/, '').trim() === '') inMath = true;
+      lastBlank = -1; continue;
+    }
+    if (/^\s*$/.test(line)) { blankRun++; lastBlank = i; segChars++; continue; }
+    /* 站上空行后的第一个非空行：这里是唯一合法的切点 */
+    if (segChars >= target && blankRun === 1 && lastBlank > segStart && !isListLine(line) && !prevQuote) {
+      chunks.push(lines.slice(segStart, lastBlank).join('\n'));
+      segStart = lastBlank;
+      segChars = 0;
+    }
+    blankRun = 0;
+    prevQuote = RE_QUOTE.test(line);
+    segChars += line.length + 1;
+  }
+  chunks.push(lines.slice(segStart).join('\n'));
+  return chunks;
 }
 
 /** 解析整篇 Markdown 为块节点，返回 DocumentFragment */
@@ -900,14 +963,15 @@ export class WysiwygEditor {
     this.root.innerHTML = '';
     this.lastBlock = null;
     this.lastCell = null;
-    const frag = parseMarkdown(md);
-    const total = frag.childNodes.length;
-    /* 万行级文档一次性 append + 布局会把主线程冻住好几秒。超过阈值就分块
-       插入，每块之间让出一帧 —— 内容从上往下逐步出现，期间输入被忽略。 */
-    if (total > BIG_DOC_BLOCKS) {
-      this._renderChunked(frag, total, restore, md);
+    /* 大文档走渐进载入：首段先上屏（几十毫秒见字），其余 parse + 一次性
+       bulk 插入。实测（10MB/7.8 万块）：bulk append 148ms + 单次布局；
+       而分批让帧的旧路径每批都触发全树样式重算，32 批要 7.5s —— 纯负资产。 */
+    if (md.length > BIG_DOC_CHARS) {
+      this._renderProgressive(md, restore);
       return;
     }
+    const frag = parseMarkdown(md);
+    const total = frag.childNodes.length;
     this.root.appendChild(frag);
     /* 载入不再全量 normalize：parse 产出的 DOM 由构造函数保证规范
        （空标题的降级也挪进了 parse），逐块 sweep 在万行文档下纯属浪费。 */
@@ -919,30 +983,36 @@ export class WysiwygEditor {
     this._warmBaseline(md);
   }
 
-  async _renderChunked(frag, total, restore, srcMd) {
+  async _renderProgressive(md, restore) {
     this.loading = true;
-    /* 关键：载入期间临时摘掉 contenteditable。编辑宿主（contenteditable
-       子树）里的每次 DOM 变异，Chromium 都要做选区/光标整理（O(现有内容)），
-       分批 append 就成了 O(n²)，实测 30s+ 还在爬；摘掉后是纯 DOM 插入。
-       cv-auto 同理只在非编辑宿主里生效，摘掉 editable 后它才起作用。 */
+    /* 载入期间临时摘掉 contenteditable：编辑宿主里的每次 DOM 变异，
+       Chromium 都要做选区/光标整理；摘掉后是纯 DOM 插入。
+       cv-auto 同理只在非编辑宿主里生效。 */
     const ceRestore = this.root.contentEditable;
     this.root.contentEditable = 'false';
     this.root.classList.add('cv-auto');
     const gen = (this._loadGen = (this._loadGen || 0) + 1);
-    if (this.onProgress) this.onProgress(0, total);
-    await new Promise((r) => setTimeout(r, 0));   // 先让一帧出来，把「载入中」画上
     try {
-      const CHUNK = 2500;
-      let done = 0;
-      while (frag.firstChild) {
-        if (gen !== this._loadGen) return;        // 期间又 render 了：旧循环立即作废
-        const batch = document.createDocumentFragment();
-        let n = 0;
-        while (frag.firstChild && n < CHUNK) { batch.appendChild(frag.firstChild); n++; }
-        this.root.appendChild(batch);
-        done += n;
-        if (this.onProgress) this.onProgress(done, total);
-        await new Promise((r) => setTimeout(r, 0));
+      const chunks = splitParseChunks(md);
+      /* 首段小步快跑：parse + append + 让一帧，第一屏文字尽早可见 */
+      this.root.appendChild(parseMarkdown(chunks[0]));
+      if (this.onProgress) this.onProgress(0, 0);
+      await nextFrame();
+      if (gen !== this._loadGen) return;
+      /* 其余段落：parse + bulk append，中途不让帧 —— 每让一帧就是一次
+         全树样式重算（实测 200ms+），攒到最后只结一次账。
+         任何一段 parse 出错都不能留下半截文档：退回整篇同步 parse。 */
+      try {
+        for (let k = 1; k < chunks.length; k++) {
+          if (gen !== this._loadGen) return;
+          this.root.appendChild(parseMarkdown(chunks[k]));
+          if (this.onProgress) this.onProgress(k + 1, chunks.length);
+        }
+      } catch (err) {
+        console.error('[渐进载入] 分段 parse 失败，整篇重载', err);
+        if (gen !== this._loadGen) return;
+        this.root.innerHTML = '';
+        this.root.appendChild(parseMarkdown(md));
       }
       if (gen !== this._loadGen) return;
       this.renumber();
@@ -952,8 +1022,8 @@ export class WysiwygEditor {
         this.root.contentEditable = ceRestore;
         this.silent = false;
         this.loading = false;
-        if (this.onProgress) this.onProgress(total, total);
-        this._warmBaseline(srcMd || '');
+        if (this.onProgress) this.onProgress(1, 1);
+        this._warmBaseline(md);
       }
     }
   }

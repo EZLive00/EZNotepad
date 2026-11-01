@@ -133,6 +133,7 @@ const wys = new WysiwygEditor(el.wysiwyg, {
      否则最后一条进度文字会永远留在状态栏上（onChange 在载入期被抑制，
      开文档时排下的那次统计早在载入完成前就跑完了）。 */
   onProgress: (done, total) => {
+    if (total === 0) { el.stLines.textContent = '载入中…'; return; }   // 渐进载入：首段已上屏，剩余总量未知
     if (total > 0 && done < total) el.stLines.textContent = `载入中 ${Math.round((done / total) * 100)}%`;
     else scheduleStats();
   },
@@ -912,6 +913,9 @@ function showSettings() {
 function refreshStats() {
   const t = activeTab();
   if (!t) return;
+  /* 渐进载入进行中别覆盖「载入中…」：大文档上这次调用会落在载入冻结期，
+     把进度文字冲掉后，完成前的状态栏就一直是假数据 */
+  if (wys.loading) return;
   const text = t.content;
   const lines = text.split('\n').length;
   const chars = text.length;
@@ -1160,7 +1164,13 @@ async function reloadTab(t, mtime) {
 /* ---------------- 文件操作 ---------------- */
 export async function openPath(path) {
   const existing = tabs.find((t) => t.path === path);
-  if (existing) { activate(existing.id); return existing; }
+  if (existing) {
+    /* 已是当前标签就别再 activate —— activate 会整篇重渲染，
+       大文档等于白白重载好几秒 */
+    const act = activeTab();
+    if (!act || act.id !== existing.id) activate(existing.id);
+    return existing;
+  }
   try {
     const r = await be.readText(path);
     // 先拿到修改时间再建标签：否则「刚打开就被自己当成外部改动」
@@ -3397,6 +3407,10 @@ function persistCurrentView() {
   const t = activeTab();
   if (!t) return;
   if (t.mode === 'wysiwyg') {
+    /* 渐进载入进行中 DOM 只有半截，序列化它会把残缺内容写进 t.content，
+       标签随即变脏 —— 自动保存一触发就用残篇覆盖磁盘文件。跳过：
+       t.content 保持完整源文本，下次激活时重渲染即可。 */
+    if (wys.loading) return;
     t.content = wys.toMarkdown();
     t.scrollTop = el.wysiwyg.scrollTop;
     t.caret = null;              // 所见即所得的 DOM 光标映射回源码偏移不可靠，只记住滚动位置
@@ -3527,6 +3541,7 @@ window.__snp = {
   gotoLine,
   newTab,
   getEditorText: () => activeTab() && activeTab().content,
+  isBusy: () => wys.loading,
   capture: persistCurrentView,
 };
 window.__diff = diff;
