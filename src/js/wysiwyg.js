@@ -25,6 +25,8 @@ const BIG_DOC_BLOCKS = 5000;
 /* 超过这个字符数走渐进载入：首段先上屏、其余 bulk 插入。
    parse 是载入期最大的单笔阻塞（~0.4ms/千字符），1MB 起感知明显。 */
 const BIG_DOC_CHARS = 1000 * 1000;
+/* .wysiwyg 的 CSS padding-top（绝对偏移的零点） */
+const PAD_TOP = 32;
 
 /** 字符串占的字节数（V8 里 1 个 UTF-16 码元 = 2 字节，这里只用于比较量级） */
 const bytesOf = (s) => (s ? s.length * 2 : 0);
@@ -35,6 +37,14 @@ let docDir = '';
 const escapeHtml = (s) => String(s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const escapeAttr = (s) => escapeHtml(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+/* escapeHtml 的逆运算，**必须按转义的逆序**（先 > < 再 &）：
+   escapeHtml 是 & → < → > 依次跑的，若先解 &amp; 会把 `&amp;lt;` 拆成 `&lt;`
+   再被当成转义序列解成 `<` —— 源文件里手写的实体就被吃掉了。
+   inlineHtml 先把整段（含语法）转义，之后从这段已转义文本里抽 href / src，
+   所以抽出来的必须先反解一层，否则属性会被重复转义（`&amp;` → `&amp;amp;`，
+   存回 md 就多一层，打开再保存即污染文件）。 */
+const unescapeHtml = (s) => String(s)
+  .replace(/&gt;/g, '>').replace(/&lt;/g, '<').replace(/&amp;/g, '&');
 
 /* ============================================================
  * 行内：Markdown <-> HTML
@@ -60,16 +70,17 @@ export function inlineHtml(src) {
   t = escapeHtml(t);
   t = t.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g,
     (_, alt, s) => {
-      const shown = resolveDocImg(s, docDir);
+      /* t 已经过 escapeHtml，这里抽出的是转义态：拆 alt、算路径、写属性都得用原文 */
+      const shown = resolveDocImg(unescapeHtml(s), docDir);
       /* 尺寸写在 alt 里（`![说明|300](a.png)`），渲染成 width / height，
          所见即所得里立刻就能看到缩过的样子 */
-      const { text, width, height } = splitImgAlt(alt);
+      const { text, width, height } = splitImgAlt(unescapeHtml(alt));
       const dim = (width ? ` width="${width}"` : '') + (height ? ` height="${height}"` : '');
       /* draggable=否：浏览器默认的图片拖拽会和右下角改宽抢同一串指针事件 */
-      return `<img class="w-img" draggable="false" src="${escapeAttr(shown)}" data-src="${escapeAttr(s)}" alt="${escapeAttr(text)}"${dim}>`;
+      return `<img class="w-img" draggable="false" src="${escapeAttr(shown)}" data-src="${escapeAttr(unescapeHtml(s))}" alt="${escapeAttr(text)}"${dim}>`;
     });
   t = t.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g,
-    (_, txt, href) => `<a href="${escapeAttr(href)}">${txt}</a>`);
+    (_, txt, href) => `<a href="${escapeAttr(unescapeHtml(href))}">${txt}</a>`);
   t = t.replace(/\*\*\*([^*]+)\*\*\*/g, '<strong><em>$1</em></strong>');
   t = t.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
   t = t.replace(/(^|[^*\w])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>');
@@ -785,6 +796,244 @@ export function blocksToMarkdown(root, cache = null) {
 }
 
 /* ============================================================
+ * 大文档：块记录（模型）+ 视口渲染
+ *
+ * 10MB 级文档一次建 7.8 万个 DOM 块，代价并不在插入（bulk 148ms），而在
+ * 「parse 时逐块 createElement + innerHTML」和「整树样式结算」。所以大文档
+ * 不再整篇进 DOM：先扫成轻量记录（只存原文切片），DOM 里永远只保留视口
+ * 附近几十个块，滚动时窗口搬家、用 padding 顶出剩余高度。
+ *
+ * 记录里的 md 就是**原文切片**，不重写用户的文件：载入 → 序列化往返
+ * 天然逐字节一致，省掉整篇重新拼装的时间。
+ * ============================================================ */
+
+/** 块的估计高度（未实测时用）。只影响滚动条长度与跳转定位，
+ *  真正渲染过之后会被实测值替代。 */
+function estimateH(r) {
+  const nl = r.nl || 0;
+  if (r.type === 'code') return 22 * (nl + 1) + 44;
+  if (r.type === 'table') return 34 * (nl + 1);
+  if (r.type === 'hr') return 30;
+  if (r.type === 'math') return 24 * (nl + 1) + 16;
+  const len = r.type === 'li' ? ((r.li && r.li.text) || '').length : (r.md ? r.md.length : 0);
+  const wraps = Math.max(1, Math.ceil(len / 44));
+  return wraps * 26 + 12;
+}
+
+/** 围栏收尾行：同字符、≥3 个、整行只有它 */
+const isFenceClose = (l, ch) => {
+  const t = l.trim();
+  if (!t || t.charCodeAt(0) !== ch.charCodeAt(0)) return false;
+  for (let i = 0; i < t.length; i++) if (t.charCodeAt(i) !== ch.charCodeAt(0)) return false;
+  return t.length >= 3;
+};
+
+/**
+ * Markdown -> 块记录数组（不建 DOM）。
+ * 扫描顺序与 parseMarkdown 完全一致：围栏 → $$ → hr → 标题 → 表格 → 引用
+ * → 任务/无序/有序 → 段落；空行只累计成块间隔。
+ * 每行先做一次首字符判定再进正则 —— 18 万行 × 8 条正则的级联是载入期
+ * 最贵的一笔开销，绝大多数行一条都不该跑。
+ */
+function parseRecords(md) {
+  const src = String(md).replace(/\r\n?/g, '\n');
+  const lines = src.split('\n');
+  const recs = [];
+  const levelOf = makeLevelTracker();
+  let i = 0;
+  let gap = 0;                      // 距上一块的空行数
+
+  const push = (rec, lineNo) => {
+    if (recs.length) recs[recs.length - 1].gap = gap;
+    gap = 0;
+    rec.line = lineNo;
+    rec.nl = 0;
+    if (rec.type !== 'li') levelOf.reset();
+    recs.push(rec);
+  };
+
+  while (i < lines.length) {
+    const raw = lines[i];
+    /* 空行：只记账。行首空白用码点判断，省掉一次 trim() 分配 */
+    let k = 0;
+    const len = raw.length;
+    while (k < len) { const ch = raw.charCodeAt(k); if (ch !== 32 && ch !== 9) break; k++; }
+    if (k === len) { gap++; i++; continue; }
+
+    const c = raw.charCodeAt(k);
+    const lineNo = i;
+
+    /* ``` / ~~~ 围栏代码块 */
+    if (c === 96 || c === 126) {
+      const f = raw.match(RE_FENCE);
+      if (f) {
+        const from = i;
+        const marker = f[1][0];
+        i++;
+        while (i < lines.length && !isFenceClose(lines[i], marker)) i++;
+        if (i < lines.length) i++;
+        const rec = { type: 'code', md: lines.slice(from, i).join('\n'), lang: f[2] || '' };
+        rec.nl = i - from - 1;
+        push(rec, lineNo);
+        continue;
+      }
+    }
+
+    /* $$ 块级公式：吃成一个块，和 parseMarkdown 一致 */
+    if (c === 36 && raw.startsWith('$$', k)) {
+      const from = i;
+      const rest = raw.slice(k + 2);
+      if (/^([\s\S]*?)\$\$\s*$/.test(rest)) {
+        i++;
+      } else {
+        i++;
+        while (i < lines.length) {
+          if (/^([\s\S]*?)\$\$\s*$/.test(lines[i])) { i++; break; }
+          i++;
+        }
+      }
+      const rec = { type: 'math', md: lines.slice(from, i).join('\n') };
+      rec.nl = i - from - 1;
+      push(rec, lineNo);
+      continue;
+    }
+
+    /* 分割线（必须先于列表判定：`---` 也是主题目里最容易被误判的一行） */
+    if ((c === 45 || c === 42 || c === 95) && RE_HR.test(raw)) {
+      push({ type: 'hr', md: raw.replace(/\s+$/, '') }, lineNo);
+      i++;
+      continue;
+    }
+
+    /* 标题 */
+    if (c === 35) {
+      const h = raw.match(RE_HEADING);
+      if (h) {
+        /* 空标题原地降级为正文（与 parseMarkdown 同规则） */
+        const empty = h[2].trim() === '';
+        push({ type: empty ? 'p' : 'h' + h[1].length, md: empty ? '' : raw.replace(/\s+$/, '') }, lineNo);
+        i++;
+        continue;
+      }
+    }
+
+    /* 表格：本行含 |，下一行是分隔行 */
+    if (raw.indexOf('|') >= 0 && i + 1 < lines.length && lines[i + 1].indexOf('-') >= 0
+      && RE_TABLE_SEP.test(lines[i + 1])) {
+      const from = i;
+      let j = i + 2;
+      while (j < lines.length && lines[j].indexOf('|') >= 0 && !/^\s*$/.test(lines[j])) j++;
+      i = j;
+      const rec = { type: 'table', md: lines.slice(from, i).join('\n') };
+      rec.nl = i - from - 1;
+      push(rec, lineNo);
+      continue;
+    }
+
+    /* 引用 / 提示块 */
+    if (c === 62) {
+      const q = raw.match(RE_QUOTE);
+      if (q) {
+        const level = Math.min(MAX_INDENT, q[1].replace(/\s/g, '').length - 1);
+        const rest = q[2];
+        const cm = rest.match(RE_CALLOUT);
+        const rec = { type: 'bq', md: raw.replace(/\s+$/, ''), indent: Math.max(0, level) };
+        if (cm) {
+          rec.callout = normalizeCallout(cm[1]);
+          rec.calloutTitle = cm[2].trim();
+        }
+        /* 空行断组的独立引用才打 bqStart —— 判据与 parseMarkdown 相同 */
+        const prev = recs[recs.length - 1];
+        if (prev && prev.type === 'bq' && !(i > 0 && RE_QUOTE.test(lines[i - 1]))) rec.bqStart = 1;
+        push(rec, lineNo);
+        i++;
+        continue;
+      }
+    }
+
+    /* 任务列表 / 无序 / 有序 */
+    if (c === 45 || c === 42 || c === 43 || (c >= 48 && c <= 57)) {
+      const task = raw.match(RE_TASK);
+      if (task) {
+        push({
+          type: 'li', md: raw.replace(/\s+$/, ''),
+          li: { kind: 'task', indent: levelOf(leadingCols(task[1])), checked: task[2].toLowerCase() === 'x', text: task[3], num: 1 },
+        }, lineNo);
+        i++;
+        continue;
+      }
+      const ul = raw.match(RE_UL);
+      if (ul) {
+        push({
+          type: 'li', md: raw.replace(/\s+$/, ''),
+          li: { kind: 'ul', indent: levelOf(leadingCols(ul[1])), text: ul[2], num: 1 },
+        }, lineNo);
+        i++;
+        continue;
+      }
+      const ol = raw.match(RE_OL);
+      if (ol) {
+        push({
+          type: 'li', md: raw.replace(/\s+$/, ''),
+          li: { kind: 'ol', indent: levelOf(leadingCols(ol[1])), text: ol[3], num: parseInt(ol[2], 10) || 1, start: parseInt(ol[2], 10) || 1 },
+        }, lineNo);
+        i++;
+        continue;
+      }
+    }
+
+    /* 普通段落：一行一块 */
+    push({ type: 'p', md: raw.replace(/\s+$/, '') }, lineNo);
+    i++;
+  }
+
+  if (!recs.length) recs.push({ type: 'p', md: '', gap: 0, line: 0, nl: 0 });
+  /* 提示块续行：callout 头行后面紧跟的普通引用行属于同一个框（纯视觉染色）。
+     规则与 parseMarkdown 尾部那段一致：遇非引用块或下一个 callout 就断。 */
+  let co = '';
+  for (const r of recs) {
+    if (r.type !== 'bq') { co = ''; continue; }
+    if (r.callout) { co = r.callout; continue; }
+    if (co) r.coFollow = co;
+  }
+  return recs;
+}
+
+/** 记录数组 -> Markdown（列表缩进列宽与前文相关，逐块推进） */
+function recordsToMd(recs) {
+  const out = [];
+  const cols = [];
+  for (const r of recs) {
+    if (r.type === 'li' && r.li) {
+      const lvl = Math.min(r.li.indent || 0, MAX_INDENT);
+      cols.length = lvl + 1;
+      const base = lvl === 0 ? 0 : (cols[lvl - 1] ?? lvl * 2);
+      const marker = r.li.kind === 'ol'
+        ? `${r.li.num || 1}. `
+        : r.li.kind === 'task'
+          ? `- [${r.li.checked ? 'x' : ' '}] `
+          : '- ';
+      out.push(' '.repeat(base) + marker + r.li.text);
+      cols[lvl] = base + marker.length;
+    } else {
+      out.push(r.md || '');
+      cols.length = 0;
+    }
+    for (let g = 0; g < (r.gap || 0); g++) out.push('');
+  }
+  return out.join('\n');
+}
+
+/** 相邻两块之间要不要空行（同列表项、同组引用不空） */
+const gapBetween = (a, b) => ((a.type === 'li' && b.type === 'li')
+  || (a.type === 'bq' && b.type === 'bq' && !b.callout && !b.bqStart)) ? 0 : 1;
+
+/** 列表项的 md 切片（物化时喂给 parseMarkdown；缩进按层级写足） */
+const liMd = (li) => ' '.repeat(Math.max(0, Math.min(li.indent || 0, MAX_INDENT)) * 2)
+  + (li.kind === 'ol' ? `${li.num || 1}. ` : li.kind === 'task' ? `- [${li.checked ? 'x' : ' '}] ` : '- ')
+  + (li.text || '');
+
+/* ============================================================
  * DOM / 光标工具
  * ============================================================ */
 
@@ -876,8 +1125,29 @@ export class WysiwygEditor {
     this.onProgress = opts.onProgress || null;
     this._flushTimer = 0;     // 输入路径的延迟序列化（见 queueFlush）
 
+    /* ---- 视口渲染（仅超大文档启用，见 _render 的分流） ----
+       records 是块的唯一真相（每项存 md 原文切片），root.children 只是
+       视口附近那一小段窗口。滚动时窗口搬家，剩余高度用 padding 顶出来。 */
+    this.virtual = false;
+    this.records = null;
+    this.winStart = 0;
+    this.winCount = 0;
+    this.cum = null;          // 记录高度的前缀和（滚动定位用）
+    this._cumDirty = true;    // 块高被实测修正/结构增删后置脏，见 _rebuildCum
+    this.padTop = 0;
+    this._vLock = false;      // 防止「调整 scrollTop → 再触发滚动」自激
+    /* 视口模式下的「逻辑全选」：Ctrl+A 的语义是整篇文档，但 DOM 里只有窗口
+       那几十块 —— 让浏览器原生全选就等于「只选了窗口」，随后打字会把窗口外的
+       内容当成「未选中」删掉（实测 10MB 文档一次丢 47 块）。所以这里自己标记
+       全文已选，编辑动作改由模型层整篇替换。 */
+    this._selAll = false;
+
+    root.addEventListener('scroll', () => this._onVirtualScroll(), { passive: true });
     root.addEventListener('input', () => this.onInput());
     root.addEventListener('keydown', (e) => this.handleKey(e));
+    root.addEventListener('beforeinput', (e) => this.onBeforeInput(e));
+    root.addEventListener('copy', (e) => this.onCopy(e, false));
+    root.addEventListener('cut', (e) => this.onCopy(e, true));
     root.addEventListener('compositionstart', () => { this.composing = true; });
     root.addEventListener('compositionend', () => { this.composing = false; this.onInput(); });
     root.addEventListener('paste', (e) => this.handlePaste(e));
@@ -959,15 +1229,16 @@ export class WysiwygEditor {
     if (md) this.trailingNewline = md.endsWith('\n');
     this.silent = true;
     this._edited = false;
+    this._selAll = false;      // 重建后旧选区已不存在，全选标记随之作废
     clearTimeout(this._warmTimer);
     this.root.innerHTML = '';
+    this._exitVirtual();
     this.lastBlock = null;
     this.lastCell = null;
-    /* 大文档走渐进载入：首段先上屏（几十毫秒见字），其余 parse + 一次性
-       bulk 插入。实测（10MB/7.8 万块）：bulk append 148ms + 单次布局；
-       而分批让帧的旧路径每批都触发全树样式重算，32 批要 7.5s —— 纯负资产。 */
+    /* 大文档（>1MB）走视口渲染：块只存记录、DOM 里只留视口附近几十个。
+       中小文档维持原路径（DOM 即模型），行为一字不变。 */
     if (md.length > BIG_DOC_CHARS) {
-      this._renderProgressive(md, restore);
+      this._renderVirtual(md, restore);
       return;
     }
     const frag = parseMarkdown(md);
@@ -1028,8 +1299,439 @@ export class WysiwygEditor {
     }
   }
 
+  /* ==================== 视口渲染（超大文档） ==================== */
+
+  /** 退出视口模式：把 padding 与模型都清掉，回到「DOM 即模型」的老路径 */
+  _exitVirtual() {
+    this.virtual = false;
+    this.records = null;
+    this.cum = null;
+    this.winStart = 0;
+    this.winCount = 0;
+    this.root.classList.remove('virtual');
+    this.root.style.removeProperty('--vpad-top');
+    this.root.style.removeProperty('--vpad-bot');
+  }
+
+  _renderVirtual(md, restore) {
+    this.loading = true;
+    this.root.classList.remove('cv-auto');
+    try {
+      this.records = parseRecords(md);
+    } catch (err) {
+      /* 记录扫描出岔子就退回渐进载入（整篇进 DOM），绝不留半截文档 */
+      console.error('[视口渲染] 记录扫描失败，退回整篇载入', err);
+      this.loading = false;
+      this._renderProgressive(md, restore);
+      return;
+    }
+    this.virtual = true;
+    this.root.classList.add('virtual');
+    this.winStart = 0;
+    this.winCount = 0;
+    this.cum = null;
+    const startIdx = restore && restore.blockIndex != null ? Math.max(0, restore.blockIndex - 6) : 0;
+    this._windowAt(startIdx, false);
+    this._renumberVirtual();
+    if (restore) this.restoreCaret(restore);
+    this.loading = false;
+    /* _render() 在开头把 silent 置真、在本体末尾复位；视口分支提前 return 了，
+       必须在这里补回来。漏了它的后果不是「少一次优化」：onInput / flush 全部
+       早退 → 编辑不进 tab.content、标签永不变脏、自动保存永远不写、撤销全空。 */
+    this.silent = false;
+  }
+
+  /** 记录的高度前缀和（未实测的块用估计值）。
+   *  纯依赖块高，窗口搬家不影响它 —— 用脏标记挡住滚动时的重复计算：
+   *  十万级记录重算一次 3ms 出头，滚一下算一遍就等于白烧 20% CPU。 */
+  _rebuildCum() {
+    const n = this.records.length;
+    if (!this.cum || this.cum.length !== n + 1) {
+      this.cum = new Float64Array(n + 1);
+      this._cumDirty = true;
+    }
+    if (!this._cumDirty) return this.cum[n];
+    let s = 0;
+    for (let i = 0; i < n; i++) {
+      this.cum[i] = s;
+      const r = this.records[i];
+      s += r.h || estimateH(r);
+    }
+    this.cum[n] = s;
+    this._cumDirty = false;
+    return s;
+  }
+
+  /** 内容纵坐标 y 落在第几块（与 syncOutline 同源：单调，二分） */
+  _indexAtY(y) {
+    const n = this.records.length;
+    let lo = 0;
+    let hi = n - 1;
+    let pick = 0;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (this.cum[mid] <= y) { pick = mid; lo = mid + 1; } else hi = mid - 1;
+    }
+    return pick;
+  }
+
+  /** 单条记录 -> DOM 块。单块 parse 看不到邻居，模型层的标注在这里补齐 */
+  _materialize(rec) {
+    let el = null;
+    try {
+      const src = rec.type === 'li' && rec.li ? liMd(rec.li) : (rec.md || '');
+      el = parseMarkdown(src).firstElementChild;
+    } catch {
+      el = null;
+    }
+    if (!el) el = mkPara('');
+    if (rec.type === 'li' && rec.li) {
+      el.dataset.indent = String(Math.min(rec.li.indent || 0, MAX_INDENT));
+      el.style.setProperty('--li-indent', el.dataset.indent);
+      if (rec.li.kind === 'ol') el.dataset.num = String(rec.li.num || 1);
+    }
+    if (el.dataset.type === 'bq') {
+      if (rec.bqStart) el.dataset.bqStart = '1'; else delete el.dataset.bqStart;
+      if (rec.coFollow) el.dataset.coFollow = rec.coFollow;
+      if (rec.bqTail) el.dataset.bqTail = '1'; else delete el.dataset.bqTail;
+    }
+    return el;
+  }
+
+  /** 视口高度。元素没被限高时 clientHeight 会等于内容高度（测试页/异常布局），
+   *  拿它算窗口会把整篇都塞进 DOM —— 超出量级就退回默认值 */
+  _viewportH() {
+    const h = this.root.clientHeight;
+    return h > 0 && h < 20000 ? h : 700;
+  }
+
+  /**
+   * 把窗口搬到 startIdx：重建这一小段 DOM，实测高度，用 padding 顶出
+   * 上下剩余空间。keepAnchor=true 时调整 scrollTop，保证视口里的画面不动。
+   */
+  _windowAt(startIdx, keepAnchor) {
+    const n = this.records.length;
+    const vh = this._viewportH();
+    startIdx = Math.max(0, Math.min(startIdx, n - 1));
+    /* padding 里编码的是**绝对文档偏移**（32 + 窗口前所有块的高度），
+       所以同一个文档位置对应的 scrollTop 天生不变。只有一种情况会让画面
+       跳动：窗口上方的块这次被实测、高度估计值被修正 → 前缀和变了。
+       记下修正前的偏移，搬完再补这笔差。 */
+    this._rebuildCum();
+    const offBefore = this.cum[startIdx];
+
+    /* 覆盖 4 屏：滚动时窗口不必每屏都搬家，且编辑到窗口边界附近时
+       前后兄弟仍然在 DOM 里（合并/拆分要用）。上限 600 块兜底，
+       防止极端行高下窗口无限膨胀 */
+    const targetH = vh * 4;
+    const MAX_WIN = 600;
+    let end = startIdx;
+    let h = 0;
+    while (end < n && (h < targetH || end === startIdx) && end - startIdx < MAX_WIN) {
+      h += this.records[end].h || estimateH(this.records[end]);
+      end++;
+    }
+
+    const focused = this.root.contains(document.activeElement);
+    const caret = focused ? this.caretState() : null;
+
+    const nodes = new Array(end - startIdx);
+    for (let i = startIdx, k = 0; i < end; i++, k++) {
+      const rec = this.records[i];
+      const el = this._materialize(rec);
+      rec.el = el;
+      nodes[k] = el;
+    }
+    this.winStart = startIdx;
+    this.winCount = end - startIdx;
+    this.root.replaceChildren(...nodes);
+    this._measureWindow();
+    this._applyPadding();
+    /* 光标还在新窗口里才恢复 —— 在窗口外说明用户滚到别处看，别把他拽回去 */
+    if (caret && caret.blockIndex >= startIdx && caret.blockIndex < end) {
+      this.restoreCaret(caret);
+      if (focused) this.root.focus({ preventScroll: true });
+    }
+    if (keepAnchor) {
+      const delta = this.cum[startIdx] - offBefore;
+      if (delta) {
+        this._vLock = true;
+        this.root.scrollTop += delta;
+        this._vLock = false;
+      }
+    }
+  }
+
+  /** 实测量一遍窗口内块的高度（只读，不写样式，一次布局内完成） */
+  _measureWindow() {
+    const kids = this.root.children;
+    let changed = false;
+    for (let i = 0; i < kids.length; i++) {
+      const r = this.records[this.winStart + i];
+      if (!r) continue;
+      const box = kids[i].getBoundingClientRect();
+      /* 只在真变了才置脏：窗口里绝大多数块每趟实测都是同一个值，
+         每次搬家都无条件作废前缀和等于把脏标记白写一遍 */
+      if (box.height > 0 && box.height !== r.h) {
+        r.h = box.height;
+        changed = true;
+      }
+    }
+    if (changed) this._cumDirty = true;
+  }
+
+  /** 用两个伪元素顶出窗口之外的内容高度。
+   *  为什么不用 padding：clientHeight 含 padding，几百万像素的 padding 会把
+   *  滚动容器本身撑高（box-sizing 一变就完全失效）；伪元素不参与
+   *  root.children，块下标、firstElementChild 这些假定都还成立。 */
+  _applyPadding() {
+    this._rebuildCum();
+    const n = this.records.length;
+    const vh = this._viewportH();
+    this.padTop = PAD_TOP + this.cum[this.winStart];
+    const below = this.cum[n] - this.cum[this.winStart + this.winCount];
+    this.root.style.setProperty('--vpad-top', Math.round(this.cum[this.winStart]) + 'px');
+    this.root.style.setProperty('--vpad-bot', Math.round(below + vh * 0.4 + 24) + 'px');
+  }
+
+  _onVirtualScroll() {
+    if (!this.virtual || this.loading || this._vLock || !this.records) return;
+    if (this.root.classList.contains('hidden')) return;
+    const vh = this._viewportH();
+    this._rebuildCum();
+    const y = this.root.scrollTop - PAD_TOP;
+    const top = this._indexAtY(Math.max(0, y - vh * 0.3));
+    const bot = this._indexAtY(Math.max(0, y + vh * 1.5));
+    /* 视口仍稳稳落在窗口里就不动 —— 搬家本身要 parse 几十块（10ms 级），
+       但会打断选区与滚动惯性，能少搬就少搬。
+       判据是「窗口是否完整盖住 [top, bot]」：顶端不能要求 top > winStart，
+       文档最顶上 top 恒等于 winStart（0），那样写会白搬好几次才稳住。 */
+    if (top >= this.winStart && bot <= this.winStart + this.winCount - 2) return;
+    this._windowAt(Math.max(0, top - 1), true);
+  }
+
+  /** 把窗口里被编辑过的块并回模型（结构变了就同步增删记录） */
+  _syncWindow() {
+    if (!this.virtual || !this.records) return;
+    const kids = this.root.children;
+    const n = kids.length;
+    const start = this.winStart;
+    let resized = false;
+    if (n !== this.winCount) {
+      const add = n - this.winCount;
+      if (add > 0) {
+        this.records.splice(start + this.winCount, 0,
+          ...Array.from({ length: add }, () => ({ type: 'p', md: '', gap: 1, line: 0, nl: 0 })));
+      } else {
+        this.records.splice(start + n, -add);
+      }
+      this.winCount = n;
+      this.cum = null;
+      resized = true;
+    }
+    /* 只记「真的变了」的块：没动过的块保留原文间距，打开再保存不会平白
+       把用户的紧凑写法（`---` 紧跟标题这类）撑成空行 */
+    let dirtyFrom = -1;
+    let dirtyTo = -1;
+    const mark = (i) => {
+      if (dirtyFrom < 0 || i < dirtyFrom) dirtyFrom = i;
+      if (i > dirtyTo) dirtyTo = i;
+    };
+    for (let i = 0; i < n; i++) {
+      const el = kids[i];
+      const r = this.records[start + i];
+      if (!r) continue;
+      const type = el.dataset.type || 'p';
+      if (type === 'li') {
+        const prev = r.li || {};
+        const li = {
+          kind: el.dataset.list || 'ul',
+          indent: Math.min(+(el.dataset.indent || 0), MAX_INDENT),
+          num: +(el.dataset.num || 1),
+          start: prev.start || prev.num || 1,
+          checked: el.dataset.checked === '1',
+          text: inlineToMd(textEl(el)),
+        };
+        const md = liMd(li);
+        if (md !== r.md || r.type !== 'li') mark(i);
+        r.li = li;
+        r.md = md;
+        r.type = 'li';
+        r.nl = 0;
+        r.callout = '';
+        r.bqStart = 0;
+        r.coFollow = '';
+      } else {
+        const rb = rawBlock(el);
+        const md = rb.lines.join('\n');
+        if (md !== r.md || r.type !== type) mark(i);
+        r.md = md;
+        r.nl = rb.lines.length - 1;
+        r.type = type;
+        r.li = null;
+        r.callout = el.dataset.callout || '';
+        r.bqStart = el.dataset.bqStart ? 1 : 0;
+        r.coFollow = el.dataset.coFollow || '';
+      }
+    }
+    if (resized) {
+      /* 结构变了：整段重算间隔（新块没有原始间距可用） */
+      for (let i = 0; i < n - 1; i++) {
+        const a = this.records[start + i];
+        const b = this.records[start + i + 1];
+        if (a && b) a.gap = gapBetween(a, b);
+      }
+    } else if (dirtyFrom >= 0) {
+      /* 只动变化块的左右邻：块间隔只跟相邻两块的类型有关 */
+      const lo = Math.max(0, dirtyFrom - 1);
+      const hi = Math.min(n - 1, dirtyTo + 1);
+      for (let i = lo; i < hi; i++) {
+        const a = this.records[start + i];
+        const b = this.records[start + i + 1];
+        if (a && b) a.gap = gapBetween(a, b);
+      }
+    }
+  }
+
+  /** 模型层编号：整篇算一遍，只把结果套到窗口 DOM 上 */
+  _renumberVirtual() {
+    if (!this.records) return;
+    this._syncWindow();
+    const recs = this.records;
+    const counters = [];
+    for (let i = 0; i < recs.length; i++) {
+      const r = recs[i];
+      if (r.type === 'li' && r.li) {
+        if (r.li.kind !== 'ol') continue;
+        const ind = Math.min(r.li.indent || 0, MAX_INDENT);
+        counters.length = ind + 1;
+        if (counters[ind] == null) counters[ind] = r.li.start || 1;
+        else counters[ind] += 1;
+        r.li.num = counters[ind];
+      } else if (r.type !== 'li') {
+        counters.length = 0;
+      }
+      if (r.type === 'bq') {
+        const nx = recs[i + 1];
+        r.bqTail = !!(nx && nx.type === 'bq' && !nx.bqStart);
+      }
+    }
+    const kids = this.root.children;
+    for (let i = 0; i < kids.length; i++) {
+      const r = recs[this.winStart + i];
+      if (!r) continue;
+      const el = kids[i];
+      if (r.type === 'li' && r.li) {
+        el.dataset.indent = String(Math.min(r.li.indent || 0, MAX_INDENT));
+        el.style.setProperty('--li-indent', el.dataset.indent);
+        if (r.li.kind === 'ol') el.dataset.num = String(r.li.num || 1);
+      }
+      if (r.type === 'bq') {
+        if (r.bqTail) el.dataset.bqTail = '1'; else delete el.dataset.bqTail;
+      }
+    }
+  }
+
+  /** 滚到第 idx 块（大纲点击 / 查找跳转 / 行号跳转都走它） */
+  scrollToBlockIndex(idx, center = false) {
+    if (!this.records) return;
+    const n = this.records.length;
+    idx = Math.max(0, Math.min(idx, n - 1));
+    if (!this.virtual) {
+      const el = this.root.children[idx];
+      if (el) el.scrollIntoView({ block: center ? 'center' : 'start' });
+      return;
+    }
+    const vh = this._viewportH();
+    this._windowAt(Math.max(0, idx - 4), false);
+    /* 先强制一次布局：padding 刚改过，浏览器的 scrollHeight 还是旧值，
+       直接写 scrollTop 会被夹到旧的最大值上，跳转就落空 */
+    void this.root.scrollHeight;
+    /* 绝对位置 = 顶部留白 + 该块之前的全部高度（padTop 里已经含窗口起点，
+       不能再加，否则重复计一次） */
+    this._vLock = true;
+    this.root.scrollTop = Math.max(0, Math.round(
+      PAD_TOP + this.cum[idx] - (center ? vh / 2 : Math.min(96, vh * 0.3)),
+    ));
+    this._vLock = false;
+  }
+
+  /** 第 n 个标题块（大纲点第 n 项） */
+  scrollToHeadingIndex(n) {
+    if (!this.virtual || !this.records) return;
+    let seen = 0;
+    for (let i = 0; i < this.records.length; i++) {
+      if (/^h[1-6]$/.test(this.records[i].type)) {
+        if (seen === n) { this.scrollToBlockIndex(i); return; }
+        seen++;
+      }
+    }
+  }
+
+  /** 当前视口顶部上方最后一个标题在大纲里的序号（-1 = 还没有标题） */
+  headingIndexAt() {
+    if (!this.virtual || !this.records) return -1;
+    this._rebuildCum();
+    const y = Math.max(0, this.root.scrollTop - PAD_TOP + Math.min(96, this._viewportH() * 0.3));
+    const at = this._indexAtY(y);
+    let seen = -1;
+    for (let i = 0; i <= at && i < this.records.length; i++) {
+      if (/^h[1-6]$/.test(this.records[i].type)) seen++;
+    }
+    return seen;
+  }
+
+  /** 行号（Markdown 源行，0 起）-> 块下标 */
+  scrollToLine(line) {
+    if (!this.virtual || !this.records) return;
+    let idx = 0;
+    for (let i = 0; i < this.records.length; i++) {
+      if (this.records[i].line <= line) idx = i; else break;
+    }
+    this.scrollToBlockIndex(idx, true);
+  }
+
+  /** 全文查找（返回匹配所在块的下标；实际匹配由调用方在窗口 DOM 里再定位） */
+  findMatches(re) {
+    if (!this.virtual || !this.records) return null;
+    this._syncWindow();
+    const recs = this.records;
+    const starts = new Array(recs.length);
+    let text = '';
+    for (let i = 0; i < recs.length; i++) {
+      starts[i] = text.length;
+      text += (recs[i].md || '') + '\n';
+    }
+    const out = [];
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(text))) {
+      if (m[0].length === 0) { re.lastIndex++; continue; }
+      const off = m.index;
+      let lo = 0;
+      let hi = recs.length - 1;
+      let pick = 0;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (starts[mid] <= off) { pick = mid; lo = mid + 1; } else hi = mid - 1;
+      }
+      out.push({ block: pick, off });
+      if (out.length >= 2000) break;
+    }
+    return out;
+  }
+
   toMarkdown() {
-    let md = blocksToMarkdown(this.root, this.mdCache);
+    let md;
+    if (this.virtual) {
+      /* 窗口里的块可能刚被改过：先把这几个块的 DOM 并回模型，再拼整篇。
+         成本与窗口大小成正比（几十块），与文档大小无关 —— 这就是大文档
+         序列化从 ~700ms 降到 1ms 级的原因。 */
+      this._syncWindow();
+      md = recordsToMd(this.records);
+    } else {
+      md = blocksToMarkdown(this.root, this.mdCache);
+    }
     if (this.trailingNewline && md && !md.endsWith('\n')) md += '\n';
     return md;
   }
@@ -1049,7 +1751,18 @@ export class WysiwygEditor {
 
   restoreCaret(state) {
     if (!state) return;
-    const block = this.root.children[state.blockIndex];
+    let block = null;
+    if (this.virtual) {
+      /* 记录里的下标是全文下标，窗口里只放了一小段：不在窗口就先搬家 */
+      let local = state.blockIndex - this.winStart;
+      if (local < 0 || local >= this.root.children.length) {
+        this._windowAt(Math.max(0, state.blockIndex - 4), false);
+        local = state.blockIndex - this.winStart;
+      }
+      block = this.root.children[local];
+    } else {
+      block = this.root.children[state.blockIndex];
+    }
     if (!block) return;
     if (state.cell) {
       const table = block.querySelector('table');
@@ -1116,7 +1829,9 @@ export class WysiwygEditor {
      而它在每次击键的 caretState 里都要跑一次。 */
   indexOf(block) {
     const kids = this.root.children;
-    for (let i = 0; i < kids.length; i++) if (kids[i] === block) return i;
+    for (let i = 0; i < kids.length; i++) {
+      if (kids[i] === block) return this.virtual ? i + this.winStart : i;
+    }
     return -1;
   }
 
@@ -1126,6 +1841,23 @@ export class WysiwygEditor {
    * 改标题文字之后不用重新标注，算出来自然就变了。
    */
   findHeadingBySlug(slug) {
+    if (this.virtual && this.records) {
+      /* 窗口里可能一个标题都没有：在记录上算 slug（与渲染共用同一函数），
+         命中后把窗口搬过去。返回 null 之外调用方只做滚动，不摸 DOM。 */
+      const idx = [];
+      const texts = [];
+      for (let i = 0; i < this.records.length; i++) {
+        const t = this.records[i].type;
+        if (/^h[1-6]$/.test(t)) {
+          idx.push(i);
+          texts.push((this.records[i].md || '').replace(/^#{1,6}\s*/, '').replace(/\s*#+\s*$/, ''));
+        }
+      }
+      const k = headingSlugs(texts).indexOf(String(slug));
+      if (k < 0) return null;
+      this.scrollToBlockIndex(idx[k]);
+      return this.root.children[idx[k] - this.winStart] || null;
+    }
     const heads = [...this.root.querySelectorAll('.w-h')];
     const texts = heads.map((b) => (b.querySelector('.w-text') || b).textContent || '');
     const i = headingSlugs(texts).indexOf(String(slug));
@@ -1231,6 +1963,100 @@ export class WysiwygEditor {
   queueFlush() {
     if (this._flushTimer) clearTimeout(this._flushTimer);
     this._flushTimer = setTimeout(() => { this._flushTimer = 0; this.flush(); }, 400);
+  }
+
+  /* ---------------- 视口模式的全选 ----------------
+   * DOM 里只放窗口那几十块，所以浏览器原生 Ctrl+A 只能选到窗口 —— 用户随后
+   * 打字，就等于「只留下窗口内容」，窗口外的几万块被当成未选中而删掉。
+   * 这里把「全选」提升成模型层的概念：选区铺满窗口（看得见），真动作由
+   * beforeinput / copy / cut 接管，按整篇文档处理。
+   */
+
+  /** 选区是否仍然覆盖「整个窗口」（用户一旦点别处 / 收窄选区就作废） */
+  _selAllHeld() {
+    if (!this.virtual || !this.records) return false;
+    const kids = this.root.children;
+    if (!kids.length) return false;
+    const sel = window.getSelection();
+    if (!sel.rangeCount || sel.isCollapsed) return false;
+    const a = document.createRange();
+    a.setStart(textEl(kids[0]), 0);
+    a.collapse(true);
+    const b = document.createRange();
+    b.selectNodeContents(kids[kids.length - 1]);
+    b.collapse(false);
+    const r = sel.getRangeAt(0);
+    /* START_TO_START ≤ 0：选区起点不晚于首块开头；END_TO_END ≥ 0：终点不早于末块末尾 */
+    return r.compareBoundaryPoints(Range.START_TO_START, a) <= 0
+      && r.compareBoundaryPoints(Range.END_TO_END, b) >= 0;
+  }
+
+  _selectAllVirtual() {
+    const kids = this.root.children;
+    if (!kids.length) return;
+    const r = document.createRange();
+    /* 顺序有讲究：selectNodeContents 会**重置整个 range**（起点也跟着变成该节点开头），
+       所以必须先圈住末块，再把起点往回拉到首块开头。反过来写，选区就只剩最后一块。 */
+    r.selectNodeContents(kids[kids.length - 1]);
+    r.setStart(textEl(kids[0]), 0);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(r);
+    this._selAll = true;
+    this.root.focus({ preventScroll: true });
+  }
+
+  /** 整篇替换：重建文档，并让撤销一步回到替换前 */
+  _replaceWholeDoc(text) {
+    this._selAll = false;
+    const prev = this.toMarkdown();
+    this.lastBlock = null;
+    this.render(text, { blockIndex: 0, offset: 0 });
+    if (prev !== text) {
+      this.history = [{ md: prev, caret: null }, { md: text, caret: null }];
+      this.hIndex = 1;
+      this.hBytes = bytesOf(prev) + bytesOf(text);
+    }
+    this._edited = true;
+    this.flush();
+  }
+
+  onBeforeInput(e) {
+    if (!this._selAll) return;
+    if (!this._selAllHeld()) { this._selAll = false; return; }
+    const t = e.inputType || '';
+    if (t === 'insertText' || t === 'insertReplacementText') {
+      e.preventDefault();
+      this._replaceWholeDoc(e.data || '');
+      return;
+    }
+    if (t === 'insertFromPaste' || t === 'insertFromDrop') {
+      e.preventDefault();
+      const dt = e.dataTransfer;
+      this._replaceWholeDoc(dt ? dt.getData('text/plain') : '');
+      return;
+    }
+    if (t === 'insertParagraph' || t === 'insertLineBreak') {
+      e.preventDefault();
+      this._replaceWholeDoc('\n');
+      return;
+    }
+    if (t.indexOf('delete') === 0) {
+      e.preventDefault();
+      this._replaceWholeDoc('');
+    }
+  }
+
+  onCopy(e, isCut) {
+    if (!this._selAll) return;
+    if (!this._selAllHeld()) { this._selAll = false; return; }
+    /* 拿不到剪贴板就别放行：剪切会退化成「只删窗口」，那是丢数据的第二种走法 */
+    if (!e.clipboardData) { e.preventDefault(); return; }
+    const md = this.toMarkdown();
+    e.clipboardData.setData('text/plain', md);
+    e.preventDefault();
+    this._selAll = false;
+    if (isCut) this._replaceWholeDoc('');
   }
 
   flush() {
@@ -1619,6 +2445,11 @@ export class WysiwygEditor {
     // 撤销 / 重做 / 行内格式
     if ((e.metaKey || e.ctrlKey) && !e.altKey) {
       const k = e.key.toLowerCase();
+      if (k === 'a') {
+        /* 视口模式下原生全选只覆盖窗口那几十块，语义完全不对（见 _selectAllVirtual） */
+        if (this.virtual && this.records) { e.preventDefault(); this._selectAllVirtual(); }
+        return;
+      }
       if (k === 'z') { e.preventDefault(); if (e.shiftKey) this.redo(); else this.undo(); return; }
       if (k === 'y') { e.preventDefault(); this.redo(); return; }
       if (k === 'b') { e.preventDefault(); this.toggleInline('strong'); return; }
@@ -2158,6 +2989,8 @@ export class WysiwygEditor {
    *  CSS 拿它折叠引用框 —— 不能用 :has(+ ...)，见 styles.css 的说明）。
    *  所有结构变化路径都会调用本方法，这里注解零额外扫描成本。 */
   renumber() {
+    /* 视口模式：编号在所有记录上算（窗口外的块也要正确），只把结果套回窗口 */
+    if (this.virtual) { this._renumberVirtual(); return; }
     let counters = [];
     for (const b of this.root.children) {
       if (b.dataset.type === 'bq') {

@@ -7,11 +7,13 @@
 <style>
   html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); }
   body { display: block; overflow: auto; user-select: auto; }
-  #wysiwyg { min-height: 300px; }
+  /* 给编辑器真实的高度约束：视口渲染靠 clientHeight 算窗口，
+     元素不限高时 clientHeight 会等于全文高度（见 _viewportH 的注释）。
+     用行内样式写到元素上，免得被 styles.css 的 flex 规则盖掉 */
 </style>
 </head>
 <body data-theme="light">
-<div id="wysiwyg" class="wysiwyg" contenteditable="true" spellcheck="false"></div>
+<div id="wysiwyg" class="wysiwyg" contenteditable="true" spellcheck="false" style="height: 600px; overflow-y: auto"></div>
 <script type="module">
 import { WysiwygEditor, blocksToMarkdown } from '../src/js/wysiwyg.js';
 import { renderMarkdown } from './../src/js/markdown.js';
@@ -111,6 +113,26 @@ window.__run = () => {
   eq('img 保留原始地址', root.querySelector('img').getAttribute('data-src'), 'assets/a.png');
   T.reset('![网图](https://example.com/x.png)');
   eq('网络图片原样', T.out(), '![网图](https://example.com/x.png)');
+
+  /* 1c. 实体：inlineHtml 先把整段（含语法）escapeHtml，再从这段已转义文本里抽
+     href / src / alt —— 抽出来必须反解一层再转义，否则属性被重复转义，
+     `&amp;` 变 `&amp;amp;`，**打开再保存就污染文件**。 */
+  eq('链接 URL 含 & 往返不涨',
+    T.reset('[甲](https://e.com/a?x=1&y=2)'), '[甲](https://e.com/a?x=1&y=2)');
+  eq('链接 URL 含实体往返不涨',
+    T.reset('[甲](https://e.com/a?x=1&amp;y=2)'), '[甲](https://e.com/a?x=1&amp;y=2)');
+  eq('href 属性还原为原文',
+    (T.reset('[甲](https://e.com/a?x=1&y=2)'), root.querySelector('a').getAttribute('href')),
+    'https://e.com/a?x=1&y=2');
+  eq('图片地址含 & 往返不涨',
+    T.reset('![甲](a.png?x=1&y=2)'), '![甲](a.png?x=1&y=2)');
+  eq('图片 alt 含实体往返不涨',
+    T.reset('![a&b 图](a.png)'), '![a&b 图](a.png)');
+  eq('段落里的 & 与 < 往返不涨',
+    T.reset('a & b &amp; c < d > e'), 'a & b &amp; c < d > e');
+  eq('连续两次回读稳定',
+    (T.reset('[甲](https://e.com/a?x=1&y=2)'), T.out(), T.reset(T.out()), T.out()),
+    '[甲](https://e.com/a?x=1&y=2)');
 
   // 2. 段首语法糖
   T.reset('');
@@ -774,6 +796,141 @@ window.__run = () => {
   document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: r2.right + 56, clientY: r2.bottom - 2 }));
   eq('拖 60px 宽度增加 60', im2.getAttribute('width'), 360);
   has('松手后尺寸落进 markdown', /\|360\]\(a\.png\)/.test(ed.toMarkdown()));
+
+  /* ============ 视口渲染（超大文档路径） ============ */
+  {
+    /* 造一份 >1MB、类型齐全的文档：视口模式的正确性靠往返一致性证明 */
+    const seg = [
+      '## 第 %n 节',
+      '',
+      '正文里有 **加粗**、_斜体_、`行内码` 和 [链接](https://example.com)。',
+      '第二行紧跟着，用来验证「一行一块」。',
+      '',
+      '- 无序一',
+      '- 无序二',
+      '  - 嵌套项',
+      '',
+      '1. 有序一',
+      '2. 有序二',
+      '',
+      '- [ ] 待办',
+      '- [x] 已完成',
+      '',
+      '> 引用一行',
+      '',
+      '> [!info] 提示标题',
+      '> 提示正文',
+      '',
+      '| 名称 | 数量 |',
+      '| --- | ---: |',
+      '| 苹果 | 3 |',
+      '',
+      '```js',
+      'const a = 1;',
+      'console.log(a);',
+      '```',
+      '',
+      '$$',
+      'E = mc^2',
+      '$$',
+      '',
+      '---',
+      '',
+    ].join('\n');
+    let big = '';
+    for (let n = 1; big.length < 1_200_000; n++) big += seg.replace(/%n/g, n);
+
+    const t0 = performance.now();
+    ed.render(big);
+    const loadMs = Math.round(performance.now() - t0);
+    has('视口: 大文档走视口模式', ed.virtual === true);
+    has('视口: DOM 里只有窗口', root.children.length > 0 && root.children.length < 400);
+    /* 注意：别用 eq 比对整篇文本 —— 1.2MB 字符串进结果对象后，CDP 回传
+       几 MB 的 JSON 会把运行器挂死（踩过）。只回布尔与长度。 */
+    const rt1 = ed.toMarkdown();
+    has('视口: 往返长度一致', rt1.length === big.length);
+    has('视口: 往返逐字节一致', rt1 === big);
+    ed.render(big);
+    has('视口: 二次渲染幂等', ed.toMarkdown() === big);
+
+    /* 滚动：窗口要能把远处的内容搬进来 */
+    const before = root.children[0].textContent;
+    root.scrollTop = 60000;
+    root.dispatchEvent(new Event('scroll'));
+    has('视口: 滚动后窗口换了内容', root.children[0].textContent !== before);
+    has('视口: 占位撑出剩余高度', parseFloat(root.style.getPropertyValue('--vpad-bot')) > 1000);
+    has('视口: 滚动容器高度未被占位撑大', root.clientHeight < 2000);
+
+    /* 窗口内编辑：只改一处，其余必须原样 */
+    root.focus();
+    {                                  // 挑一个段落块：hr / 代码块不可编辑，插不进去
+      let k = 0;
+      while (k < root.children.length && root.children[k].dataset.type !== 'p') k++;
+      ed.restoreCaret({ blockIndex: ed.winStart + k, offset: 0 });
+    }
+    const md0 = T.out();
+    T.type('插入的字');
+    const md1 = T.out();
+    has('视口: 编辑后含新文字', md1.indexOf('插入的字') >= 0);
+    has('视口: 编辑后只多出这几个字', md1.length >= md0.length + 4);
+    // 改动的范围必须局限在光标附近（块间隔的局部归一化算在允许范围内）
+    {
+      let p = 0;
+      while (p < md0.length && md0[p] === md1[p]) p++;
+      let s = 0;
+      while (s < md0.length - p && md0[md0.length - 1 - s] === md1[md1.length - 1 - s]) s++;
+      has('视口: 编辑只影响局部', md0.length - p - s < 200);
+    }
+
+    /* 跳转：窗口必须跟着搬家 */
+    ed.scrollToBlockIndex(ed.records.length - 1, false);
+    has('视口: 跳到末块后窗口已前移', ed.winStart > 0);
+    has('视口: 窗口覆盖到文末', ed.winStart + ed.winCount === ed.records.length);
+
+    /* 前缀和只在块高变化时重算。滚动事件一秒几十次，白算一次就是 3ms，
+       而且它只依赖块高 —— 窗口搬家不该让它作废。 */
+    ed._rebuildCum();
+    has('视口: 前缀和算完复位脏标记', ed._cumDirty === false);
+    {
+      const c100 = ed.cum[100];
+      root.dispatchEvent(new Event('scroll'));
+      has('视口: 视口未动时不重算前缀和', ed._cumDirty === false && ed.cum[100] === c100);
+    }
+
+    /* silent 必须在视口分支里复位。_render() 开头置真、本体末尾复位，
+       视口分支提前 return 就漏了 —— 后果不是「少一次优化」，而是 onInput/flush
+       全部早退：编辑不进 tab.content、标签永不变脏、自动保存永不写、撤销为空。 */
+    has('视口: 载入后 silent 已复位', ed.silent === false);
+
+    /* 全选：DOM 里只有窗口，原生 Ctrl+A 会退化成「只选窗口」，
+       随后打字就等于把窗口外的内容当未选中删掉。必须走整篇语义。 */
+    ed.render(big);
+    {
+      let k = 0;
+      while (k < root.children.length && root.children[k].dataset.type !== 'p') k++;
+      root.focus();
+      ed.restoreCaret({ blockIndex: ed.winStart + k, offset: 0 });
+    }
+    ed._selectAllVirtual();
+    has('视口: 全选标记置上', ed._selAll === true);
+    has('视口: 选区覆盖整窗口', ed._selAllHeld() === true);
+    ed.onBeforeInput({ inputType: 'insertText', data: '乙', preventDefault() {} });
+    eq('视口: 全选后输入 = 整篇替换', ed.toMarkdown(), '乙');
+    has('视口: 替换后全选标记已清', ed._selAll === false);
+    has('视口: 替换可一步撤销', ed.undo() === true && ed.toMarkdown() === big);
+
+    ed._selectAllVirtual();
+    ed.onBeforeInput({ inputType: 'deleteContentBackward', preventDefault() {} });
+    eq('视口: 全选后删除 = 清空整篇', ed.toMarkdown(), '');
+    has('视口: 清空后回到非视口路径', ed.virtual === false);
+
+    /* 切回小文档：padding 与模型状态都要清干净 */
+    ed.render('# 小文档\n\n正文');
+    has('视口: 回到小文档后退出视口模式', ed.virtual === false);
+    has('视口: 占位变量已清空', root.style.getPropertyValue('--vpad-top') === '');
+    eq('视口: 小文档往返', ed.toMarkdown(), '# 小文档\n\n正文');
+    has('视口: 载入耗时在可接受范围', loadMs < 5000);
+  }
 
   return R;
 };

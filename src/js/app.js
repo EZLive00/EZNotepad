@@ -511,7 +511,13 @@ function syncOutline() {
   if (!nodes.length || !outlineItems.length) return;
 
   let cur = -1;
-  if (t.mode === 'wysiwyg' || t.mode === 'preview') {
+  if (t.mode === 'wysiwyg' && wys.virtual) {
+    /* 视口模式：DOM 里只有窗口那一小段，标题数量对不上。
+       高亮改由块模型按滚动位置算（等价于原来的「标题顶 ≤ 基准线」二分）。 */
+    cur = atScrollEnd(el.wysiwyg.scrollTop, el.wysiwyg.scrollHeight, el.wysiwyg.clientHeight)
+      ? outlineItems.length - 1
+      : wys.headingIndexAt();
+  } else if (t.mode === 'wysiwyg' || t.mode === 'preview') {
     const box = t.mode === 'wysiwyg' ? el.wysiwyg : el.preview;
     const heads = box.querySelectorAll(t.mode === 'wysiwyg' ? '.w-h' : 'h1,h2,h3,h4,h5,h6');
     if (atScrollEnd(box.scrollTop, box.scrollHeight, box.clientHeight)) {
@@ -553,6 +559,7 @@ function gotoLine(line, idx = null) {
   if (!t) return;
   // 大纲点击走「标题顶贴基准线」，和高亮判定共用 outlineBaseline，点谁谁亮
   if (t.mode === 'wysiwyg' && idx != null) {
+    if (wys.virtual) { wys.scrollToHeadingIndex(idx); return; }   // 窗口外的标题也得能跳
     const h = el.wysiwyg.querySelectorAll('.w-h')[idx];
     if (h) { scrollBoxToHeading(el.wysiwyg, h); return; }
   }
@@ -561,6 +568,7 @@ function gotoLine(line, idx = null) {
     if (h) { scrollBoxToHeading(el.preview, h); return; }
   }
   if (t.mode === 'wysiwyg') {          // 兜底：按行号数块（搜索结果跳转等无序号入口）
+    if (wys.virtual) { wys.scrollToLine(line); return; }
     let acc = 0;
     for (const blk of el.wysiwyg.children) {
       if (acc >= line) { blk.scrollIntoView({ block: 'center', behavior: 'smooth' }); return; }
@@ -910,16 +918,37 @@ function showSettings() {
 }
 
 /* ---------------- 状态栏 ---------------- */
+/** 统计行数 / 字数 / 字符数：**单趟扫描，不分配中间数组**。
+ *  原先用 split('\n') + 两个全局 match，10MB 文档上要 125ms、还要为 18 万个
+ *  行号造一批临时字符串（GC 也跟着抖）；改成一次 charCodeAt 扫描只要 39ms。
+ *  口径与原来逐字对齐：行数 = 换行数 + 1，字数 = 中日韩单字 + ASCII 连续段。 */
+function countStats(text) {
+  let lines = 1;
+  let words = 0;
+  let run = false;          // 是否正处在一段 ASCII 词里
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    if (c === 10) lines++;
+    if (c >= 0x4e00 && c <= 0x9fa5) {      // 中日韩统一表意文字：一字一词
+      words++;
+      run = false;
+    } else if ((c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122)
+      || c === 95 || c === 45 || c === 39) {   // 0-9 A-Z a-z _ ' -
+      if (!run) { words++; run = true; }
+    } else {
+      run = false;
+    }
+  }
+  return { lines, words, chars: text.length };
+}
+
 function refreshStats() {
   const t = activeTab();
   if (!t) return;
   /* 渐进载入进行中别覆盖「载入中…」：大文档上这次调用会落在载入冻结期，
      把进度文字冲掉后，完成前的状态栏就一直是假数据 */
   if (wys.loading) return;
-  const text = t.content;
-  const lines = text.split('\n').length;
-  const chars = text.length;
-  const words = (text.match(/[\u4e00-\u9fa5]/g) || []).length + (text.match(/[A-Za-z0-9_'-]+/g) || []).length;
+  const { lines, words, chars } = countStats(t.content);
   el.stLines.textContent = `${lines} 行`;
   el.stWords.textContent = `${words} 字 · ${chars} 字符`;
 }
@@ -1859,7 +1888,15 @@ function runFind() {
 
   if (t.mode === 'wysiwyg') {
     find.dom = true;
-    find.matches = domfind.findInDom(el.wysiwyg, re);
+    if (wys.virtual) {
+      /* 视口模式：匹配在块模型上算（DOM 里只有窗口内容），
+         跳转时再把对应块搬进窗口、由 DOM 现算高亮范围 */
+      find.model = true;
+      find.matches = wys.findMatches(re) || [];
+    } else {
+      find.model = false;
+      find.matches = domfind.findInDom(el.wysiwyg, re);
+    }
     // 编辑正文触发的刷新不要把人踢回第一处匹配
     find.index = Math.min(prevIndex, Math.max(0, find.matches.length - 1));
   } else {
@@ -1890,6 +1927,13 @@ function locateMatch() {
   if (!t || !find.matches.length) return;
   if (find.dom) {
     // 高亮交给 CSS Custom Highlight，不动 DOM —— contenteditable 里插 <mark> 会毁掉光标
+    if (find.model) {
+      const m = find.matches[find.index];
+      if (m) wys.scrollToBlockIndex(m.block, true);
+      // 只画窗口内的：窗口外的匹配没有 DOM，无法建 Range
+      domfind.paint(domfind.findInDom(el.wysiwyg, buildRegex()), -1);
+      return;
+    }
     domfind.paint(find.matches, find.index);
     domfind.scrollTo(find.matches[find.index], el.wysiwyg);
     return;
@@ -3542,6 +3586,7 @@ window.__snp = {
   newTab,
   getEditorText: () => activeTab() && activeTab().content,
   isBusy: () => wys.loading,
+  editor: wys,          // 编辑器实例（与 __diff / __merge 同类调试面：真机 CDP 探针要用）
   capture: persistCurrentView,
 };
 window.__diff = diff;

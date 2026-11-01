@@ -1186,6 +1186,27 @@ body[data-theme="dark"] .ctx-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 2
   contain-intrinsic-size: auto 28px;
 }
 
+/* ---- 视口渲染的上下占位（大文档专用，见 wysiwyg.js 的 _applyPadding）----
+   窗口外内容的真实高度用伪元素顶出来，而不是 padding：clientHeight 含
+   padding，几百万像素的 padding 会把滚动容器自己撑高，滚动条直接失效。
+   伪元素还有个好处 —— 不进 root.children，块下标与 firstElementChild
+   这些假定（索引、序列化、光标恢复）统统不受影响。 */
+.wysiwyg.virtual::before,
+.wysiwyg.virtual::after {
+  content: '';
+  display: block;
+  height: 0;
+  pointer-events: none;
+}
+.wysiwyg.virtual::before { height: var(--vpad-top, 0); }
+.wysiwyg.virtual::after { height: var(--vpad-bot, 0); }
+
+/* 关掉浏览器的滚动锚定：视口渲染在 _windowAt 里自己补 delta（见那里的注释），
+   浏览器再按「内容变了、把可见内容钉住」补一次，两次叠加 → 每搬一次窗口
+   scrollTop 就被顶前一两千像素，滚动像被人拽着跑。只对视口模式关，
+   普通文档继续吃原生锚定的好处。 */
+.wysiwyg.virtual { overflow-anchor: none; }
+
 /* ---- 行首块手柄：只在光标 / 鼠标所在那一行浮出，落在正文左侧的留白里 ----
    它挂在 .edit-wrap 上而不是块里，所以浏览器选不中、退格删不到、也不会被
    sweepBlock 当成游离节点吸进正文（.w-hash 踩过这个坑）。 */
