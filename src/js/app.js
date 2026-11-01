@@ -457,6 +457,26 @@ function schedulePreview() {
 /* 上一次画出来的大纲长什么样。签名里带上行号：标题文字没变、位置变了，
    点进去也得跳到新行，所以不能只比文字。 */
 let outlineSig = '';
+/* 与 outlineItems 一一对应的按钮节点，外加「当前亮着的那一项」。
+   每次同步只动这两个节点 —— 不要遍历整个列表：四万项的大纲里逐一
+   classList.toggle 等于每 70ms 制造几万次样式失效（实测把滚动帧时间
+   从 17ms 顶到 178ms，视口渲染本身没问题，全被这一步拖垮）。 */
+let outlineNodes = [];
+let outlineActive = -1;
+/* 大纲列表也窗口化：万级标题时，把三万个按钮都塞进侧栏，主文档每重排一次
+   就要连带它们算一遍（实测 33k 项：滚动 17ms → 72ms）。这里只铺视口附近
+   那一段，上下用 padding 占位，滚动条位置与点击跳转都不变。 */
+const OUTLINE_ROW = 28;          // 行高，与 .outline-item 的 CSS 高度一致
+const OUTLINE_OVER = 12;         // 上下各多铺几行，滚动时不闪白
+let outlineStart = 0;
+let outlineEnd = 0;
+let outlineScrollRaf = 0;
+let outlineScrollBound = false;
+/* 侧栏可视高度单独缓存：clientHeight 把我们自己设的上下 padding 也算在内，
+   而且首帧布局没稳定时它等于「内容高度」（几十万像素）—— 拿它算窗口会一次
+   把整张表都铺出来，铺出来又把盒子撑高，自我锁定成非窗口态。 */
+let outlineViewH = 0;
+let outlineFitTries = 0;
 
 function updateOutline() {
   const t = activeTab();
@@ -470,26 +490,104 @@ function updateOutline() {
   outlineItems = items;
   if (!items.length) {
     outlineSig = '';
+    outlineNodes = [];
+    outlineActive = -1;
     el.outlineList.innerHTML = `<div class="outline-empty">${kind === 'md' ? '用 # 定义标题后，这里会出现大纲。' : '当前文件没有可提取的结构。'}</div>`;
     return;
   }
   /* 结构没变就别重建 DOM：改正文时标题几乎不动，而重建 600 个按钮
      比跑一次正则贵得多。高亮的跟随由 scheduleOutlineSync 单独负责。 */
   const sig = items.map((it) => `${it.level}:${it.line}:${it.text}`).join('\n');
-  if (sig === outlineSig && el.outlineList.children.length) return;
+  if (sig === outlineSig && outlineItems.length) return;
   outlineSig = sig;
+  outlineActive = -1;
+  if (!outlineScrollBound) {
+    outlineScrollBound = true;
+    el.outlineList.addEventListener('scroll', () => {
+      if (outlineScrollRaf) return;
+      outlineScrollRaf = requestAnimationFrame(() => {
+        outlineScrollRaf = 0;
+        renderOutlineWindow(false);
+      });
+    }, { passive: true });
+    window.addEventListener('resize', () => {
+      outlineViewH = 0;
+      outlineFitTries = 0;
+      renderOutlineWindow(true);
+    });
+  }
+  renderOutlineWindow(true);
+  scheduleOutlineSync();     // 重建后立刻把「当前章节」点亮，不要等下一次滚动
+}
+
+/** 按侧栏的滚动位置铺出可见的那一段（force=true 表示内容刚换，必须重建） */
+function renderOutlineWindow(force) {
+  const list = el.outlineList;
+  const n = outlineItems.length;
+  if (!n) {
+    outlineNodes = [];
+    outlineStart = outlineEnd = 0;
+    list.replaceChildren();
+    return;
+  }
+  if (!outlineViewH) {
+    const cand = list.clientHeight;
+    /* 40 ~ 4000：小于 40 说明还没布局（或侧栏被折叠），大于 4000 说明量到的
+       是内容高度 —— 两种都不算数，留给下一帧重试 */
+    if (cand > 40 && cand < 4000) outlineViewH = cand;
+  }
+  if (!outlineViewH && outlineFitTries < 3) {
+    outlineFitTries++;
+    requestAnimationFrame(() => { if (!outlineViewH) renderOutlineWindow(true); });
+  }
+  const h = outlineViewH || 600;
+  const start = Math.max(0, Math.floor(list.scrollTop / OUTLINE_ROW) - OUTLINE_OVER);
+  const end = Math.min(n, Math.ceil((list.scrollTop + h) / OUTLINE_ROW) + OUTLINE_OVER);
+  if (!force && start === outlineStart && end === outlineEnd) return;
+  outlineStart = start;
+  outlineEnd = end;
   const frag = document.createDocumentFragment();
-  items.forEach((it, i) => {
+  const nodes = new Array(end - start);
+  for (let i = start; i < end; i++) {
+    const it = outlineItems[i];
     const b = document.createElement('button');
     b.className = `outline-item h${Math.min(6, it.level)}`;
     b.textContent = it.text;
     b.title = it.text;
     b.onclick = () => gotoLine(it.line, i);
+    if (i === outlineActive) b.classList.add('active');
+    nodes[i - start] = b;
     frag.appendChild(b);
-  });
-  el.outlineList.innerHTML = '';
-  el.outlineList.appendChild(frag);
-  scheduleOutlineSync();     // 重建后立刻把「当前章节」点亮，不要等下一次滚动
+  }
+  outlineNodes = nodes;
+  /* 未铺出来的部分用两个空 div 顶出高度（滚动条长度与位置都对得上真实条目数）。
+     用 padding 顶不行：padding 算进 clientHeight，而且首帧布局未稳定时会把
+     列表盒子自己撑到几十万像素高 —— 子元素不会。 */
+  const top = document.createElement('div');
+  top.className = 'outline-pad';
+  top.style.height = start * OUTLINE_ROW + 'px';
+  const bottom = document.createElement('div');
+  bottom.className = 'outline-pad';
+  bottom.style.height = (n - end) * OUTLINE_ROW + 'px';
+  const all = document.createDocumentFragment();
+  all.appendChild(top);
+  all.appendChild(frag);
+  all.appendChild(bottom);
+  list.replaceChildren(all);
+}
+
+/** 当前章节高亮：只动「旧 → 新」两个节点，且只在它们被铺出来时动手 */
+function paintOutlineActive(cur) {
+  const n = outlineItems.length;
+  if (cur >= n) cur = n - 1;
+  if (cur === outlineActive) return;
+  const prev = outlineActive;
+  outlineActive = cur;
+  const at = (i) => (i >= outlineStart && i < outlineEnd ? outlineNodes[i - outlineStart] : null);
+  const oldNode = at(prev);
+  if (oldNode) oldNode.classList.remove('active');
+  const newNode = at(cur);
+  if (newNode) newNode.classList.add('active');
 }
 
 /* ---------------- 大纲跟随滚动 ---------------- */
@@ -507,8 +605,7 @@ function scheduleOutlineSync() {
 function syncOutline() {
   const t = activeTab();
   if (!t || !settings.outlineVisible) return;
-  const nodes = [...el.outlineList.querySelectorAll('.outline-item')];
-  if (!nodes.length || !outlineItems.length) return;
+  if (!outlineItems.length) return;
 
   let cur = -1;
   if (t.mode === 'wysiwyg' && wys.virtual) {
@@ -540,10 +637,16 @@ function syncOutline() {
     const line = atScrollEnd(plain.scrollTop, plain.scrollHeight, el.editor.clientHeight)
       ? Infinity
       : plain.lineAtViewportY(baseY) - 1;   // 0 起
-    outlineItems.forEach((it, i) => { if (it.line <= line) cur = i; });
+    /* 大纲里的行号自上而下单调递增，二分找最后一个 ≤ line 的项 */
+    let lo = 0, hi = outlineItems.length - 1, found = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (outlineItems[mid].line <= line) { found = mid; lo = mid + 1; }
+      else hi = mid - 1;
+    }
+    cur = found;
   }
-  if (cur >= nodes.length) cur = nodes.length - 1;
-  nodes.forEach((b, i) => b.classList.toggle('active', i === cur));
+  paintOutlineActive(cur);
 }
 
 /** 大纲高亮的基准线：容器顶往下 96px（矮窗口取 30% 高）。点击跳转必须落在这条线上，高亮才对得上 */

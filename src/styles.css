@@ -620,16 +620,19 @@ body[data-theme="dark"] .am-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 25
 .set-folder.faint { color: var(--fg-faint); }
 .set-hint { font-size: 11px; color: var(--fg-faint); line-height: 1.6; }
 .set-foot { display: flex; justify-content: flex-end; border-top: 1px solid var(--line); padding-top: 12px; }
-.outline-list { flex: 1; overflow-y: auto; padding: 0 8px 16px; }
+/* min-height:0 是关键：列表靠上下 padding 顶出未铺出的条目（窗口化），
+   而 flex 项的 min-height:auto 会按「内边距 + 内容」算最小值 ——
+   少了这一行，几万条的 padding 会把列表盒子自己撑到几十万像素高 */
+.outline-list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 16px; }
 .outline-item {
   display: block; width: 100%; text-align: left; border: none; background: transparent;
   padding: 5px 8px; border-radius: 0; color: var(--fg-soft);
   font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  line-height: 1.45; border-left: 2px solid transparent;
+  /* 固定行高：大纲列表按行窗口化（app.js 的 OUTLINE_ROW），
+     行高不齐会让「第几行 × 行高」的定位越滚越偏 */
+  height: 28px; box-sizing: border-box; line-height: 18px;
+  border-left: 2px solid transparent;
   transition: background .12s var(--ease), color .12s var(--ease), border-color .12s var(--ease);
-  /* 万级标题的大纲列表：视口外的条目跳过布局/绘制 */
-  content-visibility: auto;
-  contain-intrinsic-size: auto 28px;
 }
 /* hover 时左沿浮出一道竖条：位置固定、只变色不加位移，指针扫过时不会跳 */
 .outline-item:hover { background: var(--bg-hover); color: var(--fg); border-left-color: var(--line-strong); }

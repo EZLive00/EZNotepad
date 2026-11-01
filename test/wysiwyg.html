@@ -929,6 +929,89 @@ window.__run = () => {
     has('视口: 回到小文档后退出视口模式', ed.virtual === false);
     has('视口: 占位变量已清空', root.style.getPropertyValue('--vpad-top') === '');
     eq('视口: 小文档往返', ed.toMarkdown(), '# 小文档\n\n正文');
+    /* ---- 撤销：视口模式用「记录快照 + 写时复制」 ----
+       整篇文本快照在 10MB 文档上要 12MB 一份，8MB 预算只够留 1 步（还得每次
+       整篇重解析）。记录快照只是指针数组，块对象共享，能留十几步且撤销只重建窗口。 */
+    {
+      ed.render(big);
+      has('视口: 基线快照是记录而不是整篇文本',
+        !!ed.history[0].recs && ed.history[0].md === undefined);
+
+      const pickP = () => {
+        let k = 0;
+        while (k < root.children.length && root.children[k].dataset.type !== 'p') k++;
+        return k;
+      };
+      const base = ed.toMarkdown();
+      root.focus();
+      for (let step = 1; step <= 3; step++) {
+        ed.restoreCaret({ blockIndex: ed.winStart + pickP(), offset: 0 });
+        T.type('步' + step);
+        ed.hCoalesce = false;        // 三步算三次独立编辑，别合并成一步
+        ed.flush();
+      }
+      has('视口: 三次编辑留下三条历史', ed.history.length === 4);
+
+      const t1 = performance.now();
+      const undone = ed.undo() && ed.undo() && ed.undo();
+      const undoMs = performance.now() - t1;
+      has('视口: 三步都能撤', undone === true);
+      has('视口: 撤销三步回到原文', ed.toMarkdown() === base);
+      has('视口: 撤销后仍是视口模式', ed.virtual === true);
+      has('视口: 撤销不必整篇重解析', undoMs < 900);
+      has('视口: 重做回到编辑后', ed.redo() === true && ed.toMarkdown() !== base);
+    }
+
+    /* ---- 纯文本编辑不动块间距 ----
+       源文里的软换行（两行紧挨、没有空行）是一个块一条记录、gap=0；
+       改个字如果顺手重排间距，就会把它们拆成两个段落 —— 那是改内容。 */
+    {
+      ed.render(big);
+      const prev = ed.toMarkdown();
+      root.focus();
+      let k = 0;
+      while (k < root.children.length && root.children[k].textContent.indexOf('第二行紧跟着') < 0) k++;
+      has('视口: 找到软换行块', k < root.children.length);
+      ed.restoreCaret({ blockIndex: ed.winStart + k, offset: 0 });
+      T.type('X');
+      const out2 = ed.toMarkdown();
+      has('视口: 软换行没被拆成两段', out2.indexOf('\n\n第二行紧跟着') < 0);
+      has('视口: 软换行块内容已更新', out2.indexOf('X第二行紧跟着') >= 0);
+      has('视口: 软换行编辑只多了那一个字', out2.length === prev.length + 1);
+    }
+
+    /* ---- 拖选跨窗口：窗口只长不搬 ----
+       搬家会 replaceChildren 掉锚点节点，浏览器随即丢选区（跨屏拖选白拖）。
+       拖选期间改为朝推进方向续长窗口。 */
+    {
+      ed.render(big);
+      root.focus();
+      let k = 0;
+      while (k < root.children.length && root.children[k].dataset.type !== 'p') k++;
+      ed.restoreCaret({ blockIndex: ed.winStart + k, offset: 0 });
+      const sel = window.getSelection();
+      const rg = sel.getRangeAt(0);
+      const last = root.children[root.children.length - 1];
+      rg.setEnd(last.querySelector('.w-text'), 0);
+      sel.removeAllRanges();
+      sel.addRange(rg);
+      const count0 = ed.winCount;
+      const text0 = sel.toString().length;
+
+      ed._drag = true;
+      root.scrollTop = root.clientHeight * 3.5;   // 模拟拖到屏底后的自动滚屏
+      root.dispatchEvent(new Event('scroll'));
+      has('视口: 拖选时窗口只长不搬', ed.winStart === 0);
+      has('视口: 拖选时窗口已续长', ed.winCount > count0);
+      has('视口: 拖选时选区还在', window.getSelection().toString().length >= text0);
+      ed._drag = false;
+
+      /* 松手后恢复常态：滚动照旧搬家 */
+      root.scrollTop = root.clientHeight * 14;
+      root.dispatchEvent(new Event('scroll'));
+      has('视口: 松手后窗口恢复搬家', ed.winStart > 0);
+    }
+
     has('视口: 载入耗时在可接受范围', loadMs < 5000);
   }
 

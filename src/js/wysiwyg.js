@@ -27,9 +27,22 @@ const BIG_DOC_BLOCKS = 5000;
 const BIG_DOC_CHARS = 1000 * 1000;
 /* .wysiwyg 的 CSS padding-top（绝对偏移的零点） */
 const PAD_TOP = 32;
+/* 拖选期间窗口只增不减的上限（块）。4 屏约百来块，2000 块够拖十几屏；
+   再往上 DOM 成本就压过收益了，此时退回正常搬家（选区会断，和以前一样） */
+const MAX_DRAG_WIN = 2000;
 
 /** 字符串占的字节数（V8 里 1 个 UTF-16 码元 = 2 字节，这里只用于比较量级） */
 const bytesOf = (s) => (s ? s.length * 2 : 0);
+/* 视口模式的撤销快照是「记录数组的浅拷贝」：块对象由 _syncWindow 写时复制
+   （内容没变就保持同一个对象），所以一份 8 万块的快照只占 620 KB 指针。
+   条数按同样的字节预算折算，10MB 文档能留十几步，而不是原先的一步。 */
+const snapSize = (e) => (e.recs ? e.recs.length * 8 + 64 : bytesOf(e.md));
+const sameRecs = (a, b) => {
+  if (a === b) return true;
+  if (!a || !b || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+};
 
 /** 当前文档所在目录：图片的相对路径要按它展开成可加载的绝对地址 */
 let docDir = '';
@@ -1024,7 +1037,22 @@ function recordsToMd(recs) {
   return out.join('\n');
 }
 
+/** 记录数组 → markdown 原文（trail：原文结尾有没有换行，见 _render 的说明） */
+function serializeRecs(recs, trail) {
+  let md = recordsToMd(recs);
+  if (trail && md && !md.endsWith('\n')) md += '\n';
+  return md;
+}
+
 /** 相邻两块之间要不要空行（同列表项、同组引用不空） */
+const sameLi = (a, b) => a === b || (!!a && !!b && a.kind === b.kind
+  && a.indent === b.indent && a.num === b.num && a.start === b.start
+  && a.checked === b.checked && a.text === b.text);
+/** 两条记录的逻辑内容是否相同（高度缓存 h、DOM 引用不参与） */
+const sameRec = (a, b) => a.md === b.md && a.type === b.type && a.nl === b.nl
+  && a.gap === b.gap && a.callout === b.callout
+  && a.bqStart === b.bqStart && a.coFollow === b.coFollow && sameLi(a.li, b.li);
+
 const gapBetween = (a, b) => ((a.type === 'li' && b.type === 'li')
   || (a.type === 'bq' && b.type === 'bq' && !b.callout && !b.bqStart)) ? 0 : 1;
 
@@ -1142,6 +1170,15 @@ export class WysiwygEditor {
        全文已选，编辑动作改由模型层整篇替换。 */
     this._selAll = false;
 
+    /* 拖选期间（按下左键到松开）窗口只许变长、不许搬家：搬家会 replaceChildren
+       掉锚点所在的节点，浏览器随即丢掉整个选区 —— 跨屏拖选等于白拖。 */
+    this._drag = false;
+    root.addEventListener('pointerdown', (e) => { if (e.button === 0) this._drag = true; }, true);
+    const endDrag = () => { this._drag = false; };
+    document.addEventListener('pointerup', endDrag, true);
+    document.addEventListener('pointercancel', endDrag, true);
+    window.addEventListener('blur', endDrag);
+
     root.addEventListener('scroll', () => this._onVirtualScroll(), { passive: true });
     root.addEventListener('input', () => this.onInput());
     root.addEventListener('keydown', (e) => this.handleKey(e));
@@ -1190,8 +1227,15 @@ export class WysiwygEditor {
        预热块缓存并核对一次：往返结果与源文本一致（绝大多数）就维持源文本；
        有出入（罕见的非规范写法被归一化）再换成往返结果，保证首次编辑的
        脏判定不错乱。 */
-    this.history = [{ md, caret: null }];
-    this.hBytes = bytesOf(md);
+    if (this.virtual && this.records) {
+      /* 视口模式的基线存记录快照：整篇文本是 8 万块的 12 MB 字符串，
+         而快照只是记录数组的浅拷贝（块对象共享），620 KB 一份 */
+      this.history = [{ recs: this.records.slice(), trail: this.trailingNewline, caret: null }];
+      this.hBytes = snapSize(this.history[0]);
+    } else {
+      this.history = [{ md, caret: null }];
+      this.hBytes = bytesOf(md);
+    }
     this.hIndex = 0;
     this.hLast = 0;
     this.hCoalesce = false;
@@ -1438,9 +1482,7 @@ export class WysiwygEditor {
     const nodes = new Array(end - startIdx);
     for (let i = startIdx, k = 0; i < end; i++, k++) {
       const rec = this.records[i];
-      const el = this._materialize(rec);
-      rec.el = el;
-      nodes[k] = el;
+      nodes[k] = this._materialize(rec);
     }
     this.winStart = startIdx;
     this.winCount = end - startIdx;
@@ -1464,9 +1506,14 @@ export class WysiwygEditor {
 
   /** 实测量一遍窗口内块的高度（只读，不写样式，一次布局内完成） */
   _measureWindow() {
+    this._measureFrom(0);
+  }
+
+  /** 只量窗口里从第 from 个孩子往后的块（续长窗口时只量新加的） */
+  _measureFrom(from) {
     const kids = this.root.children;
     let changed = false;
-    for (let i = 0; i < kids.length; i++) {
+    for (let i = from; i < kids.length; i++) {
       const r = this.records[this.winStart + i];
       if (!r) continue;
       const box = kids[i].getBoundingClientRect();
@@ -1506,8 +1553,79 @@ export class WysiwygEditor {
        但会打断选区与滚动惯性，能少搬就少搬。
        判据是「窗口是否完整盖住 [top, bot]」：顶端不能要求 top > winStart，
        文档最顶上 top 恒等于 winStart（0），那样写会白搬好几次才稳住。 */
+    /* 拖选中：朝选区推进的方向续长窗口，节点因此不会被摘掉，选区可以一直
+       延下去（自动滚屏也会跟着走）。续不动了（到文末/到上限）再退回搬家。 */
+    if (this._drag && this._hasRange()) {
+      if (top < this.winStart + 1 && this._growWindow(-1)) return;
+      if (bot > this.winStart + this.winCount - 2 && this._growWindow(1)) return;
+    }
     if (top >= this.winStart && bot <= this.winStart + this.winCount - 2) return;
     this._windowAt(Math.max(0, top - 1), true);
+  }
+
+  /** 当前是否有落在编辑器里的非折叠选区 */
+  _hasRange() {
+    const sel = window.getSelection();
+    return !!(sel && sel.rangeCount && !sel.isCollapsed && this.root.contains(sel.anchorNode));
+  }
+
+  /**
+   * 把窗口朝 dir 续长一块（只增不减，约一屏）。给拖选用：内容必须在 DOM 里，
+   * 选区才延得下去。返回 false 表示续不动（到文首/文末，或触到 MAX_DRAG_WIN）。
+   */
+  _growWindow(dir) {
+    const n = this.records.length;
+    if (this.winCount >= MAX_DRAG_WIN) return false;
+    const vh = this._viewportH();
+    if (dir > 0) {
+      const from = this.winStart + this.winCount;
+      if (from >= n) return false;
+      const room = Math.min(n, from + 300, this.winStart + MAX_DRAG_WIN);
+      let end = from;
+      let h = 0;
+      while (end < room && h < vh) {
+        h += this.records[end].h || estimateH(this.records[end]);
+        end++;
+      }
+      const nodes = new Array(end - from);
+      for (let i = from, k = 0; i < end; i++, k++) nodes[k] = this._materialize(this.records[i]);
+      this.root.append(...nodes);
+      this.winCount = end - this.winStart;
+      this._measureFrom(from - this.winStart);
+      this._applyPadding();
+      return true;
+    }
+    const to = this.winStart;
+    if (to <= 0) return false;
+    const room = Math.max(0, to - 300, this.winStart + this.winCount - MAX_DRAG_WIN);
+    let from = to;
+    let h = 0;
+    while (from > room && h < vh) {
+      h += this.records[from - 1].h || estimateH(this.records[from - 1]);
+      from--;
+    }
+    const add = to - from;
+    const nodes = new Array(add);
+    for (let i = from, k = 0; i < to; i++, k++) nodes[k] = this._materialize(this.records[i]);
+    this.root.prepend(...nodes);
+    this.winStart = from;
+    this.winCount += add;
+    /* 上面的补偿量要用真实高度：估计值和实测差几十像素，画面就会跳一下 */
+    const kids = this.root.children;
+    let added = 0;
+    for (let i = 0; i < add; i++) {
+      const box = kids[i].getBoundingClientRect();
+      if (box.height > 0) { this.records[from + i].h = box.height; added += box.height; }
+    }
+    if (added) this._cumDirty = true;
+    this._applyPadding();
+    /* 上方的占位少了「新长出来这些块」的高度，视口会整体上移同样的量 —— 补回来 */
+    if (added) {
+      this._vLock = true;
+      this.root.scrollTop = Math.max(0, this.root.scrollTop - added);
+      this._vLock = false;
+    }
+    return true;
   }
 
   /** 把窗口里被编辑过的块并回模型（结构变了就同步增删记录） */
@@ -1529,19 +1647,16 @@ export class WysiwygEditor {
       this.cum = null;
       resized = true;
     }
-    /* 只记「真的变了」的块：没动过的块保留原文间距，打开再保存不会平白
-       把用户的紧凑写法（`---` 紧跟标题这类）撑成空行 */
-    let dirtyFrom = -1;
-    let dirtyTo = -1;
-    const mark = (i) => {
-      if (dirtyFrom < 0 || i < dirtyFrom) dirtyFrom = i;
-      if (i > dirtyTo) dirtyTo = i;
-    };
+    /* 只记「类型真的变了」的块：内容改了不需要动间距（改个字不该把段落之间的
+       紧凑写法拆开）；只有块类型变了，间距规则才跟着变 */
+    let typeFrom = -1;
+    let typeTo = -1;
     for (let i = 0; i < n; i++) {
       const el = kids[i];
       const r = this.records[start + i];
       if (!r) continue;
       const type = el.dataset.type || 'p';
+      let next;
       if (type === 'li') {
         const prev = r.li || {};
         const li = {
@@ -1552,45 +1667,47 @@ export class WysiwygEditor {
           checked: el.dataset.checked === '1',
           text: inlineToMd(textEl(el)),
         };
-        const md = liMd(li);
-        if (md !== r.md || r.type !== 'li') mark(i);
-        r.li = li;
-        r.md = md;
-        r.type = 'li';
-        r.nl = 0;
-        r.callout = '';
-        r.bqStart = 0;
-        r.coFollow = '';
+        next = { ...r, md: liMd(li), type: 'li', nl: 0, li, callout: '', bqStart: 0, coFollow: '' };
       } else {
         const rb = rawBlock(el);
-        const md = rb.lines.join('\n');
-        if (md !== r.md || r.type !== type) mark(i);
-        r.md = md;
-        r.nl = rb.lines.length - 1;
-        r.type = type;
-        r.li = null;
-        r.callout = el.dataset.callout || '';
-        r.bqStart = el.dataset.bqStart ? 1 : 0;
-        r.coFollow = el.dataset.coFollow || '';
+        next = {
+          ...r,
+          md: rb.lines.join('\n'),
+          nl: rb.lines.length - 1,
+          type,
+          li: null,
+          callout: el.dataset.callout || '',
+          bqStart: el.dataset.bqStart ? 1 : 0,
+          coFollow: el.dataset.coFollow || '',
+        };
+      }
+      /* 记录是只读的：撤销快照就是记录数组的浅拷贝，原地改字段会把历史里的
+         旧状态一起改掉（那就撤不回去了）。因此内容有变才换新对象 —— 没变的块
+         保持同一个引用，快照之间共享，内存几乎不涨。 */
+      if (!sameRec(r, next)) this.records[start + i] = next;
+      if (r.type !== type) {
+        if (typeFrom < 0 || i < typeFrom) typeFrom = i;
+        if (i > typeTo) typeTo = i;
       }
     }
     if (resized) {
       /* 结构变了：整段重算间隔（新块没有原始间距可用） */
-      for (let i = 0; i < n - 1; i++) {
-        const a = this.records[start + i];
-        const b = this.records[start + i + 1];
-        if (a && b) a.gap = gapBetween(a, b);
-      }
-    } else if (dirtyFrom >= 0) {
-      /* 只动变化块的左右邻：块间隔只跟相邻两块的类型有关 */
-      const lo = Math.max(0, dirtyFrom - 1);
-      const hi = Math.min(n - 1, dirtyTo + 1);
-      for (let i = lo; i < hi; i++) {
-        const a = this.records[start + i];
-        const b = this.records[start + i + 1];
-        if (a && b) a.gap = gapBetween(a, b);
-      }
+      for (let i = 0; i < n - 1; i++) this._setGap(start + i);
+    } else if (typeFrom >= 0) {
+      /* 只动变类型块的左右邻：块间隔只跟相邻两块的类型有关 */
+      const lo = Math.max(0, typeFrom - 1);
+      const hi = Math.min(n - 1, typeTo + 1);
+      for (let i = lo; i < hi; i++) this._setGap(start + i);
     }
+  }
+
+  /** 重算第 i 块与其后一块的间距（同样写时复制，见 _syncWindow 的说明） */
+  _setGap(i) {
+    const a = this.records[i];
+    const b = this.records[i + 1];
+    if (!a || !b) return;
+    const g = gapBetween(a, b);
+    if (a.gap !== g) this.records[i] = { ...a, gap: g };
   }
 
   /** 模型层编号：整篇算一遍，只把结果套到窗口 DOM 上 */
@@ -1722,16 +1839,14 @@ export class WysiwygEditor {
   }
 
   toMarkdown() {
-    let md;
     if (this.virtual) {
       /* 窗口里的块可能刚被改过：先把这几个块的 DOM 并回模型，再拼整篇。
          成本与窗口大小成正比（几十块），与文档大小无关 —— 这就是大文档
          序列化从 ~700ms 降到 1ms 级的原因。 */
       this._syncWindow();
-      md = recordsToMd(this.records);
-    } else {
-      md = blocksToMarkdown(this.root, this.mdCache);
+      return this._serializeRecords();
     }
+    let md = blocksToMarkdown(this.root, this.mdCache);
     if (this.trailingNewline && md && !md.endsWith('\n')) md += '\n';
     return md;
   }
@@ -1777,22 +1892,32 @@ export class WysiwygEditor {
   pushHistory(md) {
     const now = Date.now();
     const last = this.history[this.hIndex];
-    if (last && last.md === md) { this.hLast = now; return; }
-    const snap = { md, caret: this.caretState() };
+    const recs = !!(this.virtual && this.records);
+    /* 没有真改动就别占一条历史。记录快照按对象引用判等：内容没变的块始终是
+       同一个对象（_syncWindow 写时复制），所以这个比较是几万次指针比较，零成本 */
+    const same = recs && last && last.recs
+      ? sameRecs(last.recs, this.records)
+      : (!!last && last.md === md);
+    if (same) { this.hLast = now; return; }
+    const snap = recs
+      ? { recs: this.records.slice(), trail: this.trailingNewline, caret: this.caretState() }
+      : { md, caret: this.caretState() };
     if (last && this.hCoalesce && now - this.hLast < 700) {
-      if (this.history[this.hIndex]) this.hBytes -= bytesOf(this.history[this.hIndex].md);
+      this.hBytes -= snapSize(this.history[this.hIndex]);
       this.history[this.hIndex] = snap;
-      this.hBytes += bytesOf(md);
+      this.hBytes += snapSize(snap);
     } else {
       this.history = this.history.slice(0, this.hIndex + 1);
       this.history.push(snap);
-      this.hBytes += bytesOf(md);
-      if (this.history.length > 200) this.hBytes -= bytesOf(this.history.shift().md);
+      this.hBytes += snapSize(snap);
+      if (this.history.length > 200) this.hBytes -= snapSize(this.history.shift());
       /* 条数上限 200 是按小文档定的。600 段的文档每份快照 60 KB，
          200 条就是 12 MB 常驻。所以再按总字节封一道顶，超了丢最旧的：
-         长文档的撤销深度换内存，短文档完全不受影响。 */
+         长文档的撤销深度换内存，短文档完全不受影响。
+         视口文档的一份快照按 8 万块 × 8 字节 = 620 KB 折算，同一道顶
+         能留十几步 —— 而不是整篇文本快照下的 1 步。 */
       while (this.hBytes > HISTORY_BYTES && this.history.length > 2) {
-        this.hBytes -= bytesOf(this.history.shift().md);
+        this.hBytes -= snapSize(this.history.shift());
       }
       this.hIndex = this.history.length - 1;
     }
@@ -1804,9 +1929,7 @@ export class WysiwygEditor {
     if (this._flushTimer) this.flush();
     if (this.hIndex <= 0) return false;
     this.hIndex--;
-    const s = this.history[this.hIndex];
-    this._render(s.md, s.caret);
-    this.onChange(s.md);
+    this._applyHistory(this.history[this.hIndex]);
     this.hCoalesce = false;
     return true;
   }
@@ -1816,11 +1939,52 @@ export class WysiwygEditor {
     if (this._flushTimer) this.flush();
     if (this.hIndex >= this.history.length - 1) return false;
     this.hIndex++;
-    const s = this.history[this.hIndex];
-    this._render(s.md, s.caret);
-    this.onChange(s.md);
+    this._applyHistory(this.history[this.hIndex]);
     this.hCoalesce = false;
     return true;
+  }
+
+  /**
+   * 应用一条历史。记录快照只换数组 + 重建窗口（几十毫秒），
+   * 文本快照才走整篇渲染（只有小文档/降级路径才会用到）。
+   */
+  _applyHistory(s) {
+    if (s.recs && this.virtual) {
+      this._restoreRecords(s);
+      this.onChange(this._serializeRecords());
+      return;
+    }
+    /* 记录快照遇上非视口模式（替换整篇后文档变小这类）：先序列化再整篇渲染 */
+    const md = s.recs ? serializeRecs(s.recs, s.trail) : s.md;
+    this._render(md, s.caret);
+    this.onChange(md);
+  }
+
+  /** 用快照里的记录重建视图（不重新解析原文） */
+  _restoreRecords(s) {
+    this.records = s.recs.slice();
+    this.trailingNewline = !!s.trail;
+    this.silent = true;
+    this._selAll = false;
+    this.lastBlock = null;
+    this.lastCell = null;
+    this.cum = null;
+    this._cumDirty = true;
+    this.winStart = 0;
+    this.winCount = 0;
+    const n = this.records.length;
+    const idx = s.caret && s.caret.blockIndex != null ? s.caret.blockIndex : 0;
+    this.root.innerHTML = '';
+    this._windowAt(Math.max(0, Math.min(idx - 2, n - 1)), false);
+    this._renumberVirtual();
+    if (s.caret) this.restoreCaret(s.caret);
+    this.silent = false;
+    this._edited = true;
+  }
+
+  /** 记录 → markdown（视口模式的唯一序列化出口，结尾换行规则与 toMarkdown 一致） */
+  _serializeRecords() {
+    return serializeRecs(this.records, this.trailingNewline);
   }
 
   /* ---------------- 基础定位 ---------------- */
@@ -2010,12 +2174,19 @@ export class WysiwygEditor {
   _replaceWholeDoc(text) {
     this._selAll = false;
     const prev = this.toMarkdown();
+    /* 替换前的状态要先按当前模式存好快照 —— render 之后旧记录就没了 */
+    const before = this.virtual && this.records
+      ? { recs: this.records.slice(), trail: this.trailingNewline, caret: null }
+      : { md: prev, caret: null };
     this.lastBlock = null;
     this.render(text, { blockIndex: 0, offset: 0 });
     if (prev !== text) {
-      this.history = [{ md: prev, caret: null }, { md: text, caret: null }];
+      const after = this.virtual && this.records
+        ? { recs: this.records.slice(), trail: this.trailingNewline, caret: null }
+        : { md: text, caret: null };
+      this.history = [before, after];
       this.hIndex = 1;
-      this.hBytes = bytesOf(prev) + bytesOf(text);
+      this.hBytes = snapSize(before) + snapSize(after);
     }
     this._edited = true;
     this.flush();
