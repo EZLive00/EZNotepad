@@ -71,10 +71,21 @@ body[data-theme="light"] {
   --co-danger: #c22f2f;  --co-danger-bg: rgba(194, 47, 47, .07);
   --co-ok: #15803d;      --co-ok-bg: rgba(21, 128, 61, .08);
 
-  /* 正文光标：自绘工字（14×24，热区在竖线正中）。系统 I-beam 只有 1px，
+  /* 正文光标：自绘工字（14×24 画布，热区在竖干正中）。系统 I-beam 只有 1px，
      而且 Chromium 会按背景明暗自己翻成白色/黑色，翻成白色时在浅底上几乎看不见。
-     这里固定 2px 竖线 + 1px 对比晕：浅底是深色工字，深底是浅色工字，不再随背景变 */
-  --cur-text: url("data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2214%22%20height%3D%2224%22%20viewBox%3D%220%200%2014%2024%22%3E%3Cpath%20d%3D%22M3%203%20H11%20M7%201%20V23%20M3%2021%20H11%22%20fill%3D%22none%22%20stroke%3D%22%23ffffff%22%20stroke-opacity%3D%220.92%22%20stroke-width%3D%224%22%2F%3E%3Cpath%20d%3D%22M3%203%20H11%20M7%201%20V23%20M3%2021%20H11%22%20fill%3D%22none%22%20stroke%3D%22%2317191e%22%20stroke-width%3D%222%22%2F%3E%3C%2Fsvg%3E") 7 12;
+     尺寸口径：竖干 2px（原生的两倍），横臂 6px 长 2px 厚（原生约 4px），
+     竖干上下与横臂齐平——出头会看着像「工」字多了两根刺；
+     颜色是中深灰 #3d4350 而不是纯黑，纯黑在小字号正文里压得太重。
+     不加对比晕：实测会显成白框，浅底上反而脏。
+     用 PNG 而不是 SVG——cursor 对 SVG 的支持不可靠（解析得过却渲染不出时，
+     光标直接消失，比 1px 更糟） */
+  --cur-text: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAA4AAAAYCAYAAADKx8xXAAAAJklEQVR42mNgGLrA1jngPzZMO43oBpDt5FGNoxqHncaBy4+DDwAAH69eDUbf5XAAAAAASUVORK5CYII=") 7 12;
+}
+/* 高分屏（125%/150% 缩放）换 2x 图，否则光标会被系统放大发糊。本机 100% DPI 走上面那张 */
+@media (min-resolution: 1.5dppx) {
+  :root {
+    --cur-text: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABwAAAAwCAYAAAACYxrZAAAAQklEQVR42u3XsQ0AIAgAQRazcgH3X0ZHMDREzH1CfRQ0REjtG3PtzADfA28LlB8REAgEAoFAIBAIbAl61/77D6XyDkl3eEAKjpLaAAAAAElFTkSuQmCC") 7 12;
+  }
 }
 
 body[data-theme="dark"] {
@@ -120,8 +131,13 @@ body[data-theme="dark"] {
   --co-danger: #ff8a8a;  --co-danger-bg: rgba(255, 90, 90, .10);
   --co-ok: #62d38b;      --co-ok-bg: rgba(46, 204, 113, .09);
 
-  /* 深底反过来：浅色工字 + 深色对比晕 */
-  --cur-text: url("data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2214%22%20height%3D%2224%22%20viewBox%3D%220%200%2014%2024%22%3E%3Cpath%20d%3D%22M3%203%20H11%20M7%201%20V23%20M3%2021%20H11%22%20fill%3D%22none%22%20stroke%3D%22%230d1015%22%20stroke-opacity%3D%220.85%22%20stroke-width%3D%224%22%2F%3E%3Cpath%20d%3D%22M3%203%20H11%20M7%201%20V23%20M3%2021%20H11%22%20fill%3D%22none%22%20stroke%3D%22%23e7e9ee%22%20stroke-width%3D%222%22%2F%3E%3C%2Fsvg%3E") 7 12;
+  /* 深底反过来：浅灰工字（#c2c7d2），同样不加晕 */
+  --cur-text: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAA4AAAAYCAYAAADKx8xXAAAAJklEQVR42mNgGLrg0PFL/7Fh2mlEN4BsJ49qHNU47DQOXH4cfAAAtUOuSWTbew0AAAAASUVORK5CYII=") 7 12;
+}
+@media (min-resolution: 1.5dppx) {
+  body[data-theme="dark"] {
+    --cur-text: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABwAAAAwCAYAAAACYxrZAAAAQklEQVR42u3XsQ0AIAgAQfYfy8behXQEQ0PE3CfUR0FDhNS+MdfODPA98LZA+REBgUAgEAgEAoHAlqB37b//UCrvAKImuT/aYZR/AAAAAElFTkSuQmCC") 7 12;
+  }
 }
 
 * { box-sizing: border-box; }
