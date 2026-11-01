@@ -569,6 +569,98 @@ window.__run = () => {
   ed.insertBlock('quote');
   eq('再点一次取消引用', T.out(), '一段话');
 
+  /* 31b. 换块类型 = 原地搬内容，不是另起一块
+     此前引用那条分支只认段落和标题（代码块上点了毫无反应），代码块则一律
+     插在下方、原块原地不动 —— 两个方向都不是用户要的。 */
+  {
+    T.reset('```js\nconst a = 1;\n```');
+    ed.restoreCaret({ blockIndex: 0, offset: 0 });
+    ed.insertBlock('quote');
+    eq('代码块转引用：原地换类型', T.out(), '> const a = 1;');
+    eq('代码块转引用：块数不变', T.blocks().length, 1);
+
+    T.reset('> 一句引用');
+    ed.restoreCaret({ blockIndex: 0, offset: 0 });
+    ed.insertBlock('code');
+    eq('引用转代码块：内容搬进代码块', T.out(), '```\n一句引用\n```');
+    eq('引用转代码块：不在下面另起一块', T.blocks().join(','), 'code=一句引用');
+
+    /* 代码块是多行块，转逐行块必须按行拆 —— 压成一行才是真丢内容 */
+    T.reset('```\n第一行\n第二行\n```');
+    ed.restoreCaret({ blockIndex: 0, offset: 0 });
+    ed.insertBlock('quote');
+    eq('多行代码块转引用按行拆开', T.out(), '> 第一行\n> 第二行');
+
+    // 紧跟已有引用转出来的 = 独立引用（否则会被紧凑规则粘进上一个框）
+    T.reset('> 已有引用\n\n```\n代码一行\n```');
+    ed.restoreCaret({ blockIndex: 1, offset: 0 });
+    ed.insertBlock('quote');
+    {
+      const qs = [...root.querySelectorAll('.w-bq')];
+      has('代码块转引用：紧跟引用时打 bqStart', qs.length === 2 && qs[1].dataset.bqStart === '1');
+      eq('代码块转出的独立引用往返', T.out(), '> 已有引用\n\n> 代码一行');
+    }
+
+    // 内容按 Markdown 源搬家：行内格式不能因为换类型被削掉
+    T.reset('> 引用里有 **加粗**');
+    ed.restoreCaret({ blockIndex: 0, offset: 0 });
+    ed.insertBlock('code');
+    eq('引用转代码块：行内标记变字面', T.out(), '```\n引用里有 **加粗**\n```');
+
+    T.reset('段落 **加粗**');
+    ed.restoreCaret({ blockIndex: 0, offset: 0 });
+    ed.insertBlock('quote');
+    eq('段落转引用：行内标记不丢', T.out(), '> 段落 **加粗**');
+
+    T.reset('> 引用 **粗**');
+    ed.restoreCaret({ blockIndex: 0, offset: 0 });
+    ed.toggleHeading(2);
+    eq('引用转标题：行内标记不丢', T.out(), '## 引用 **粗**');
+
+    // 多行转提示块：续行染同一个框，只写一个 [!info]
+    T.reset('```\n甲\n乙\n```');
+    ed.restoreCaret({ blockIndex: 0, offset: 0 });
+    ed.setCallout('info');
+    eq('多行代码块转提示块只写一个标记', T.out(), '> [!info]\n> 甲\n> 乙');
+
+    // 表格没有可搬的一行文本：不许把表格换掉，保持原样
+    T.reset('| A |\n| --- |\n| 1 |');
+    ed.focusCell(root.querySelector('.w-table'), 0, 0);
+    ed.insertBlock('quote');
+    eq('表格上点引用不破坏表格', T.out(), '| A |\n| --- |\n| 1 |');
+
+    /* 引用组的边界不能因为换类型模糊掉：后面紧跟的那条引用原来跟前一块隔着
+       别的东西，转出来的引用不该被紧凑规则吸进去 */
+    T.reset('```\n代码一行\n```\n\n> 后面这句');
+    ed.restoreCaret({ blockIndex: 0, offset: 0 });
+    ed.insertBlock('quote');
+    eq('转出来的引用不与后面的引用并框', T.out(), '> 代码一行\n\n> 后面这句');
+
+    /* 提示块的标题只存在 data-callout-title 里，换类型/取消都得把字带上 */
+    T.reset('> [!info] 提示标题\n> 续行一\n> 续行二');
+    ed.restoreCaret({ blockIndex: 0, offset: 0 });
+    ed.insertBlock('code');
+    eq('提示块转代码块：标题文字跟过去', T.out(), '```\n提示标题\n```\n\n> 续行一\n> 续行二');
+    has('提示块转代码块：续行不再染色', !root.querySelector('[data-co-follow]'));
+
+    T.reset('> [!info] 提示标题\n> 续行');
+    ed.restoreCaret({ blockIndex: 0, offset: 0 });
+    ed.clearCallout();
+    eq('取消提示块：标题变正文、引用留着', T.out(), '> 提示标题\n> 续行');
+
+    T.reset('> [!info] 提示标题\n> 续行');
+    ed.restoreCaret({ blockIndex: 0, offset: 0 });
+    ed.setCallout('warning');
+    has('提示块换类型：续行跟着换色',
+      root.querySelectorAll('[data-co-follow="warning"]').length === 1);
+
+    // 结构性编辑必须可撤销
+    T.reset('```\n原代码\n```');
+    ed.restoreCaret({ blockIndex: 0, offset: 0 });
+    ed.insertBlock('quote');
+    has('换块类型可一步撤销', ed.undo() === true && T.out() === '```\n原代码\n```');
+  }
+
   // 32. 空行不再生成空段落：标题与分割线之间只隔一层
   T.reset('## 标题\n\n---');
   eq('标题与分割线之间没有空块', T.blocks().join(','), 'h2=标题,hr=');
@@ -929,6 +1021,31 @@ window.__run = () => {
     has('视口: 回到小文档后退出视口模式', ed.virtual === false);
     has('视口: 占位变量已清空', root.style.getPropertyValue('--vpad-top') === '');
     eq('视口: 小文档往返', ed.toMarkdown(), '# 小文档\n\n正文');
+
+    /* ---- 换块类型在视口模式下也要走记录模型 ----
+       records 是块的唯一真相，原地换类型会改块数（多行代码块转引用按行拆），
+       窗口 DOM 与 records 的对齐全靠 _syncWindow 的增删同步。 */
+    {
+      ed.render(big);
+      root.focus();
+      let k = 0;
+      while (k < root.children.length
+        && !(root.children[k].dataset.type === 'bq'
+          && root.children[k].textContent.trim() === '引用一行')) k++;
+      has('视口: 窗口里有引用可转', k < root.children.length);
+      const md0 = ed.toMarkdown();
+      const cnt = (s, sub) => s.split(sub).length - 1;
+      const q0 = cnt(md0, '\n> 引用一行\n');
+      const c0 = cnt(md0, '```\n引用一行\n```');
+      has('视口: 文档里有多条同样的引用', q0 >= 1);
+      ed.restoreCaret({ blockIndex: ed.winStart + k, offset: 0 });
+      ed.insertBlock('code');
+      const md1 = ed.toMarkdown();
+      has('视口: 引用转代码块进了记录', cnt(md1, '```\n引用一行\n```') === c0 + 1);
+      has('视口: 原引用行少了一条', cnt(md1, '\n> 引用一行\n') === q0 - 1);
+      eq('视口: 只改了这一段', md1.length - md0.length, 6);   // "> 引用一行"(6) → 围栏版(12)
+      has('视口: 换类型可一步撤销', ed.undo() === true && ed.toMarkdown() === big);
+    }
     /* ---- 撤销：视口模式用「记录快照 + 写时复制」 ----
        整篇文本快照在 10MB 文档上要 12MB 一份，8MB 预算只够留 1 步（还得每次
        整篇重解析）。记录快照只是指针数组，块对象共享，能留十几步且撤销只重建窗口。 */

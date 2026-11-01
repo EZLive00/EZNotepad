@@ -2456,6 +2456,14 @@ const commands = {
   ol: () => wysCmd((w) => w.toggleList('ol')),
   taskList: () => wysCmd((w) => w.toggleList('task')),
   quote: () => wysCmd((w) => w.insertBlock('quote')),
+  /* 右键「引用」那排药丸里「普通」的意思是「切成普通引用」，不是「取消引用」：
+     在提示块上应该只摘掉提示块样式，原先它跟 quote 走同一个命令，一点整个框
+     就退成段落了。普通引用上再点一次仍然是取消（保持原来的开关手感） */
+  plainQuote: () => wysCmd((w) => {
+    const b = w.currentBlock();
+    if (b && b.dataset.type === 'bq' && b.dataset.callout) { w.clearCallout(b); return; }
+    w.insertBlock('quote');
+  }),
   calloutInfo: () => wysCmd((w) => w.setCallout('info')),
   calloutWarning: () => wysCmd((w) => w.setCallout('warning')),
   calloutDanger: () => wysCmd((w) => w.setCallout('danger')),
@@ -3093,14 +3101,14 @@ function bindEvents() {
           { label: '无序列表', hint: '无序列表', icon: 'list', iconOnly: true, shortcut: 'Ctrl+Shift+8', action: () => commands.ul() },
           { label: '有序列表', hint: '有序列表', icon: 'list-ordered', iconOnly: true, shortcut: 'Ctrl+Shift+7', action: () => commands.ol() },
           { label: '任务列表', hint: '任务列表', icon: 'list-todo', iconOnly: true, shortcut: 'Ctrl+Shift+9', action: () => commands.taskList() },
-          /* 引用相关的三项在表格里点了没反应（setCallout / quote 只认 bq、p、标题块，
-             表格块会被静默忽略），索性不摆出来 —— 死按钮比少一项更让人困惑 */
+          /* 引用相关的三项在表格里点了没反应（表格没有可搬的一行文本，换类型一律
+             跳过它；见 wysiwyg.convertBlock），索性不摆出来 —— 死按钮比少一项更让人困惑 */
           ...(tbl ? [] : [
             { label: '引用', hint: '引用块', icon: 'text-quote', iconOnly: true, shortcut: 'Ctrl+Shift+Q', action: () => commands.quote() },
           ]),
         ] },
         ...(tbl ? [] : [{ lead: '引用', row: [
-          { label: '普通', hint: '普通引用', checked: () => bqCallout() === '', action: () => commands.quote() },
+          { label: '普通', hint: '普通引用', checked: () => bqCallout() === '', action: () => commands.plainQuote() },
           { label: '信息', hint: '信息提示块', checked: () => bqCallout() === 'info', action: () => commands.calloutInfo() },
           { label: '警告', hint: '警告提示块', checked: () => bqCallout() === 'warning', action: () => commands.calloutWarning() },
           { label: '危险', hint: '危险提示块', checked: () => bqCallout() === 'danger', action: () => commands.calloutDanger() },

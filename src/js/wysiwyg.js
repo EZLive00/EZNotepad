@@ -651,6 +651,24 @@ function codeToText(el) {
 }
 
 /**
+ * 换块类型时要搬的那段文字 —— 取 **Markdown 源**，不是 textContent。
+ * 用 textContent 会把 `**加粗**` 退成纯字、把 `[链接](url)` 退成标题，
+ * 换一次类型等于把行内格式悄悄削掉一层。
+ * 代码块与公式里的换行由 <br> 表示，交给 codeToText 还原成 \n。
+ */
+function blockMarkdownText(el) {
+  const type = el.dataset.type || 'p';
+  if (type === 'code') return codeToText(el.querySelector('.w-code') || el);
+  if (type === 'math') return codeToText(el.querySelector('.w-tex') || el);
+  const body = inlineToMd(el.querySelector('.w-text') || el);
+  /* 提示块的标题存在 data-callout-title 里、不在正文，换类型时得一起搬走，
+     否则「> [!info] 我的标题」转成代码块会变成一个空块 —— 用户写的字就没了 */
+  const title = type === 'bq' ? el.dataset.calloutTitle || '' : '';
+  if (!title) return body;
+  return body ? title + '\n' + body : title;
+}
+
+/**
  * 单个块的「原始序列化」：只依赖块自身（文本 + data-*），不含列表标记/缩进
  * 列宽（那要跟着前文走）、也不含块间空行（那要看邻居类型）。
  * 这两样在 assemble 阶段现算 —— 所以缓存可以放心按块失效。
@@ -2902,31 +2920,62 @@ export class WysiwygEditor {
     const block = this.currentBlock();
     if (!block) return;
     if (block.dataset.type === 'bq') {
-      if (block.dataset.callout === type) {
-        delete block.dataset.callout;
-        delete block.dataset.calloutTitle;
-        block.querySelector('.w-co-head')?.remove();
-      } else {
-        const title = block.dataset.calloutTitle || '';
-        block.dataset.callout = type;
-        const old = block.querySelector('.w-co-head');
-        const head = mkCalloutHead(type, title);
-        if (old) old.replaceWith(head);
-        else block.insertBefore(head, block.firstChild);
-        if (title) block.dataset.calloutTitle = title;
-      }
+      if (block.dataset.callout === type) { this.clearCallout(block); return; }
+      const title = block.dataset.calloutTitle || '';
+      const prevCo = block.dataset.callout || '';
+      block.dataset.callout = type;
+      const old = block.querySelector('.w-co-head');
+      const head = mkCalloutHead(type, title);
+      if (old) old.replaceWith(head);
+      else block.insertBefore(head, block.firstChild);
+      if (title) block.dataset.calloutTitle = title;
+      /* 续行跟着换色：否则改了类型，下面的正文还染着旧色 */
+      if (prevCo) this.eachCoFollow(block, prevCo, type);
       this.hCoalesce = false;
       this.flush();
       this.placeCaretEnd(block);
       return;
     }
-    if (block.dataset.type === 'p' || /^h[1-6]$/.test(block.dataset.type)) {
-      const nb = mkQuote(textEl(block).textContent, 0, type, '');
-      block.replaceWith(nb);
-      this.placeCaretEnd(nb);
-      this.hCoalesce = false;
-      this.flush();
+    /* 段落/标题/列表/代码块 → 提示块，内容跟过去（convertBlock 统一按行搬） */
+    this.convertBlock('bq', { callout: type });
+  }
+
+  /** 遍历紧跟在 block 之后、属于同一个提示块的续行；to 为空表示摘掉染色 */
+  eachCoFollow(block, co, to) {
+    let n = block.nextElementSibling;
+    while (n && n.dataset && n.dataset.type === 'bq' && n.dataset.coFollow === co) {
+      if (to) n.dataset.coFollow = to;
+      else delete n.dataset.coFollow;
+      n = n.nextElementSibling;
     }
+  }
+
+  /** 取消提示块样式，退回普通引用 —— 引用本身留着（右键「普通」走这条） */
+  clearCallout(block = this.currentBlock()) {
+    if (!block || block.dataset.type !== 'bq' || !block.dataset.callout) return;
+    const co = block.dataset.callout;
+    const title = block.dataset.calloutTitle || '';
+    const body = inlineToMd(textEl(block));
+    delete block.dataset.callout;
+    delete block.dataset.calloutTitle;
+    block.querySelector('.w-co-head')?.remove();
+    this.eachCoFollow(block, co, '');
+    /* 标题文字原来只存在 data-callout-title 里：摘掉提示块得把它放回正文，
+       否则用户写的标题凭空消失。标题与正文并存时按两行引用留下 */
+    const parts = [title, body].filter((s) => s && s.trim());
+    const t = textEl(block);
+    t.innerHTML = parts.length ? inlineHtml(parts[0]) : '';
+    ensurePlaceholder(t);
+    let anchor = block;
+    for (let i = 1; i < parts.length; i++) {
+      const nb = mkQuote(parts[i], 0);
+      anchor.after(nb);
+      anchor = nb;
+    }
+    this.renumber();
+    this.hCoalesce = false;
+    this.flush();
+    this.placeCaretEnd(block);
   }
 
   /* ---------------- 标题的 ### 标记 ----------------
@@ -3281,14 +3330,8 @@ export class WysiwygEditor {
       return;
     }
 
-    const t = textEl(block);
-    const text = t.textContent;
-    const li = mkLi(kind, text, 0, false, 1);
-    block.replaceWith(li);
-    this.placeCaretEnd(li);
-    this.renumber();
-    this.hCoalesce = false;
-    this.flush();
+    /* 段落/标题/引用/代码块 → 列表，内容跟过去（代码块按行拆成一个条目一行） */
+    this.convertBlock('li', { list: kind });
   }
 
   /** 标题级别：0 = 正文 */
@@ -3296,14 +3339,22 @@ export class WysiwygEditor {
     const block = this.currentBlock();
     if (!block) return;
     const cur = block.dataset.type;
-    if (level === 0 || cur === 'h' + level) { this.toParagraph(block, null); return; }
     if (cur === 'table' || cur === 'hr') return;
-    const text = textEl(block).textContent;
-    const nb = mkHeading(level, text);
-    block.replaceWith(nb);
-    this.placeCaretEnd(nb);
-    this.hCoalesce = false;
-    this.flush();
+    const target = level === 0 ? 'p' : 'h' + level;
+    if (cur === target) {
+      // 同级标题再点一次 = 退回正文（原地搬行内节点，光标位置不跳）
+      if (level !== 0) this.toParagraph(block, null);
+      return;
+    }
+    /* 代码块/公式是多行块，转标题或正文得按行拆开，压成一行等于丢内容；
+       其余块统一按 Markdown 源搬家 —— 用 textContent 会把 **加粗** 这类
+       行内格式削掉。退回正文这条走原地搬节点，光标位置不跳 */
+    if (level === 0) {
+      if (cur === 'code' || cur === 'math') this.convertBlock('p');
+      else this.toParagraph(block, null);
+      return;
+    }
+    this.convertBlock(target);
   }
 
   /** 在当前块之后插入一个新块并聚焦 */
@@ -3331,6 +3382,82 @@ export class WysiwygEditor {
     return true;
   }
 
+  /**
+   * 把光标所在的块**原地**换成另一种类型，内容跟过去。
+   *
+   * 「换类型」和「插入一个新块」是两件事。此前：
+   *   · 代码块上点「引用」—— 毫无反应（引用那条分支只认段落和标题）；
+   *   · 引用上点「代码块」—— 引用原地不动，下面凭空多出一个空代码块。
+   * 两个方向都不是用户要的，根子在于每个命令各写了一套「只认某几种源类型」的判断。
+   * 这里统一成一条：凡是「一行文本」的块都能互转。
+   *
+   * 表格与分割线没有可搬的文本，返回 false 由调用方另起新块。
+   * 代码块和公式是多行的，转给逐行块（段落/标题/列表/引用）时**按行拆开** ——
+   * 压成一行才是真丢内容。
+   */
+  convertBlock(type, opts = {}) {
+    const block = this.currentBlock();
+    if (!block) return false;
+    const from = block.dataset.type || 'p';
+    if (from === 'table' || from === 'hr') return false;
+    if (from === type) return false;
+
+    const src = blockMarkdownText(block);
+    /* 只有代码/公式能把多行塞进一个块；其余类型一行一块。
+       末尾的空行是代码块那个"空末行"的产物，搬过去只会多出一行空白 */
+    let lines;
+    if (type === 'code' || type === 'math') lines = [src];
+    else {
+      lines = src.split('\n');
+      while (lines.length > 1 && !lines[lines.length - 1].trim()) lines.pop();
+    }
+
+    const nodes = lines.map((line, i) => {
+      switch (type) {
+        case 'code':
+          return mkCode(line, opts.lang != null ? opts.lang : (from === 'code' ? block.dataset.lang || '' : ''));
+        case 'math': return mkMath(line);
+        // 只有第一行顶 [!info] 头，其余是续行（见下面的 coFollow）
+        case 'bq': return mkQuote(line, 0, i === 0 ? opts.callout || '' : '');
+        case 'li': return mkLi(opts.list || 'ul', line, 0, false, 1);
+        default: return /^h[1-6]$/.test(type) ? mkHeading(+type[1], line) : mkPara(line);
+      }
+    });
+
+    /* 换掉之后邻居就找不回来了，先记下原块后面的那块（提示块续行清理要用） */
+    const next0 = block.nextElementSibling;
+    block.replaceWith(nodes[0]);
+    for (let i = 1; i < nodes.length; i++) nodes[i - 1].after(nodes[i]);
+
+    /* 引用组的边界不能因为换类型就凭空消失。原来这两块之间隔着别的东西，
+       转成引用后不该被紧凑规则吸进旁边的框 —— 那等于顺手改了另一块的语义。
+       两个方向都要管：前一块是引用 → 自己另起一组；后一块是引用 → 把它断开 */
+    if (type === 'bq') {
+      const pb = nodes[0].previousElementSibling;
+      if (pb && pb.dataset && pb.dataset.type === 'bq') nodes[0].dataset.bqStart = '1';
+      const nx = nodes[nodes.length - 1].nextElementSibling;
+      if (nx && nx.dataset && nx.dataset.type === 'bq' && !nx.dataset.bqStart) nx.dataset.bqStart = '1';
+      /* 多行转提示块：后面几行是同一个框的正文续行，不该各顶一个 [!x] 头 */
+      if (opts.callout) {
+        for (let i = 1; i < nodes.length; i++) nodes[i].dataset.coFollow = opts.callout;
+      }
+    } else if (from === 'bq' && block.dataset.callout) {
+      /* 提示块的头被转走了：紧跟的续行会变成「没有头的染色块」，一并摘掉 */
+      const co = block.dataset.callout;
+      let n = next0;
+      while (n && n.dataset && n.dataset.type === 'bq' && n.dataset.coFollow === co) {
+        delete n.dataset.coFollow;
+        n = n.nextElementSibling;
+      }
+    }
+
+    this.placeCaretEnd(nodes[nodes.length - 1]);
+    this.renumber();
+    this.hCoalesce = false;
+    this.flush();
+    return true;
+  }
+
   insertBlock(type) {
     const block = this.currentBlock();
     if (type === 'hr') {
@@ -3346,6 +3473,9 @@ export class WysiwygEditor {
       return;
     }
     if (type === 'code' || type === 'math') {
+      /* 有内容的块一律原地改类型：在引用上点「代码块」，要的是这段引用变成代码，
+         而不是引用不动、下面多一个空代码块。表格/分割线没有文本可搬，才另起新块 */
+      if (this.convertBlock(type)) return;
       const nb = type === 'code' ? mkCode('', '') : mkMath('');
       // 空行上直接顶替，别在代码块前留一个空段落
       if (block && block.dataset.type === 'p' && this.isEmptyBlock(block)) block.replaceWith(nb);
@@ -3357,16 +3487,7 @@ export class WysiwygEditor {
     }
     if (type === 'quote') {
       if (block && block.dataset.type === 'bq') { this.toParagraph(block, null); return; }  // 再点一次取消
-      if (block && (block.dataset.type === 'p' || /^h[1-6]$/.test(block.dataset.type))) {
-        const nb = mkQuote(textEl(block).textContent, 0);
-        // 紧跟着另一条引用转出来的 = 新的独立引用，不是上一条的续行
-        const pb = block.previousElementSibling;
-        if (pb && pb.dataset && pb.dataset.type === 'bq') nb.dataset.bqStart = '1';
-        block.replaceWith(nb);
-        this.placeCaretEnd(nb);
-        this.hCoalesce = false;
-        this.flush();
-      }
+      this.convertBlock('bq');
       return;
     }
   }

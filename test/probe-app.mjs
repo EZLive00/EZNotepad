@@ -119,6 +119,53 @@ try {
   await ev(`document.getElementById('findNext').click()`);
   ok('能跳到下一个匹配', (await ev(`document.getElementById('findCount').textContent`)) === '2/3');
 
+  /* ---- D2. 换块类型：原地搬内容 ----
+     用户报过两处：代码块上点「引用」毫无反应；引用上点「代码块」不是换类型，
+     而是引用原地不动、下面多出一个空代码块。这里在真壳子里两个方向都走一遍 */
+  {
+    const convDoc = '```js\nconst a = 1;\n```\n\n> 一句引用';
+    await ev(`window.__snp.newTab('conv.md', ${JSON.stringify(convDoc)}, null)`);
+    await sleep(200);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(200);
+
+    await ev(`(() => {
+      const ed = window.__snp.editor;
+      ed.restoreCaret({ blockIndex: 0, offset: 0 });
+      window.__snp.commands.quote();
+    })()`);
+    await sleep(150);
+    const conv1 = await ev(`window.__snp.getEditorText()`);
+    ok('代码块改成引用：原地换类型',
+      conv1.indexOf('```') < 0 && conv1.indexOf('> const a = 1;') === 0, JSON.stringify(conv1));
+
+    await ev(`(() => {
+      const ed = window.__snp.editor;
+      ed.restoreCaret({ blockIndex: ed.root.children.length - 1, offset: 0 });
+      window.__snp.commands.codeBlock();
+    })()`);
+    await sleep(150);
+    const conv2 = await ev(`window.__snp.getEditorText()`);
+    ok('引用改成代码块：不在下面另起一块',
+      conv2.indexOf('```\n一句引用\n```') >= 0 && conv2.indexOf('> 一句引用') < 0, JSON.stringify(conv2));
+
+    /* 右键「引用」那排药丸里的「普通」= 切成普通引用。原先它跟「取消引用」
+       共用一个命令，在提示块上一点整个框就退成段落了 */
+    const coDoc = '> [!info] 提示标题\n> 续行';
+    await ev(`window.__snp.newTab('co.md', ${JSON.stringify(coDoc)}, null)`);
+    await sleep(200);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(200);
+    await ev(`(() => {
+      const ed = window.__snp.editor;
+      ed.restoreCaret({ blockIndex: 0, offset: 0 });
+      window.__snp.commands.plainQuote();
+    })()`);
+    await sleep(150);
+    const co1 = await ev(`window.__snp.getEditorText()`);
+    ok('提示块上点「普通」只摘样式、引用留着', co1 === '> 提示标题\n> 续行', JSON.stringify(co1));
+  }
+
   // ---- E. 大纲跟随滚动 ----
   const doc = Array.from({ length: 30 }, (_, i) => `## 第 ${i + 1} 节\n\n这一段是第 ${i + 1} 节的内容，用来把页面撑长。\n`).join('\n');
   await ev(`window.__snp.newTab('outline.md', ${JSON.stringify(doc)}, null)`);
