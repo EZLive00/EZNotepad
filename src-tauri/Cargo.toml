@@ -8,7 +8,10 @@ rust-version = "1.90"
 
 [lib]
 name = "simple_notepad_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+# staticlib 只有 iOS 需要，桌面端完全用不到，但它在 debug 下是一个 ~748MB 的
+# simple_notepad_lib.lib，每次构建都要重新生成、旧的那份被删掉。桌面项目别留它。
+# （以后真要出 iOS，把 "staticlib" 加回来即可。）
+crate-type = ["cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -37,6 +40,11 @@ windows-sys = { version = "0.61", features = [
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
 ] }
+
+[profile.dev]
+# 只留行号表：panic 回栈仍有 file:line，但产物小一个量级。
+# 满级 debuginfo 下 dev 产物是 rlib 311MB + pdb 205MB，每次构建都会把旧的那份删掉。
+debug = 1
 
 [profile.release]
 panic = "abort"
