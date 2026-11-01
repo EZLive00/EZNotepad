@@ -266,16 +266,19 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
 .tabs {
   display: flex; gap: 0; overflow-x: auto; overflow-y: hidden;
   scrollbar-width: none; min-width: 0; flex: 0 1 auto;
-  /* 标签 stretch 到整行高；不压到 appbar 边框上，底线保持完整连续 */
+  /* 标签是带四边框的独立小方块：撑满行高让它们垂直居中，
+     上下各留 3px，避免上边框与标签行顶线、下边框与底线叠成双线 */
   align-self: stretch;
-  align-items: stretch;
+  align-items: center;
 }
 .tabs::-webkit-scrollbar { display: none; }
 .tabbar-fill { flex: 1; align-self: stretch; min-width: 12px; }
 
 .tab {
   display: flex; align-items: center; gap: 6px;
+  height: 26px;
   padding: 0 7px 0 11px;
+  border: 1px solid var(--line);
   border-radius: var(--r-sm);
   color: var(--fg-soft);
   font-size: 12.5px;
@@ -283,15 +286,13 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
   max-width: 200px;
   flex: 0 1 auto;
   position: relative;
-  transition: background .15s var(--ease);
+  transition: background .15s var(--ease), border-color .15s var(--ease);
   background: transparent;
-  border: none;
 }
-.tab:hover { background: var(--bg-hover); }
-/* 标签之间的 1px 分隔线：紧贴相邻标签左缘（gap 收零后线条才算「分割」）。
-   激活标签自身和它的右邻不画线，让实体面完整独立出来 */
-.tab + .tab { border-left: 1px solid var(--line); }
-.tab.active, .tab.active + .tab { border-left-color: transparent; }
+.tab:hover { background: var(--bg-hover); border-color: var(--line-strong); }
+/* 相邻标签共享同一条竖线：后一颗左移 1px，把自己的左边框压在邻居右边框上，
+   这样每颗都有完整四条边，中间又只有一条线（不会出现双线）。 */
+.tab + .tab { margin-left: -1px; }
 /* 拖拽换位的两个状态：被拖的那颗变淡，落点用 2px 竖线提示 */
 .tab.dragging { opacity: .4; }
 .tab.drop-before::before,
@@ -301,10 +302,13 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
 }
 .tab.drop-before::before { left: -2px; }
 .tab.drop-after::before { left: auto; right: -2px; }
-/* 激活标签：同色平面上的激活态靠字重 + 全亮文字表达，
-   不再另铺底色（全域同色后底色差已不存在） */
+/* 激活标签：同色平面上的激活态靠字重 + 全亮文字表达，不再另铺底色
+   （全域同色后底色差已不存在）。边框略加深，并抬一层——共享边只有 1px，
+   不抬层的话它的边会被右邻的左边框盖掉，看起来一深一浅 */
 .tab.active {
   background: var(--bg-panel); color: var(--fg); font-weight: 600;
+  border-color: var(--line-strong);
+  z-index: 1;
 }
 /* 加粗宽度占位：正常态也预留 600 字重的宽度，激活切换时文字宽了但布局不动。
    伪元素是同文本的加粗版，高度压成 0 且不可见，只贡献宽度 */
