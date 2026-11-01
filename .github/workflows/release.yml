@@ -1,0 +1,75 @@
+name: Release (Windows)
+
+# 触发方式两种：
+#   1. 推一个 v* 标签（发布正式版）：git tag v1.0.0 && git push origin v1.0.0
+#   2. 手动跑（Actions 页面 Run workflow），标签用 tauri.conf.json 里的版本，即 v1.0.0
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+# 创建 / 更新 Release 需要写 contents 权限；GITHUB_TOKEN 默认是只读
+permissions:
+  contents: write
+
+# 同一条 tag 的重复触发排队执行，避免两次构建同时往一个 Release 上传 assets
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          # 依赖 package-lock.json，缓存后 npm ci 从数分钟降到十几秒
+          cache: npm
+
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 缓存 Rust 编译产物
+        uses: swatinem/rust-cache@v2
+        with:
+          # 冒号语法是插件约定：左边是 Cargo 工作区目录，右边是 target 目录名
+          workspaces: src-tauri -> target
+          # release profile 开了 lto + codegen-units=1，冷构建十几分钟，
+          # 缓存命中后能砍掉大半
+          key: release-windows
+
+      - name: 安装前端依赖
+        # 用 ci 而不是 install：严格按 lock 还原，不会悄悄升级 tauri/frontend 版本
+        run: npm ci
+
+      - name: 构建并发布
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # 推标签时用标签名；手动跑时 __VERSION__ 会被替换成 tauri.conf.json 的 version
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || 'v__VERSION__' }}
+          releaseName: ${{ github.ref_type == 'tag' && github.ref_name || 'v__VERSION__' }}
+          releaseBody: |
+            Windows 安装包（NSIS），版本取自 tauri.conf.json。
+
+            安装包未做代码签名，首次运行 SmartScreen 会拦一次：
+            点「更多信息」→「仍要运行」。
+          releaseDraft: false
+          prerelease: false
+
+      - name: 备份产物为 Artifact
+        # 即使创建 Release 失败（比如标签冲突、权限问题），
+        # 安装包仍然能从 Actions 页面下载，不至于白跑一次
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installers
+          path: src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: warn
