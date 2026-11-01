@@ -1231,9 +1231,12 @@ const saveTabAs = (t) => saveTab(t, true);
 
 /* 我们自己已经确认过一次关闭时，让 close-requested 直接放行，避免二次弹窗 */
 let forceClose = false;
+/* 选了「不保存退出」：连草稿兜底也跳过（beforeunload 里的 saveDraft 要看它） */
+let discardOnQuit = false;
 
 /* 退出前把**所有**标签看一遍。以前只检查活动标签：开三个未命名文档各写一段，
-   退出时只有一个进了草稿，其余静默消失。 */
+   退出时只有一个进了草稿，其余静默消失。
+   返回：false=取消；'discard'=不保存退出（调用方须跳过 saveDraft）；true=正常放行。 */
 async function confirmQuit() {
   const dirty = tabs.filter(isDirty);
   if (!dirty.length) return true;
@@ -1247,12 +1250,21 @@ async function confirmQuit() {
     buttons: [
       { id: 'save', label: '全部保存并退出', primary: true },
       { id: 'draft', label: '存为草稿并退出' },
+      { id: 'discard', label: '不保存退出' },
       { id: 'cancel', label: '取消' },
     ],
   });
   if (r === 'cancel') return false;
+  if (r === 'discard') return 'discard';
   if (r === 'save') await saveAllQuiet(dirty);
   return true;
+}
+
+/** 统一的「确认完、准备关窗」收尾：discard 时连草稿也不留 */
+function finishQuit(ok) {
+  if (ok === 'discard') discardOnQuit = true;
+  else saveDraft();
+  forceClose = true;
 }
 
 /* 批量保存不能走 saveTab()：它靠 readEditor(t) 取内容，而那只对屏幕上那个
@@ -2254,9 +2266,9 @@ const commands = {
   closeTab: () => activeTab() && closeTab(activeTab().id),
   quit: async () => {
     persistCurrentView();
-    if (!(await confirmQuit())) return;
-    saveDraft();
-    forceClose = true;
+    const ok = await confirmQuit();
+    if (!ok) return;
+    finishQuit(ok);
     await win.closeWindow();
   },
   undo: () => editCmd('undo'),
@@ -3478,20 +3490,20 @@ async function boot() {
   updateOutline();
   applyZen();
 
-  window.addEventListener('beforeunload', () => { persistCurrentView(); saveDraft(); });
+  window.addEventListener('beforeunload', () => { persistCurrentView(); if (!discardOnQuit) saveDraft(); });
 
   /* Alt+F4 / 任务栏关闭不走标题栏那个按钮，不拦一下就绕过上面那套检查 */
   win.onCloseRequested(async (event) => {
     if (forceClose) return;
     event.preventDefault();
     persistCurrentView();
-    if (!(await confirmQuit())) return;
-    saveDraft();
-    forceClose = true;
+    const ok = await confirmQuit();
+    if (!ok) return;
+    finishQuit(ok);
     win.closeWindow();
   });
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') { persistCurrentView(); saveDraft(); }
+    if (document.visibilityState === 'hidden' && !discardOnQuit) { persistCurrentView(); saveDraft(); }
   });
   /* 回到窗口时看一眼文件有没有被别的程序改过（延迟一点点，避开切换动画期间的 IO 抖动） */
   window.addEventListener('focus', () => setTimeout(checkExternalChange, 250));
