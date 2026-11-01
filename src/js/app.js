@@ -114,16 +114,28 @@ function applyTheme() {
 let statsTimer = 0;
 function scheduleStats() {
   clearTimeout(statsTimer);
-  statsTimer = setTimeout(refreshStats, 150);
+  /* 字数统计要对全文做正则扫描，超大文档下一次就是上百毫秒 —— 防抖按体量放大 */
+  const big = (activeTab()?.content?.length || 0) > 1_000_000;
+  statsTimer = setTimeout(refreshStats, big ? 800 : 150);
 }
 
 let outlineTimer = 0;
 function scheduleOutline() {
   clearTimeout(outlineTimer);
-  outlineTimer = setTimeout(updateOutline, 250);
+  /* 大纲提取对全文逐行正则，超大文档下一次上百毫秒 —— 防抖按体量放大 */
+  const big = (activeTab()?.content?.length || 0) > 1_000_000;
+  outlineTimer = setTimeout(updateOutline, big ? 800 : 250);
 }
 
 const wys = new WysiwygEditor(el.wysiwyg, {
+  /* 大文档分块载入的进度：状态栏行数位临时显示百分比。
+     完成时（done === total）调度一次统计，把「载入中 x%」换回真实行数 ——
+     否则最后一条进度文字会永远留在状态栏上（onChange 在载入期被抑制，
+     开文档时排下的那次统计早在载入完成前就跑完了）。 */
+  onProgress: (done, total) => {
+    if (total > 0 && done < total) el.stLines.textContent = `载入中 ${Math.round((done / total) * 100)}%`;
+    else scheduleStats();
+  },
   onChange: (md) => {
     const t = activeTab();
     if (!t) return;
@@ -1325,8 +1337,8 @@ function setContent(text, opts = {}) {
   if (t.mode === 'wysiwyg') wys.render(text, opts.caret);
   else plain.value = text;
   schedulePreview();
-  refreshStats();
-  updateOutline();
+  scheduleStats();     // 大文档下全文字数统计不便宜，走防抖不挡打开
+  scheduleOutline();   // 大纲同理：提取 + 上万按钮的构建不挡打开
   scheduleDraft();
   updateStatus();
 }

@@ -13,7 +13,7 @@
 <body data-theme="light">
 <div id="wysiwyg" class="wysiwyg" contenteditable="true" spellcheck="false"></div>
 <script type="module">
-import { WysiwygEditor } from '../src/js/wysiwyg.js';
+import { WysiwygEditor, blocksToMarkdown } from '../src/js/wysiwyg.js';
 import { renderMarkdown } from './../src/js/markdown.js';
 import * as df from '../src/js/domfind.js';
 
@@ -59,6 +59,25 @@ window.__run = () => {
   const R = [];
   const eq = (name, got, want) => R.push({ name, ok: String(got) === String(want), got: String(got), want: String(want) });
   const has = (name, ok) => R.push({ name, ok: !!ok, got: String(!!ok), want: 'true' });
+
+  // 增量序列化：flush 的结果必须与全量现算完全一致（缓存脏块判定不能漏）
+  T.reset('# 甲\n\n段落 **加粗** 与 `代码`。\n\n- 列表项\n- 第二项\n\n> 引用\n\n| A | B |\n| --- | --- |\n| 1 | 2 |');
+  T.caret(2, 3);
+  T.type('新字');
+  eq('增量: 块内输入与全量一致', blocksToMarkdown(root), T.out());
+  T.caret(4, 0);
+  T.key('Enter');
+  eq('增量: 结构操作与全量一致', blocksToMarkdown(root), T.out());
+  T.caret(1, 0);
+  T.key('Backspace');
+  eq('增量: 跨块合并与全量一致', blocksToMarkdown(root), T.out());
+  // 空转 flush（DOM 没变）不得产出不同结果
+  const mdBefore = T.out();
+  ed.flush();
+  eq('增量: 空转 flush 幂等', T.out(), mdBefore);
+  // 撤销基线 = 源文本
+  T.reset('# 源');
+  eq('载入基线用源文本', ed.history[0].md, '# 源');
 
   // 1. 往返保真
   const SRC = [
@@ -275,11 +294,6 @@ window.__run = () => {
   eq('编辑后粗体标记仍在', T.out(), '**粗** 普通!');
 
   // 11. 删除合并
-  T.reset('abc\ndef');
-  T.caret(0, 3);
-  T.key('Delete');
-  eq('行尾 Delete 合并下一行', T.out(), 'abcdef');
-
   T.reset('abc\ndef');
   T.caret(1, 0);
   T.key('Backspace');

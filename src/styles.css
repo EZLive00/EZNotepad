@@ -627,6 +627,9 @@ body[data-theme="dark"] .am-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 25
   font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   line-height: 1.45; border-left: 2px solid transparent;
   transition: background .12s var(--ease), color .12s var(--ease), border-color .12s var(--ease);
+  /* 万级标题的大纲列表：视口外的条目跳过布局/绘制 */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 28px;
 }
 /* hover 时左沿浮出一道竖条：位置固定、只变色不加位移，指针扫过时不会跳 */
 .outline-item:hover { background: var(--bg-hover); color: var(--fg); border-left-color: var(--line-strong); }
@@ -1172,8 +1175,16 @@ body[data-theme="dark"] .ctx-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 2
 
 /* ============ WYSIWYG 块级编辑视图 ============ */
 /* 注意：.wysiwyg 的 padding / 字体 / 行高统一写在「工作区」那一节，
-   这里不要重复声明，否则会悄悄盖掉那边的 max() 居中规则 */
+   这里不要重复声明，否则会悄悄盖掉那边的 max() 居中规则
+   content-visibility 只对超大文档（块数过 BIG_DOC_BLOCKS 阈值，由 JS 挂
+   .cv-auto）启用：万块级文档首布局 11s → 2.3s。曾在 headless 里测到过
+   cv:auto 块内 execCommand 后选区被重置，复核未能复现（视口内外插入选区
+   均正常），但小文档没有收益，维持默认不开。 */
 .wysiwyg .w-block { position: relative; }
+.wysiwyg.cv-auto .w-block {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 28px;
+}
 
 /* ---- 行首块手柄：只在光标 / 鼠标所在那一行浮出，落在正文左侧的留白里 ----
    它挂在 .edit-wrap 上而不是块里，所以浏览器选不中、退格删不到、也不会被
@@ -1271,16 +1282,19 @@ body[data-theme="dark"] .ctx-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 2
 }
 /* 连续的引用行在视觉上连成一块。
    注意必须把**前行**的 margin-bottom 也清零 —— 相邻外边距折叠取大者，
-   只把后行的 margin-top 置 0 的话，折叠结果仍是前行的 .95em，框会断成一节一节 */
+   只把后行的 margin-top 置 0 的话，折叠结果仍是前行的 .95em，框会断成一节一节。
+   「前行跟着紧凑引用」这个后视条件用 JS 打的 data-bq-tail 表达，不能用 :has(+ ...)：
+   Chromium 对 :has 的失效判定是插入时沿兄弟链重算，万块级文档分块载入时
+   每次 append 都触发全量重算，实测每批 2500 块从 4ms 恶化到 4s+（O(n²) 载入） */
 .wysiwyg .w-bq + .w-bq { margin-top: 0; }
-.wysiwyg .w-bq:has(+ .w-bq) { margin-bottom: 0; border-bottom-right-radius: 0; }
+.wysiwyg .w-bq[data-bq-tail] { margin-bottom: 0; border-bottom-right-radius: 0; padding-bottom: 0; }
 /* 组内续行把上下 padding 也清掉：每块自带 .5em，叠两份就是「两个块」的行距。
    清掉后行距与普通段落完全一致 */
 .wysiwyg .w-bq + .w-bq:not([data-bq-start]) { padding-top: 0; }
-.wysiwyg .w-bq:has(+ .w-bq:not([data-bq-start])) { padding-bottom: 0; }
-/* data-bq-start = 空行断出来的独立引用：恢复与上一条的间距，两个框各自完整 */
+/* data-bq-start = 空行断出来的独立引用：恢复与上一条的间距，两个框各自完整
+   （不需要专门恢复 margin-bottom/padding-bottom —— 那正是基础值，
+   前行没打 data-bq-tail 时自然就是它们） */
 .wysiwyg .w-bq + .w-bq[data-bq-start] { margin-top: .95em; padding-top: .5em; }
-.wysiwyg .w-bq:has(+ .w-bq[data-bq-start]) { margin-bottom: .95em; padding-bottom: .5em; }
 /* 提示块：引用块 + [!info] 标记，四色染色 + 标题行（.w-co-head 非可编辑）。
    data-co-follow = 提示块的正文续行，染同一色让整个框看起来是一块 */
 .wysiwyg .w-bq[data-callout],

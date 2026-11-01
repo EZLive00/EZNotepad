@@ -19,6 +19,9 @@ const ZWSP = '\u200b';
 
 /** 撤销历史的总字节上限。条数上限（200）对小文档够用，长文档得靠这个兜底 */
 const HISTORY_BYTES = 8 * 1024 * 1024;
+/* 超过这个块数的文档按「大文档」对待：分块插入 + 跳过载入期全量扫描。
+   阈值取 5000 块（约几千行），常规文档完全走不到这条路径。 */
+const BIG_DOC_BLOCKS = 5000;
 
 /** 字符串占的字节数（V8 里 1 个 UTF-16 码元 = 2 字节，这里只用于比较量级） */
 const bytesOf = (s) => (s ? s.length * 2 : 0);
@@ -422,7 +425,9 @@ export function parseMarkdown(md) {
     const h = line.match(RE_HEADING);
     if (h) {
       levelOf.reset();
-      frag.appendChild(mkHeading(h[1].length, h[2]));
+      /* 空标题原地降级为正文（原先是载入后 normalize(true) 统一做的；
+         跳过全量扫描后这职责挪到 parse —— 构造出规范 DOM 才敢跳过扫描） */
+      frag.appendChild(h[2].trim() === '' ? mkPara('') : mkHeading(h[1].length, h[2]));
       i++;
       continue;
     }
@@ -558,46 +563,124 @@ function codeToText(el) {
   return s;
 }
 
-/** 编辑视图 DOM -> Markdown */
-export function blocksToMarkdown(root) {
+/**
+ * 单个块的「原始序列化」：只依赖块自身（文本 + data-*），不含列表标记/缩进
+ * 列宽（那要跟着前文走）、也不含块间空行（那要看邻居类型）。
+ * 这两样在 assemble 阶段现算 —— 所以缓存可以放心按块失效。
+ */
+function rawBlock(el) {
+  const type = el.dataset.type || 'p';
+
+  if (type === 'hr') return { type, lines: ['---'] };
+  if (type === 'table') return { type, lines: tableToMarkdown(el) };
+
+  if (type === 'code') {
+    const text = codeToText(el.querySelector('.w-code') || el);
+    return { type, lines: ['```' + (el.dataset.lang || ''), text, '```'] };
+  }
+
+  if (type === 'math') {
+    // $$ 由这里补回去：块里只存裸 TeX，粘贴/编辑都不会把定界符弄丢
+    const text = codeToText(el.querySelector('.w-tex') || el);
+    if (el.dataset.mathInline === '1' && !text.includes('\n')) {
+      return { type, lines: ['$$' + text + '$$'] };
+    }
+    return { type, lines: ['$$', text, '$$'] };
+  }
+
+  const t = el.querySelector('.w-text') || el;
+  const text = inlineToMd(t);
+
+  if (/^h[1-6]$/.test(type)) {
+    return { type, lines: ['#'.repeat(+type[1]) + ' ' + text] };
+  }
+  if (type === 'li') {
+    // 标记与缩进列宽依赖前文（cols），组装时再拼
+    return { type, text };
+  }
+  if (type === 'bq') {
+    const depth = (+el.dataset.indent || 0) + 1;
+    const prefix = '> '.repeat(depth);
+    const co = el.dataset.callout || '';
+    if (co) {
+      // 标记行 + 正文行：> [!info] 标题 / > 正文
+      const title = el.dataset.calloutTitle || '';
+      const lines = [prefix + `[!${co}]` + (title ? ` ${title}` : '')];
+      if (text.trim()) lines.push(prefix + text);
+      return { type, lines, co: true };
+    }
+    return { type, lines: [prefix + text], bqStart: !!el.dataset.bqStart };
+  }
+  return { type, lines: [text] };
+}
+
+/**
+ * 块的序列化指纹：覆盖序列化会读取的全部输入。
+ * - dataset：type/indent/num/list/checked/start/lang/callout/calloutTitle/
+ *   bqStart/mathInline —— 前缀、标记全从这里来（aligns 在内层 table 上，单取）
+ * - textContent：正文文字
+ * - 行内标签结构：<code>/<strong>/<em>/<del>/<a>/<img>/<br> 的数量与图片
+ *   地址、alt —— **粗** 和 \`码\` 的 textContent 完全相同，只看文字会漏
+ * 组装时逐块校验，不符就重算该块 —— 这是增量缓存的唯一正确性依据。
+ * 成本：每块一次 querySelectorAll（C++ 子树遍历），整篇相当于一次全文扫描；
+ * 纯文本块（段落/标题的常态，万块级文档里占绝大多数）走 childNodes 快路径跳过它。
+ */
+const SIG_TAGS = 'code,strong,em,del,b,i,strike,a,img,br';
+
+function blockSig(el) {
+  const ds = el.dataset;
+  let s = (ds.type || '') + '|' + (ds.indent || '') + '|' + (ds.num || '') + '|'
+    + (ds.list || '') + '|' + (ds.checked || '') + '|' + (ds.start || '') + '|'
+    + (ds.lang || '') + '|' + (ds.callout || '') + '|' + (ds.calloutTitle || '') + '|'
+    + (ds.bqStart || '') + '|' + (ds.mathInline || '');
+  if (ds.type === 'table') {
+    const table = el.querySelector('table');
+    s += '|al' + (table ? table.dataset.aligns || '' : '');
+  }
+  const t = el.querySelector('.w-text') || el;
+  if (t !== el) s += '|wt' + t.childNodes.length;
+  // 快路径：正文里只有纯文本节点 → 不存在任何行内标签/图片，直接出签名
+  let simple = true;
+  for (const n of t.childNodes) { if (n.nodeType !== 3) { simple = false; break; } }
+  if (simple) return s + '\u0001' + el.textContent;
+  const counts = {};
+  for (const n of t.querySelectorAll(SIG_TAGS)) {
+    const k = n.tagName;
+    counts[k] = (counts[k] || 0) + 1;
+    if (k === 'IMG') s += '|' + (n.getAttribute('data-src') || '') + '#' + (n.getAttribute('alt') || '') + '@' + (n.getAttribute('width') || '');
+  }
+  for (const k in counts) s += '|' + k + counts[k];
+  return s + '\u0001' + el.textContent;
+}
+
+/**
+ * 编辑视图 DOM -> Markdown。
+ *
+ * cache（WeakMap，块 -> { sig, ...raw }）是编辑器的增量通道：组装时逐块
+ * 校验签名，只有变过的块重新序列化。不传 cache 就全量现算 —— 行为与
+ * 逐块现算完全一致，只是省掉重复劳动。
+ *
+ * 组装（块间空行、列表缩进列宽、首尾空行修剪）永远全量现算：
+ * 这些依赖邻居与上下文，成本只是逐块读类型，量级远小于序列化本身。
+ */
+export function blocksToMarkdown(root, cache = null) {
   const chunks = [];
   // 列表缩进按 CommonMark 的「列」算：子项要缩进到父项正文所在的列
   // （"- " 占 2 列、"1. " 占 3 列、" - [ ] " 占 6 列），这样交给任何渲染器都不会散架
   const cols = [];
 
   for (const el of root.children) {
-    const type = el.dataset.type || 'p';
-
-    if (type === 'hr') { chunks.push({ type, lines: ['---'] }); cols.length = 0; continue; }
-
-    if (type === 'table') { chunks.push({ type, lines: tableToMarkdown(el) }); cols.length = 0; continue; }
-
-    if (type === 'code') {
-      const text = codeToText(el.querySelector('.w-code') || el);
-      chunks.push({ type, lines: ['```' + (el.dataset.lang || ''), text, '```'] });
-      cols.length = 0;
-      continue;
+    const sig = blockSig(el);
+    let entry = cache ? cache.get(el) : null;
+    if (!entry || entry.sig !== sig) {
+      entry = rawBlock(el);
+      entry.sig = sig;
+      if (cache) cache.set(el, entry);
     }
+    const c = entry;
+    const type = c.type;
 
-    if (type === 'math') {
-      // $$ 由这里补回去：块里只存裸 TeX，粘贴/编辑都不会把定界符弄丢
-      const text = codeToText(el.querySelector('.w-tex') || el);
-      if (el.dataset.mathInline === '1' && !text.includes('\n')) {
-        chunks.push({ type, lines: ['$$' + text + '$$'] });
-      } else {
-        chunks.push({ type, lines: ['$$', text, '$$'] });
-      }
-      cols.length = 0;
-      continue;
-    }
-
-    const t = el.querySelector('.w-text') || el;
-    const text = inlineToMd(t);
-
-    if (/^h[1-6]$/.test(type)) {
-      chunks.push({ type, lines: ['#'.repeat(+type[1]) + ' ' + text] });
-      cols.length = 0;
-    } else if (type === 'li') {
+    if (type === 'li') {
       const kind = el.dataset.list || 'ul';
       const lvl = Math.min(+el.dataset.indent || 0, MAX_INDENT);
       cols.length = lvl + 1;
@@ -607,24 +690,10 @@ export function blocksToMarkdown(root) {
         : kind === 'task'
           ? `- [${el.dataset.checked === '1' ? 'x' : ' '}] `
           : '- ';
-      chunks.push({ type, lines: [' '.repeat(base) + marker + text] });
+      chunks.push({ type, lines: [' '.repeat(base) + marker + c.text] });
       cols[lvl] = base + marker.length;
-    } else if (type === 'bq') {
-      const depth = (+el.dataset.indent || 0) + 1;
-      const prefix = '> '.repeat(depth);
-      const co = el.dataset.callout || '';
-      if (co) {
-        // 标记行 + 正文行：> [!info] 标题 / > 正文
-        const title = el.dataset.calloutTitle || '';
-        const lines = [prefix + `[!${co}]` + (title ? ` ${title}` : '')];
-        if (text.trim()) lines.push(prefix + text);
-        chunks.push({ type, lines, co: true });
-      } else {
-        chunks.push({ type, lines: [prefix + text], bqStart: !!el.dataset.bqStart });
-      }
-      cols.length = 0;
     } else {
-      chunks.push({ type, lines: [text] });
+      chunks.push(c);
       cols.length = 0;
     }
   }
@@ -733,6 +802,17 @@ export class WysiwygEditor {
     this.lastBlock = null;
     this.lastCell = null;
 
+    /* ---- 增量序列化 ----
+       每次击键都要把整篇 DOM 写回 Markdown，大文档（万行级）下这是卡顿的
+       最大来源。方案：块内容序列化按块缓存（WeakMap，块 -> { sig, ...raw }），
+       sig 是序列化全部输入的廉价指纹（dataset + textContent + br/img 计数）。
+       组装时逐块校验签名，不符就地重算 —— 正确性只依赖这个校验，
+       不依赖任何事件回调（MutationObserver 在实测中会漏记录，不可信）。 */
+    this.mdCache = new WeakMap();
+    this.loading = false;     // 大文档分块插入期间为 true，输入一律不响应
+    this.onProgress = opts.onProgress || null;
+    this._flushTimer = 0;     // 输入路径的延迟序列化（见 queueFlush）
+
     root.addEventListener('input', () => this.onInput());
     root.addEventListener('keydown', (e) => this.handleKey(e));
     root.addEventListener('compositionstart', () => { this.composing = true; });
@@ -772,12 +852,40 @@ export class WysiwygEditor {
 
   render(md, restore) {
     this._render(md, restore);
-    const snap = this.toMarkdown();
-    this.history = [{ md: snap, caret: null }];
-    this.hBytes = bytesOf(snap);
+    /* 撤销基线先用「源文本」顶上 —— 它就是盘上的真状态，不必为了基线把
+       整篇 DOM 再序列化一遍（万行文档下那是秒级的无谓开销）。之后空闲时
+       预热块缓存并核对一次：往返结果与源文本一致（绝大多数）就维持源文本；
+       有出入（罕见的非规范写法被归一化）再换成往返结果，保证首次编辑的
+       脏判定不错乱。 */
+    this.history = [{ md, caret: null }];
+    this.hBytes = bytesOf(md);
     this.hIndex = 0;
     this.hLast = 0;
     this.hCoalesce = false;
+  }
+
+  /* 空闲时把块序列化预热进缓存；全部热完后组装一次与源文本核对基线。 */
+  _warmBaseline(srcMd) {
+    clearTimeout(this._warmTimer);
+    let i = 0;
+    const kids = this.root.children;
+    const step = () => {
+      /* 用户已经动过手（或基线已被换掉）就别再抢：缓存在每次 flush 里
+         本来就在增量维护，这里的预热只是锦上添花。 */
+      if (this._edited || this.history[0].md !== srcMd) return;
+      const end = Math.min(kids.length, i + 2000);
+      for (; i < end; i++) {
+        const el = kids[i];
+        if (!this.mdCache.has(el)) this.mdCache.set(el, { ...rawBlock(el), sig: blockSig(el) });
+      }
+      if (i < kids.length) { this._warmTimer = setTimeout(step, 16); return; }
+      const rt = blocksToMarkdown(this.root, this.mdCache);
+      if (rt !== srcMd) {
+        this.history[0] = { md: rt, caret: null };
+        this.hBytes = bytesOf(rt);
+      }
+    };
+    this._warmTimer = setTimeout(step, 300);
   }
 
   _render(md, restore) {
@@ -787,19 +895,72 @@ export class WysiwygEditor {
        空文档不改这个标记 —— 用户清空重写时不该顺手把文件的换行习惯改掉。 */
     if (md) this.trailingNewline = md.endsWith('\n');
     this.silent = true;
+    this._edited = false;
+    clearTimeout(this._warmTimer);
     this.root.innerHTML = '';
     this.lastBlock = null;
     this.lastCell = null;
-    this.root.appendChild(parseMarkdown(md));
-    this.silent = false;
-    this.normalize(true);      // 载入时也过一遍：空标题退回正文、清掉游离节点
+    const frag = parseMarkdown(md);
+    const total = frag.childNodes.length;
+    /* 万行级文档一次性 append + 布局会把主线程冻住好几秒。超过阈值就分块
+       插入，每块之间让出一帧 —— 内容从上往下逐步出现，期间输入被忽略。 */
+    if (total > BIG_DOC_BLOCKS) {
+      this._renderChunked(frag, total, restore, md);
+      return;
+    }
+    this.root.appendChild(frag);
+    /* 载入不再全量 normalize：parse 产出的 DOM 由构造函数保证规范
+       （空标题的降级也挪进了 parse），逐块 sweep 在万行文档下纯属浪费。 */
     this.renumber();
     if (restore) this.restoreCaret(restore);
+    /* 超大文档才开视口外跳渲染（cv:auto 在可编辑块上有选区副作用，见 CSS） */
+    this.root.classList.toggle('cv-auto', total > BIG_DOC_BLOCKS);
+    this.silent = false;
+    this._warmBaseline(md);
+  }
+
+  async _renderChunked(frag, total, restore, srcMd) {
+    this.loading = true;
+    /* 关键：载入期间临时摘掉 contenteditable。编辑宿主（contenteditable
+       子树）里的每次 DOM 变异，Chromium 都要做选区/光标整理（O(现有内容)），
+       分批 append 就成了 O(n²)，实测 30s+ 还在爬；摘掉后是纯 DOM 插入。
+       cv-auto 同理只在非编辑宿主里生效，摘掉 editable 后它才起作用。 */
+    const ceRestore = this.root.contentEditable;
+    this.root.contentEditable = 'false';
+    this.root.classList.add('cv-auto');
+    const gen = (this._loadGen = (this._loadGen || 0) + 1);
+    if (this.onProgress) this.onProgress(0, total);
+    await new Promise((r) => setTimeout(r, 0));   // 先让一帧出来，把「载入中」画上
+    try {
+      const CHUNK = 2500;
+      let done = 0;
+      while (frag.firstChild) {
+        if (gen !== this._loadGen) return;        // 期间又 render 了：旧循环立即作废
+        const batch = document.createDocumentFragment();
+        let n = 0;
+        while (frag.firstChild && n < CHUNK) { batch.appendChild(frag.firstChild); n++; }
+        this.root.appendChild(batch);
+        done += n;
+        if (this.onProgress) this.onProgress(done, total);
+        await new Promise((r) => setTimeout(r, 0));
+      }
+      if (gen !== this._loadGen) return;
+      this.renumber();
+      if (restore) this.restoreCaret(restore);
+    } finally {
+      if (gen === this._loadGen) {                // 被新一轮载入接管时别动全局状态
+        this.root.contentEditable = ceRestore;
+        this.silent = false;
+        this.loading = false;
+        if (this.onProgress) this.onProgress(total, total);
+        this._warmBaseline(srcMd || '');
+      }
+    }
   }
 
   toMarkdown() {
-    const md = blocksToMarkdown(this.root);
-    if (this.trailingNewline && md && !md.endsWith('\n')) return md + '\n';
+    let md = blocksToMarkdown(this.root, this.mdCache);
+    if (this.trailingNewline && md && !md.endsWith('\n')) md += '\n';
     return md;
   }
 
@@ -856,6 +1017,8 @@ export class WysiwygEditor {
   }
 
   undo() {
+    // 停手 400ms 内按撤销：先把挂起的输入落成快照，不然这几下会丢
+    if (this._flushTimer) this.flush();
     if (this.hIndex <= 0) return false;
     this.hIndex--;
     const s = this.history[this.hIndex];
@@ -866,6 +1029,8 @@ export class WysiwygEditor {
   }
 
   redo() {
+    // 有挂起输入说明撤销后又打了字，redo 本就该失效 —— flush 顺带把 redo 分支截掉
+    if (this._flushTimer) this.flush();
     if (this.hIndex >= this.history.length - 1) return false;
     this.hIndex++;
     const s = this.history[this.hIndex];
@@ -976,17 +1141,32 @@ export class WysiwygEditor {
   /* ---------------- 输入主流程 ---------------- */
 
   onInput() {
-    if (this.silent || this.composing) return;
+    if (this.silent || this.loading || this.composing) return;
     this.normalize(false, true);   // 只扫光标附近，见 normalize 的说明
-    if (this.applyBlockRule()) return;
+    if (this.applyBlockRule()) { this.renumber(); this.queueFlush(); return; }   // 接管 = 结构变化，全量重排一次
     this.applyInlineRule();
-    this.renumber();
+    // 纯打字不 renumber：编号只随结构变化，结构路径都显式全量重排。
+    // 万块级文档上全量扫一遍是每键几十毫秒，打字路径背不起。
     this.hCoalesce = true;
-    this.flush();
+    this.queueFlush();
+  }
+
+  /**
+   * 输入路径的 flush 延后到停手再执行。
+   * 全量序列化（含 78k 块的签名校验）实测热缓存仍要 ~750ms，逐键执行必然卡顿；
+   * 而它的三个用途（撤销快照、tab.content、自动保存）都只关心「最终内容」，
+   * 停手 400ms 后同步一次即可。回车 / 格式命令等动作型入口仍走 flush()
+   * 立即序列化，撤销粒度不受影响。
+   */
+  queueFlush() {
+    if (this._flushTimer) clearTimeout(this._flushTimer);
+    this._flushTimer = setTimeout(() => { this._flushTimer = 0; this.flush(); }, 400);
   }
 
   flush() {
-    if (this.silent) return;
+    if (this.silent || this.loading) return;
+    if (this._flushTimer) { clearTimeout(this._flushTimer); this._flushTimer = 0; }
+    this._edited = true;
     const md = this.toMarkdown();
     this.pushHistory(md);
     this.onChange(md);
@@ -1359,6 +1539,7 @@ export class WysiwygEditor {
   /* ---------------- 键盘 ---------------- */
 
   handleKey(e) {
+    if (this.loading) { e.preventDefault(); return; }   // 大文档分块载入期间不响应
     if (e.isComposing) return;
     const sel = window.getSelection();
     if (!sel.rangeCount) return;
@@ -1875,6 +2056,7 @@ export class WysiwygEditor {
     block.remove();
     if (prev) this.placeCaretEnd(prev);
     else this.root.appendChild(mkPara(''));
+    this.renumber();   // 删块可能改变相邻引用的 data-bq-tail（编号同理）
     this.hCoalesce = false;
     this.flush();
   }
@@ -1901,10 +2083,18 @@ export class WysiwygEditor {
     this.flush();
   }
 
-  /** 有序列表重新编号（每个连续 run 各自从头算，嵌套层级各自计数） */
+  /** 有序列表重新编号（每个连续 run 各自从头算，嵌套层级各自计数）。
+   *  顺手维护引用组的 data-bq-tail（前行是否紧跟一条未断开的引用，
+   *  CSS 拿它折叠引用框 —— 不能用 :has(+ ...)，见 styles.css 的说明）。
+   *  所有结构变化路径都会调用本方法，这里注解零额外扫描成本。 */
   renumber() {
     let counters = [];
     for (const b of this.root.children) {
+      if (b.dataset.type === 'bq') {
+        const nx = b.nextElementSibling;
+        if (nx && nx.dataset.type === 'bq' && !nx.dataset.bqStart) b.dataset.bqTail = '1';
+        else delete b.dataset.bqTail;
+      }
       if (b.dataset.type !== 'li') { counters = []; continue; }
       if (b.dataset.list !== 'ol') continue;
       const ind = +b.dataset.indent || 0;
@@ -1913,7 +2103,10 @@ export class WysiwygEditor {
       else counters[ind] += 1;
       const num = counters[ind];
       b.dataset.num = String(num);
-      const m = b.querySelector('.w-li-marker');
+      /* marker 永远是首孩子（mkLi 先造它）——命中就不必 querySelector，
+         万行文档 li 数以万计，这个查询在载入路径上是白扔的时间 */
+      let m = b.firstElementChild;
+      if (!m || !m.classList.contains('w-li-marker')) m = b.querySelector('.w-li-marker');
       if (m && m.textContent !== num + '.') m.textContent = num + '.';
     }
   }
@@ -2476,6 +2669,7 @@ export class WysiwygEditor {
   }
 
   handleClick(e) {
+    if (this.loading) return;
     const a = e.target.closest && e.target.closest('a');
     if (a) {
       // Ctrl/⌘ + 点击 = 打开链接；直接点仍然是定位光标（否则想改链接文字就没法下手了）
