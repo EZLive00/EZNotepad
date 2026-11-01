@@ -1245,18 +1245,17 @@ async function confirmQuit() {
   const r = await dialog({
     title: '还有未保存的内容',
     body: `${dirty.length} 个标签有未保存的修改：${names}。`
-      + (noPath ? `<br><br>其中 ${noPath} 个还没保存过文件，会作为草稿留在本机，下次启动可以恢复。` : '')
+      + (noPath ? `<br><br>其中 ${noPath} 个还没保存过文件：「全部保存并退出」会把它们存成草稿，下次启动可恢复；「不保存退出」则连同丢弃。` : '')
       + '<br><br>要如何处理？',
     buttons: [
       { id: 'save', label: '全部保存并退出', primary: true },
-      { id: 'draft', label: '存为草稿并退出' },
       { id: 'discard', label: '不保存退出' },
       { id: 'cancel', label: '取消' },
     ],
   });
   if (r === 'cancel') return false;
   if (r === 'discard') return 'discard';
-  if (r === 'save') await saveAllQuiet(dirty);
+  await saveAllQuiet(dirty);
   return true;
 }
 
