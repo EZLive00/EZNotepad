@@ -23,6 +23,8 @@ import { showHistory } from './history.js';
 import { freeUntitledName, moveById } from './taborder.js';
 import { listen } from '../vendor/api/event.js';
 import * as win from './win.js';
+import { tt, setLang, resolveLang, getLang, applyDom, LANGS } from './i18n.js';
+import { welcomeDoc } from './welcome.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -91,12 +93,14 @@ const plain = new PlainEditor(el.editor, {
   onPasteImage: (file) => insertImageFromFile(file),
 });
 
-const MODE_META = {
+/* 模式文案每次取用时才算 —— 写成常量会在模块加载那一刻定死，
+   切语言后工具栏仍是旧语言 */
+const modeMeta = () => ({
   // short 用于工具栏/标题栏这类横向空间紧张的地方
-  wysiwyg: { label: '所见即所得', short: '所见即所得', icon: 'type' },
-  edit: { label: '编辑模式', short: '编辑', icon: 'code' },
-  preview: { label: '预览模式', short: '预览', icon: 'eye' },
-};
+  wysiwyg: { label: tt('所见即所得'), short: tt('所见即所得'), icon: 'type' },
+  edit: { label: tt('编辑模式'), short: tt('编辑'), icon: 'code' },
+  preview: { label: tt('预览模式'), short: tt('预览'), icon: 'eye' },
+});
 
 let currentLang = '';
 
@@ -133,8 +137,8 @@ const wys = new WysiwygEditor(el.wysiwyg, {
      否则最后一条进度文字会永远留在状态栏上（onChange 在载入期被抑制，
      开文档时排下的那次统计早在载入完成前就跑完了）。 */
   onProgress: (done, total) => {
-    if (total === 0) { el.stLines.textContent = '载入中…'; return; }   // 渐进载入：首段已上屏，剩余总量未知
-    if (total > 0 && done < total) el.stLines.textContent = `载入中 ${Math.round((done / total) * 100)}%`;
+    if (total === 0) { el.stLines.textContent = tt('载入中…'); return; }   // 渐进载入：首段已上屏，剩余总量未知
+    if (total > 0 && done < total) el.stLines.textContent = tt('载入中 {n}%', { n: Math.round((done / total) * 100) });
     else scheduleStats();
   },
   onChange: (md) => {
@@ -164,11 +168,11 @@ function refreshTitle() {
   const name = t ? t.name : '';
   const shown = settings.showWinTitle === false
     ? ''
-    : (t ? (dirty ? '• ' + name : name) : '简单记事本');
+    : (t ? (dirty ? '• ' + name : name) : 'EZNotepad');
   if (el.winTitle && el.winTitle.textContent !== shown) el.winTitle.textContent = shown;
   // 保存按钮兼作「有改动」的提示：没有工具行的其它文件操作了，这里点一下最直接
   if (el.btnSave) el.btnSave.classList.toggle('dirty', dirty);
-  const docTitle = t ? `${dirty ? '• ' : ''}${name} — 简单记事本` : '简单记事本';
+  const docTitle = t ? `${dirty ? '• ' : ''}${name} — EZNotepad` : 'EZNotepad';
   if (document.title !== docTitle) document.title = docTitle;
   clearTimeout(titleTimer);
   titleTimer = setTimeout(() => win.setTitle(docTitle), 300);
@@ -209,7 +213,7 @@ function renderTabs() {
     const x = document.createElement('button');
     x.className = 'tab-close';
     x.innerHTML = iconHTML('x');
-    x.title = '关闭';
+    x.title = tt('关闭');
     x.onclick = (e) => { e.stopPropagation(); closeTab(t.id); };
     b.appendChild(x);
     b.onclick = () => activate(t.id);
@@ -254,12 +258,12 @@ function renderTabs() {
     b.oncontextmenu = (e) => {
       e.preventDefault();
       contextMenu(e.clientX, e.clientY, [
-        { label: '关闭', shortcut: 'Ctrl+W', action: () => closeTab(t.id) },
-        { label: '关闭其他', action: () => closeOthers(t.id) },
-        { label: '关闭右侧', action: () => closeRight(t.id) },
+        { label: tt('关闭'), shortcut: 'Ctrl+W', action: () => closeTab(t.id) },
+        { label: tt('关闭其他'), action: () => closeOthers(t.id) },
+        { label: tt('关闭右侧'), action: () => closeRight(t.id) },
         { sep: true },
-        { label: '复制文件路径', disabled: !t.path, action: () => { navigator.clipboard.writeText(t.path || ''); toast('路径已复制'); } },
-        { label: '在文件夹中显示', disabled: !t.path, action: () => revealInFolder(t.path) },
+        { label: tt('复制文件路径'), disabled: !t.path, action: () => { navigator.clipboard.writeText(t.path || ''); toast(tt('路径已复制')); } },
+        { label: tt('在文件夹中显示'), disabled: !t.path, action: () => revealInFolder(t.path) },
       ]);
     };
     el.tabs.appendChild(b);
@@ -279,7 +283,7 @@ async function revealInFolder(p) {
   try {
     const { revealItemInDir } = await import('../vendor/plugin-opener/dist-js/index.js');
     await revealItemInDir(p);
-  } catch { toast('无法打开文件位置'); }
+  } catch { toast(tt('无法打开文件位置')); }
 }
 
 function closeOthers(id) {
@@ -292,7 +296,7 @@ function closeRight(id) {
   activate(id);
 }
 
-export function newTab(name = '未命名.md', content = '', path = null, opts = {}) {
+export function newTab(name = tt('未命名.md'), content = '', path = null, opts = {}) {
   const t = createTab(name, content, path);
   // 默认模式 = 该类型支持列表的第一项（Markdown 是所见即所得，其余是编辑模式）；
   // 用户手动切过模式后按 lastMode 记忆
@@ -328,9 +332,9 @@ function activate(id) {
 function clearView() {
   plain.load('');
   el.wysiwyg.innerHTML = '';
-  el.preview.innerHTML = '<div class="diff-empty">没有打开的文件</div>';
+  el.preview.innerHTML = '<div class="diff-empty">' + tt('没有打开的文件') + '</div>';
   el.preview.__pvText = null;   // 容器被换掉了，预览的内容签名也要一起作废
-  el.outlineList.innerHTML = '<div class="outline-empty">新建或打开一个文件开始。</div>';
+  el.outlineList.innerHTML = '<div class="outline-empty">' + tt('新建或打开一个文件开始。') + '</div>';
   el.fmtBadge.textContent = '—';
 }
 
@@ -342,7 +346,7 @@ function setMode(mode, opt = {}) {
   const allowed = modesFor(kind);
   if (!allowed.includes(mode)) {
     const fallback = allowed.includes(settings.lastMode[kind]) ? settings.lastMode[kind] : allowed[0];
-    toast(`${kindLabel(kind)} 不支持「${MODE_META[mode].label}」，已切到「${MODE_META[fallback].label}」`);
+    toast(tt('{kind} 不支持「{mode}」，已切到「{fallback}」', { kind: kindLabel(kind), mode: modeMeta()[mode].label, fallback: modeMeta()[fallback].label }));
     mode = fallback;
   }
   const changedTab = !opt.fromActivate;
@@ -353,8 +357,8 @@ function setMode(mode, opt = {}) {
      以后改默认永远轮不到生效 */
   if (!opt.fromActivate) { settings.lastMode[kind] = mode; saveSettings(); }
 
-  el.modeLabel.textContent = MODE_META[mode].short || MODE_META[mode].label;
-  setIcon(el.modeIcon, MODE_META[mode].icon);
+  el.modeLabel.textContent = modeMeta()[mode].short || modeMeta()[mode].label;
+  setIcon(el.modeIcon, modeMeta()[mode].icon);
 
   const split = settings.layout === 'split';
   const showEditor = mode !== 'preview';
@@ -371,7 +375,7 @@ function setMode(mode, opt = {}) {
   el.mid.classList.toggle('hidden', !(showEditor && showPreview));
   el.editorPane.style.flex = '1';
   el.previewPane.style.flex = split ? '1' : '1';
-  el.previewHead.textContent = split ? '预览' : '预览（只读）';
+  el.previewHead.textContent = split ? tt('预览') : tt('预览（只读）');
 
   const docDir = t.path ? be.dirName(t.path) : '';
   if (showWys) { wys.setDocDir(docDir); wys.render(t.content); }
@@ -405,13 +409,13 @@ function updateModeMenu(kind, allowed) {
     b.classList.toggle('disabled', !allowed.includes(m));
   });
   const notes = {
-    md: '支持全部三种模式',
-    json: 'JSON 支持：编辑 / 预览（校验 + 高亮）',
-    code: '代码支持：编辑 / 预览（语法高亮）',
-    txt: '纯文本支持：编辑 / 预览（只读）',
-    data: '表格文本支持：编辑 / 预览（只读）',
+    md: tt('支持全部三种模式'),
+    json: tt('JSON 支持：编辑 / 预览（校验 + 高亮）'),
+    code: tt('代码支持：编辑 / 预览（语法高亮）'),
+    txt: tt('纯文本支持：编辑 / 预览（只读）'),
+    data: tt('表格文本支持：编辑 / 预览（只读）'),
   };
-  el.modeNote.textContent = `当前格式：${kindLabel(kind)} · ${notes[kind] || ''}`;
+  el.modeNote.textContent = tt('当前格式：{kind} · {note}', { kind: kindLabel(kind), note: notes[kind] || '' });
 }
 
 function setLayout(layout) {
@@ -437,7 +441,7 @@ function toggleZen(force) {
   applyZen();
   // 侧栏一藏，编辑容器的宽度就变了，大纲和当前光标要重新对一次
   if (!settings.zen) { updateOutline(); scheduleOutlineSync(); }
-  toast(settings.zen ? '专注模式：Esc 退出' : '已退出专注模式');
+  toast(settings.zen ? tt('专注模式：Esc 退出') : tt('已退出专注模式'));
   return settings.zen;
 }
 
@@ -492,7 +496,7 @@ function updateOutline() {
     outlineSig = '';
     outlineNodes = [];
     outlineActive = -1;
-    el.outlineList.innerHTML = `<div class="outline-empty">${kind === 'md' ? '用 # 定义标题后，这里会出现大纲。' : '当前文件没有可提取的结构。'}</div>`;
+    el.outlineList.innerHTML = '<div class="outline-empty">' + (kind === 'md' ? tt('用 # 定义标题后，这里会出现大纲。') : tt('当前文件没有可提取的结构。')) + '</div>';
     return;
   }
   /* 结构没变就别重建 DOM：改正文时标题几乎不动，而重建 600 个按钮
@@ -702,7 +706,7 @@ const tree = new FileTree({
   onOpen: (p, line) => openPathAt(p, line),
   menu: contextMenu,
   ask: askText,
-  confirm: (title, html) => confirmBox(title, html, '删除', '取消'),
+  confirm: (title, html) => confirmBox(title, html, tt('删除'), tt('取消')),
   onReveal: (p) => revealInFolder(p),
   /* 改名/删除要带着已打开的标签一起走，否则标签还指着旧路径，
      下次保存就凭空造出一个同名文件（删除的情况则是把内容写回已删位置）。 */
@@ -725,16 +729,16 @@ const tree = new FileTree({
     t.path = null;
     t.mtime = null;
     t.extChanged = false;
-    if (!t.name.includes('（已删除）')) t.name += '（已删除）';
+    if (!t.name.includes(tt('（已删除）'))) t.name += tt('（已删除）');
     renderTabs();
     refreshTitle();
     syncWatches();
-    toast('文件已删除，标签内容保留，可另存为新文件');
+    toast(tt('文件已删除，标签内容保留，可另存为新文件'));
   },
 });
 
 /** 单行文本输入框。dialog 的 body 支持塞 DOM，和「跳转到行」走同一套 */
-function askText(title, label, value, okLabel = '确定') {
+function askText(title, label, value, okLabel = tt('确定')) {
   const box = document.createElement('div');
   box.innerHTML = `<div class="dlg-text"></div><input class="dlg-input" id="askInput">`;
   box.querySelector('.dlg-text').textContent = label;
@@ -743,7 +747,7 @@ function askText(title, label, value, okLabel = '确定') {
   const p = dialog({
     title,
     body: box,
-    buttons: [{ id: 'ok', label: okLabel, primary: true }, { id: 'cancel', label: '取消' }],
+    buttons: [{ id: 'ok', label: okLabel, primary: true }, { id: 'cancel', label: tt('取消') }],
   }).then((r) => (r === 'ok' ? input.value.trim() : null));
   setTimeout(() => { input.focus(); input.select(); }, 40);
   return p;
@@ -766,7 +770,7 @@ async function openPathAt(p, line) {
 }
 
 async function pickFolder() {
-  const p = await be.pickFolder('选择文件夹');
+  const p = await be.pickFolder(tt('选择文件夹'));
   if (!p) return;
   settings.folder = p;
   saveSettings();
@@ -790,17 +794,17 @@ function clearFolder() {
 async function replaceInFolderNow() {
   const root = tree.root || settings.folder;
   const q = el.ftQuery.value;
-  if (!root) { toast('先打开一个文件夹'); return; }
-  if (!q) { toast('先在上面填要搜索的内容'); return; }
+  if (!root) { toast(tt('先打开一个文件夹')); return; }
+  if (!q) { toast(tt('先在上面填要搜索的内容')); return; }
   const rep = el.ftReplaceInput.value;
   const htmlEsc = (s) => String(s).replace(/[&<>"]/g, (c) =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const ok = await confirmBox(
-    '在整个文件夹里替换',
-    `把 <code>${htmlEsc(q)}</code> 换成 <code>${htmlEsc(rep) || '（删除）'}</code>。<br><br>`
-    + '这会<b>直接改动磁盘上的文件</b>，不是只改当前文档。<br>'
-    + '每个文件改动前都会留一份历史快照，出问题可以从「文件 → 历史版本」找回。',
-    '开始替换', '取消'
+    tt('在整个文件夹里替换'),
+    tt('把 <code>{q}</code> 换成 <code>{rep}</code>。<br><br>', { q: htmlEsc(q), rep: htmlEsc(rep) || tt('（删除）') })
+    + tt('这会<b>直接改动磁盘上的文件</b>，不是只改当前文档。<br>')
+    + tt('每个文件改动前都会留一份历史快照，出问题可以从「文件 → 历史版本」找回。'),
+    tt('开始替换'), tt('取消')
   );
   if (!ok) return;
 
@@ -808,10 +812,10 @@ async function replaceInFolderNow() {
   try {
     r = await be.replaceInFolder(root, q, rep, tree.regex, tree.caseSensitive);
   } catch (e) {
-    dialog({ title: '替换失败', body: String(e) });
+    dialog({ title: tt('替换失败'), body: String(e) });
     return;
   }
-  toast(`替换完成：${r.files} 个文件、${r.hits} 处${r.skipped ? `（跳过 ${r.skipped} 个）` : ''}`);
+  toast(tt('替换完成：{files} 个文件、{hits} 处', { files: r.files, hits: r.hits }) + (r.skipped ? tt('（跳过 {n} 个）', { n: r.skipped }) : ''));
 
   await tree.search(q);
   /* 打开的标签跟着走：不脏就静默重载，脏就打个点等用户切过去再问 */
@@ -864,7 +868,7 @@ function setupSidebar() {
   };
   el.ftRegex.onclick = () => {
     el.ftRegex.classList.toggle('on');
-    el.ftRegex.title = tree.regex ? '按正则表达式匹配（已开启）' : '按正则表达式匹配';
+    el.ftRegex.title = tree.regex ? tt('按正则表达式匹配（已开启）') : tt('按正则表达式匹配');
     syncSearchMode();
     if (el.ftQuery.value) rerunSearch();
   };
@@ -885,78 +889,120 @@ function setupSidebar() {
 /* ---------------- 设置面板 ---------------- */
 /* 设置项原来散在「视图」菜单里：主题、字号、单双栏各占一行，还看不出当前字号是多少。
    集中成一个面板，改一项立刻生效，不需要「确定」。 */
+/** 语言偏好落地的唯一出口：改设置 → 生效 → 把「按需取词」的地方重刷一遍。
+    静态 HTML 走 data-i18n（applyDom 一次扫完，顺带把已打开的设置面板就地翻掉），
+    菜单顶级标签走 update()，其余是渲染时才算文案的动态区域（状态栏、大纲、预览）。 */
+function applyLang() {
+  setLang(resolveLang(settings.lang));
+  applyDom();
+  if (menuApi) menuApi.update(menuTree());
+  const t = activeTab();
+  if (t && t.mode) el.modeLabel.textContent = modeMeta()[t.mode].short || modeMeta()[t.mode].label;
+  /* 预览标题是随布局变的（预览 / 预览（只读）），没有静态标记可循，这里补一句 */
+  if (el.previewHead) el.previewHead.textContent = settings.layout === 'split' ? tt('预览') : tt('预览（只读）');
+  updateOutline();
+  updateStatus();
+  tree.render();
+  schedulePreview();
+  refreshTitle();
+}
+
 function showSettings() {
   const box = document.createElement('div');
   box.className = 'set-panel';
+  /* 面板里的文案一律写 data-i18n + 中文兜底，末尾 applyDom(box) 统一翻。
+     这样换语言时同一个 applyDom 能把开着的面板就地刷掉，不用关掉重开。 */
   const seg = (name, opts, cur) => `<div class="set-seg" data-name="${name}">${
-    opts.map(([v, l]) => `<button type="button" data-v="${v}" class="${v === cur ? 'on' : ''}">${l}</button>`).join('')
+    opts.map(([v, l]) => `<button type="button" data-v="${v}" data-i18n="${l}" class="${v === cur ? 'on' : ''}">${l}</button>`).join('')
   }</div>`;
+
+  const langOpts = ['auto'].concat(LANGS.map((l) => l.code)).map((c) => {
+    const name = c === 'auto' ? '跟随系统' : (LANGS.find((l) => l.code === c) || {}).name || c;
+    return `<option value="${c}"${c === settings.lang ? ' selected' : ''}${c === 'auto' ? ' data-i18n="跟随系统"' : ''}>${name}</option>`;
+  }).join('');
 
   box.innerHTML = `
     <div class="set-group">
-      <div class="set-label">主题</div>
+      <div class="set-label" data-i18n="语言">语言</div>
+      <select class="set-select" id="setLang">${langOpts}</select>
+      <div class="set-hint" data-i18n="「跟随系统」按系统语言自动选择，切换后立即生效。">「跟随系统」按系统语言自动选择，切换后立即生效。</div>
+    </div>
+
+    <div class="set-group">
+      <div class="set-label" data-i18n="主题">主题</div>
       ${seg('theme', [['auto', '跟随系统'], ['light', '浅色'], ['dark', '深色']], settings.theme)}
     </div>
 
     <div class="set-group">
-      <div class="set-label">字号</div>
+      <div class="set-label" data-i18n="字号">字号</div>
       <div class="set-zoom">
-        <button type="button" class="set-step" data-zoom="-1" title="缩小">−</button>
+        <button type="button" class="set-step" data-zoom="-1" title="缩小" data-i18n-title="缩小">−</button>
         <span class="set-value" id="setFontSize">${settings.fontSize} px</span>
-        <button type="button" class="set-step" data-zoom="1" title="放大">+</button>
-        <button type="button" class="set-link" id="setFontReset">实际大小</button>
+        <button type="button" class="set-step" data-zoom="1" title="放大" data-i18n-title="放大">+</button>
+        <button type="button" class="set-link" id="setFontReset" data-i18n="实际大小">实际大小</button>
       </div>
     </div>
 
     <div class="set-group">
-      <div class="set-label">正文宽度</div>
+      <div class="set-label" data-i18n="正文宽度">正文宽度</div>
       <div class="set-zoom">
-        <button type="button" class="set-step" data-rw="-1" title="窄一点">−</button>
+        <button type="button" class="set-step" data-rw="-1" title="窄一点" data-i18n-title="窄一点">−</button>
         <span class="set-value" id="setReadWidth">${settings.readWidth} px</span>
-        <button type="button" class="set-step" data-rw="1" title="宽一点">+</button>
-        <button type="button" class="set-link" id="setReadReset">默认</button>
+        <button type="button" class="set-step" data-rw="1" title="宽一点" data-i18n-title="宽一点">+</button>
+        <button type="button" class="set-link" id="setReadReset" data-i18n="默认">默认</button>
       </div>
-      <div class="set-hint">Markdown 正文在宽窗口下居中的最大宽度（编辑与预览都按这个来）。窗口或分栏不够宽时自动收回到两侧留白，专注模式在此基础上再收 8%。</div>
+      <div class="set-hint" data-i18n="Markdown 正文在宽窗口下居中的最大宽度（编辑与预览都按这个来）。窗口或分栏不够宽时自动收回到两侧留白，专注模式在此基础上再收 8%。">Markdown 正文在宽窗口下居中的最大宽度（编辑与预览都按这个来）。窗口或分栏不够宽时自动收回到两侧留白，专注模式在此基础上再收 8%。</div>
     </div>
 
     <div class="set-group">
-      <div class="set-label">界面</div>
-      <label class="set-row"><input type="checkbox" id="setOutline" ${settings.outlineVisible ? 'checked' : ''} /> 显示大纲 / 文件栏</label>
-      <label class="set-row"><input type="checkbox" id="setSplit" ${settings.layout === 'split' ? 'checked' : ''} /> 双栏（编辑 + 预览）</label>
+      <div class="set-label" data-i18n="界面">界面</div>
+      <label class="set-row"><input type="checkbox" id="setOutline" ${settings.outlineVisible ? 'checked' : ''} /> <span data-i18n="显示大纲 / 文件栏">显示大纲 / 文件栏</span></label>
+      <label class="set-row"><input type="checkbox" id="setSplit" ${settings.layout === 'split' ? 'checked' : ''} /> <span data-i18n="双栏（编辑 + 预览）">双栏（编辑 + 预览）</span></label>
     </div>
 
     <div class="set-group">
-      <div class="set-label">文件</div>
-      <label class="set-row"><input type="checkbox" id="setAutoSave" ${settings.autoSave ? 'checked' : ''} /> 自动保存（停手约 1 秒写盘）</label>
-      <label class="set-row"><input type="checkbox" id="setWatch" ${settings.watchFiles !== false ? 'checked' : ''} /> 监听磁盘改动（别的程序改了文件时提示）</label>
+      <div class="set-label" data-i18n="文件">文件</div>
+      <label class="set-row"><input type="checkbox" id="setAutoSave" ${settings.autoSave ? 'checked' : ''} /> <span data-i18n="自动保存（停手约 1 秒写盘）">自动保存（停手约 1 秒写盘）</span></label>
+      <label class="set-row"><input type="checkbox" id="setWatch" ${settings.watchFiles !== false ? 'checked' : ''} /> <span data-i18n="监听磁盘改动（别的程序改了文件时提示）">监听磁盘改动（别的程序改了文件时提示）</span></label>
       <div class="set-row folder">
         <span class="set-folder" id="setFolder"></span>
-        <button type="button" class="mini" id="setPickFolder">选择…</button>
-        <button type="button" class="mini ghost" id="setClearFolder">清除</button>
+        <button type="button" class="mini" id="setPickFolder" data-i18n="选择…">选择…</button>
+        <button type="button" class="mini ghost" id="setClearFolder" data-i18n="清除">清除</button>
       </div>
-      <div class="set-hint">当前打开的文件夹，用于左侧「文件」页浏览与搜索。</div>
+      <div class="set-hint" data-i18n="当前打开的文件夹，用于左侧「文件」页浏览与搜索。">当前打开的文件夹，用于左侧「文件」页浏览与搜索。</div>
     </div>
 
     <div class="set-group">
-      <div class="set-label">快捷键</div>
+      <div class="set-label" data-i18n="快捷键">快捷键</div>
       <div class="keys-list" id="setKeysList"></div>
-      <div class="set-hint">点「改」后直接按新的组合键（要带 Ctrl / Alt，或单用 F1–F12），Esc 取消。自定义优先于默认键位。</div>
+      <div class="set-hint" data-i18n="点「改」后直接按新的组合键（要带 Ctrl / Alt，或单用 F1–F12），Esc 取消。自定义优先于默认键位。">点「改」后直接按新的组合键（要带 Ctrl / Alt，或单用 F1–F12），Esc 取消。自定义优先于默认键位。</div>
     </div>
 
     <div class="set-foot">
-      <button type="button" class="mini ghost" id="setReset">恢复默认设置</button>
+      <button type="button" class="mini ghost" id="setReset" data-i18n="恢复默认设置">恢复默认设置</button>
     </div>
   `;
+  applyDom(box);
 
   const paintFolder = () => {
     const n = box.querySelector('#setFolder');
     if (!n) return;
-    n.textContent = settings.folder || '未打开文件夹';
+    n.textContent = settings.folder || tt('未打开文件夹');
     n.title = settings.folder || '';
     n.classList.toggle('faint', !settings.folder);
   };
   paintFolder();
   paintKeyList(box.querySelector('#setKeysList'));
+
+  box.querySelector('#setLang').onchange = (e) => {
+    settings.lang = e.target.value;
+    saveSettings();
+    applyLang();      // applyDom 顺带把这块还开着的面板翻掉
+    /* 对话框标题是 dialog() 一次性写进去的，applyDom 管不到（#dlgTitle 没有、也不能有
+       data-i18n —— 每个对话框的标题都不一样），这里单独补一次 */
+    const dt = document.getElementById('dlgTitle');
+    if (dt) dt.textContent = tt('设置');
+  };
 
   box.querySelectorAll('.set-seg button').forEach((b) => {
     b.onclick = () => {
@@ -1002,7 +1048,7 @@ function showSettings() {
     settings.watchFiles = e.target.checked;
     saveSettings();
     syncWatches();
-    toast(settings.watchFiles ? '已开启磁盘改动监听' : '已关闭磁盘改动监听');
+    toast(settings.watchFiles ? tt('已开启磁盘改动监听') : tt('已关闭磁盘改动监听'));
   };
   box.querySelector('#setSplit').onchange = (e) => {
     setLayout(e.target.checked ? 'split' : 'single');
@@ -1011,7 +1057,7 @@ function showSettings() {
   box.querySelector('#setAutoSave').onchange = (e) => {
     settings.autoSave = e.target.checked;
     saveSettings();
-    toast(settings.autoSave ? '自动保存已开启' : '自动保存已关闭');
+    toast(settings.autoSave ? tt('自动保存已开启') : tt('自动保存已关闭'));
   };
   box.querySelector('#setPickFolder').onclick = async () => {
     await pickFolder();
@@ -1019,7 +1065,7 @@ function showSettings() {
   };
   box.querySelector('#setClearFolder').onclick = () => { clearFolder(); paintFolder(); };
   box.querySelector('#setReset').onclick = async () => {
-    const ok = await confirmBox('恢复默认设置', '主题、字号、正文宽度、布局、自动保存都会回到出厂状态，文件夹设置也会清空。<br><br>确定？', '恢复', '取消');
+    const ok = await confirmBox(tt('恢复默认设置'), tt('主题、字号、正文宽度、布局、自动保存都会回到出厂状态，文件夹设置也会清空。<br><br>确定？'), tt('恢复'), tt('取消'));
     if (!ok) return;
     /* 直接铺 DEFAULTS：字段增删只维护一处，不会漏项。
        keymap / lastMode 必须换成新对象 —— 否则 settings 和 DEFAULTS 共用同一份引用，
@@ -1039,10 +1085,12 @@ function showSettings() {
     box.querySelector('#setOutline').checked = true;
     box.querySelector('#setSplit').checked = false;
     box.querySelector('#setAutoSave').checked = true;
-    toast('已恢复默认设置');
+    box.querySelector('#setLang').value = settings.lang;
+    applyLang();
+    toast(tt('已恢复默认设置'));
   };
 
-  dialog({ title: '设置', body: box, buttons: [{ id: 'ok', label: '完成', primary: true }] });
+  dialog({ title: tt('设置'), body: box, buttons: [{ id: 'ok', label: tt('完成'), primary: true }] });
 }
 
 /* ---------------- 状态栏 ---------------- */
@@ -1077,8 +1125,8 @@ function refreshStats() {
      把进度文字冲掉后，完成前的状态栏就一直是假数据 */
   if (wys.loading) return;
   const { lines, words, chars } = countStats(t.content);
-  el.stLines.textContent = `${lines} 行`;
-  el.stWords.textContent = `${words} 字 · ${chars} 字符`;
+  el.stLines.textContent = tt('{n} 行', { n: lines });
+  el.stWords.textContent = tt('{w} 字 · {c} 字符', { w: words, c: chars });
 }
 
 /**
@@ -1091,7 +1139,7 @@ function updateCursorPos() {
   if (!t) return;
   if (t.mode === 'edit') {
     const c = plain.cursor;
-    el.stPos.textContent = `行 ${c.line}, 列 ${c.col}`;
+    el.stPos.textContent = tt('行 {line}，列 {col}', { line: c.line, col: c.col });
   } else {
     el.stPos.textContent = '—';
   }
@@ -1104,7 +1152,7 @@ function updateStatus() {
   el.stEncoding.textContent = t.encoding;
   el.fmtBadge.textContent = kindLabel(detectKind(t.name));
   updateCursorPos();
-  el.stDraft.textContent = isDirty(t) ? '未保存' : '已保存';
+  el.stDraft.textContent = isDirty(t) ? tt('未保存') : tt('已保存');
   el.stDraft.classList.toggle('dirty', isDirty(t));
   renderTabs();
 }
@@ -1173,9 +1221,9 @@ async function restoreDrafts() {
   const names = valid.map((d) => `<b>${d.name}</b>`).join('、');
   const when = new Date(valid[valid.length - 1].time || Date.now()).toLocaleString();
   const keep = await confirmBox(
-    valid.length === 1 ? '恢复上次的草稿' : `恢复 ${valid.length} 份未保存的内容`,
-    `上次关闭时（${when}）还有没保存的内容：${names}。<br><br>是否全部恢复？`,
-    '恢复', '丢弃'
+    valid.length === 1 ? tt('恢复上次的草稿') : tt('恢复 {n} 份未保存的内容', { n: valid.length }),
+    tt('上次关闭时（{when}）还有没保存的内容：{names}。<br><br>是否全部恢复？', { when, names }),
+    tt('恢复'), tt('丢弃')
   );
   if (!keep) { LS.del('drafts'); LS.del('draft'); return 0; }
 
@@ -1194,7 +1242,7 @@ async function restoreDrafts() {
   renderTabs();
   LS.del('drafts'); LS.del('draft');
   saveDraft();          // 恢复过程中 activate 覆盖过 session，这里写回完整状态
-  toast(valid.length === 1 ? '草稿已恢复' : `已恢复 ${valid.length} 份草稿`);
+  toast(valid.length === 1 ? tt('草稿已恢复') : tt('已恢复 {n} 份草稿', { n: valid.length }));
   return valid.length;
 }
 
@@ -1251,17 +1299,17 @@ async function checkExternalChange(tab) {
     if (m == null || m === t.mtime) return;
     if (!isDirty(t)) {
       await reloadTab(t, m);
-      toast('文件已在磁盘上更新，已重新载入');
+      toast(tt('文件已在磁盘上更新，已重新载入'));
       return;
     }
     const reload = await confirmBox(
-      '文件已在外部修改',
-      `<b>${t.name}</b> 在打开之后被其他程序改过。<br><br>重新载入会丢掉你这里的修改。`,
-      '重新载入', '保留我的'
+      tt('文件已在外部修改'),
+      tt('<b>{name}</b> 在打开之后被其他程序改过。<br><br>重新载入会丢掉你这里的修改。', { name: t.name }),
+      tt('重新载入'), tt('保留我的')
     );
     if (!reload) return;
     await reloadTab(t, m);
-    toast('已重新载入');
+    toast(tt('已重新载入'));
   } catch {
     /* 读不到就算了：真正的失败留给保存时报错，别在这里弹窗打扰 */
   } finally {
@@ -1336,7 +1384,7 @@ export async function openPath(path) {
     addRecent(path);
     return t;
   } catch (e) {
-    dialog({ title: '无法打开', body: String(e) });
+    dialog({ title: tt('无法打开'), body: String(e) });
     return null;
   }
 }
@@ -1368,9 +1416,9 @@ async function saveTab(t = activeTab(), saveAs = false, opts = {}) {
       const cur = await be.fileMtime(t.path).catch(() => null);
       if (cur != null && cur !== t.mtime) {
         const overwrite = await confirmBox(
-          '文件已被其他程序修改',
-          `磁盘上的 <b>${t.name}</b> 在打开之后被改过，保存会覆盖那些改动。`,
-          '仍然覆盖', '取消'
+          tt('文件已被其他程序修改'),
+          tt('磁盘上的 <b>{name}</b> 在打开之后被改过，保存会覆盖那些改动。', { name: t.name }),
+          tt('仍然覆盖'), tt('取消')
         );
         if (!overwrite) return false;
       }
@@ -1386,10 +1434,10 @@ async function saveTab(t = activeTab(), saveAs = false, opts = {}) {
     saveDraft();               // 这个标签干净了，把它从草稿堆里摘掉
     addRecent(t.path);
     updateStatus();
-    if (!silent) toast(`已保存 ${t.name}`);
+    if (!silent) toast(tt('已保存 {name}', { name: t.name }));
     return true;
   } catch (e) {
-    dialog({ title: '保存失败', body: String(e) });
+    dialog({ title: tt('保存失败'), body: String(e) });
     return false;
   }
 }
@@ -1410,14 +1458,14 @@ async function confirmQuit() {
   const names = dirty.map((t) => `<b>${t.name}</b>`).join('、');
   const noPath = dirty.filter((t) => !t.path).length;
   const r = await dialog({
-    title: '还有未保存的内容',
-    body: `${dirty.length} 个标签有未保存的修改：${names}。`
-      + (noPath ? `<br><br>其中 ${noPath} 个还没保存过文件：「全部保存并退出」会把它们存成草稿，下次启动可恢复；「不保存退出」则连同丢弃。` : '')
-      + '<br><br>要如何处理？',
+    title: tt('还有未保存的内容'),
+    body: tt('{n} 个标签有未保存的修改：{names}。', { n: dirty.length, names })
+      + (noPath ? tt('<br><br>其中 {n} 个还没保存过文件：「全部保存并退出」会把它们存成草稿，下次启动可恢复；「不保存退出」则连同丢弃。', { n: noPath }) : '')
+      + tt('<br><br>要如何处理？'),
     buttons: [
-      { id: 'save', label: '全部保存并退出', primary: true },
-      { id: 'discard', label: '不保存退出' },
-      { id: 'cancel', label: '取消' },
+      { id: 'save', label: tt('全部保存并退出'), primary: true },
+      { id: 'discard', label: tt('不保存退出') },
+      { id: 'cancel', label: tt('取消') },
     ],
   });
   if (r === 'cancel') return false;
@@ -1461,12 +1509,12 @@ async function closeTab(id) {
   if (isDirty(t)) {
     persistCurrentView();
     const r = await dialog({
-      title: '未保存的修改',
-      body: `<b>${t.name}</b> 有未保存的修改，要保存吗？`,
+      title: tt('未保存的修改'),
+      body: tt('<b>{name}</b> 有未保存的修改，要保存吗？', { name: t.name }),
       buttons: [
-        { id: 'save', label: '保存', primary: true },
-        { id: 'discard', label: '不保存' },
-        { id: 'cancel', label: '取消' },
+        { id: 'save', label: tt('保存'), primary: true },
+        { id: 'discard', label: tt('不保存') },
+        { id: 'cancel', label: tt('取消') },
       ],
     });
     if (r === 'cancel') return;
@@ -1495,8 +1543,8 @@ function recentMenuItems() {
     kbd: (be.dirName(p).split(/[\\/]/).pop() || '').slice(0, 16),
     action: () => openPath(p),
   }));
-  items.push({ id: 'clearRecent', label: '清除记录' });
-  return [{ sep: true }, { head: '最近打开' }, ...items];
+  items.push({ id: 'clearRecent', label: tt('清除记录') });
+  return [{ sep: true }, { head: tt('最近打开') }, ...items];
 }
 
 /* ---------------- 内容读写 ---------------- */
@@ -1537,7 +1585,7 @@ function surround(marker) {
   const t = activeTab();
   if (!t) return;
   if (t.mode === 'wysiwyg') { wys.wrapInline(marker); return; }
-  if (t.mode !== 'edit') { toast('预览模式下不能编辑'); return; }
+  if (t.mode !== 'edit') { toast(tt('预览模式下不能编辑')); return; }
   const { from, to } = plain.selection;
   const sel = plain.selectedText;
   const next = plain.value.slice(0, from) + marker + sel + marker + plain.value.slice(to);
@@ -1549,7 +1597,7 @@ function surround(marker) {
 function requireEditMode() {
   const t = activeTab();
   if (!t) return false;
-  if (t.mode === 'preview') { toast('预览模式下不能编辑，请切换到编辑模式'); return false; }
+  if (t.mode === 'preview') { toast(tt('预览模式下不能编辑，请切换到编辑模式')); return false; }
   return true;
 }
 
@@ -1557,15 +1605,16 @@ function requireEditMode() {
 function wysCmd(fn) {
   const t = activeTab();
   if (!t) return;
-  if (t.mode !== 'wysiwyg') { toast('该操作请在「所见即所得」模式下使用'); return; }
+  if (t.mode !== 'wysiwyg') { toast(tt('该操作请在「所见即所得」模式下使用')); return; }
   fn(wys);
 }
 
 /** 表格列对齐 */
 function alignColumn(w, align) {
-  if (!w.isInTable()) { toast('请先把光标放进表格'); return; }
+  if (!w.isInTable()) { toast(tt('请先把光标放进表格')); return; }
   w.setColAlign(align);
-  toast(align ? `本列已${{ left: '左对齐', center: '居中', right: '右对齐' }[align]}` : '本列已取消对齐');
+  const alignWord = { left: tt('左对齐'), center: tt('居中'), right: tt('右对齐') };
+  toast(align ? tt('本列已{how}', { how: alignWord[align] }) : tt('本列已取消对齐'));
 }
 
 /** 调整当前块缩进（列表改层级、引用改嵌套深度） */
@@ -1583,17 +1632,17 @@ function shiftIndent(delta) {
 function tablePrompt() {
   const t = activeTab();
   if (!t) return;
-  if (t.mode !== 'wysiwyg') { toast('插入表格请在「所见即所得」模式下使用'); return; }
+  if (t.mode !== 'wysiwyg') { toast(tt('插入表格请在「所见即所得」模式下使用')); return; }
   const saved = saveRange();
   const box = document.createElement('div');
-  box.innerHTML = '<div class="dlg-text">行数（含表头）与列数：</div>'
+  box.innerHTML = '<div class="dlg-text">' + tt('行数（含表头）与列数：') + '</div>'
     + '<div class="dlg-row">'
     + '<input class="dlg-input" id="tblRows" value="3">'
-    + '<span>行</span>'
+    + '<span>' + tt('行') + '</span>'
     + '<input class="dlg-input" id="tblCols" value="3">'
-    + '<span>列</span>'
+    + '<span>' + tt('列') + '</span>'
     + '</div>';
-  dialog({ title: '插入表格', body: box, buttons: [{ id: 'ok', label: '插入', primary: true }, { id: 'cancel', label: '取消' }] })
+  dialog({ title: tt('插入表格'), body: box, buttons: [{ id: 'ok', label: tt('插入'), primary: true }, { id: 'cancel', label: tt('取消') }] })
     .then((r) => {
       if (r !== 'ok') return;
       const rows = Math.max(1, Math.min(20, parseInt(document.getElementById('tblRows').value, 10) || 3));
@@ -1608,11 +1657,11 @@ function tablePrompt() {
 function linkPrompt() {
   const t = activeTab();
   if (!t) return;
-  if (t.mode !== 'wysiwyg') { toast('插入链接请在「所见即所得」模式下使用'); return; }
+  if (t.mode !== 'wysiwyg') { toast(tt('插入链接请在「所见即所得」模式下使用')); return; }
   const saved = saveRange();
   const box = document.createElement('div');
-  box.innerHTML = '<div class="dlg-text">链接地址：</div><input class="dlg-input" id="linkInput" value="https://">';
-  dialog({ title: '插入链接', body: box, buttons: [{ id: 'ok', label: '插入', primary: true }, { id: 'cancel', label: '取消' }] })
+  box.innerHTML = '<div class="dlg-text">' + tt('链接地址：') + '</div><input class="dlg-input" id="linkInput" value="https://">';
+  dialog({ title: tt('插入链接'), body: box, buttons: [{ id: 'ok', label: tt('插入'), primary: true }, { id: 'cancel', label: tt('取消') }] })
     .then((r) => {
       if (r !== 'ok') return;
       const v = document.getElementById('linkInput').value.trim();
@@ -1632,37 +1681,37 @@ function linkPrompt() {
 async function imagePrompt() {
   const t = activeTab();
   if (!t) return;
-  if (t.mode !== 'wysiwyg') { toast('插入图片请在「所见即所得」模式下使用'); return; }
+  if (t.mode !== 'wysiwyg') { toast(tt('插入图片请在「所见即所得」模式下使用')); return; }
   const saved = saveRange();
   const pick = await dialog({
-    title: '插入图片',
-    body: '本地图片会复制到文档同目录的 <b>assets/</b> 下，用相对路径引用；也可以直接给一个网络地址。',
+    title: tt('插入图片'),
+    body: tt('本地图片会复制到文档同目录的 <b>assets/</b> 下，用相对路径引用；也可以直接给一个网络地址。'),
     buttons: [
-      { id: 'local', label: '选择本地图片…', primary: true },
-      { id: 'url', label: '网络地址…' },
-      { id: 'cancel', label: '取消' },
+      { id: 'local', label: tt('选择本地图片…'), primary: true },
+      { id: 'url', label: tt('网络地址…') },
+      { id: 'cancel', label: tt('取消') },
     ],
   });
 
   if (pick === 'local') {
-    if (!t.path) { toast('请先保存文档，图片要放进它同目录的 assets/'); return; }
+    if (!t.path) { toast(tt('请先保存文档，图片要放进它同目录的 assets/')); return; }
     const src = await be.pickImage();
     if (!src) return;
     try {
       const rel = await be.copyImageToAssets(src, t.path);
       restoreRange(saved);
       wys.insertImage(rel, '');
-      toast('图片已复制到 assets/');
+      toast(tt('图片已复制到 assets/'));
     } catch (e) {
-      toast('插入失败：' + e);
+      toast(tt('插入失败：') + e);
     }
     return;
   }
 
   if (pick === 'url') {
     const box = document.createElement('div');
-    box.innerHTML = '<div class="dlg-text">图片地址：</div><input class="dlg-input" id="imgInput" value="https://">';
-    const ok = await dialog({ title: '图片地址', body: box, buttons: [{ id: 'ok', label: '插入', primary: true }, { id: 'cancel', label: '取消' }] });
+    box.innerHTML = '<div class="dlg-text">' + tt('图片地址：') + '</div><input class="dlg-input" id="imgInput" value="https://">';
+    const ok = await dialog({ title: tt('图片地址'), body: box, buttons: [{ id: 'ok', label: tt('插入'), primary: true }, { id: 'cancel', label: tt('取消') }] });
     if (ok !== 'ok') return;
     const url = document.getElementById('imgInput').value.trim();
     if (!url || url === 'https://') return;
@@ -1686,24 +1735,24 @@ function placeImageRef(rel) {
 async function insertImageFromFile(file) {
   const t = activeTab();
   if (!t) return;
-  if (!t.path) { toast('请先保存文档，图片要放进它同目录的 assets/'); return; }
-  if (t.readonly) { toast('当前标签是只读的'); return; }
+  if (!t.path) { toast(tt('请先保存文档，图片要放进它同目录的 assets/')); return; }
+  if (t.readonly) { toast(tt('当前标签是只读的')); return; }
   try {
     const ext = (String(file.type || '').split('/')[1] || 'png').replace(/^jpeg$/, 'jpg');
     const bytes = new Uint8Array(await file.arrayBuffer());
     const rel = await be.saveImageBytes(t.path, bytes, ext);
     // 截图这类没有文件名，alt 留空即可（Markdown 里就是 ![](assets/x.png)）
     placeImageRef(rel);
-    toast('图片已存入 assets/');
+    toast(tt('图片已存入 assets/'));
   } catch (e) {
-    toast('插入图片失败：' + e);
+    toast(tt('插入图片失败：') + e);
   }
 }
 
 /* ---------------- 目录 ---------------- */
 
 /** 标题文字进方括号前要清掉会截断链接语法的字符 */
-const tocLabel = (s) => s.replace(/[[\]]/g, '').replace(/\s+/g, ' ').trim() || '（无标题）';
+const tocLabel = (s) => s.replace(/[[\]]/g, '').replace(/\s+/g, ' ').trim() || tt('（无标题）');
 
 /**
  * 插入目录：扫一遍标题，按层级缩进成 Markdown 列表。
@@ -1713,9 +1762,9 @@ const tocLabel = (s) => s.replace(/[[\]]/g, '').replace(/\s+/g, ' ').trim() || '
 function insertToc() {
   const t = activeTab();
   if (!t) return;
-  if (t.mode === 'preview') { toast('预览模式是只读的，Ctrl+1 或 Ctrl+2 之后再插入'); return; }
+  if (t.mode === 'preview') { toast(tt('预览模式是只读的，Ctrl+1 或 Ctrl+2 之后再插入')); return; }
   const heads = outlineFromMarkdown(readEditor(t));
-  if (!heads.length) { toast('这篇还没有标题，先用 # 写几行小标题'); return; }
+  if (!heads.length) { toast(tt('这篇还没有标题，先用 # 写几行小标题')); return; }
   const slugs = headingSlugs(heads.map((h) => h.text));
   const min = Math.min(...heads.map((h) => h.level));
   const md = heads
@@ -1727,7 +1776,7 @@ function insertToc() {
   } else {
     plain.insertText(md + '\n');
   }
-  toast(`已插入目录：${heads.length} 个标题`);
+  toast(tt('已插入目录：{n} 个标题', { n: heads.length }));
 }
 
 /** 跳文档内锚点：目录里的 [标题](#slug) 走这条 */
@@ -1741,12 +1790,12 @@ function gotoAnchor(href) {
   if (t.mode === 'preview') {
     const node = el.preview.querySelector(`[id="${slug.replace(/["\\]/g, '\\$&')}"]`) || el.preview.querySelector('#' + esc);
     if (node) node.scrollIntoView({ block: 'start', behavior: 'smooth' });
-    else toast('找不到这一节');
+    else toast(tt('找不到这一节'));
     return;
   }
   if (canWys()) {
     const block = wys.findHeadingBySlug(slug);
-    if (!block) { toast('找不到这一节'); return; }
+    if (!block) { toast(tt('找不到这一节')); return; }
     wys.focusBlock(block);
     block.scrollIntoView({ block: 'start', behavior: 'smooth' });
     return;
@@ -1754,7 +1803,7 @@ function gotoAnchor(href) {
   // 编辑模式：源码里数一下第几个标题，再滚到那一行
   const heads = outlineFromMarkdown(plain.value);
   const i = headingSlugs(heads.map((h) => h.text)).indexOf(slug);
-  if (i < 0) { toast('找不到这一节'); return; }
+  if (i < 0) { toast(tt('找不到这一节')); return; }
   plain.scrollToLine(heads[i].line + 1);
 }
 
@@ -1766,28 +1815,28 @@ async function openExternal(href) {
     try {
       const { openUrl } = await import('../vendor/plugin-opener/dist-js/index.js');
       await openUrl(u);
-    } catch { toast('无法打开链接'); }
+    } catch { toast(tt('无法打开链接')); }
     return;
   }
   if (u.startsWith('#')) { gotoAnchor(u); return; }
   const t = activeTab();
   const base = t && t.path ? be.dirName(t.path) : '';
   const p = /^([a-zA-Z]:[\\/]|[\\/])/.test(u) ? u : `${base}/${u}`;
-  try { await openPath(p); } catch { toast('打不开：' + p); }
+  try { await openPath(p); } catch { toast(tt('打不开：') + p); }
 }
 
 /* ---------------- 新建文档：先选类型 ---------------- */
-const NEW_TYPES = [
-  { ext: 'md', name: 'Markdown', desc: '所见即所得写作' },
-  { ext: 'txt', name: '纯文本', desc: '记事 / 日志' },
-  { ext: 'json', name: 'JSON', desc: '校验 + 高亮' },
-  { ext: 'csv', name: 'CSV', desc: '表格文本' },
-  { ext: 'js', name: 'JavaScript', desc: '代码高亮' },
+const newTypes = () => [
+  { ext: 'md', name: 'Markdown', desc: tt('所见即所得写作') },
+  { ext: 'txt', name: tt('纯文本'), desc: tt('记事 / 日志') },
+  { ext: 'json', name: 'JSON', desc: tt('校验 + 高亮') },
+  { ext: 'csv', name: 'CSV', desc: tt('表格文本') },
+  { ext: 'js', name: 'JavaScript', desc: tt('代码高亮') },
   { ext: 'ts', name: 'TypeScript' },
   { ext: 'py', name: 'Python' },
   { ext: 'html', name: 'HTML' },
   { ext: 'css', name: 'CSS' },
-  { ext: 'sh', name: 'Shell 脚本' },
+  { ext: 'sh', name: tt('Shell 脚本') },
 ];
 
 /** 新建文档的名字：连开三个不该都叫「未命名.md」——重名时依次加序号 */
@@ -1807,7 +1856,7 @@ async function newFilePrompt() {
   const box = document.createElement('div');
   box.className = 'new-types';
   const last = settings.lastNewExt || 'md';
-  NEW_TYPES.forEach((ty) => {
+  newTypes().forEach((ty) => {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'new-type' + (ty.ext === last ? ' active' : '');
@@ -1816,11 +1865,11 @@ async function newFilePrompt() {
     box.appendChild(b);
   });
   const picked = await dialog({
-    title: '新建文档',
+    title: tt('新建文档'),
     body: box,
     buttons: [
-      { id: last, label: `新建 ${NEW_TYPES.find((t) => t.ext === last)?.name || 'Markdown'}`, primary: true },
-      { id: 'cancel', label: '取消' },
+      { id: last, label: tt('新建 {type}', { type: newTypes().find((t) => t.ext === last)?.name || 'Markdown' }), primary: true },
+      { id: 'cancel', label: tt('取消') },
     ],
   });
   if (!picked || picked === 'cancel') return;
@@ -1848,7 +1897,7 @@ function transformText(fn, label) {
     const md = wys.toMarkdown();
     setContent(fn(md));
     wys.render(fn(md));
-    toast(`${label}已应用`);
+    toast(tt('{op}已应用', { op: label }));
     updateStatus();
     return;
   }
@@ -1859,10 +1908,10 @@ function transformText(fn, label) {
   const backup = content;
   const out = fn(target);
   const next = hasSel ? content.slice(0, s) + out + content.slice(e) : out;
-  if (next === backup) { toast('内容没有变化'); return; }
+  if (next === backup) { toast(tt('内容没有变化')); return; }
   setContent(next);
   if (hasSel) plain.setSelection(s, s + out.length);
-  undoToast(`${label}已应用（${hasSel ? '选区' : '全文'}）`, backup);
+  undoToast(tt('{op}已应用（{scope}）', { op: label, scope: hasSel ? tt('选区') : tt('全文') }), backup);
 }
 
 function formatDoc() {
@@ -1873,13 +1922,13 @@ function formatDoc() {
   const backup = t.content;
   try {
     const r = formatByKind(kind, t.content);
-    if (r.text === t.content) { toast('已经是最佳格式，无需调整'); return; }
+    if (r.text === t.content) { toast(tt('已经是最佳格式，无需调整')); return; }
     setContent(r.text);
     const notes = r.notes && r.notes.length ? `（${r.notes.join('、')}）` : '';
-    undoToast(`已格式化${notes}`, backup);
+    undoToast(tt('已格式化{notes}', { notes }), backup);
   } catch (e) {
-    const loc = e.line ? `第 ${e.line} 行第 ${e.col} 列` : '';
-    dialog({ title: '无法格式化', body: `文件中存在语法错误，已保持原样。<br><br><b>${loc}</b><br><span style="font-family:var(--font-mono);font-size:12px">${String(e.message)}</span>` });
+    const loc = e.line ? tt('第 {line} 行第 {col} 列', { line: e.line, col: e.col }) : '';
+    dialog({ title: tt('无法格式化'), body: tt('文件中存在语法错误，已保持原样。<br><br><b>{loc}</b><br><span style="font-family:var(--font-mono);font-size:12px">{msg}</span>', { loc, msg: String(e.message) }) });
     if (e.line) gotoLine(e.line - 1);
   }
 }
@@ -1892,9 +1941,9 @@ function undoToast(msg, backup) {
   const span = document.createElement('span');
   span.textContent = msg;
   const btn = document.createElement('button');
-  btn.textContent = '撤销';
+  btn.textContent = tt('撤销');
   btn.style.cssText = 'border:none;background:var(--accent);color:#fff;border-radius:0;padding:2px 10px;font-size:11.5px;cursor:pointer';
-  btn.onclick = () => { setContent(backup); box.remove(); toast('已撤销'); };
+  btn.onclick = () => { setContent(backup); box.remove(); toast(tt('已撤销')); };
   box.append(span, btn);
   wrap.appendChild(box);
   setTimeout(() => { box.style.opacity = '0'; setTimeout(() => box.remove(), 300); }, 6000);
@@ -1937,7 +1986,7 @@ function setFindExpanded(on) {
   el.findbar.classList.toggle('expanded', !!on);
   $('findReplaceRow').classList.toggle('hidden', !on);
   $('findExpand').setAttribute('aria-expanded', on ? 'true' : 'false');
-  $('findExpand').title = on ? '收起替换（Ctrl+F）' : '展开替换（Ctrl+H）';
+  $('findExpand').title = on ? tt('收起替换（Ctrl+F）') : tt('展开替换（Ctrl+H）');
   if (on) autoGrow($('replaceInput'));
 }
 
@@ -1948,7 +1997,7 @@ function setFindExpanded(on) {
 function openCompareWindow() {
   const t = activeTab();
   const left = t && t.path ? t.path : null;
-  be.openCompareWindow(left, null).catch((e) => toast('打不开对比窗口：' + e));
+  be.openCompareWindow(left, null).catch((e) => toast(tt('打不开对比窗口：') + e));
 }
 
 /**
@@ -2084,9 +2133,9 @@ async function switchToEditForReplace() {
   const t = activeTab();
   if (!t || t.mode !== 'wysiwyg') return true;
   const go = await confirmBox(
-    '替换需要编辑模式',
-    '这一处匹配跨越了加粗、链接这类格式，在所见即所得里直接改会把它们弄乱。<br><br>切到编辑模式（Ctrl+2）继续替换？',
-    '切换并替换', '取消'
+    tt('替换需要编辑模式'),
+    tt('这一处匹配跨越了加粗、链接这类格式，在所见即所得里直接改会把它们弄乱。<br><br>切到编辑模式（Ctrl+2）继续替换？'),
+    tt('切换并替换'), tt('取消')
   );
   if (!go) return false;
   setMode('edit', { fromActivate: true });
@@ -2147,9 +2196,9 @@ async function replaceAll() {
       runFind();
     }
     const rest = list.length - ok;
-    if (!list.length) { toast('没有找到匹配项'); return; }
-    if (rest) toast(`已替换 ${ok} 处；另有 ${rest} 处跨越了格式，请切到编辑模式处理`);
-    else toast(`已替换 ${ok} 处`);
+    if (!list.length) { toast(tt('没有找到匹配项')); return; }
+    if (rest) toast(tt('已替换 {ok} 处；另有 {rest} 处跨越了格式，请切到编辑模式处理', { ok, rest }));
+    else toast(tt('已替换 {n} 处', { n: ok }));
     return;
   }
 
@@ -2162,14 +2211,14 @@ async function replaceAll() {
   if (onlySel) {
     // 只动选区那一段，前后原样拼回去（选区外的同名文字不该被牵连）
     const body = t.content.slice(sel.from, sel.to).replace(re, () => (n++, rep));
-    if (!n) { toast('选区内没有匹配项'); return; }
+    if (!n) { toast(tt('选区内没有匹配项')); return; }
     setContent(t.content.slice(0, sel.from) + body + t.content.slice(sel.to));
   } else {
     const next = t.content.replace(re, () => (n++, rep));
-    if (!n) { toast('没有找到匹配项'); return; }
+    if (!n) { toast(tt('没有找到匹配项')); return; }
     setContent(next);
   }
-  toast(`已替换 ${n} 处`);
+  toast(tt('已替换 {n} 处', { n }));
   runFind();
 }
 
@@ -2183,13 +2232,13 @@ function closeFind() {
 async function insertImageFromPath(p) {
   const t = activeTab();
   if (!t) return false;
-  if (!t.path) { toast('请先保存文档，图片要放进它同目录的 assets/'); return true; }
+  if (!t.path) { toast(tt('请先保存文档，图片要放进它同目录的 assets/')); return true; }
   try {
     const rel = await be.copyImageToAssets(p, t.path);
     placeImageRef(rel);
-    toast('图片已存入 assets/');
+    toast(tt('图片已存入 assets/'));
   } catch (e) {
-    toast('插入图片失败：' + e);
+    toast(tt('插入图片失败：') + e);
   }
   return true;
 }
@@ -2266,9 +2315,9 @@ function gotoLinePrompt() {
   if (!t) return;
   const total = t.content.split('\n').length;
   const box = document.createElement('div');
-  box.innerHTML = `<div class="dlg-text">跳到第几行（1 – ${total}）：</div>
+  box.innerHTML = `<div class="dlg-text">${tt('跳到第几行（1 – {total}）：', { total })}</div>
     <input class="dlg-input" id="gotoInput" value="1">`;
-  dialog({ title: '跳转到行', body: box, buttons: [{ id: 'ok', label: '跳转', primary: true }, { id: 'cancel', label: '取消' }] })
+  dialog({ title: tt('跳转到行'), body: box, buttons: [{ id: 'ok', label: tt('跳转'), primary: true }, { id: 'cancel', label: tt('取消') }] })
     .then((r) => {
       if (r !== 'ok') return;
       const n = parseInt(document.getElementById('gotoInput').value, 10);
@@ -2282,21 +2331,21 @@ function gotoLinePrompt() {
 function showHistoryPanel() {
   const t = activeTab();
   if (!t) return;
-  if (!t.path) { toast('这个文件还没保存过，没有历史版本'); return; }
+  if (!t.path) { toast(tt('这个文件还没保存过，没有历史版本')); return; }
   showHistory({
     path: t.path,
     onOpen: ({ text, time }) => {
       const d = new Date(time);
       const stamp = `${d.getMonth() + 1}-${String(d.getDate()).padStart(2, '0')} `
         + `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-      newTab(`历史 · ${t.name}`, text, null);
-      toast(`已打开 ${stamp} 的版本，要留下就「另存为」`);
+      newTab(tt('历史 · {name}', { name: t.name }), text, null);
+      toast(tt('已打开 {when} 的版本，要留下就「另存为」', { when: stamp }));
     },
     onApply: (text) => {
       t.content = text;
       setContent(text);
       updateStatus();
-      toast('已写回编辑器，按 Ctrl+S 才会改动文件');
+      toast(tt('已写回编辑器，按 Ctrl+S 才会改动文件'));
     },
   });
 }
@@ -2306,20 +2355,20 @@ function cycleEol() {
   if (!t) return;
   t.eol = t.eol === 'LF' ? 'CRLF' : 'LF';
   el.stEOL.textContent = t.eol;
-  toast(`换行符：${t.eol}（保存时生效）`);
+  toast(tt('换行符：{eol}（保存时生效）', { eol: t.eol }));
 }
 
 function changeEncoding() {
   const t = activeTab();
   if (!t) return;
   const box = document.createElement('div');
-  box.innerHTML = `<div class="dlg-text">当前编码：<b>${t.encoding}</b>${t.bom ? '（含 BOM）' : ''}</div>
-    <div class="dlg-label">以其它编码重新解读当前文件</div>
-    <div class="dlg-row">${['UTF-8', 'GBK', 'UTF-16LE'].map((e) => `<button class="mini" data-reopen="${e}" ${t.path ? '' : 'disabled'}>按 ${e} 重新打开</button>`).join('')}</div>
-    <div class="dlg-label">保存时使用编码</div>
+  box.innerHTML = `<div class="dlg-text">${tt('当前编码：')}<b>${t.encoding}</b>${t.bom ? tt('（含 BOM）') : ''}</div>
+    <div class="dlg-label">${tt('以其它编码重新解读当前文件')}</div>
+    <div class="dlg-row">${['UTF-8', 'GBK', 'UTF-16LE'].map((e) => `<button class="mini" data-reopen="${e}" ${t.path ? '' : 'disabled'}>${tt('按 {enc} 重新打开', { enc: e })}</button>`).join('')}</div>
+    <div class="dlg-label">${tt('保存时使用编码')}</div>
     <div class="dlg-row">${['UTF-8', 'GBK', 'UTF-16LE'].map((e) => `<button class="mini${e === t.encoding ? ' primary' : ''}" data-saveenc="${e}">${e}</button>`).join('')}</div>
-    <label class="chk" style="margin-top:14px;display:flex"><input type="checkbox" id="bomChk" ${t.bom ? 'checked' : ''}> 保存时写入 BOM</label>`;
-  dialog({ title: '文件编码', body: box, buttons: [{ id: 'cancel', label: '关闭' }] });
+    <label class="chk" style="margin-top:14px;display:flex"><input type="checkbox" id="bomChk" ${t.bom ? 'checked' : ''}> ${tt('保存时写入 BOM')}</label>`;
+  dialog({ title: tt('文件编码'), body: box, buttons: [{ id: 'cancel', label: tt('关闭') }] });
   setTimeout(() => {
     $('dlgBody').querySelectorAll('[data-saveenc]').forEach((b) => {
       b.onclick = () => {
@@ -2327,7 +2376,7 @@ function changeEncoding() {
         t.bom = $('bomChk').checked;
         el.stEncoding.textContent = t.encoding + (t.bom ? ' BOM' : '');
         $('dlgOverlay').classList.add('hidden');
-        toast(`保存编码：${t.encoding}，保存后生效`);
+        toast(tt('保存编码：{enc}，保存后生效', { enc: t.encoding }));
       };
     });
     $('dlgBody').querySelectorAll('[data-reopen]').forEach((b) => {
@@ -2340,8 +2389,8 @@ function changeEncoding() {
           t.bom = false;
           el.stEncoding.textContent = enc;
           $('dlgOverlay').classList.add('hidden');
-          toast(`已按 ${enc} 重新解读`);
-        } catch (e) { toast('重新解读失败'); }
+          toast(tt('已按 {enc} 重新解读', { enc }));
+        } catch (e) { toast(tt('重新解读失败')); }
       };
     });
   }, 30);
@@ -2349,8 +2398,8 @@ function changeEncoding() {
 
 async function reloadCurrent() {
   const t = activeTab();
-  if (!t || !t.path) { toast('当前标签没有对应文件'); return; }
-  if (isDirty(t) && !(await confirmBox('重新载入', '当前有未保存的修改，重新载入会丢弃它们。继续？'))) return;
+  if (!t || !t.path) { toast(tt('当前标签没有对应文件')); return; }
+  if (isDirty(t) && !(await confirmBox(tt('重新载入'), tt('当前有未保存的修改，重新载入会丢弃它们。继续？')))) return;
   const r = await be.readText(t.path);
   t.encoding = r.encoding;
   t.eol = r.eol;
@@ -2358,7 +2407,7 @@ async function reloadCurrent() {
   setContent(r.content);
   t.savedContent = r.content;
   updateStatus();
-  toast('已重新载入');
+  toast(tt('已重新载入'));
 }
 
 function showWordCount() {
@@ -2373,26 +2422,26 @@ function showWordCount() {
   const paras = text.split(/\n\s*\n/).filter((p) => p.trim()).length;
   const minutes = Math.max(1, Math.ceil(cjk / 350 + words / 200));
   dialog({
-    title: '字数统计',
+    title: tt('字数统计'),
     body: `<table class="kbd-table">
-      <tr><td>行数</td><td>${lines}</td></tr>
-      <tr><td>段落</td><td>${paras}</td></tr>
-      <tr><td>字符（含空格）</td><td>${chars}</td></tr>
-      <tr><td>字符（不含空格）</td><td>${noSpace}</td></tr>
-      <tr><td>中文汉字</td><td>${cjk}</td></tr>
-      <tr><td>英文单词</td><td>${words}</td></tr>
-      <tr><td>预计阅读</td><td>约 ${minutes} 分钟</td></tr>
+      <tr><td>${tt('行数')}</td><td>${lines}</td></tr>
+      <tr><td>${tt('段落')}</td><td>${paras}</td></tr>
+      <tr><td>${tt('字符（含空格）')}</td><td>${chars}</td></tr>
+      <tr><td>${tt('字符（不含空格）')}</td><td>${noSpace}</td></tr>
+      <tr><td>${tt('中文汉字')}</td><td>${cjk}</td></tr>
+      <tr><td>${tt('英文单词')}</td><td>${words}</td></tr>
+      <tr><td>${tt('预计阅读')}</td><td>${tt('约 {n} 分钟', { n: minutes })}</td></tr>
     </table>`,
   });
 }
 
 function showAbout() {
   dialog({
-    title: '关于 简单记事本',
+    title: tt('关于 EZNotepad'),
     body: `<div class="dlg-text">
-      <p style="margin-top:0"><b>简单记事本</b> · 版本 1.0.0</p>
-      <p>把 Markdown 预览、文本对比、记事本读写，做成一个 10MB 以内、免安装、不联网的小工具。</p>
-      <p style="color:var(--fg-faint);font-size:12px">文件只在本机读写，不向任何服务器发送内容。</p>
+      <p style="margin-top:0"><b>EZNotepad</b> · ${tt('版本 {v}', { v: '1.0.0' })}</p>
+      <p>${tt('把 Markdown 预览、文本对比、记事本读写，做成一个 10MB 以内、免安装、不联网的小工具。')}</p>
+      <p style="color:var(--fg-faint);font-size:12px">${tt('文件只在本机读写，不向任何服务器发送内容。')}</p>
     </div>`,
   });
 }
@@ -2418,7 +2467,7 @@ function editCmd(cmd) {
     try { document.execCommand(cmd); } catch {}
     return;
   }
-  if (t.mode !== 'edit') { toast('预览模式下不能编辑'); return; }
+  if (t.mode !== 'edit') { toast(tt('预览模式下不能编辑')); return; }
   switch (cmd) {
     case 'undo': plain.undo(); break;
     case 'redo': plain.redo(); break;
@@ -2438,11 +2487,11 @@ async function pasteFromClipboard() {
   else plain.focus();
   try {
     const text = await navigator.clipboard.readText();
-    if (!text) { toast('剪贴板是空的'); return; }
+    if (!text) { toast(tt('剪贴板是空的')); return; }
     if (inWys) document.execCommand('insertText', false, text);
     else plain.insertText(text);
   } catch {
-    toast('请按 Ctrl+V 粘贴');
+    toast(tt('请按 Ctrl+V 粘贴'));
   }
 }
 
@@ -2532,7 +2581,8 @@ const commands = {
     settings.theme = settings.theme === 'auto' ? 'light' : settings.theme === 'light' ? 'dark' : 'auto';
     saveSettings();
     applyTheme();
-    toast(`主题：${{ auto: '跟随系统', light: '浅色', dark: '深色' }[settings.theme]}`);
+    const themeWord = { auto: tt('跟随系统'), light: tt('浅色'), dark: tt('深色') };
+    toast(tt('主题：{name}', { name: themeWord[settings.theme] }));
   },
   themeAuto: () => setTheme('auto'),
   themeLight: () => setTheme('light'),
@@ -2557,7 +2607,7 @@ const commands = {
   },
   fullscreen: async () => {
     const on = await win.toggleFullscreen();
-    if (on) toast('已进入全屏，按 F11 退出');
+    if (on) toast(tt('已进入全屏，按 F11 退出'));
   },
   toggleZen: () => toggleZen(),
   zoomIn: () => zoom(1),
@@ -2575,24 +2625,24 @@ const commands = {
   autoSave: () => {
     settings.autoSave = !settings.autoSave;
     saveSettings();
-    toast(settings.autoSave ? '自动保存已开启：改动停下约 1 秒就写盘' : '自动保存已关闭');
+    toast(settings.autoSave ? tt('自动保存已开启：改动停下约 1 秒就写盘') : tt('自动保存已关闭'));
   },
-  clearRecent: () => { LS.del('recent'); toast('已清除最近记录'); },
+  clearRecent: () => { LS.del('recent'); toast(tt('已清除最近记录')); },
   openFolder: pickFolder,
   settings: showSettings,
   shortcuts: showShortcuts,
   about: showAbout,
   encoding: changeEncoding,
   eol: cycleEol,
-  sortAsc: () => transformText(lineOps.sortAsc, '升序排序'),
-  sortDesc: () => transformText(lineOps.sortDesc, '降序排序'),
-  sortNum: () => transformText(lineOps.sortNum, '按数字排序'),
-  dedupe: () => transformText(lineOps.dedupe, '去重'),
-  removeEmpty: () => transformText(lineOps.removeEmpty, '删除空行'),
-  trimLines: () => transformText(lineOps.trimLines, '去除首尾空白'),
-  upper: () => transformText(caseOps.upper, '转大写'),
-  lower: () => transformText(caseOps.lower, '转小写'),
-  title: () => transformText(caseOps.title, '首字母大写'),
+  sortAsc: () => transformText(lineOps.sortAsc, tt('升序排序')),
+  sortDesc: () => transformText(lineOps.sortDesc, tt('降序排序')),
+  sortNum: () => transformText(lineOps.sortNum, tt('按数字排序')),
+  dedupe: () => transformText(lineOps.dedupe, tt('去重')),
+  removeEmpty: () => transformText(lineOps.removeEmpty, tt('删除空行')),
+  trimLines: () => transformText(lineOps.trimLines, tt('去除首尾空白')),
+  upper: () => transformText(caseOps.upper, tt('转大写')),
+  lower: () => transformText(caseOps.lower, tt('转小写')),
+  title: () => transformText(caseOps.title, tt('首字母大写')),
 };
 
 /* ---------------- 菜单结构（自绘标题栏用） ---------------- */
@@ -2638,174 +2688,178 @@ const colAlign = () => {
   return ((info.table.dataset.aligns || '').split(',')[info.colIdx] || '').trim();
 };
 
-const MENU_TREE = [
+const menuTree = () => [
   {
-    label: '文件',
+    label: tt('文件'),
     /* 每次展开都重算：最近打开是动态的，固定数组会永远停在打开那一刻的样子 */
     items: () => [
-      { id: 'new', label: '新建', kbd: 'Ctrl+N' },
-      { id: 'open', label: '打开…', kbd: 'Ctrl+O' },
-      { id: 'openFolder', label: '打开文件夹…', icon: 'folder-open' },
+      { id: 'new', label: tt('新建'), kbd: 'Ctrl+N' },
+      { id: 'open', label: tt('打开…'), kbd: 'Ctrl+O' },
+      { id: 'openFolder', label: tt('打开文件夹…'), icon: 'folder-open' },
       ...recentMenuItems(),
       { sep: true },
-      { id: 'save', label: '保存', kbd: 'Ctrl+S', disabled: () => !hasTab() },
-      { id: 'saveAs', label: '另存为…', kbd: 'Ctrl+Shift+S', disabled: () => !hasTab() },
-      { id: 'autoSave', label: '自动保存（约 1 秒）', checked: () => !!settings.autoSave },
+      { id: 'save', label: tt('保存'), kbd: 'Ctrl+S', disabled: () => !hasTab() },
+      { id: 'saveAs', label: tt('另存为…'), kbd: 'Ctrl+Shift+S', disabled: () => !hasTab() },
+      { id: 'autoSave', label: tt('自动保存（约 1 秒）'), checked: () => !!settings.autoSave },
       { sep: true },
-      { id: 'exportPdf', label: '导出 PDF / 打印…', kbd: 'Ctrl+P', disabled: () => !hasTab() },
-      { id: 'exportHtml', label: '导出网页（HTML）…', disabled: () => !hasTab() },
-      { id: 'history', label: '历史版本…', disabled: () => !hasTab() },
-      { id: 'reload', label: '重新载入', disabled: () => !hasTab() },
+      { id: 'exportPdf', label: tt('导出 PDF / 打印…'), kbd: 'Ctrl+P', disabled: () => !hasTab() },
+      { id: 'exportHtml', label: tt('导出网页（HTML）…'), disabled: () => !hasTab() },
+      { id: 'history', label: tt('历史版本…'), disabled: () => !hasTab() },
+      { id: 'reload', label: tt('重新载入'), disabled: () => !hasTab() },
       { sep: true },
-      { id: 'closeTab', label: '关闭标签', kbd: 'Ctrl+W', disabled: () => !hasTab() },
+      { id: 'closeTab', label: tt('关闭标签'), kbd: 'Ctrl+W', disabled: () => !hasTab() },
       { sep: true },
-      { id: 'quit', label: '退出' },
+      { id: 'quit', label: tt('退出') },
     ],
   },
   {
-    label: '编辑',
+    label: tt('编辑'),
     items: [
-      { id: 'undo', label: '撤销', kbd: 'Ctrl+Z', disabled: () => !hasTab() },
-      { id: 'redo', label: '重做', kbd: 'Ctrl+Y', disabled: () => !hasTab() },
+      { id: 'undo', label: tt('撤销'), kbd: 'Ctrl+Z', disabled: () => !hasTab() },
+      { id: 'redo', label: tt('重做'), kbd: 'Ctrl+Y', disabled: () => !hasTab() },
       { sep: true },
-      { id: 'cut', label: '剪切', kbd: 'Ctrl+X', disabled: () => !hasTab() },
-      { id: 'copy', label: '复制', kbd: 'Ctrl+C', disabled: () => !hasTab() },
-      { id: 'paste', label: '粘贴', kbd: 'Ctrl+V', disabled: () => !hasTab() },
-      { id: 'selectAll', label: '全选', kbd: 'Ctrl+A', disabled: () => !hasTab() },
+      { id: 'cut', label: tt('剪切'), kbd: 'Ctrl+X', disabled: () => !hasTab() },
+      { id: 'copy', label: tt('复制'), kbd: 'Ctrl+C', disabled: () => !hasTab() },
+      { id: 'paste', label: tt('粘贴'), kbd: 'Ctrl+V', disabled: () => !hasTab() },
+      { id: 'selectAll', label: tt('全选'), kbd: 'Ctrl+A', disabled: () => !hasTab() },
       { sep: true },
-      { id: 'find', label: '查找…', kbd: 'Ctrl+F' },
-      { id: 'replace', label: '替换…', kbd: 'Ctrl+H' },
-      { id: 'gotoLine', label: '跳转到行…', kbd: 'Ctrl+G', disabled: () => !hasTab() },
+      { id: 'find', label: tt('查找…'), kbd: 'Ctrl+F' },
+      { id: 'replace', label: tt('替换…'), kbd: 'Ctrl+H' },
+      { id: 'gotoLine', label: tt('跳转到行…'), kbd: 'Ctrl+G', disabled: () => !hasTab() },
     ],
   },
   {
-    label: '格式',
+    label: tt('格式'),
     items: [
       /* 四级别是互斥的单选题，横排一行：比竖着占 4 行省地方，
          而且当前级别一目了然（这是竖向文字菜单做不到的） */
-      { head: '标题级别' },
+      { head: tt('标题级别') },
       { row: [
-        { id: 'body', label: '正文', hint: '正文（取消标题）', kbd: 'Ctrl+Alt+0', disabled: wysOnly, checked: () => headingLevel() === 0 },
-        { id: 'h1', label: 'H1', hint: '一级标题', kbd: 'Ctrl+Alt+1', disabled: wysOnly, checked: () => headingLevel() === 1 },
-        { id: 'h2', label: 'H2', hint: '二级标题', kbd: 'Ctrl+Alt+2', disabled: wysOnly, checked: () => headingLevel() === 2 },
-        { id: 'h3', label: 'H3', hint: '三级标题', kbd: 'Ctrl+Alt+3', disabled: wysOnly, checked: () => headingLevel() === 3 },
+        { id: 'body', label: tt('正文'), hint: tt('正文（取消标题）'), kbd: 'Ctrl+Alt+0', disabled: wysOnly, checked: () => headingLevel() === 0 },
+        { id: 'h1', label: 'H1', hint: tt('一级标题'), kbd: 'Ctrl+Alt+1', disabled: wysOnly, checked: () => headingLevel() === 1 },
+        { id: 'h2', label: 'H2', hint: tt('二级标题'), kbd: 'Ctrl+Alt+2', disabled: wysOnly, checked: () => headingLevel() === 2 },
+        { id: 'h3', label: 'H3', hint: tt('三级标题'), kbd: 'Ctrl+Alt+3', disabled: wysOnly, checked: () => headingLevel() === 3 },
       ] },
-      { note: '标题与列表只在所见即所得模式下可用，Ctrl + 1 切换', hidden: () => canWys() },
+      { note: tt('标题与列表只在所见即所得模式下可用，Ctrl + 1 切换'), hidden: () => canWys() },
 
-      { head: '文字' },
-      { id: 'bold', label: '加粗', icon: 'bold', kbd: 'Ctrl+B', disabled: () => !hasTab() },
-      { id: 'italic', label: '斜体', icon: 'italic', kbd: 'Ctrl+I', disabled: () => !hasTab() },
-      { id: 'strike', label: '删除线', icon: 'strikethrough', kbd: 'Ctrl+Shift+X', disabled: () => !hasTab() },
-      { id: 'inlineCode', label: '行内代码', icon: 'code', disabled: () => !hasTab() },
+      { head: tt('文字') },
+      { id: 'bold', label: tt('加粗'), icon: 'bold', kbd: 'Ctrl+B', disabled: () => !hasTab() },
+      { id: 'italic', label: tt('斜体'), icon: 'italic', kbd: 'Ctrl+I', disabled: () => !hasTab() },
+      { id: 'strike', label: tt('删除线'), icon: 'strikethrough', kbd: 'Ctrl+Shift+X', disabled: () => !hasTab() },
+      { id: 'inlineCode', label: tt('行内代码'), icon: 'code', disabled: () => !hasTab() },
 
-      { head: '段落' },
-      { id: 'ul', label: '无序列表', icon: 'list', kbd: 'Ctrl+Shift+8', disabled: wysOnly },
-      { id: 'ol', label: '有序列表', icon: 'list-ordered', kbd: 'Ctrl+Shift+7', disabled: wysOnly },
-      { id: 'taskList', label: '任务列表', icon: 'list-todo', kbd: 'Ctrl+Shift+9', disabled: wysOnly },
-      { id: 'quote', label: '引用', icon: 'text-quote', kbd: 'Ctrl+Shift+Q', disabled: wysOnly },
-      { id: 'calloutInfo', label: '信息提示块', icon: 'info', disabled: wysOnly },
-      { id: 'calloutWarning', label: '警告提示块', icon: 'triangle-alert', disabled: wysOnly },
-      { id: 'calloutDanger', label: '危险提示块', icon: 'octagon-alert', disabled: wysOnly },
-      { id: 'calloutSuccess', label: '成功提示块', icon: 'circle-check', disabled: wysOnly },
-      { id: 'codeBlock', label: '代码块', icon: 'square-code', kbd: 'Ctrl+Shift+K', disabled: wysOnly },
-      { id: 'indentIn', label: '增加缩进', icon: 'indent-increase', kbd: 'Tab', disabled: wysOnly },
-      { id: 'indentOut', label: '减少缩进', icon: 'indent-decrease', kbd: 'Shift+Tab', disabled: wysOnly },
+      { head: tt('段落') },
+      { id: 'ul', label: tt('无序列表'), icon: 'list', kbd: 'Ctrl+Shift+8', disabled: wysOnly },
+      { id: 'ol', label: tt('有序列表'), icon: 'list-ordered', kbd: 'Ctrl+Shift+7', disabled: wysOnly },
+      { id: 'taskList', label: tt('任务列表'), icon: 'list-todo', kbd: 'Ctrl+Shift+9', disabled: wysOnly },
+      { id: 'quote', label: tt('引用'), icon: 'text-quote', kbd: 'Ctrl+Shift+Q', disabled: wysOnly },
+      { id: 'calloutInfo', label: tt('信息提示块'), icon: 'info', disabled: wysOnly },
+      { id: 'calloutWarning', label: tt('警告提示块'), icon: 'triangle-alert', disabled: wysOnly },
+      { id: 'calloutDanger', label: tt('危险提示块'), icon: 'octagon-alert', disabled: wysOnly },
+      { id: 'calloutSuccess', label: tt('成功提示块'), icon: 'circle-check', disabled: wysOnly },
+      { id: 'codeBlock', label: tt('代码块'), icon: 'square-code', kbd: 'Ctrl+Shift+K', disabled: wysOnly },
+      { id: 'indentIn', label: tt('增加缩进'), icon: 'indent-increase', kbd: 'Tab', disabled: wysOnly },
+      { id: 'indentOut', label: tt('减少缩进'), icon: 'indent-decrease', kbd: 'Shift+Tab', disabled: wysOnly },
     ],
   },
   {
     /* 「加东西」和「改样子」本来就是两件事，混在一个菜单里 38 项谁都得找半天。
        拆出去之后：格式 15 项、插入 6 项，各自一屏看完 */
-    label: '插入',
+    label: tt('插入'),
     items: [
-      { id: 'link', label: '链接…', icon: 'link', kbd: 'Ctrl+K', disabled: wysOnly },
-      { id: 'image', label: '图片…', icon: 'image', disabled: wysOnly },
+      { id: 'link', label: tt('链接…'), icon: 'link', kbd: 'Ctrl+K', disabled: wysOnly },
+      { id: 'image', label: tt('图片…'), icon: 'image', disabled: wysOnly },
       { sep: true },
-      { id: 'table', label: '表格 3 × 3', icon: 'table', kbd: 'Ctrl+Shift+T', disabled: wysOnly },
-      { id: 'tablePrompt', label: '表格（自定大小）…', icon: 'table', disabled: wysOnly },
-      { id: 'hr', label: '分割线', icon: 'minus', disabled: wysOnly },
+      { id: 'table', label: tt('表格 3 × 3'), icon: 'table', kbd: 'Ctrl+Shift+T', disabled: wysOnly },
+      { id: 'tablePrompt', label: tt('表格（自定大小）…'), icon: 'table', disabled: wysOnly },
+      { id: 'hr', label: tt('分割线'), icon: 'minus', disabled: wysOnly },
       { sep: true },
-      { id: 'mathBlock', label: '数学公式块', disabled: wysOnly },
-      { id: 'toc', label: '目录…', icon: 'list-tree', disabled: () => !hasTab() || previewMode() },
+      { id: 'mathBlock', label: tt('数学公式块'), disabled: wysOnly },
+      { id: 'toc', label: tt('目录…'), icon: 'list-tree', disabled: () => !hasTab() || previewMode() },
       /* 增删行列、调对齐这些「改已有表格」的操作不再占菜单位置：
          右键菜单里本来就有一整套，同一个命令没必要在两个地方各列一遍。
          这里只在光标真的进了表格时提一句，省得有人找不到 */
-      { note: '光标在表格内右键，可增删行列、调整对齐', hidden: noTable },
+      { note: tt('光标在表格内右键，可增删行列、调整对齐'), hidden: noTable },
     ],
   },
   {
-    label: '视图',
+    label: tt('视图'),
     items: [
-      { id: 'modeWysiwyg', label: '所见即所得', kbd: 'Ctrl+1', checked: markMode('wysiwyg'), disabled: () => !hasTab() },
-      { id: 'modeEdit', label: '编辑模式', kbd: 'Ctrl+2', checked: markMode('edit'), disabled: () => !hasTab() },
-      { id: 'modePreview', label: '预览模式', kbd: 'Ctrl+3', checked: markMode('preview'), disabled: () => !hasTab() },
+      { id: 'modeWysiwyg', label: tt('所见即所得'), kbd: 'Ctrl+1', checked: markMode('wysiwyg'), disabled: () => !hasTab() },
+      { id: 'modeEdit', label: tt('编辑模式'), kbd: 'Ctrl+2', checked: markMode('edit'), disabled: () => !hasTab() },
+      { id: 'modePreview', label: tt('预览模式'), kbd: 'Ctrl+3', checked: markMode('preview'), disabled: () => !hasTab() },
       { sep: true },
-      { id: 'layoutSingle', label: '单栏', kbd: 'Ctrl+Shift+L', checked: () => settings.layout === 'single' },
-      { id: 'layoutSplit', label: '双栏', checked: () => settings.layout === 'split' },
+      { id: 'layoutSingle', label: tt('单栏'), kbd: 'Ctrl+Shift+L', checked: () => settings.layout === 'single' },
+      { id: 'layoutSplit', label: tt('双栏'), checked: () => settings.layout === 'split' },
       { sep: true },
-      { id: 'toggleOutline', label: '显示大纲', kbd: 'Ctrl+Shift+O', checked: () => settings.outlineVisible },
-      { id: 'toggleToolbar', label: '显示快捷按钮', checked: () => settings.showToolbar !== false },
-      { id: 'toggleWinTitle', label: '标题栏显示文件名', checked: () => settings.showWinTitle !== false },
+      { id: 'toggleOutline', label: tt('显示大纲'), kbd: 'Ctrl+Shift+O', checked: () => settings.outlineVisible },
+      { id: 'toggleToolbar', label: tt('显示快捷按钮'), checked: () => settings.showToolbar !== false },
+      { id: 'toggleWinTitle', label: tt('标题栏显示文件名'), checked: () => settings.showWinTitle !== false },
       { sep: true },
-      { id: 'zoomIn', label: '放大', kbd: 'Ctrl+=' },
-      { id: 'zoomOut', label: '缩小', kbd: 'Ctrl+-' },
-      { id: 'zoomReset', label: '实际大小', kbd: 'Ctrl+0' },
+      { id: 'zoomIn', label: tt('放大'), kbd: 'Ctrl+=' },
+      { id: 'zoomOut', label: tt('缩小'), kbd: 'Ctrl+-' },
+      { id: 'zoomReset', label: tt('实际大小'), kbd: 'Ctrl+0' },
       { sep: true },
-      { id: 'themeAuto', label: '主题：跟随系统', checked: () => settings.theme === 'auto' },
-      { id: 'themeLight', label: '主题：浅色', checked: () => settings.theme === 'light' },
-      { id: 'themeDark', label: '主题：深色', checked: () => settings.theme === 'dark' },
+      { id: 'themeAuto', label: tt('主题：跟随系统'), checked: () => settings.theme === 'auto' },
+      { id: 'themeLight', label: tt('主题：浅色'), checked: () => settings.theme === 'light' },
+      { id: 'themeDark', label: tt('主题：深色'), checked: () => settings.theme === 'dark' },
       { sep: true },
-      { id: 'toggleZen', label: '专注模式', kbd: 'F9', checked: () => settings.zen },
-      { id: 'fullscreen', label: '全屏', kbd: 'F11' },
+      { id: 'toggleZen', label: tt('专注模式'), kbd: 'F9', checked: () => settings.zen },
+      { id: 'fullscreen', label: tt('全屏'), kbd: 'F11' },
     ],
   },
   {
-    label: '工具',
+    label: tt('工具'),
     items: [
-      { id: 'palette', label: '命令面板…', kbd: 'Ctrl+Shift+P' },
+      { id: 'palette', label: tt('命令面板…'), kbd: 'Ctrl+Shift+P' },
       { sep: true },
-      { id: 'format', label: '一键格式化', kbd: 'Ctrl+Shift+F', disabled: () => !hasTab() },
+      { id: 'format', label: tt('一键格式化'), kbd: 'Ctrl+Shift+F', disabled: () => !hasTab() },
       { sep: true },
-      { id: 'sortAsc', label: '按行升序排序', disabled: () => !hasTab() },
-      { id: 'sortDesc', label: '按行降序排序', disabled: () => !hasTab() },
-      { id: 'sortNum', label: '按数字排序', disabled: () => !hasTab() },
-      { id: 'dedupe', label: '去除重复行', disabled: () => !hasTab() },
-      { id: 'removeEmpty', label: '删除空行', disabled: () => !hasTab() },
-      { id: 'trimLines', label: '去除首尾空白', disabled: () => !hasTab() },
+      { id: 'sortAsc', label: tt('按行升序排序'), disabled: () => !hasTab() },
+      { id: 'sortDesc', label: tt('按行降序排序'), disabled: () => !hasTab() },
+      { id: 'sortNum', label: tt('按数字排序'), disabled: () => !hasTab() },
+      { id: 'dedupe', label: tt('去除重复行'), disabled: () => !hasTab() },
+      { id: 'removeEmpty', label: tt('删除空行'), disabled: () => !hasTab() },
+      { id: 'trimLines', label: tt('去除首尾空白'), disabled: () => !hasTab() },
       { sep: true },
-      { id: 'upper', label: '转大写', disabled: () => !hasTab() },
-      { id: 'lower', label: '转小写', disabled: () => !hasTab() },
-      { id: 'title', label: '首字母大写', disabled: () => !hasTab() },
+      { id: 'upper', label: tt('转大写'), disabled: () => !hasTab() },
+      { id: 'lower', label: tt('转小写'), disabled: () => !hasTab() },
+      { id: 'title', label: tt('首字母大写'), disabled: () => !hasTab() },
       { sep: true },
-      { id: 'textCompare', label: '文本对比…', kbd: 'Ctrl+D' },
-      { id: 'folderCompare', label: '文件夹对比…' },
-      { id: 'merge', label: '三向合并…' },
+      { id: 'textCompare', label: tt('文本对比…'), kbd: 'Ctrl+D' },
+      { id: 'folderCompare', label: tt('文件夹对比…') },
+      { id: 'merge', label: tt('三向合并…') },
       { sep: true },
-      { id: 'wordCount', label: '字数统计', disabled: () => !hasTab() },
-      { id: 'encoding', label: '文件编码…', disabled: () => !hasTab() },
-      { id: 'eol', label: '切换换行符', disabled: () => !hasTab() },
+      { id: 'wordCount', label: tt('字数统计'), disabled: () => !hasTab() },
+      { id: 'encoding', label: tt('文件编码…'), disabled: () => !hasTab() },
+      { id: 'eol', label: tt('切换换行符'), disabled: () => !hasTab() },
     ],
   },
   {
     /* 设置原本塞在「工具」最后一项，位置不对：工具是「处理文本」（排序、去重、对比），
        设置是「配置软件」。提成顶级项后，它有了自己的位置，点一下直接开面板——
        没有下拉，所以不跟别的菜单抢「展开/收起」那套交互。 */
-    label: '设置',
+    label: tt('设置'),
     action: () => showSettings(),
   },
   {
-    label: '帮助',
+    label: tt('帮助'),
     items: [
-      { id: 'shortcuts', label: '快捷键一览' },
-      { id: 'about', label: '关于 简单记事本' },
+      { id: 'shortcuts', label: tt('快捷键一览') },
+      { id: 'about', label: tt('关于 EZNotepad') },
     ],
   },
 ];
 
+/* 菜单实例只建一次。换语言时走 update(menuTree()) 而不是重建 ——
+   createAppMenu 会往 document 上挂一套「点外面就关」的监听，重建等于叠一层，
+   叠多了菜单开始自己闪。 */
+let menuApi = null;
 function setupAppMenu() {
   if (!el.menubar) return;
-  createAppMenu({
+  menuApi = createAppMenu({
     bar: el.menubar,
-    menus: MENU_TREE,
+    menus: menuTree(),
     run: (id) => { const fn = commands[id]; if (fn) fn(); },
   });
 }
@@ -2817,29 +2871,29 @@ function setupAppMenu() {
 
 const svgIco = (n) => `<svg class="ico" aria-hidden="true"><use href="#i-${n}" /></svg>`;
 
-const BLOCK_KINDS = [
-  { id: 'body', label: '正文段落', icon: 'type' },
-  { id: 'h1', label: '标题 1', icon: 'type' },
-  { id: 'h2', label: '标题 2', icon: 'type' },
-  { id: 'h3', label: '标题 3', icon: 'type' },
-  { id: 'ul', label: '无序列表', icon: 'list-tree' },
-  { id: 'ol', label: '有序列表', icon: 'list-tree' },
-  { id: 'taskList', label: '任务列表', icon: 'check' },
-  { id: 'quote', label: '引用', icon: 'type' },
-  { id: 'calloutInfo', label: '信息提示块', icon: 'info' },
-  { id: 'calloutWarning', label: '警告提示块', icon: 'triangle-alert' },
-  { id: 'calloutDanger', label: '危险提示块', icon: 'octagon-alert' },
-  { id: 'calloutSuccess', label: '成功提示块', icon: 'circle-check' },
-  { id: 'codeBlock', label: '代码块', icon: 'code' },
+const blockKinds = () => [
+  { id: 'body', label: tt('正文段落'), icon: 'type' },
+  { id: 'h1', label: tt('标题 1'), icon: 'type' },
+  { id: 'h2', label: tt('标题 2'), icon: 'type' },
+  { id: 'h3', label: tt('标题 3'), icon: 'type' },
+  { id: 'ul', label: tt('无序列表'), icon: 'list-tree' },
+  { id: 'ol', label: tt('有序列表'), icon: 'list-tree' },
+  { id: 'taskList', label: tt('任务列表'), icon: 'check' },
+  { id: 'quote', label: tt('引用'), icon: 'type' },
+  { id: 'calloutInfo', label: tt('信息提示块'), icon: 'info' },
+  { id: 'calloutWarning', label: tt('警告提示块'), icon: 'triangle-alert' },
+  { id: 'calloutDanger', label: tt('危险提示块'), icon: 'octagon-alert' },
+  { id: 'calloutSuccess', label: tt('成功提示块'), icon: 'circle-check' },
+  { id: 'codeBlock', label: tt('代码块'), icon: 'code' },
 ];
 
 /** 插入类：这几件事自己知道往哪插，不用先造空块 */
-const BLOCK_INSERTS = [
-  { id: 'table', label: '表格（3 × 3）', icon: 'square' },
-  { id: 'tablePrompt', label: '表格（自定大小）…', icon: 'square' },
-  { id: 'image', label: '图片…', icon: 'image' },
-  { id: 'link', label: '链接…', icon: 'arrow-left-right' },
-  { id: 'hr', label: '分割线', icon: 'minus' },
+const blockInserts = () => [
+  { id: 'table', label: tt('表格（3 × 3）'), icon: 'square' },
+  { id: 'tablePrompt', label: tt('表格（自定大小）…'), icon: 'square' },
+  { id: 'image', label: tt('图片…'), icon: 'image' },
+  { id: 'link', label: tt('链接…'), icon: 'arrow-left-right' },
+  { id: 'hr', label: tt('分割线'), icon: 'minus' },
 ];
 const SELF_INSERTING = new Set(['table', 'tablePrompt', 'image', 'link', 'hr']);
 
@@ -2935,12 +2989,12 @@ function openBlockMenu(mode) {
   };
 
   const cur = mode === 'convert' ? kindOfBlock(handleBlock) : '';
-  head(mode === 'insert' ? '在下方插入' : '转换这一块');
-  BLOCK_KINDS.forEach((it) => item(it, it.id === cur));
+  head(mode === 'insert' ? tt('在下方插入') : tt('转换这一块'));
+  blockKinds().forEach((it) => item(it, it.id === cur));
   if (mode === 'insert') {
     sep();
-    head('插入');
-    BLOCK_INSERTS.forEach((it) => item(it, false));
+    head(tt('插入'));
+    blockInserts().forEach((it) => item(it, false));
   }
 
   // 贴着按钮展开；右边放不下就翻到左边，下边放不下就往上收
@@ -3061,7 +3115,7 @@ function bindEvents() {
     if (max === maxState) return;
     maxState = max;
     if (el.wcMaxIcon) setIcon(el.wcMaxIcon, max ? 'copy' : 'square');
-    if (el.wcMax) el.wcMax.title = max ? '还原' : '最大化';
+    if (el.wcMax) el.wcMax.title = max ? tt('还原') : tt('最大化');
   };
   window.addEventListener('resize', syncMaxState);
   setTimeout(syncMaxState, 80);
@@ -3079,7 +3133,7 @@ function bindEvents() {
   $('btnMode').onclick = (e) => { e.stopPropagation(); el.modeMenu.classList.toggle('open'); };
   el.modeMenu.querySelectorAll('button[data-mode]').forEach((b) => {
     b.onclick = () => {
-      if (b.classList.contains('disabled')) { toast('当前文件类型不支持该模式'); return; }
+      if (b.classList.contains('disabled')) { toast(tt('当前文件类型不支持该模式')); return; }
       setMode(b.dataset.mode, { fromActivate: true });
       el.modeMenu.classList.remove('open');
     };
@@ -3098,17 +3152,17 @@ function bindEvents() {
     // 菜单一弹出焦点就跑了，剪贴板命令前先把焦点还给编辑区
     const clip = (cmd) => () => { plain.focus(); try { document.execCommand(cmd); } catch {} };
     contextMenu(e.clientX, e.clientY, [
-      { label: '剪切', action: clip('cut') },
-      { label: '复制', action: clip('copy') },
-      { label: '粘贴', action: clip('paste') },
-      { label: '全选', action: () => { plain.focus(); plain.selectAll(); } },
+      { label: tt('剪切'), action: clip('cut') },
+      { label: tt('复制'), action: clip('copy') },
+      { label: tt('粘贴'), action: clip('paste') },
+      { label: tt('全选'), action: () => { plain.focus(); plain.selectAll(); } },
       { sep: true },
-      { label: '查找…', shortcut: 'Ctrl+F', action: () => openFind() },
-      { label: '替换…', shortcut: 'Ctrl+H', action: () => openFind(true) },
-      { label: '一键格式化', shortcut: 'Ctrl+Shift+F', action: commands.format },
+      { label: tt('查找…'), shortcut: 'Ctrl+F', action: () => openFind() },
+      { label: tt('替换…'), shortcut: 'Ctrl+H', action: () => openFind(true) },
+      { label: tt('一键格式化'), shortcut: 'Ctrl+Shift+F', action: commands.format },
       { sep: true },
-      { label: '转大写', action: commands.upper },
-      { label: '转小写', action: commands.lower },
+      { label: tt('转大写'), action: commands.upper },
+      { label: tt('转小写'), action: commands.lower },
     ]);
   });
   document.addEventListener('contextmenu', (e) => {
@@ -3120,74 +3174,74 @@ function bindEvents() {
          表格」分组，同族动作横排一行：高度从约 870px 降到约 340px，
          当前标题级别和本列对齐方式还能点亮，不用点进去试 */
       const items = [
-        { head: '文字' },
+        { head: tt('文字') },
         { row: [
-          { label: '加粗', hint: '加粗', icon: 'bold', iconOnly: true, shortcut: 'Ctrl+B', action: () => commands.bold() },
-          { label: '斜体', hint: '斜体', icon: 'italic', iconOnly: true, shortcut: 'Ctrl+I', action: () => commands.italic() },
-          { label: '删除线', hint: '删除线', icon: 'strikethrough', iconOnly: true, shortcut: 'Ctrl+Shift+X', action: () => commands.strike() },
-          { label: '行内代码', hint: '行内代码', icon: 'code', iconOnly: true, action: () => commands.inlineCode() },
-          { label: '插入链接', hint: '插入链接', icon: 'link', iconOnly: true, shortcut: 'Ctrl+K', action: () => commands.link() },
+          { label: tt('加粗'), hint: tt('加粗'), icon: 'bold', iconOnly: true, shortcut: 'Ctrl+B', action: () => commands.bold() },
+          { label: tt('斜体'), hint: tt('斜体'), icon: 'italic', iconOnly: true, shortcut: 'Ctrl+I', action: () => commands.italic() },
+          { label: tt('删除线'), hint: tt('删除线'), icon: 'strikethrough', iconOnly: true, shortcut: 'Ctrl+Shift+X', action: () => commands.strike() },
+          { label: tt('行内代码'), hint: tt('行内代码'), icon: 'code', iconOnly: true, action: () => commands.inlineCode() },
+          { label: tt('插入链接'), hint: tt('插入链接'), icon: 'link', iconOnly: true, shortcut: 'Ctrl+K', action: () => commands.link() },
         ] },
 
-        { head: '段落' },
+        { head: tt('段落') },
         { row: [
-          { label: '正文', checked: () => headingLevel() === 0, action: () => commands.body() },
+          { label: tt('正文'), checked: () => headingLevel() === 0, action: () => commands.body() },
           { label: 'H1', checked: () => headingLevel() === 1, action: () => commands.h1() },
           { label: 'H2', checked: () => headingLevel() === 2, action: () => commands.h2() },
           { label: 'H3', checked: () => headingLevel() === 3, action: () => commands.h3() },
         ] },
         { row: [
-          { label: '无序列表', hint: '无序列表', icon: 'list', iconOnly: true, shortcut: 'Ctrl+Shift+8', action: () => commands.ul() },
-          { label: '有序列表', hint: '有序列表', icon: 'list-ordered', iconOnly: true, shortcut: 'Ctrl+Shift+7', action: () => commands.ol() },
-          { label: '任务列表', hint: '任务列表', icon: 'list-todo', iconOnly: true, shortcut: 'Ctrl+Shift+9', action: () => commands.taskList() },
+          { label: tt('无序列表'), hint: tt('无序列表'), icon: 'list', iconOnly: true, shortcut: 'Ctrl+Shift+8', action: () => commands.ul() },
+          { label: tt('有序列表'), hint: tt('有序列表'), icon: 'list-ordered', iconOnly: true, shortcut: 'Ctrl+Shift+7', action: () => commands.ol() },
+          { label: tt('任务列表'), hint: tt('任务列表'), icon: 'list-todo', iconOnly: true, shortcut: 'Ctrl+Shift+9', action: () => commands.taskList() },
           /* 引用相关的三项在表格里点了没反应（表格没有可搬的一行文本，换类型一律
              跳过它；见 wysiwyg.convertBlock），索性不摆出来 —— 死按钮比少一项更让人困惑 */
           ...(tbl ? [] : [
-            { label: '引用', hint: '引用块', icon: 'text-quote', iconOnly: true, shortcut: 'Ctrl+Shift+Q', action: () => commands.quote() },
+            { label: tt('引用'), hint: tt('引用块'), icon: 'text-quote', iconOnly: true, shortcut: 'Ctrl+Shift+Q', action: () => commands.quote() },
           ]),
         ] },
-        ...(tbl ? [] : [{ lead: '引用', row: [
-          { label: '普通', hint: '普通引用', checked: () => bqCallout() === '', action: () => commands.plainQuote() },
-          { label: '信息', hint: '信息提示块', checked: () => bqCallout() === 'info', action: () => commands.calloutInfo() },
-          { label: '警告', hint: '警告提示块', checked: () => bqCallout() === 'warning', action: () => commands.calloutWarning() },
-          { label: '危险', hint: '危险提示块', checked: () => bqCallout() === 'danger', action: () => commands.calloutDanger() },
-          { label: '成功', hint: '成功提示块', checked: () => bqCallout() === 'success', action: () => commands.calloutSuccess() },
+        ...(tbl ? [] : [{ lead: tt('引用'), row: [
+          { label: tt('普通'), hint: tt('普通引用'), checked: () => bqCallout() === '', action: () => commands.plainQuote() },
+          { label: tt('信息'), hint: tt('信息提示块'), checked: () => bqCallout() === 'info', action: () => commands.calloutInfo() },
+          { label: tt('警告'), hint: tt('警告提示块'), checked: () => bqCallout() === 'warning', action: () => commands.calloutWarning() },
+          { label: tt('危险'), hint: tt('危险提示块'), checked: () => bqCallout() === 'danger', action: () => commands.calloutDanger() },
+          { label: tt('成功'), hint: tt('成功提示块'), checked: () => bqCallout() === 'success', action: () => commands.calloutSuccess() },
         ] }]),
       ];
       if (tbl) {
         items.push(
-          { head: '表格' },
-          { lead: '插入', row: [
-            { label: '上方行', action: () => commands.tableRowAbove() },
-            { label: '下方行', action: () => commands.tableRowBelow() },
-            { label: '左侧列', action: () => commands.tableColBefore() },
-            { label: '右侧列', action: () => commands.tableColAfter() },
+          { head: tt('表格') },
+          { lead: tt('插入'), row: [
+            { label: tt('上方行'), action: () => commands.tableRowAbove() },
+            { label: tt('下方行'), action: () => commands.tableRowBelow() },
+            { label: tt('左侧列'), action: () => commands.tableColBefore() },
+            { label: tt('右侧列'), action: () => commands.tableColAfter() },
           ] },
           /* 四个方向的对齐都留在这里：主菜单已不再重复列表格操作，
              右键是唯一入口，少一个就等于功能丢了 */
-          { lead: '对齐', row: [
-            { label: '左', hint: '本列左对齐', checked: () => colAlign() === 'left', action: () => commands.tableAlignLeft() },
-            { label: '居中', hint: '本列居中', checked: () => colAlign() === 'center', action: () => commands.tableAlignCenter() },
-            { label: '右', hint: '本列右对齐', checked: () => colAlign() === 'right', action: () => commands.tableAlignRight() },
-            { label: '默认', hint: '本列取消对齐', checked: () => colAlign() === '', action: () => commands.tableAlignNone() },
+          { lead: tt('对齐'), row: [
+            { label: tt('左'), hint: tt('本列左对齐'), checked: () => colAlign() === 'left', action: () => commands.tableAlignLeft() },
+            { label: tt('居中'), hint: tt('本列居中'), checked: () => colAlign() === 'center', action: () => commands.tableAlignCenter() },
+            { label: tt('右'), hint: tt('本列右对齐'), checked: () => colAlign() === 'right', action: () => commands.tableAlignRight() },
+            { label: tt('默认'), hint: tt('本列取消对齐'), checked: () => colAlign() === '', action: () => commands.tableAlignNone() },
           ] },
-          { lead: '删除', danger: true, row: [
-            { label: '本行', hint: '删除光标所在行', action: () => commands.tableDelRow() },
-            { label: '本列', hint: '删除光标所在列', action: () => commands.tableDelCol() },
-            { label: '整表', hint: '删除整个表格', action: () => commands.tableDel() },
+          { lead: tt('删除'), danger: true, row: [
+            { label: tt('本行'), hint: tt('删除光标所在行'), action: () => commands.tableDelRow() },
+            { label: tt('本列'), hint: tt('删除光标所在列'), action: () => commands.tableDelCol() },
+            { label: tt('整表'), hint: tt('删除整个表格'), action: () => commands.tableDel() },
           ] },
         );
       } else {
         items.push(
-          { head: '插入' },
-          { label: '表格 3 × 3', shortcut: 'Ctrl+Shift+T', action: () => commands.table() },
-          { label: '分割线', action: () => commands.hr() },
+          { head: tt('插入') },
+          { label: tt('表格 3 × 3'), shortcut: 'Ctrl+Shift+T', action: () => commands.table() },
+          { label: tt('分割线'), action: () => commands.hr() },
         );
       }
       items.push(
         { sep: true },
-        { label: '全选', shortcut: 'Ctrl+A', action: () => document.execCommand('selectAll') },
-        { label: '查找替换…', shortcut: 'Ctrl+F', action: () => openFind() },
+        { label: tt('全选'), shortcut: 'Ctrl+A', action: () => document.execCommand('selectAll') },
+        { label: tt('查找替换…'), shortcut: 'Ctrl+F', action: () => openFind() },
       );
       contextMenu(e.clientX, e.clientY, items);
     }
@@ -3280,7 +3334,7 @@ function paletteItems() {
       });
     }
   };
-  for (const m of MENU_TREE) {
+  for (const m of menuTree()) {
     if (!m.items) continue;
     walk(typeof m.items === 'function' ? m.items() : m.items, m.label);
   }
@@ -3317,8 +3371,8 @@ function openPalette() {
   const items = paletteItems();
   const wrap = document.createElement('div');
   wrap.className = 'palette';
-  wrap.innerHTML = `<div class="palette-box" role="dialog" aria-label="命令面板">
-      <input class="palette-input" placeholder="输入命令名…（↑↓ 选择，Enter 执行，Esc 关闭）" spellcheck="false">
+  wrap.innerHTML = `<div class="palette-box" role="dialog" aria-label="${tt('命令面板')}">
+      <input class="palette-input" placeholder="${tt('输入命令名…（↑↓ 选择，Enter 执行，Esc 关闭）')}" spellcheck="false">
       <div class="palette-list"></div>
     </div>`;
   const input = wrap.querySelector('.palette-input');
@@ -3342,7 +3396,7 @@ function openPalette() {
     if (sel >= rows.length) sel = Math.max(0, rows.length - 1);
     list.innerHTML = '';
     if (!rows.length) {
-      list.innerHTML = '<div class="palette-empty">没有匹配的命令</div>';
+      list.innerHTML = '<div class="palette-empty">' + tt('没有匹配的命令') + '</div>';
       return;
     }
     rows.forEach((it, i) => {
@@ -3362,7 +3416,7 @@ function openPalette() {
   const run = (i) => {
     const it = rows[i];
     if (!it) return;
-    if (it.off) { toast(`「${it.label}」在当前状态下不可用`); return; }
+    if (it.off) { toast(tt('「{name}」在当前状态下不可用', { name: it.label })); return; }
     closePalette();
     commands[it.id]?.();
   };
@@ -3422,7 +3476,7 @@ function comboToKbd(combo) {
 /** 菜单里所有带快捷键的命令（顺序和菜单一致） */
 function keyRows() {
   const rows = [];
-  for (const m of MENU_TREE) {
+  for (const m of menuTree()) {
     if (!m.items) continue;
     const items = typeof m.items === 'function' ? m.items() : m.items;
     const walk = (arr) => arr.forEach((it) => {
@@ -3464,12 +3518,12 @@ function paintKeyList(list) {
     const rec = document.createElement('button');
     rec.type = 'button';
     rec.className = 'mini';
-    rec.textContent = '改';
+    rec.textContent = tt('改');
     rec.onclick = () => {
-      rec.textContent = '按键…';
+      rec.textContent = tt('按键…');
       rec.classList.add('waiting');
       recordCombo((combo) => {
-        rec.textContent = '改';
+        rec.textContent = tt('改');
         rec.classList.remove('waiting');
         if (!combo) return;
         /* 一个命令只留一个自定义键；新键若被别的命令占着，直接接管 */
@@ -3484,7 +3538,7 @@ function paintKeyList(list) {
     const reset = document.createElement('button');
     reset.type = 'button';
     reset.className = 'mini ghost';
-    reset.textContent = '恢复';
+    reset.textContent = tt('恢复');
     reset.disabled = !mine.length;
     reset.onclick = () => {
       for (const c of customKeysOf(r.id)) delete keymap()[c];
@@ -3617,60 +3671,13 @@ function persistCurrentView() {
 }
 
 /* ---------------- 启动 ---------------- */
-const WELCOME = `# 欢迎使用 简单记事本
-
-一个安装包不到 10MB、免安装、不联网的小工具，把 **Markdown 写作**、**文本读写**、**文件对比** 的常用功能收在一起。
-
-## 三种模式
-
-- **所见即所得**：输入 \`# \` 立刻变标题（文字写好了回行首补 \`# \` 也行），\`**粗体**\` 立刻加粗；光标哪一行，左边就浮出 \`+\` 和 \`⋮⋮\` —— 插新块、换块类型不用离开正文
-- **编辑模式**：显示原始 Markdown，带行号、语法着色、括号匹配和代码折叠
-- **预览模式**：只读渲染
-
-在工具栏「模式」下拉切换，或按 \`Ctrl+1 / Ctrl+2 / Ctrl+3\`。
-
-新建时可以先选类型：Markdown、纯文本、JSON、CSV 和常见代码。非 Markdown 的文件只开放编辑 / 预览，当普通文本编辑器用：\`Tab\` 缩进（4 空格）、\`Shift+Tab\` 反缩进、回车按上一行缩进自动续上（Python 里 \`def ...:\` 回车还会多缩一级）。
-
-## 常用快捷键
-
-| 操作 | 快捷键 |
-|---|---|
-| 新建 / 打开 / 保存 | \`Ctrl+N\` / \`Ctrl+O\` / \`Ctrl+S\` |
-| 查找 / 替换 | \`Ctrl+F\` / \`Ctrl+H\` |
-| 一键格式化 | \`Ctrl+Shift+F\` |
-| 文本对比 | \`Ctrl+D\` |
-| 标题级别 / 正文 | \`Ctrl+Alt+1~3\` / \`Ctrl+Alt+0\` |
-| 无序 / 有序 / 任务列表 | \`Ctrl+Shift+8 / 7 / 9\` |
-| 插入表格 / 引用 | \`Ctrl+Shift+T\` / \`Ctrl+Shift+Q\` |
-| 单栏 / 双栏 | \`Ctrl+Shift+L\` |
-| 跳转行 | \`Ctrl+G\` |
-| 导出 PDF | \`Ctrl+P\` |
-
-> 支持 Markdown、JSON、TXT、日志与常见代码文件，打开时自动识别类型。
-
-提示块（引用的扩展写法）：行首输入 \`[!info] \` 加空格，或右键菜单「引用」里选类型 —— \`info\` / \`warning\` / \`danger\` / \`success\` 四种配色，和 GitHub、Obsidian 的写法互通：
-
-> [!info] 提示
-> 行首输入 \`[!info] \` 加空格就能生成这样的提示块，标题可自定义。
-
-> [!warning] 注意
-> 兼容 GitHub alerts 的别名：\`[!NOTE]\`、\`[!TIP]\`、\`[!IMPORTANT]\`、\`[!CAUTION]\` 也能认。
-
-> [!success] 完成
-> 颜色跟着类型走，普通引用仍是蓝色左边条。
-
-\`\`\`js
-// 代码块支持语法高亮
-const hello = (name) => \`你好，\${name}\`;
-console.log(hello('简单记事本'));
-\`\`\`
-
-- [x] 多标签页
-- [x] 自动保存草稿
-- [ ] 去写点什么
-`;
-
+/* 欢迎文档按语言取，见 welcome.js；这里只在首次启动建标签时用一次。 */
 async function boot() {
+  /* 语言必须在任何界面文案生成之前定下来：菜单树、工具栏、状态栏、
+     空态提示都是后面按需取词的，先定语言才不会渲染出旧语言再闪一下 */
+  setLang(resolveLang(settings.lang));
+  applyDom();
+
   bindEvents();
   setupKeys();
   setupAppMenu();
@@ -3692,7 +3699,7 @@ async function boot() {
   const drafts = await restoreDrafts().catch(() => 0);
   /* 命令行/文件关联带进来的文件：双击 .md 时系统把路径塞进 argv */
   for (const p of cliFiles || []) await openPath(p);
-  if (!opened && !drafts && !(cliFiles || []).length) newTab('欢迎.md', WELCOME);
+  if (!opened && !drafts && !(cliFiles || []).length) newTab(tt('欢迎.md'), welcomeDoc(getLang()));
   setLayout(settings.layout);
   updateOutline();
   applyZen();
@@ -3743,6 +3750,6 @@ window.__diff = diff;
 window.__merge = merge;
 
 boot().catch((err) => {
-  console.error('[启动失败]', err);
-  try { document.getElementById('preview').innerHTML = `<div class="diff-empty">启动失败：${err && err.message}</div>`; } catch {}
+  console.error(tt('[启动失败]'), err);
+  try { document.getElementById('preview').innerHTML = '<div class="diff-empty">' + tt('启动失败：{msg}', { msg: (err && err.message) || '' }) + '</div>'; } catch {}
 });

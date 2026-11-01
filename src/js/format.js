@@ -4,6 +4,7 @@
 // ============================================================
 
 /** 由扩展名判断格式类型 */
+import { tt } from './i18n.js';
 export function detectKind(fileName = '') {
   const ext = (fileName.split('.').pop() || '').toLowerCase();
   if (!fileName.includes('.')) return 'txt';
@@ -21,7 +22,7 @@ export function detectKind(fileName = '') {
 }
 
 export function kindLabel(kind) {
-  return { md: 'Markdown', json: 'JSON', code: '代码', txt: '纯文本', data: '表格文本' }[kind] || '文本';
+  return { md: 'Markdown', json: 'JSON', code: tt('代码'), txt: tt('纯文本'), data: tt('表格文本') }[kind] || tt('文本');
 }
 
 /** 该类型支持哪些模式 */
@@ -86,10 +87,10 @@ export function formatJSON(text, indent = 2) {
   // 常见错误自动修复（仅在全角标点、尾逗号、单引号上做保守处理）
   const note = (n) => { if (!fixes.includes(n)) fixes.push(n); };
   let fixed = src
-    .replace(/[\u201c\u201d]/g, () => { note('全角引号已改为半角'); return '"'; })
-    .replace(/\uff1a/g, () => { note('全角冒号已改为半角'); return ':'; })
-    .replace(/,\s*([}\]])/g, (m, c) => { note('已移除多余逗号'); return c; })
-    .replace(/\/\/[^\n"]*$/gm, () => { note('已移除行注释'); return ''; })
+    .replace(/[\u201c\u201d]/g, () => { note(tt('全角引号已改为半角')); return '"'; })
+    .replace(/\uff1a/g, () => { note(tt('全角冒号已改为半角')); return ':'; })
+    .replace(/,\s*([}\]])/g, (m, c) => { note(tt('已移除多余逗号')); return c; })
+    .replace(/\/\/[^\n"]*$/gm, () => { note(tt('已移除行注释')); return ''; })
     .replace(/\/\*[\s\S]*?\*\//g, () => { note('已移除块注释'); return ''; });
 
   const attempt = (s) => {

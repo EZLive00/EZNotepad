@@ -1,4 +1,4 @@
-// 简单记事本 - Rust 后端
+// EZNotepad - Rust 后端
 // 只做网页端做不了的事：原生文件对话框、磁盘读写与编码转换、目录遍历。
 
 use serde::{Deserialize, Serialize};

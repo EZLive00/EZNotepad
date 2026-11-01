@@ -78,7 +78,7 @@ async function boot(patch) {
   await ev(`(() => {
     const s = JSON.parse(localStorage.getItem('snp.settings') || '{}');
     Object.assign(s, ${JSON.stringify(patch)});
-    localStorage.setItem('snp.settings', JSON.stringify({ __v: 3, ...s }));
+    localStorage.setItem('snp.settings', JSON.stringify({ __v: 4, lang: 'zh-CN', ...s }));
     localStorage.removeItem('snp.draft');
     location.reload();
   })()`).catch(() => {});

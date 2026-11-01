@@ -9,6 +9,7 @@ import { renderMarkdown, resolveDocImg } from './markdown.js';
 import { highlight, normalizeLang } from './highlight.js';
 import { jsonErrorPosition } from './format.js';
 import { renderMathIn } from './math.js';
+import { tt } from './i18n.js';
 
 export function renderPreview(kind, text, lang, target, docDir = '') {
   /* 同一份内容不重复渲染：切模式、切双栏、改设置都会再调一次，
@@ -44,7 +45,7 @@ export function renderPreview(kind, text, lang, target, docDir = '') {
 
 function renderPlain(text) {
   const t = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  return `<pre class="plainview">${t || '<span style="color:var(--fg-faint)">（空文件）</span>'}</pre>`;
+  return '<pre class="plainview">' + (t || '<span style="color:var(--fg-faint)">' + tt('（空文件）') + '</span>') + '</pre>';
 }
 
 function renderCode(text, lang) {
@@ -66,10 +67,13 @@ function renderJson(text, target) {
   }
   let head = '';
   if (err) {
-    const loc = err.line ? `第 ${err.line} 行${err.col ? ` 第 ${err.col} 列` : ''}：` : '';
-    head = `<div class="json-err">JSON 语法错误 · ${loc}${escape(err.message)}</div>`;
+    /* 冒号也进词条：西文要 ": "（带空格），中文是全角「：」，拼在外面就翻译不了 */
+    const loc = err.line
+      ? tt(err.col ? '第 {line} 行第 {col} 列：' : '第 {line} 行：', { line: err.line, col: err.col })
+      : '';
+    head = '<div class="json-err">' + tt('JSON 语法错误 · {loc}{msg}', { loc, msg: escape(err.message) }) + '</div>';
   } else {
-    head = `<div class="json-err" style="background:var(--add-bg);color:var(--add-fg);border-left-color:var(--add-fg)">JSON 格式有效 · ${countJsonKeys(text)} 个键</div>`;
+    head = '<div class="json-err" style="background:var(--add-bg);color:var(--add-fg);border-left-color:var(--add-fg)">' + tt('JSON 格式有效 · {n} 个键', { n: countJsonKeys(text) }) + '</div>';
   }
   // 预览额外提供「已格式化」视图：缩进 2 空格
   let pretty = text;
@@ -96,7 +100,7 @@ export function extractOutline(kind, text) {
       if (/^\s*(```|~~~)/.test(l)) fence = !fence;
       if (fence) return;
       const m = l.match(/^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/);
-      if (m) items.push({ level: m[1].length, text: m[2].replace(/[*_`~]/g, '').trim() || '(空标题)', line: i });
+      if (m) items.push({ level: m[1].length, text: m[2].replace(/[*_`~]/g, '').trim() || tt('(空标题)'), line: i });
     });
     return items;
   }

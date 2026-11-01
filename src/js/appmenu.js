@@ -16,6 +16,10 @@ const CHECK = iconHTML('check', 'check');
  * @param {(id:string)=>void} opt.run 执行命令
  */
 export function createAppMenu({ bar, menus, run }) {
+  /* 菜单结构由调用方按需重建（语言一换，所有 label 都变），
+     这里只保留「当前这一份」，切语言时用 update() 换标签，
+     而不是重建整个菜单 —— 重建会给 document 叠加一套重复的事件监听。 */
+  let cur = menus;
   const panel = document.createElement('div');
   panel.className = 'appmenu';
   panel.setAttribute('role', 'menu');
@@ -27,7 +31,7 @@ export function createAppMenu({ bar, menus, run }) {
   let rows = [];      // 与 items 等长，分隔符位置为 null
   let hotIndex = -1;
 
-  menus.forEach((m, i) => {
+  cur.forEach((m, i) => {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'am-btn';
@@ -171,10 +175,10 @@ export function createAppMenu({ bar, menus, run }) {
 
   function open(i) {
     // 动作型顶级项没有面板，别 render 出一个空框
-    if (typeof menus[i].action === 'function') return;
+    if (typeof cur[i].action === 'function') return;
     openIndex = i;
     buttons.forEach((b, n) => b.classList.toggle('open', n === i));
-    render(menus[i]);
+    render(cur[i]);
     panel.hidden = false;
     place(i);
     hot(-1);
@@ -206,9 +210,9 @@ export function createAppMenu({ bar, menus, run }) {
   /** 左右换菜单时跳过「动作型」顶级项——它没有下拉，停在那儿等于卡住 */
   function stepMenu(dir) {
     let i = openIndex;
-    for (let k = 0; k < menus.length; k++) {
-      i = (i + dir + menus.length) % menus.length;
-      if (typeof menus[i].action !== 'function') { open(i); return; }
+    for (let k = 0; k < cur.length; k++) {
+      i = (i + dir + cur.length) % cur.length;
+      if (typeof cur[i].action !== 'function') { open(i); return; }
     }
   }
 
@@ -235,5 +239,14 @@ export function createAppMenu({ bar, menus, run }) {
     }
   }, true);
 
-  return { close };
+  /** 换一套菜单数据：只更新顶级标签，结构（谁带下拉、谁是动作）不变 */
+  function update(next) {
+    cur = next;
+    buttons.forEach((b, i) => {
+      b.textContent = next[i] ? next[i].label : '';
+      b.hidden = !next[i];
+    });
+  }
+
+  return { close, update };
 }

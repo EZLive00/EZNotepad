@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "author": "简单记事本",
+  "author": "EZNotepad",
   "license": "MIT",
   "scripts": {
     "dev": "tauri dev",
@@ -19,6 +19,7 @@
     "test:app": "node test/run-app.mjs",
     "test:app": "node test/run-app.mjs",
     "test:units": "node test/run-units.mjs",
+    "test:i18n": "node test/run-i18n.mjs",
     "build:katex": "node scripts/build-katex.mjs",
     "shot:find": "node test/shot-find.mjs",
     "shot:find": "node test/shot-find.mjs"

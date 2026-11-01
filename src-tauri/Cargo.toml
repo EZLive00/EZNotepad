@@ -1,8 +1,8 @@
 [package]
 name = "simple-notepad"
 version = "1.0.0"
-description = "简单记事本 - 轻量 Markdown / 文本编辑器 与 文本对比"
-authors = ["简单记事本"]
+description = "EZNotepad - lightweight Markdown / text editor and diff tool"
+authors = ["EZNotepad"]
 edition = "2021"
 rust-version = "1.90"
 

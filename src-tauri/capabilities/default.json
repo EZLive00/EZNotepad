@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "简单记事本默认权限",
+  "description": "EZNotepad 默认权限",
   "windows": ["main", "compare"],
   "permissions": [
     "core:default",

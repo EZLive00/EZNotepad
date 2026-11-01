@@ -1,11 +1,11 @@
 @echo off
 chcp 65001 >nul
 setlocal enabledelayedexpansion
-title 简单记事本 - Windows 构建环境检查
+title EZNotepad - Windows 构建环境检查
 cd /d "%~dp0"
 
 echo ============================================================
-echo   简单记事本 - Windows 构建环境检查
+echo   EZNotepad - Windows 构建环境检查
 echo ============================================================
 echo.
 

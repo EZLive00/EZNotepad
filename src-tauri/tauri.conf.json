@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "简单记事本",
+  "productName": "EZNotepad",
   "version": "1.0.0",
   "identifier": "com.simple.notepad",
   "build": {
@@ -9,7 +9,7 @@
   "app": {
     "windows": [
       {
-        "title": "简单记事本",
+        "title": "EZNotepad",
         "width": 1280,
         "height": 820,
         "minWidth": 620,
@@ -48,28 +48,28 @@
       {
         "ext": ["md", "markdown"],
         "name": "Markdown",
-        "description": "Markdown 文档",
+        "description": "Markdown document",
         "mimeType": "text/markdown",
         "role": "Editor"
       },
       {
         "ext": ["txt", "log"],
         "name": "Text",
-        "description": "纯文本",
+        "description": "Plain text",
         "mimeType": "text/plain",
         "role": "Editor"
       },
       {
         "ext": ["json"],
         "name": "JSON",
-        "description": "JSON 文件",
+        "description": "JSON file",
         "mimeType": "application/json",
         "role": "Editor"
       },
       {
         "ext": ["csv"],
         "name": "CSV",
-        "description": "逗号分隔表格",
+        "description": "Comma-separated table",
         "mimeType": "text/csv",
         "role": "Editor"
       }

@@ -6,11 +6,12 @@ import { renderPreview } from './preview.js';
 import { detectKind } from './format.js';
 import { dialog, toast } from './ui.js';
 import { activeTab } from './state.js';
+import { tt } from './i18n.js';
 
 export async function exportPdf() {
   const t = activeTab();
   if (!t) return;
-  toast('正在调起打印，请在对话框中选择「另存为 PDF」', 2600);
+  toast(tt('正在调起打印，请在对话框中选择「另存为 PDF」'), 2600);
   await printTab(t);
 }
 
@@ -19,8 +20,8 @@ export async function printTab(t) {
   const win = window.open('', '_blank', 'width=900,height=1000');
   if (!win) {
     dialog({
-      title: '无法打开打印窗口',
-      body: '请在浏览器/系统设置中允许弹出窗口后重试。',
+      title: tt('无法打开打印窗口'),
+      body: tt('请在浏览器/系统设置中允许弹出窗口后重试。'),
     });
     return;
   }

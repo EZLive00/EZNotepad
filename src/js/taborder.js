@@ -12,13 +12,14 @@
  * @param {string[]} names 现有标签名
  * @param {string} ext 扩展名（不带点）
  */
+import { tt } from './i18n.js';
 export function freeUntitledName(names, ext) {
   const used = new Set(names || []);
-  let name = `未命名.${ext}`;
+  let name = tt('未命名.{ext}', { ext });
   let n = 1;
   while (used.has(name)) {
     n += 1;
-    name = `未命名 ${n}.${ext}`;
+    name = tt('未命名 {n}.{ext}', { n, ext });
   }
   return name;
 }

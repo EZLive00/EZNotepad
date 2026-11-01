@@ -6,6 +6,7 @@
 // ============================================================
 import * as be from './backend.js';
 import { toast } from './ui.js';
+import { tt } from './i18n.js';
 
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const $ = (id) => document.getElementById(id);
@@ -26,11 +27,11 @@ export class DiffPanel {
     });
 
     $('pickFolderLeft').onclick = async () => {
-      const p = await be.pickFolder('选择左侧文件夹');
+      const p = await be.pickFolder(tt('选择左侧文件夹'));
       if (p) { $('nameFolderLeft').textContent = p; $('nameFolderLeft').title = p; await this.runFolder(); }
     };
     $('pickFolderRight').onclick = async () => {
-      const p = await be.pickFolder('选择右侧文件夹');
+      const p = await be.pickFolder(tt('选择右侧文件夹'));
       if (p) { $('nameFolderRight').textContent = p; $('nameFolderRight').title = p; await this.runFolder(); }
     };
     $('folderOnlyDiff').onchange = () => this.runFolder();
@@ -49,7 +50,7 @@ export class DiffPanel {
     try {
       await be.openCompareWindow(tab && tab.path ? tab.path : null, null);
     } catch (e) {
-      toast('打不开对比窗口：' + e);
+      toast(tt('打不开对比窗口：') + e);
     }
   }
 
@@ -69,11 +70,11 @@ export class DiffPanel {
     const L = $('nameFolderLeft').textContent;
     const R = $('nameFolderRight').textContent;
     const body = $('folderBody');
-    if (L === '未选择' || R === '未选择') {
-      body.innerHTML = '<div class="diff-empty">选择左右两个文件夹开始对比</div>';
+    if (L === tt('未选择') || R === tt('未选择')) {
+      body.innerHTML = '<div class="diff-empty">' + tt('选择左右两个文件夹开始对比') + '</div>';
       return;
     }
-    body.innerHTML = '<div class="diff-empty">正在扫描…</div>';
+    body.innerHTML = '<div class="diff-empty">' + tt('正在扫描…') + '</div>';
     try {
       const [a, b] = await Promise.all([be.listDir(L), be.listDir(R)]);
       const mapA = new Map(a.map((x) => [rel(L, x.path), x]));
@@ -92,14 +93,14 @@ export class DiffPanel {
       const show = only ? items.filter((i) => i.kind !== 'same') : items;
       const cnt = { left: 0, right: 0, mod: 0, same: 0 };
       items.forEach((i) => cnt[i.kind]++);
-      $('folderStat').textContent = `共 ${items.length} 个文件 · 仅左 ${cnt.left} · 仅右 ${cnt.right} · 已修改 ${cnt.mod} · 相同 ${cnt.same}`;
+      $('folderStat').textContent = tt('共 {n} 个文件 · 仅左 {l} · 仅右 {r} · 已修改 {m} · 相同 {s}', { n: items.length, l: cnt.left, r: cnt.right, m: cnt.mod, s: cnt.same });
       if (!show.length) {
-        body.innerHTML = '<div class="diff-empty">没有差异（或该目录为空）</div>';
+        body.innerHTML = '<div class="diff-empty">' + tt('没有差异（或该目录为空）') + '</div>';
         return;
       }
-      body.innerHTML = `<table class="f-table"><thead><tr><th>状态</th><th>相对路径</th><th>大小</th><th>修改时间</th></tr></thead><tbody>${
+      body.innerHTML = `<table class="f-table"><thead><tr><th>${tt('状态')}</th><th>${tt('相对路径')}</th><th>${tt('大小')}</th><th>${tt('修改时间')}</th></tr></thead><tbody>${
         show.map((i) => {
-          const label = { left: '仅左', right: '仅右', mod: '已修改', same: '相同' }[i.kind];
+          const label = { left: tt('仅左'), right: tt('仅右'), mod: tt('已修改'), same: tt('相同') }[i.kind];
           const f = i.x || i.y;
           return `<tr class="${i.kind === 'same' ? '' : 'f-row-click'}" data-l="${i.x ? i.x.path : ''}" data-r="${i.y ? i.y.path : ''}">
             <td><span class="f-badge ${i.kind}">${label}</span></td>
@@ -114,14 +115,14 @@ export class DiffPanel {
           if (l && r) {
             // 两侧都在：丢给对比窗口并排看，浮层里塞不下两栏
             this.close();
-            be.openCompareWindow(l, r).catch((e) => toast('打不开对比窗口：' + e));
+            be.openCompareWindow(l, r).catch((e) => toast(tt('打不开对比窗口：') + e));
           } else {
             window.__snp.openPath(l || r);
           }
         };
       });
     } catch (e) {
-      body.innerHTML = `<div class="diff-empty">扫描失败：${esc(String(e))}</div>`;
+      body.innerHTML = '<div class="diff-empty">' + tt('扫描失败：{msg}', { msg: esc(String(e)) }) + '</div>';
     }
   }
 }

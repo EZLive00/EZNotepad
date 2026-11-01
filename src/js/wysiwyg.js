@@ -13,6 +13,7 @@
 // ============================================================
 
 import { resolveDocImg, headingSlugs, CALLOUT_TYPES, RE_CALLOUT, normalizeCallout, splitImgAlt } from './markdown.js';
+import { tt } from './i18n.js';
 
 const MAX_INDENT = 6;
 const ZWSP = '\u200b';
@@ -1342,7 +1343,7 @@ export class WysiwygEditor {
           if (this.onProgress) this.onProgress(k + 1, chunks.length);
         }
       } catch (err) {
-        console.error('[渐进载入] 分段 parse 失败，整篇重载', err);
+        console.error(tt('[渐进载入] 分段 parse 失败，整篇重载'), err);
         if (gen !== this._loadGen) return;
         this.root.innerHTML = '';
         this.root.appendChild(parseMarkdown(md));
@@ -1382,7 +1383,7 @@ export class WysiwygEditor {
       this.records = parseRecords(md);
     } catch (err) {
       /* 记录扫描出岔子就退回渐进载入（整篇进 DOM），绝不留半截文档 */
-      console.error('[视口渲染] 记录扫描失败，退回整篇载入', err);
+      console.error(tt('[视口渲染] 记录扫描失败，退回整篇载入'), err);
       this.loading = false;
       this._renderProgressive(md, restore);
       return;

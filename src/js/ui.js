@@ -2,6 +2,7 @@
 // ui.js —— 通用 UI 组件：提示条、确认框、通用对话框
 // ============================================================
 import { iconHTML } from './icons.js';
+import { tt } from './i18n.js';
 
 export function toast(msg, ms = 2200) {
   const wrap = document.getElementById('toasts');
@@ -18,7 +19,7 @@ export function toast(msg, ms = 2200) {
 }
 
 /** 通用对话框：返回 Promise<{ok:boolean}> */
-export function dialog({ title = '提示', body = '', buttons = [{ id: 'ok', label: '确定', primary: true }] } = {}) {
+export function dialog({ title = tt('提示'), body = '', buttons = [{ id: 'ok', label: tt('确定'), primary: true }] } = {}) {
   return new Promise((resolve) => {
     const overlay = document.getElementById('dlgOverlay');
     const titleEl = document.getElementById('dlgTitle');
@@ -58,7 +59,7 @@ export function dialog({ title = '提示', body = '', buttons = [{ id: 'ok', lab
   });
 }
 
-export const confirmBox = (title, text, okLabel = '确定', cancelLabel = '取消') =>
+export const confirmBox = (title, text, okLabel = tt('确定'), cancelLabel = tt('取消')) =>
   dialog({ title, body: text, buttons: [{ id: 'ok', label: okLabel, primary: true }, { id: 'cancel', label: cancelLabel }] }).then((r) => r === 'ok');
 
 /**

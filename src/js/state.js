@@ -2,6 +2,7 @@
 // state.js —— 全局状态、标签模型、本地持久化（草稿 / 设置）
 // ============================================================
 
+import { tt } from './i18n.js';
 export const LS = {
   get(k, d) {
     try { const v = localStorage.getItem('snp.' + k); return v === null ? d : JSON.parse(v); } catch { return d; }
@@ -14,6 +15,7 @@ export const LS = {
 
 export const DEFAULTS = {
   theme: 'auto',        // auto | light | dark
+  lang: 'auto',         // auto = 跟随系统；其余为 zh-CN / zh-TW / en / ja / ko / fr / de / es / pt
   fontSize: 13.5,
   readWidth: 800,       // 正文栏宽（px）：宽窗口下正文居中的最大宽度，见 applyReadWidth()
   layout: 'single',     // single | split（2026-10-25 起默认单栏）
@@ -28,7 +30,7 @@ export const DEFAULTS = {
   zen: false,           // 专注模式：只留标题栏和正文
   watchFiles: true,     // 监听磁盘上的改动（别的程序改了文件实时提示）
   keymap: {},           // 自定义快捷键：{ 'mod+shift+k': 'commandId' }，优先于默认键位
-  __v: 3,               // 设置版本：默认值变更时 +1，触发下面的迁移
+  __v: 4,               // 设置版本：默认值变更时 +1，触发下面的迁移
 };
 
 export const settings = Object.assign({}, DEFAULTS, LS.get('settings', {}));
@@ -42,13 +44,16 @@ if (LS.get('settings', {}).__v !== DEFAULTS.__v) {
   /* __v3：默认模式改为「所见即所得」（Markdown）。旧版把自动落位也写进 lastMode，
      'edit' 已成粘滞值 → 一次性清掉，之后只记忆用户手动切换的模式 */
   settings.lastMode = {};
+  /* __v4：新增界面语言偏好。老用户没有这个键 → 一律先「跟随系统」，
+     之后在设置里手动改过就一直记住 */
+  settings.lang = 'auto';
   saveSettings();
 }
 
 export function saveSettings() { LS.set('settings', settings); }
 
 let tabSeq = 0;
-export function createTab(name = '未命名.md', content = '', path = null) {
+export function createTab(name = tt('未命名.md'), content = '', path = null) {
   return {
     id: ++tabSeq,
     path,                       // 绝对路径，未保存为 null

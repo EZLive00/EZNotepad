@@ -1,11 +1,11 @@
 @echo off
 chcp 65001 >nul
 setlocal enabledelayedexpansion
-title 简单记事本 - Windows 打包
+title EZNotepad - Windows 打包
 cd /d "%~dp0"
 
 echo ============================================================
-echo   简单记事本 - Windows 打包
+echo   EZNotepad - Windows 打包
 echo ============================================================
 
 set MISS=0

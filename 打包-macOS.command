@@ -3,7 +3,7 @@
 cd "$(dirname "$0")"
 
 echo "============================================"
-echo "  简单记事本 - macOS 打包"
+echo "  EZNotepad - macOS 打包"
 echo "============================================"
 
 if ! command -v node >/dev/null 2>&1; then

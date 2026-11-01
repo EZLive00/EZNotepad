@@ -17,6 +17,7 @@ import { invoke } from '../vendor/api/core.js';
 import { listen } from '../vendor/api/event.js';
 import { getCurrentWindow } from '../vendor/api/window.js';
 import { PhysicalPosition, PhysicalSize } from '../vendor/api/dpi.js';
+import { tt, setLang, resolveLang, applyDom } from './i18n.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -269,21 +270,21 @@ function updateCurBox() {
 function updateStats() {
   const hasL = !!S.sides.l.path, hasR = !!S.sides.r.path;
   if (!hasL && !hasR) {
-    $('stat').textContent = '选择左右两个文件开始对比';
+    $('stat').textContent = tt('选择左右两个文件开始对比');
     $('curInfo').textContent = '';
     return;
   }
   if (!hasL || !hasR) {
-    $('stat').textContent = '只打开了一侧：可以当并排阅读器用，选另一侧即开始对比';
+    $('stat').textContent = tt('只打开了一侧：可以当并排阅读器用，选另一侧即开始对比');
     $('curInfo').textContent = '';
     return;
   }
   const st = diffStats(S.rows);
   const same = st.add + st.del + st.chg === 0;
   $('stat').textContent = same
-    ? '两侧内容完全一致'
-    : `修改 ${st.chg} 行 · 仅左 ${st.del} 行 · 仅右 ${st.add} 行 · 差异 ${S.blocks.length} 处`;
-  $('curInfo').textContent = S.blocks.length ? `第 ${S.cur + 1} / ${S.blocks.length} 处` : '';
+    ? tt('两侧内容完全一致')
+    : tt('修改 {chg} 行 · 仅左 {del} 行 · 仅右 {add} 行 · 差异 {n} 处', { chg: st.chg, del: st.del, add: st.add, n: S.blocks.length });
+  $('curInfo').textContent = S.blocks.length ? tt('第 {i} / {n} 处', { i: S.cur + 1, n: S.blocks.length }) : '';
   $('prev').disabled = !S.blocks.length;
   $('next').disabled = !S.blocks.length;
   $('report').disabled = same;
@@ -301,11 +302,11 @@ function updateMeta() {
       nameEl.title = st.path;
       phEl.textContent = st.name;
       const n = st.lines.length;
-      metaEl.textContent = `${n} 行 · ${st.enc}${st.eol === '\r\n' ? ' · CRLF' : ''}${st.dirty ? ' · 未保存' : ''}`;
+      metaEl.textContent = tt('{n} 行', { n }) + ' · ' + st.enc + (st.eol === '\r\n' ? ' · CRLF' : '') + (st.dirty ? ' · ' + tt('未保存') : '');
     } else {
-      nameEl.textContent = (side === 'l' ? '左侧' : '右侧') + '未选择';
+      nameEl.textContent = (side === 'l' ? tt('左侧') : tt('右侧')) + tt('未选择');
       nameEl.title = '';
-      phEl.textContent = side === 'l' ? '左侧' : '右侧';
+      phEl.textContent = side === 'l' ? tt('左侧') : tt('右侧');
       metaEl.textContent = '';
     }
   }
@@ -435,7 +436,7 @@ function bindScroll(side) {
 
 /* ---------------- 导航 ---------------- */
 function gotoBlock(i) {
-  if (!S.blocks.length) { toast('两侧没有差异'); return; }
+  if (!S.blocks.length) { toast(tt('两侧没有差异')); return; }
   S.cur = ((i % S.blocks.length) + S.blocks.length) % S.blocks.length;
   const row = S.blocks[S.cur];
   const sc = el('l', 'scroll');
@@ -461,7 +462,7 @@ async function loadSide(side, path) {
     st.undo.length = 0;
     st.redo.length = 0;
   } catch (e) {
-    toast('读取失败：' + e);
+    toast(tt('读取失败：') + e);
     return;
   }
   S.pending = null;
@@ -709,24 +710,24 @@ function onKey(e) {
 async function save() {
   if (S.pending) { flush(); S.ver++; recompute(); render(true); }
   const dirty = ['l', 'r'].filter((k) => S.sides[k].path && S.sides[k].dirty);
-  if (!dirty.length) { toast('没有需要保存的改动'); return; }
+  if (!dirty.length) { toast(tt('没有需要保存的改动')); return; }
   for (const k of dirty) {
     const st = S.sides[k];
     try {
       await be.saveText({ path: st.path, content: st.lines.join(st.eol), encoding: st.enc, bom: st.bom });
       st.dirty = false;
     } catch (e) {
-      toast('保存失败：' + e);
+      toast(tt('保存失败：') + e);
       return;
     }
   }
   updateMeta();
-  toast(`已保存 ${dirty.length} 个文件`);
+  toast(tt('已保存 {n} 个文件', { n: dirty.length }));
 }
 
 /* ---------------- 报告 ---------------- */
 async function saveReport() {
-  const p = await be.pickSavePath('对比报告.html');
+  const p = await be.pickSavePath(tt('对比报告.html'));
   if (!p) return;
   const st = diffStats(S.rows);
   const rowHtml = (side) => S.rows.map((r) => {
@@ -737,7 +738,7 @@ async function saveReport() {
     const cls = r.kind === 'same' ? '' : 'diff';
     return `<div class="row ${cls}"><span class="ln">${c.no}</span><span class="tx">${t}</span></div>`;
   }).join('');
-  const html = `<!doctype html><meta charset="utf-8"><title>文本对比报告</title>
+  const html = `<!doctype html><meta charset="utf-8"><title>${tt('文本对比报告')}</title>
 <style>
 body{font-family:-apple-system,"Segoe UI","PingFang SC",sans-serif;margin:0;padding:28px;color:#1f2430;background:#fff}
 h1{font-size:20px;margin:0 0 6px}.meta{color:#6b7280;font-size:12.5px;margin-bottom:16px}
@@ -749,13 +750,13 @@ h1{font-size:20px;margin:0 0 6px}.meta{color:#6b7280;font-size:12.5px;margin-bot
 .diff{background:rgba(217,43,43,.07)}.diff .ln{color:#b4232a;box-shadow:inset 3px 0 0 #b4232a}
 mark{background:rgba(217,43,43,.2)}mark.rem{background:rgba(217,43,43,.32);text-decoration:line-through}
 </style>
-<h1>文本对比报告</h1>
-<div class="meta">${esc(S.sides.l.name || '空')} ⇄ ${esc(S.sides.r.name || '空')} · ${new Date().toLocaleString()}</div>
-<div class="bar"><span>修改 ${st.chg} 行</span><span>仅左 ${st.del} 行</span><span>仅右 ${st.add} 行</span><span>差异 ${S.blocks.length} 处</span></div>
-<div class="grid"><div class="col"><div class="head">${esc(S.sides.l.name || '左')}</div>${rowHtml('l')}</div>
-<div class="col"><div class="head">${esc(S.sides.r.name || '右')}</div>${rowHtml('r')}</div></div>`;
+<h1>${tt('文本对比报告')}</h1>
+<div class="meta">${esc(S.sides.l.name || tt('空'))} ⇄ ${esc(S.sides.r.name || tt('空'))} · ${new Date().toLocaleString()}</div>
+<div class="bar"><span>${tt('修改 {n} 行', { n: st.chg })}</span><span>${tt('仅左 {n} 行', { n: st.del })}</span><span>${tt('仅右 {n} 行', { n: st.add })}</span><span>${tt('差异 {n} 处', { n: S.blocks.length })}</span></div>
+<div class="grid"><div class="col"><div class="head">${esc(S.sides.l.name || tt('左'))}</div>${rowHtml('l')}</div>
+<div class="col"><div class="head">${esc(S.sides.r.name || tt('右'))}</div>${rowHtml('r')}</div></div>`;
   await be.writeBinary(p, new TextEncoder().encode(html));
-  toast('报告已导出：' + be.baseName(p));
+  toast(tt('报告已导出：') + be.baseName(p));
 }
 
 /* ---------------- 事件绑定 ---------------- */
@@ -799,7 +800,7 @@ function bind() {
   $('report').onclick = saveReport;
 
   $('toggleEdit').onclick = () => {
-    if (!S.sides.l.path && !S.sides.r.path) { toast('先选两个文件再编辑'); return; }
+    if (!S.sides.l.path && !S.sides.r.path) { toast(tt('先选两个文件再编辑')); return; }
     if (S.pending) { flush(); S.ver++; recompute(); }
     S.edit = !S.edit;
     $('toggleEdit').classList.toggle('on', S.edit);
@@ -807,7 +808,7 @@ function bind() {
     $('paneR').classList.toggle('editing', S.edit);
     S.ver++;
     render(true);
-    toast(S.edit ? '编辑已打开：直接改字，Ctrl+S 写回磁盘' : '编辑已关闭');
+    toast(S.edit ? tt('编辑已打开：直接改字，Ctrl+S 写回磁盘') : tt('编辑已关闭'));
   };
 
   for (const side of ['l', 'r']) {
@@ -871,13 +872,24 @@ function bind() {
 
 function pickSide(side) {
   return async () => {
-    const p = await be.pickFile(side === 'l' ? '选择左侧文件' : '选择右侧文件');
+    const p = await be.pickFile(side === 'l' ? tt('选择左侧文件') : tt('选择右侧文件'));
     if (p) await loadSide(side, p);
   };
 }
 
 /* ---------------- 启动 ---------------- */
 (async function boot() {
+  /* 对比窗口是独立页面，不引 state.js（那是主窗口的模型），
+     语言偏好直接从同一份 localStorage 里读，保证两个窗口一致 */
+  let langPref = 'auto';
+  try { langPref = JSON.parse(localStorage.getItem('snp.settings') || '{}').lang || 'auto'; } catch {}
+  setLang(resolveLang(langPref));
+  applyDom();
+  document.title = 'EZNotepad · ' + tt('对比');
+  /* 两侧槽位在没选文件时显示占位文字；这两处是按文件动态写的，只能在这里给初值 */
+  document.getElementById('nameL').textContent = tt('左侧未选择');
+  document.getElementById('nameR').textContent = tt('右侧未选择');
+
   applyTheme();
   await fitToScreen();
   cacheColors();

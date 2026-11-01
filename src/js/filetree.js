@@ -9,6 +9,7 @@
 // 树是懒加载的：展开某个目录才去读那一层，打开大仓库不会先把几万个文件读进来。
 // ============================================================
 
+import { tt } from './i18n.js';
 const baseName = (p) => (p ? String(p).split(/[\\/]/).pop() : '');
 /** 取所在目录，保留原来的分隔符风格（后端给的是 \，别混用手写的 /） */
 const parentOf = (p) => String(p || '').replace(/[\\/][^\\/]*$/, '');
@@ -63,7 +64,7 @@ export class FileTree {
     this.root = path || '';
     this.expanded.clear();
     if (this.pathText) {
-      this.pathText.textContent = this.root ? baseName(this.root) : '未打开文件夹';
+      this.pathText.textContent = this.root ? baseName(this.root) : tt('未打开文件夹');
       this.pathText.title = this.root || '';
     }
     return this.render();
@@ -82,7 +83,7 @@ export class FileTree {
     this.token++;
     this.body.innerHTML = '';
     if (!this.root) {
-      this.body.innerHTML = '<div class="ft-empty">还没打开文件夹。<br>点上面的「选择…」挑一个目录，<br>之后就能在这里翻文件、搜内容。</div>';
+      this.body.innerHTML = '<div class="ft-empty">' + tt('还没打开文件夹。<br>点上面的「选择…」挑一个目录，<br>之后就能在这里翻文件、搜内容。') + '</div>';
       return;
     }
     const tree = document.createElement('div');
@@ -100,7 +101,7 @@ export class FileTree {
     } catch (e) {
       const err = document.createElement('div');
       err.className = 'ft-empty small';
-      err.textContent = '读不到这个目录';
+      err.textContent = tt('读不到这个目录');
       frag.append(err);
       return frag;
     }
@@ -108,7 +109,7 @@ export class FileTree {
       const empty = document.createElement('div');
       empty.className = 'ft-empty small';
       empty.style.paddingLeft = `${18 + depth * 12}px`;
-      empty.textContent = '空目录';
+      empty.textContent = tt('空目录');
       frag.append(empty);
       return frag;
     }
@@ -160,33 +161,33 @@ export class FileTree {
     if (!this.menu) return;
     const items = [];
     if (entry.is_dir) {
-      items.push({ label: '新建文件…', icon: 'file-plus', action: () => this._create(entry.path, false) });
-      items.push({ label: '新建文件夹…', icon: 'folder-plus', action: () => this._create(entry.path, true) });
+      items.push({ label: tt('新建文件…'), icon: 'file-plus', action: () => this._create(entry.path, false) });
+      items.push({ label: tt('新建文件夹…'), icon: 'folder-plus', action: () => this._create(entry.path, true) });
       items.push({ sep: true });
     }
-    items.push({ label: '重命名…', icon: 'pencil', action: () => this._rename(entry) });
-    items.push({ label: '删除', icon: 'trash-2', danger: true, action: () => this._remove(entry) });
+    items.push({ label: tt('重命名…'), icon: 'pencil', action: () => this._rename(entry) });
+    items.push({ label: tt('删除'), icon: 'trash-2', danger: true, action: () => this._remove(entry) });
     items.push({ sep: true });
-    items.push({ label: '在资源管理器中显示', icon: 'folder-open', action: () => this.onReveal(entry.path) });
+    items.push({ label: tt('在资源管理器中显示'), icon: 'folder-open', action: () => this.onReveal(entry.path) });
     this.menu(ev.clientX, ev.clientY, items);
   }
 
   _rootMenu(ev) {
     if (!this.menu || !this.root) return;
     this.menu(ev.clientX, ev.clientY, [
-      { label: '新建文件…', icon: 'file-plus', action: () => this._create(this.root, false) },
-      { label: '新建文件夹…', icon: 'folder-plus', action: () => this._create(this.root, true) },
+      { label: tt('新建文件…'), icon: 'file-plus', action: () => this._create(this.root, false) },
+      { label: tt('新建文件夹…'), icon: 'folder-plus', action: () => this._create(this.root, true) },
       { sep: true },
-      { label: '刷新', icon: 'rotate-ccw', action: () => this.render() },
+      { label: tt('刷新'), icon: 'rotate-ccw', action: () => this.render() },
     ]);
   }
 
   async _create(dir, isDir) {
     if (!this.ask) return;
     const name = await this.ask(
-      isDir ? '新建文件夹' : '新建文件',
-      isDir ? '文件夹名' : '文件名（带扩展名）',
-      isDir ? '新建文件夹' : '未命名.md'
+      isDir ? tt('新建文件夹') : tt('新建文件'),
+      isDir ? tt('文件夹名') : tt('文件名（带扩展名）'),
+      isDir ? tt('新建文件夹') : tt('未命名.md')
     );
     if (!name) return;
     try {
@@ -201,13 +202,13 @@ export class FileTree {
 
   async _rename(entry) {
     if (!this.ask) return;
-    const name = await this.ask('重命名', '新名字', entry.name);
+    const name = await this.ask(tt('重命名'), tt('新名字'), entry.name);
     if (!name || name === entry.name) return;
     try {
       const np = await this.be.renameEntry(entry.path, name);
       await this._reloadDir(parentOf(entry.path));
       this.onRenamed(entry.path, np);
-      this.toast('已重命名');
+      this.toast(tt('已重命名'));
     } catch (e) {
       this.toast(String(e));
     }
@@ -216,10 +217,11 @@ export class FileTree {
   async _remove(entry) {
     const ok = this.confirmAsk
       ? await this.confirmAsk(
-        '删除',
-        `确定删除 <b>${entry.name}</b> 吗？<br><br>${entry.is_dir
-          ? '只能删除空文件夹，里面的东西请先清空。'
-          : '文件会进系统回收站，需要时可以从那里还原。'}`
+        tt('删除'),
+        tt('确定删除 <b>{name}</b> 吗？<br><br>{detail}', {
+          name: entry.name,
+          detail: entry.is_dir ? tt('只能删除空文件夹，里面的东西请先清空。') : tt('文件会进系统回收站，需要时可以从那里还原。'),
+        })
       )
       : true;
     if (!ok) return;
@@ -227,7 +229,7 @@ export class FileTree {
       await this.be.deleteEntry(entry.path);
       await this._reloadDir(parentOf(entry.path));
       this.onDeleted(entry.path);
-      this.toast(entry.is_dir ? '文件夹已删除' : '已移到回收站');
+      this.toast(entry.is_dir ? tt('文件夹已删除') : tt('已移到回收站'));
     } catch (e) {
       this.toast(String(e));
     }
@@ -268,13 +270,13 @@ export class FileTree {
     if (!query) { await this.render(); return; }
 
     const token = ++this.token;
-    this.body.innerHTML = '<div class="ft-empty">搜索中…</div>';
+    this.body.innerHTML = '<div class="ft-empty">' + tt('搜索中…') + '</div>';
     let hits = [];
     try {
       hits = await this.be.searchInFolder(this.root, query, 200, this.regex, this.caseSensitive);
     } catch (e) {
       if (token === this.token) this.body.innerHTML = '';
-      this.toast('搜索失败：' + e);
+      this.toast(tt('搜索失败：') + e);
       return;
     }
     if (token !== this.token) return;   // 期间又搜了新词，这次结果作废
@@ -283,7 +285,7 @@ export class FileTree {
     if (!hits.length) {
       const none = document.createElement('div');
       none.className = 'ft-empty';
-      none.textContent = `没有找到「${query}」`;
+      none.textContent = tt('没有找到「{q}」', { q: query });
       this.body.append(none);
       return;
     }
@@ -314,7 +316,7 @@ export class FileTree {
         row.title = `${path}:${h.line}`;
         row.innerHTML = '<span class="ft-line"></span><span class="ft-text"></span>';
         row.querySelector('.ft-line').textContent = h.line;
-        row.querySelector('.ft-text').textContent = h.text || '（空行）';
+        row.querySelector('.ft-text').textContent = h.text || tt('（空行）');
         row.onclick = () => this.onOpen(path, h.line);
         wrap.append(row);
       }

@@ -16,6 +16,7 @@ import { detectKind } from './format.js';
 import { activeTab } from './state.js';
 import { dialog, toast } from './ui.js';
 import * as be from './backend.js';
+import { tt, getLang } from './i18n.js';
 
 const MIME = {
   png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif',
@@ -90,10 +91,10 @@ export async function exportHtml() {
     : box.innerHTML;
 
   const html = `<!doctype html>
-<html lang="zh-CN"><head>
+<html lang="${getLang()}"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="generator" content="简单记事本">
+<meta name="generator" content="EZNotepad">
 <title>${escapeHtml(title)}</title>
 <style>
 ${css}
@@ -117,16 +118,16 @@ ${body}
 </body></html>`;
 
   const target = await be.pickSavePath(`${title}.html`, [
-    { name: '网页', extensions: ['html', 'htm'] },
-    { name: '所有文件', extensions: ['*'] },
+    { name: tt('网页'), extensions: ['html', 'htm'] },
+    { name: tt('所有文件'), extensions: ['*'] },
   ]);
   if (!target) return;
 
   try {
     await be.saveText({ path: target, content: html, encoding: 'UTF-8', bom: false });
     const kb = Math.round(html.length / 1024);
-    toast(`已导出 ${be.baseName(target)}（${kb} KB${embedded ? `，内嵌 ${embedded} 张图` : ''}）`, 3000);
+    toast(tt('已导出 {name}（{kb} KB{extra}）', { name: be.baseName(target), kb, extra: embedded ? tt('，内嵌 {n} 张图', { n: embedded }) : '' }), 3000);
   } catch (e) {
-    dialog({ title: '导出失败', body: String(e) });
+    dialog({ title: tt('导出失败'), body: String(e) });
   }
 }

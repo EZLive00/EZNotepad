@@ -71,7 +71,7 @@ try {
     ok('Ctrl+F 不收起已展开的替换行', !(await cls('#findReplaceRow')).includes('hidden'));
 
     // ---- 2. 查找与计数 ----
-    await typeIn('#findInput', '简单记事本');
+    await typeIn('#findInput', 'EZNotepad');
     await ev('new Promise(r => setTimeout(r, 120))');
     const count = await ev(`document.querySelector('#findCount').textContent`);
     ok('欢迎稿里能查到内容并给出计数', /^\d+\/\d+$/.test(count) && !count.startsWith('0/'), count);

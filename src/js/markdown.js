@@ -4,6 +4,7 @@
 //       / 引用 / 链接 / 图片 / 表格 / 分割线 / 段落 / 硬换行 / HTML 转义
 // ============================================================
 
+import { tt } from './i18n.js';
 export function escapeHtml(s) {
   return String(s)
     .replace(/&/g, '&amp;')
@@ -217,14 +218,14 @@ function uniqueSlug(text, opts) {
  * note/tip/important/caution 是 GitHub alerts 的命名，收编为别名。
  */
 export const CALLOUT_TYPES = {
-  info:    { label: '信息', icon: 'info' },
-  warning: { label: '警告', icon: 'triangle-alert' },
-  danger:  { label: '危险', icon: 'octagon-alert' },
-  success: { label: '成功', icon: 'circle-check' },
-  note:      { label: '信息', icon: 'info', aliasOf: 'info' },
-  tip:       { label: '成功', icon: 'circle-check', aliasOf: 'success' },
-  important: { label: '警告', icon: 'triangle-alert', aliasOf: 'warning' },
-  caution:   { label: '危险', icon: 'octagon-alert', aliasOf: 'danger' },
+  info:    { label: tt('信息'), icon: 'info' },
+  warning: { label: tt('警告'), icon: 'triangle-alert' },
+  danger:  { label: tt('危险'), icon: 'octagon-alert' },
+  success: { label: tt('成功'), icon: 'circle-check' },
+  note:      { label: tt('信息'), icon: 'info', aliasOf: 'info' },
+  tip:       { label: tt('成功'), icon: 'circle-check', aliasOf: 'success' },
+  important: { label: tt('警告'), icon: 'triangle-alert', aliasOf: 'warning' },
+  caution:   { label: tt('危险'), icon: 'octagon-alert', aliasOf: 'danger' },
 };
 
 export const RE_CALLOUT = /^\[!(info|warning|danger|success|note|tip|important|caution)\]\s*(.*)$/i;

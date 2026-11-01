@@ -2,15 +2,30 @@
 // backend.js —— 与 Rust 后端（Tauri 命令）的桥接
 // 所有磁盘读写、原生对话框都在这里集中出口
 // ============================================================
-import { invoke } from '../vendor/api/core.js';
+import { invoke as rawInvoke } from '../vendor/api/core.js';
 import { open as openDialog, save as saveDialog } from '../vendor/plugin-dialog/dist-js/index.js';
+import { tt, ttBackend } from './i18n.js';
 
-const FILTERS = [
-  { name: '文本与代码', extensions: ['md', 'markdown', 'txt', 'json', 'log', 'csv', 'js', 'ts', 'py', 'html', 'css', 'xml', 'yml', 'yaml', 'ini', 'sh', 'sql', 'rs', 'go', 'java', 'c', 'cpp'] },
+/* 对话框过滤器名称要跟着界面语言走，所以在调用时才构建 */
+const fileFilters = () => [
+  { name: tt('文本与代码'), extensions: ['md', 'markdown', 'txt', 'json', 'log', 'csv', 'js', 'ts', 'py', 'html', 'css', 'xml', 'yml', 'yaml', 'ini', 'sh', 'sql', 'rs', 'go', 'java', 'c', 'cpp'] },
   { name: 'Markdown', extensions: ['md', 'markdown'] },
   { name: 'JSON', extensions: ['json'] },
-  { name: '所有文件', extensions: ['*'] },
+  { name: tt('所有文件'), extensions: ['*'] },
 ];
+
+/* Rust 侧的错误文案是中文（后端不认识界面语言），统一在这个出口翻一道：
+   整条命中词条就整条翻，「前缀：系统细节」只翻前缀。别处 invoke 的地方
+   （对比窗口、历史版本）各自处理，不走这里。 */
+const invoke = (cmd, args) => rawInvoke(cmd, args).catch((e) => {
+  /* 原样保留错误对象的类型（栈还在），只把 message 换掉；
+     Tauri 一般直接 reject 一个字符串，那就整条换 */
+  if (e && typeof e === 'object' && typeof e.message === 'string') {
+    e.message = ttBackend(e.message);
+    throw e;
+  }
+  throw ttBackend(e);
+});
 
 export const baseName = (p) => (p ? String(p).split(/[\\/]/).pop() : '');
 export const dirName = (p) => {
@@ -20,18 +35,18 @@ export const dirName = (p) => {
   return parts.join('/');
 };
 
-export async function pickFile(title = '打开文件') {
-  const r = await openDialog({ title, multiple: false, directory: false, filters: FILTERS });
+export async function pickFile(title = tt('打开文件')) {
+  const r = await openDialog({ title, multiple: false, directory: false, filters: fileFilters() });
   return typeof r === 'string' ? r : (r && r.path) || null;
 }
 
-export async function pickFolder(title = '选择文件夹') {
+export async function pickFolder(title = tt('选择文件夹')) {
   const r = await openDialog({ title, directory: true, multiple: false });
   return typeof r === 'string' ? r : (r && r.path) || null;
 }
 
-export async function pickSavePath(defaultName = '未命名.md', filters = null) {
-  return (await saveDialog({ title: '另存为', defaultPath: defaultName, filters: filters || FILTERS })) || null;
+export async function pickSavePath(defaultName = tt('未命名.md'), filters = null) {
+  return (await saveDialog({ title: tt('另存为'), defaultPath: defaultName, filters: filters || fileFilters() })) || null;
 }
 
 export const readText = (path, encoding = null) => invoke('read_text_file', { path, encoding });
@@ -67,10 +82,10 @@ const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'ico', 'a
 /** 选一张本地图片（不复制，只返回路径） */
 export async function pickImage() {
   const r = await openDialog({
-    title: '选择图片',
+    title: tt('选择图片'),
     multiple: false,
     directory: false,
-    filters: [{ name: '图片', extensions: IMAGE_EXTS }],
+    filters: [{ name: tt('图片'), extensions: IMAGE_EXTS }],
   });
   return typeof r === 'string' ? r : (r && r.path) || null;
 }

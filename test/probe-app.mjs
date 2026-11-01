@@ -47,7 +47,7 @@ try {
       theme: 'light', fontSize: 13.5, layout: 'split', outlineVisible: true,
       showToolbar: true, showWinTitle: true, lastMode: { md: 'edit' },
       lastNewExt: 'md', autoSave: false, folder: '', side: 'outline',
-      __v: 3   /* 钉死设置：带上当前版本号，跳过 state.js 的默认值迁移 */
+      __v: 4, lang: 'zh-CN'   /* 钉死设置（含语言）：带上当前版本号，跳过 state.js 的默认值迁移 */
     }));
     localStorage.removeItem('snp.draft');
     location.reload();
@@ -73,7 +73,7 @@ try {
   const dirsFirst = Array.isArray(ls) && ls.every((e, i) => i === 0 || !(ls[i - 1].is_dir === false && e.is_dir === true));
   ok('目录排在文件前面', dirsFirst);
 
-  const hits = await invoke('search_in_folder', { root: '.', query: '简单记事本', maxResults: 20 }).catch(() => null);
+  const hits = await invoke('search_in_folder', { root: '.', query: 'EZNotepad', maxResults: 20 }).catch(() => null);
   ok('search_in_folder 能搜到内容', Array.isArray(hits) && hits.length > 0, hits ? hits.length + ' 条' : 'null');
   ok('搜索结果带行号和片段', !!(hits && hits[0] && hits[0].line > 0 && hits[0].text));
 
