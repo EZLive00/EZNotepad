@@ -1015,6 +1015,17 @@ window.__run = () => {
     has('视口: 载入耗时在可接受范围', loadMs < 5000);
   }
 
+  /* ---- 正文光标：自绘工字 ---- 系统 I-beam 只有 1px，且 Chromium 会按背景
+     明暗自己翻成白/黑，翻成白色时在浅底上几乎看不见。这里断言我们接管了它 */
+  {
+    const cur = getComputedStyle(document.getElementById('wysiwyg')).cursor;
+    has('光标: 正文用自绘工字', cur.startsWith('url(') && cur.includes('data:image/svg+xml'));
+    has('光标: 热区在竖线正中', /7\s*12/.test(cur));
+    has('光标: 保留 text 兜底', /,\s*text\s*$/.test(cur));
+    const dark = document.body.dataset.theme === 'dark';
+    has('光标: 明暗各一套', cur.includes(dark ? '%23e7e9ee' : '%2317191e'));
+  }
+
   return R;
 };
 

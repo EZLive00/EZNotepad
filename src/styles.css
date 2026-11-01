@@ -70,6 +70,11 @@ body[data-theme="light"] {
   --co-warn: #b45309;    --co-warn-bg: rgba(217, 119, 6, .09);
   --co-danger: #c22f2f;  --co-danger-bg: rgba(194, 47, 47, .07);
   --co-ok: #15803d;      --co-ok-bg: rgba(21, 128, 61, .08);
+
+  /* 正文光标：自绘工字（14×24，热区在竖线正中）。系统 I-beam 只有 1px，
+     而且 Chromium 会按背景明暗自己翻成白色/黑色，翻成白色时在浅底上几乎看不见。
+     这里固定 2px 竖线 + 1px 对比晕：浅底是深色工字，深底是浅色工字，不再随背景变 */
+  --cur-text: url("data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2214%22%20height%3D%2224%22%20viewBox%3D%220%200%2014%2024%22%3E%3Cpath%20d%3D%22M3%203%20H11%20M7%201%20V23%20M3%2021%20H11%22%20fill%3D%22none%22%20stroke%3D%22%23ffffff%22%20stroke-opacity%3D%220.92%22%20stroke-width%3D%224%22%2F%3E%3Cpath%20d%3D%22M3%203%20H11%20M7%201%20V23%20M3%2021%20H11%22%20fill%3D%22none%22%20stroke%3D%22%2317191e%22%20stroke-width%3D%222%22%2F%3E%3C%2Fsvg%3E") 7 12;
 }
 
 body[data-theme="dark"] {
@@ -114,6 +119,9 @@ body[data-theme="dark"] {
   --co-warn: #ffcf6b;    --co-warn-bg: rgba(255, 176, 32, .09);
   --co-danger: #ff8a8a;  --co-danger-bg: rgba(255, 90, 90, .10);
   --co-ok: #62d38b;      --co-ok-bg: rgba(46, 204, 113, .09);
+
+  /* 深底反过来：浅色工字 + 深色对比晕 */
+  --cur-text: url("data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2214%22%20height%3D%2224%22%20viewBox%3D%220%200%2014%2024%22%3E%3Cpath%20d%3D%22M3%203%20H11%20M7%201%20V23%20M3%2021%20H11%22%20fill%3D%22none%22%20stroke%3D%22%230d1015%22%20stroke-opacity%3D%220.85%22%20stroke-width%3D%224%22%2F%3E%3Cpath%20d%3D%22M3%203%20H11%20M7%201%20V23%20M3%2021%20H11%22%20fill%3D%22none%22%20stroke%3D%22%23e7e9ee%22%20stroke-width%3D%222%22%2F%3E%3C%2Fsvg%3E") 7 12;
 }
 
 * { box-sizing: border-box; }
@@ -686,6 +694,16 @@ body[data-theme="dark"] .am-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 25
   outline: none; user-select: text;
 }
 .wysiwyg:empty::before { content: "开始输入… 输入 # 加空格变成标题"; color: var(--fg-faint); }
+
+/* 文本光标统一走自绘工字（见 --cur-text）。只写在容器上靠继承生效，
+   子元素自己声明 cursor 的（链接、复选框、拖拽把手）不受影响 */
+.wysiwyg,
+.preview-body,
+#editor .cm-content,
+textarea,
+input:not([type]),
+input[type="text"],
+input[type="search"] { cursor: var(--cur-text), text; }
 
 /* 块尾插入指示线：鼠标移到最后一个块下方的空白处出现，点击插入一行。
    挂在 .edit-wrap 上（编辑器的滚动容器），不是 .wysiwyg 的子元素 */

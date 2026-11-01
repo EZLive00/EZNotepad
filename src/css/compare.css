@@ -285,6 +285,9 @@ body[data-theme="dark"] {
 
 .cmp-cv { position: relative; min-height: 100%; }
 
+/* 和主窗口一致：文本区用自绘工字光标（--cur-text 在 styles.css 里按明暗各定义一份） */
+.cmp-rows, .cmp-tx { cursor: var(--cur-text), text; }
+
 /* 一行 = 一个绝对定位的块，行高由 --cmp-row 决定（虚拟滚动按它算） */
 .cmp-row {
   position: absolute;
