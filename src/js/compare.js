@@ -1109,7 +1109,9 @@ function onKey(e) {
     undo(sideOf(host), e.shiftKey);
     return;
   }
-  if (mod && k === 'y') { e.preventDefault(); flush(); undo(sideOf(host), false); return; }
+  /* Ctrl+Y 是重做。原本这里传 false（= 撤销），照着 Ctrl+Z 抄错了参数，
+     于是「按 Y 反而又退一步」——比没有重做更让人困惑 */
+  if (mod && k === 'y') { e.preventDefault(); flush(); undo(sideOf(host), true); return; }
 
   const side = sideOf(host);
   if (e.key === 'Tab') { e.preventDefault(); const p = caretPos(); flush(); if (p) insertText(side, p.line - 1, p.col, '    '); return; }
