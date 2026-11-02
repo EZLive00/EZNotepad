@@ -61,6 +61,7 @@ Los archivos nuevos piden primero el tipo (Markdown / Texto plano / JSON / CSV /
 |---|---|
 | **Bloques** | Título `# `, listas `- ` / `1. ` / `- [ ] ` (6 niveles), cita `> `, código ` ``` `, separador `---` — la marca solo debe estar al inicio de la línea |
 | **En línea** | `**negrita**`, `*cursiva*`, `~~tachado~~`, `` `código` ``, `[texto](enlace)` se dibujan al escribir |
+| **Deshacer / rehacer** | Las dos flechas a la izquierda de la barra de herramientas (en gris en los extremos), `Ctrl+Z` / `Ctrl+Y`; `Ctrl+Shift+Z` también rehace — WYSIWYG y texto plano guardan cada uno su propio historial |
 | **Tablas** | `Ctrl+Shift+T` inserta una; `Tab` recorre celdas, `Enter` baja a la misma columna, el clic derecho añade o quita filas y columnas |
 | **Imágenes** | Pega una captura, arrastra un archivo o usa **Insertar → Imagen**: se copia a `assets/`, junto al documento. Arrastra la esquina inferior derecha para el ancho, o escribe `![texto\|300](a.png)` |
 | **Matemáticas** | `$a^2+b^2=c^2$` en línea, `$$ … $$` en bloque, compuesto por KaTeX en la vista previa (solo se carga si hay fórmulas) |

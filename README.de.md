@@ -61,6 +61,7 @@ Neue Dateien fragen zuerst nach dem Typ (Markdown / reiner Text / JSON / CSV / C
 |---|---|
 | **Blöcke** | `# ` Überschrift, `- ` / `1. ` / `- [ ] ` Liste (6 Ebenen), `> ` Zitat, ` ``` ` Code, `---` Trennlinie — das Zeichen muss nur am Zeilenanfang stehen |
 | **Inline** | `**fett**`, `*kursiv*`, `~~durchgestrichen~~`, `` `Code` ``, `[Text](Link)` werden beim Tippen gesetzt |
+| **Rückgängig / Wiederholen** | Die beiden Pfeile ganz links in der Werkzeugleiste (an den Enden grau), `Strg+Z` / `Strg+Y`; `Strg+Shift+Z` wiederholt ebenfalls — WYSIWYG und Klartext führen je einen eigenen Verlauf |
 | **Tabellen** | `Ctrl+Shift+T` fügt eine ein; `Tab` wandert durch die Zellen, `Enter` springt in dieselbe Spalte darunter, Rechtsklick fügt Zeilen und Spalten hinzu oder entfernt sie |
 | **Bilder** | Screenshot einfügen, Datei hineinziehen oder **Einfügen → Bild**: die Datei landet in `assets/` neben dem Dokument. Unten rechts ziehen ändert die Breite, `![Alt\|300](a.png)` geht auch |
 | **Formeln** | `$a^2+b^2=c^2$` inline, `$$ … $$` als Block, in der Vorschau von KaTeX gesetzt (lädt nur, wenn eine Formel vorkommt) |

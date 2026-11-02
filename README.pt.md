@@ -61,6 +61,7 @@ Arquivos novos pedem o tipo primeiro (Markdown / Texto simples / JSON / CSV / C�
 |---|---|
 | **Blocos** | Título `# `, listas `- ` / `1. ` / `- [ ] ` (6 níveis), citação `> `, código ` ``` `, separador `---` — a marca só precisa estar no início da linha |
 | **Em linha** | `**negrito**`, `*itálico*`, `~~riscado~~`, `` `código` ``, `[texto](link)` aparecem enquanto você digita |
+| **Desfazer / refazer** | As duas setas à esquerda da barra de ferramentas (cinza nos extremos), `Ctrl+Z` / `Ctrl+Y`; `Ctrl+Shift+Z` também refaz — WYSIWYG e texto simples mantêm cada um o seu histórico |
 | **Tabelas** | `Ctrl+Shift+T` insere uma; `Tab` percorre células, `Enter` desce na mesma coluna, o botão direito adiciona ou remove linhas e colunas |
 | **Imagens** | Cole uma captura, arraste um arquivo ou use **Inserir → Imagem**: ela é copiada para `assets/`, ao lado do documento. Arraste o canto inferior direito para a largura, ou escreva `![texto\|300](a.png)` |
 | **Matemática** | `$a^2+b^2=c^2$` em linha, `$$ … $$` em bloco, composto pelo KaTeX na visualização (só carrega se houver fórmula) |

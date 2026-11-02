@@ -61,6 +61,7 @@ New files ask for a type first (Markdown / Plain text / JSON / CSV / Code).
 |---|---|
 | **Blocks** | `# ` heading, `- ` / `1. ` / `- [ ] ` list (6 levels), `> ` quote, ` ``` ` code, `---` rule — markers only need to sit at the start of a line |
 | **Inline** | `**bold**`, `*italic*`, `~~strike~~`, `` `code` ``, `[text](link)` render while you type |
+| **Undo / redo** | The two arrows at the far left of the toolbar (grey at the ends), `Ctrl+Z` / `Ctrl+Y`; `Ctrl+Shift+Z` redoes too — WYSIWYG and plain text each keep their own history stack |
 | **Tables** | `Ctrl+Shift+T` inserts one; `Tab` walks cells, `Enter` goes to the same column below, right-click adds or removes rows and columns |
 | **Images** | Paste a screenshot, drag a file in, or **Insert → Image**: the file is copied to `assets/` next to the document. Drag the bottom-right corner to resize, or write `![alt\|300](a.png)` |
 | **Math** | `$a^2+b^2=c^2$` inline, `$$ … $$` as a block, typeset by KaTeX in the preview (loaded only when a formula appears) |

@@ -61,6 +61,7 @@ Les nouveaux fichiers demandent d'abord un type (Markdown / Texte brut / JSON / 
 |---|---|
 | **Blocs** | Titre `# `, listes `- ` / `1. ` / `- [ ] ` (6 niveaux), citation `> `, code ` ``` `, filet `---` — le marqueur doit seulement être en début de ligne |
 | **En ligne** | `**gras**`, `*italique*`, `~~barré~~`, `` `code` ``, `[texte](lien)` se rendent à la frappe |
+| **Annuler / rétablir** | Les deux flèches à gauche de la barre d'outils (grisées aux extrémités), `Ctrl+Z` / `Ctrl+Y` ; `Ctrl+Shift+Z` rétablit aussi — WYSIWYG et texte brut gardent chacun leur propre historique |
 | **Tableaux** | `Ctrl+Shift+T` en insère un ; `Tab` circule entre les cellules, `Enter` va à la même colonne en dessous, le clic droit ajoute ou retire lignes et colonnes |
 | **Images** | Collez une capture, glissez un fichier, ou **Insertion → Image** : l'image est copiée dans `assets/` à côté du document. Tirez le coin inférieur droit pour la largeur, ou écrivez `![légende\|300](a.png)` |
 | **Maths** | `$a^2+b^2=c^2$` en ligne, `$$ … $$` en bloc, composé par KaTeX dans l'aperçu (chargé seulement s'il y a une formule) |
