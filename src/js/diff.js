@@ -10,61 +10,72 @@ const norm = (s, opt) => {
   return r;
 };
 
+/** DP 表单元格上限：4M 格 × 4 字节 ≈ 16MB，超过就走锚点切分 */
+const DP_CELLS = 4_000_000;
+/** 锚点递归深度上限，防止病态输入把栈走穿 */
+const MAX_DEPTH = 24;
+
 /**
- * 行级差异算法（Myers 的等价实现：基于公共前后缀 + LCS 动态规划，
- * 大文件时退化到分块处理，保证不卡死）
+ * 行级差异算法：公共前后缀 → 段内精确 LCS；段大到放不下 DP 表时，
+ * 先用「两侧都只出现一次的行」当锚点把段切开，各自递归。
+ *
+ * 为什么不是简单的二分或「按集合判断有没有公共行」：那些做法只能告诉你
+ * 「这行在对方文件里存不存在」，给不出**位置**。曾经就有一个分支把不匹配
+ * 的行标成 same 且 b=-1，结果 2000 行对 2000 行的两个文件整页右侧空白 ——
+ * 退化得再快，也不能拿假结果冒充真结果。
+ *
  * @returns {Array<{type:'same'|'add'|'del', a?:number, b?:number}>}  a/b 为 0 基行号
  */
 export function diffLines(aLines, bLines, opt = {}) {
   const A = aLines.map((l) => norm(l, opt));
   const B = bLines.map((l) => norm(l, opt));
-  const n = A.length, m = B.length;
-  const ops = [];
-
-  // 前缀
-  let start = 0;
-  while (start < n && start < m && A[start] === B[start]) {
-    ops.push({ type: 'same', a: start, b: start });
-    start++;
-  }
-  // 后缀
-  let endA = n - 1, endB = m - 1;
-  const tail = [];
-  while (endA >= start && endB >= start && A[endA] === B[endB]) {
-    tail.push({ type: 'same', a: endA, b: endB });
-    endA--; endB--;
-  }
-  tail.reverse();
-
-  const midA = A.slice(start, endA + 1);
-  const midB = B.slice(start, endB + 1);
-  const mid = lcsOps(midA, midB, start);
-  ops.push(...mid, ...tail);
-
-  // 把相邻的 del/add 合并成「修改块」
-  return ops;
+  return lcsOps(A, B, 0, 0, 0);
 }
 
-/** 经典 LCS -> 操作序列。对超长中段做分块，避免 O(n*m) 内存爆炸 */
-function lcsOps(A, B, offset) {
+/**
+ * 求 [A] 到 [B] 的操作序列。offA / offB 是这两段在原文件里的起始行号 ——
+ * 两侧偏移**必须分开传**，递归切分后左右不再同步。
+ */
+function lcsOps(A, B, offA, offB, depth) {
   const n = A.length, m = B.length;
-  if (n === 0 && m === 0) return [];
-  if (n === 0) return B.map((_, j) => ({ type: 'add', b: offset + j }));
-  if (m === 0) return A.map((_, i) => ({ type: 'del', a: offset + i }));
 
-  // 规模控制：任一侧超过 1500 行时，用「无公共行」快速判定
-  if (n * m > 4_000_000) {
-    const setB = new Set(B);
-    const ops = [];
-    for (let i = 0; i < n; i++) {
-      if (!setB.has(A[i])) ops.push({ type: 'del', a: offset + i });
-      else ops.push({ type: 'same', a: offset + i, b: -1 });
-    }
-    const setA = new Set(A);
-    for (let j = 0; j < m; j++) if (!setA.has(B[j])) ops.push({ type: 'add', b: offset + j });
-    return ops;
+  // 段内先剥公共前后缀：递归切出来的碎片多半同头同尾，剥掉能省下整张 DP 表
+  let p = 0;
+  while (p < n && p < m && A[p] === B[p]) p++;
+  let eA = n - 1, eB = m - 1;
+  while (eA >= p && eB >= p && A[eA] === B[eB]) { eA--; eB--; }
+  const sameCount = n - 1 - eA;          // 后缀长度，左右一致
+
+  const head = [];
+  for (let k = 0; k < p; k++) head.push({ type: 'same', a: offA + k, b: offB + k });
+  const tail = [];
+
+  const an = eA - p + 1, bn = eB - p + 1;
+  let mid;
+  if (an === 0 && bn === 0) {
+    mid = [];
+  } else if (an === 0) {
+    mid = [];
+    for (let j = 0; j < bn; j++) mid.push({ type: 'add', b: offB + p + j });
+  } else if (bn === 0) {
+    mid = [];
+    for (let i = 0; i < an; i++) mid.push({ type: 'del', a: offA + p + i });
+  } else {
+    const sa = A.slice(p, eA + 1), sb = B.slice(p, eB + 1);
+    if (an * bn <= DP_CELLS) mid = dpOps(sa, sb, offA + p, offB + p);
+    else if (depth >= MAX_DEPTH) mid = coarseOps(sa, sb, offA + p, offB + p);
+    else mid = anchoredOps(sa, sb, offA + p, offB + p, depth);
   }
 
+  for (let k = 0; k < sameCount; k++) {
+    tail.push({ type: 'same', a: offA + eA + 1 + k, b: offB + eB + 1 + k });
+  }
+  return head.concat(mid, tail);
+}
+
+/** 经典 LCS 动态规划，输出最小编辑脚本。只在该段能放下 DP 表时调用 */
+function dpOps(A, B, offA, offB) {
+  const n = A.length, m = B.length;
   const dp = new Uint32Array((n + 1) * (m + 1));
   const W = m + 1;
   for (let i = n - 1; i >= 0; i--) {
@@ -78,16 +89,84 @@ function lcsOps(A, B, offset) {
   let i = 0, j = 0;
   while (i < n && j < m) {
     if (A[i] === B[j]) {
-      ops.push({ type: 'same', a: offset + i, b: offset + j });
+      ops.push({ type: 'same', a: offA + i, b: offB + j });
       i++; j++;
     } else if (dp[(i + 1) * W + j] >= dp[i * W + j + 1]) {
-      ops.push({ type: 'del', a: offset + i }); i++;
+      ops.push({ type: 'del', a: offA + i }); i++;
     } else {
-      ops.push({ type: 'add', b: offset + j }); j++;
+      ops.push({ type: 'add', b: offB + j }); j++;
     }
   }
-  while (i < n) { ops.push({ type: 'del', a: offset + i }); i++; }
-  while (j < m) { ops.push({ type: 'add', b: offset + j }); j++; }
+  while (i < n) { ops.push({ type: 'del', a: offA + i }); i++; }
+  while (j < m) { ops.push({ type: 'add', b: offB + j }); j++; }
+  return ops;
+}
+
+/**
+ * 锚点切分：在两侧都恰好出现一次的行里，取「两边顺序一致」的最长子序列
+ * 作为锚点。重复行（空行、表格分隔线）不当锚点 —— 它们的位置本来就多解，
+ * 拿来定位只会把差异切碎。
+ */
+function anchoredOps(A, B, offA, offB, depth) {
+  const cntA = new Map(), cntB = new Map(), posB = new Map();
+  for (const s of A) cntA.set(s, (cntA.get(s) || 0) + 1);
+  for (let j = 0; j < B.length; j++) {
+    const s = B[j];
+    cntB.set(s, (cntB.get(s) || 0) + 1);
+    posB.set(s, j);
+  }
+  const cand = [];
+  for (let i = 0; i < A.length; i++) {
+    const s = A[i];
+    if (cntA.get(s) === 1 && cntB.get(s) === 1) cand.push([i, posB.get(s)]);
+  }
+  if (!cand.length) return coarseOps(A, B, offA, offB);
+
+  const anchors = lisByJ(cand);
+  const ops = [];
+  let ai = 0, bi = 0;
+  for (const [i, j] of anchors) {
+    if (i > ai || j > bi) {
+      ops.push(...lcsOps(A.slice(ai, i), B.slice(bi, j), offA + ai, offB + bi, depth + 1));
+    }
+    ops.push({ type: 'same', a: offA + i, b: offB + j });
+    ai = i + 1; bi = j + 1;
+  }
+  if (ai < A.length || bi < B.length) {
+    ops.push(...lcsOps(A.slice(ai), B.slice(bi), offA + ai, offB + bi, depth + 1));
+  }
+  return ops;
+}
+
+/** 候选锚点已按 A 的行号升序，取其中 B 行号的最长严格递增子序列 */
+function lisByJ(cand) {
+  const tails = [], idx = [], prev = new Array(cand.length).fill(-1);
+  for (let k = 0; k < cand.length; k++) {
+    const j = cand[k][1];
+    let lo = 0, hi = tails.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (tails[mid] < j) lo = mid + 1;
+      else hi = mid;
+    }
+    if (lo > 0) prev[k] = idx[lo - 1];
+    tails[lo] = j; idx[lo] = k;
+  }
+  const out = [];
+  let k = idx.length ? idx[idx.length - 1] : -1;
+  while (k >= 0) { out.push(cand[k]); k = prev[k]; }
+  return out.reverse();
+}
+
+/**
+ * 兜底：整段视为「全删 + 全增」。只在两侧一个锚点都找不到时走到这里，
+ * 语义上是「这段被整体替换了」。绝不能把不匹配的行标成 same —— 那会让
+ * 行号错位，界面上看起来像整页未改动。
+ */
+function coarseOps(A, B, offA, offB) {
+  const ops = [];
+  for (let i = 0; i < A.length; i++) ops.push({ type: 'del', a: offA + i });
+  for (let j = 0; j < B.length; j++) ops.push({ type: 'add', b: offB + j });
   return ops;
 }
 

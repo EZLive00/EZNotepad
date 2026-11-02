@@ -10,6 +10,7 @@
 import { freeUntitledName, moveById } from '../src/js/taborder.js';
 import { slugify, headingSlugs, inline, renderMarkdown } from '../src/js/markdown.js';
 import { extractOutline } from '../src/js/preview.js';
+import { diffLines, buildSideBySide, diffStats } from '../src/js/diff.js';
 
 const out = [];
 const eq = (name, got, want) => out.push({ name, ok: JSON.stringify(got) === JSON.stringify(want), got, want });
@@ -90,6 +91,38 @@ eq('中文章节三级', ol('txt', '第一章 总论\n第一节 背景\n第一�
 eq('把 txt 当 Markdown 写也认', ol('txt', '# 一\n## 一点一'), ['1:一', '2:一点一']);
 eq('csv 不提取大纲', ol('data', 'name,age\nTom,3'), []);
 eq('跨级编号压平到不跳级', extractOutline('txt', '1.1.1 深').map((x) => x.level), [1]);
+
+/* ---------- 行级差异：大文件不许退化成「假相同」 ----------
+   旧实现在 n*m > 4M 时走一条「无公共行」的捷径，把不匹配的行标成 same 且 b=-1：
+   两个 2000 行的文件一比较，右栏整页空白、所有新增堆到文末。下面几条盯住它。 */
+const bigA = Array.from({ length: 2100 }, (_, i) => `第 ${i} 行的正文内容`);
+const bigB = bigA.slice();
+for (const i of [10, 210, 777, 1200, 1999]) bigB[i] = `第 ${i} 行改过的正文内容`;
+bigB.splice(1500, 0, '插入的第一行', '插入的第二行');
+const rowsBig = buildSideBySide(bigA, bigB, { ignoreWS: true }).rows;
+const stBig = diffStats(rowsBig);
+ok('大文件：没有空文本行（旧实现的 b=-1）', rowsBig.every((r) => r.l && r.r ? r.l.text !== undefined && r.r.text !== undefined : true));
+ok('大文件：行号都落在文件范围内', rowsBig.every((r) => (!r.l || (r.l.no >= 1 && r.l.no <= bigA.length))
+  && (!r.r || (r.r.no >= 1 && r.r.no <= bigB.length))));
+eq('大文件：五处修改成对成行', stBig.chg, 5);
+eq('大文件：两行插入各自成行', stBig.add, 2);
+eq('大文件：没有多余删除', stBig.del, 0);
+
+/* 大文件 + 纯空白：默认忽略，关掉开关才报 */
+const wsA = Array.from({ length: 2050 }, (_, i) => `行 ${i}`);
+const wsB = wsA.map((s, i) => ([7, 800, 1600].includes(i) ? '   ' + s : s));
+eq('大文件：忽略空白时缩进变化不算差异', diffStats(buildSideBySide(wsA, wsB, { ignoreWS: true }).rows).chg, 0);
+eq('大文件：关掉忽略空白后缩进变化报三处', diffStats(buildSideBySide(wsA, wsB, { ignoreWS: false }).rows).chg, 3);
+
+/* 完全无关的两份大文件：宁可整段替换，也不许冒出「相同」 */
+const unA = Array.from({ length: 2100 }, (_, i) => `甲 ${i} ${(i * 13) % 997}`);
+const unB = Array.from({ length: 2100 }, (_, i) => `乙 ${i} ${(i * 17) % 991}`);
+const stUn = diffStats(buildSideBySide(unA, unB, { ignoreWS: true }).rows);
+eq('大文件：完全无关时不产生相同行', stUn.same, 0);
+eq('大文件：完全无关时整段替换', stUn.chg, 2100);
+
+/* 小文件保持原样：仍然是 del 后接 add */
+eq('小文件：修改拆成删除加新增', diffLines(['a', 'b', 'c'], ['a', 'x', 'c']).map((o) => o.type), ['same', 'del', 'add', 'same']);
 
 /* ---------- 汇总 ---------- */
 const fail = out.filter((r) => !r.ok);
