@@ -6,6 +6,12 @@ authors = ["EZNotepad"]
 edition = "2021"
 rust-version = "1.90"
 
+# 产物名与 tauri.conf.json 的 productName 对齐：
+# target/release/EZNotepad.exe 即免安装版本体，CI 直接拿它压便携包。
+[[bin]]
+name = "EZNotepad"
+path = "src/main.rs"
+
 [lib]
 name = "simple_notepad_lib"
 # staticlib 只有 iOS 需要，桌面端完全用不到，但它在 debug 下是一个 ~748MB 的

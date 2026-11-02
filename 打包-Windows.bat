@@ -75,7 +75,7 @@ echo.
 echo ============================================================
 echo   完成！产物位置：
 echo     安装版：src-tauri\target\release\bundle\nsis\
-echo     免安装：src-tauri\target\release\simple-notepad.exe
+echo     免安装：src-tauri\target\release\EZNotepad.exe
 echo ============================================================
 if exist "src-tauri\target\release\bundle\nsis" explorer "src-tauri\target\release\bundle\nsis"
 pause

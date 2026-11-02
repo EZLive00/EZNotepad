@@ -245,7 +245,7 @@ public class Win32Drv {
 "@ -ReferencedAssemblies $refs
 }
 
-$exe = "D:\dev\project\EZ\EZNotepad\src-tauri\target\release\simple-notepad.exe"
+$exe = "D:\dev\project\EZ\EZNotepad\src-tauri\target\release\EZNotepad.exe"
 $procName = "simple-notepad"
 
 function Get-Hwnd {

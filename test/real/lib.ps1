@@ -432,7 +432,7 @@ public class Win32Drv {
 }
 
 $script:AppName = "simple-notepad"
-$script:AppExe  = "D:\dev\project\EZ\EZNotepad\src-tauri\target\release\simple-notepad.exe"
+$script:AppExe  = "D:\dev\project\EZ\EZNotepad\src-tauri\target\release\EZNotepad.exe"
 $script:AppHwnd = [IntPtr]::Zero
 
 # Make sure the app window really owns the input focus before synthesizing
