@@ -15,3 +15,6 @@ src-tauri/gen/schemas/
 .DS_Store
 Thumbs.db
 *.log
+
+# 本仓库唯一 JS 锁文件是 pnpm-lock.yaml（历史上两份锁文件漂移过，CI 吃过亏）
+package-lock.json

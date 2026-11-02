@@ -25,12 +25,16 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
 
+      - name: 安装 pnpm
+        # 版本由 package.json 的 packageManager 字段钉死，本地 CI 同一份
+        uses: pnpm/action-setup@v4
+
       - name: 安装 Node
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          # 依赖 package-lock.json，缓存后 npm ci 从数分钟降到十几秒
-          cache: npm
+          # 依赖 pnpm-lock.yaml，缓存后安装从数分钟降到十几秒
+          cache: pnpm
 
       - name: 安装 Rust 工具链
         uses: dtolnay/rust-toolchain@stable
@@ -45,8 +49,9 @@ jobs:
           key: release-windows
 
       - name: 安装前端依赖
-        # 用 ci 而不是 install：严格按 lock 还原，不会悄悄升级 tauri/frontend 版本
-        run: npm ci
+        # frozen-lockfile：锁文件与 package.json 不一致就直接报错，
+        # 不会悄悄升级依赖版本（本仓库的唯一锁文件是 pnpm-lock.yaml）
+        run: pnpm install --frozen-lockfile
 
       # 构建/发布拆成显式步骤而不是用 tauri-action 一把梭：
       # 构建失败时错误行会以 ::error:: 注解打出来，API 匿名就能读到，
@@ -54,7 +59,7 @@ jobs:
       - name: 构建
         shell: pwsh
         run: |
-          & npx tauri build --verbose 2>&1 | Tee-Object -FilePath build-output.log
+          & pnpm exec tauri build --verbose 2>&1 | Tee-Object -FilePath build-output.log
           $code = $LASTEXITCODE
           if ($code -ne 0) {
             $lines = Get-Content build-output.log
