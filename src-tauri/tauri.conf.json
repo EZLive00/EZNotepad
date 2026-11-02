@@ -19,7 +19,7 @@
         "center": true,
         "decorations": false,
         "shadow": true,
-        "dragDropEnabled": false,
+        "dragDropEnabled": true,
         "visible": true,
         "theme": null,
         "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-gpu-sandbox"

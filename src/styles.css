@@ -1312,12 +1312,28 @@ body[data-theme="dark"] .ctx-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 2
   padding: 6px 8px; border: none; background: transparent; border-radius: var(--r-sm);
   font: inherit; font-size: 13px; color: var(--fg); text-align: left; cursor: pointer;
 }
-.w-bmenu .bm-item:hover { background: var(--bg-hover); }
+/* 键盘高亮的 .hot 和 hover 用同一层底色：焦点始终留在编辑区（菜单抢焦点会吃掉
+   正文选区），所以「当前项」只能靠这个类来表达 */
+.w-bmenu .bm-item:hover, .w-bmenu .bm-item.hot { background: var(--bg-hover); }
 .w-bmenu .bm-item .ico { width: 14px; height: 14px; color: var(--fg-soft); }
 .w-bmenu .bm-item.checked { color: var(--accent); }
 .w-bmenu .bm-item.checked .ico { color: var(--accent); }
 .w-bmenu .bm-sep { height: 1px; margin: 4px 6px; background: var(--line); }
 .w-bmenu .bm-kbd { margin-left: auto; padding-left: 18px; font-size: 11px; color: var(--fg-soft); }
+
+/* ---- 拖入提示 ---- */
+/* 原生拖放通道下页面收不到 dragover，只能靠 Tauri 给的 enter/leave 事件自己画。
+   虚线框贴窗口边，中间一块浮层说明「松手会怎样」 */
+.drop-hint {
+  position: fixed; inset: 8px; z-index: 80; pointer-events: none;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px dashed var(--accent); border-radius: var(--r-md);
+}
+.drop-hint.hidden { display: none; }
+.drop-hint-box {
+  padding: 12px 20px; background: var(--bg-float); border-radius: var(--r-md);
+  box-shadow: var(--shadow); font-size: 13px; color: var(--fg);
+}
 
 /* ---- 新建文档：类型选择网格 ---- */
 .new-types { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 2px; }

@@ -508,6 +508,17 @@ let outlineScrollBound = false;
 let outlineViewH = 0;
 let outlineFitTries = 0;
 
+/** 大纲为空时说明「为什么没有」：光说「没有可提取的结构」，用户会以为是 bug。
+    每种格式能生成大纲的依据不一样，各说各的。
+    必须写成函数 —— 里面的 tt() 要等语言确定后才取词（顶层常量会在切语言后卡在旧语言）。 */
+const outlineEmptyHint = () => ({
+  md: tt('用 # 定义标题后，这里会出现大纲。'),
+  txt: tt('未发现章节标记（# 标题、编号或 ===）。'),
+  data: tt('表格文本一行一条记录，不提取大纲。'),
+  code: tt('未找到函数或类定义。'),
+  json: tt('当前文件没有可提取的结构。'),
+});
+
 function updateOutline() {
   const t = activeTab();
   if (!t) return;
@@ -522,7 +533,7 @@ function updateOutline() {
     outlineSig = '';
     outlineNodes = [];
     outlineActive = -1;
-    el.outlineList.innerHTML = '<div class="outline-empty">' + (kind === 'md' ? tt('用 # 定义标题后，这里会出现大纲。') : tt('当前文件没有可提取的结构。')) + '</div>';
+    el.outlineList.innerHTML = '<div class="outline-empty">' + (outlineEmptyHint()[kind] || tt('当前文件没有可提取的结构。')) + '</div>';
     return;
   }
   /* 结构没变就别重建 DOM：改正文时标题几乎不动，而重建 600 个按钮
@@ -2288,14 +2299,49 @@ async function insertImageFromPath(p) {
 
 /* ---------------- 拖拽 / 分栏 ---------------- */
 
+/** 拖入提示：原生通道下 WebView2 不再把外部拖放转成 HTML5 事件，页面收不到
+    dragover —— 没有这层提示，用户拖到窗口上只会看到光标变成「禁止」，以为不支持 */
+let dropHintEl = null;
+function showDropHint(paths) {
+  if (!dropHintEl) {
+    dropHintEl = document.createElement('div');
+    dropHintEl.className = 'drop-hint hidden';
+    dropHintEl.appendChild(document.createElement('div')).className = 'drop-hint-box';
+    document.body.appendChild(dropHintEl);
+  }
+  const imgs = (paths || []).filter((p) => be.isImagePath(p));
+  const all = (paths || []).length;
+  const txt = all && imgs.length === all ? tt('松手插入图片') : tt('松手打开文件');
+  dropHintEl.firstChild.textContent = txt;
+  dropHintEl.classList.remove('hidden');
+}
+function hideDropHint() {
+  if (dropHintEl) dropHintEl.classList.add('hidden');
+}
+
+/** 松手后按扩展名分流：图片进 assets/，其余按文档打开（多个文件 = 多个标签） */
+async function dropPaths(paths) {
+  const list = (paths || []).filter(Boolean);
+  if (!list.length) return;
+  const imgs = list.filter((p) => be.isImagePath(p));
+  const docs = list.filter((p) => !be.isImagePath(p));
+  if (imgs.length) {
+    const t = activeTab();
+    if (!t || t.mode === 'preview') toast(tt('预览模式是只读的，Ctrl+1 或 Ctrl+2 之后再插入'));
+    else for (const p of imgs) await insertImageFromPath(p);
+  }
+  for (const p of docs) await openPath(p);
+}
+
 /**
- * 文件拖放。必须走页面的 HTML5 事件，不能指望 Tauri 的 onDragDropEvent：
- * 窗口配置 dragDropEnabled=false，而 wry 只在**注册了原生处理器**时才把 WebView2 的
- * AllowExternalDrop 关掉（wry-0.57.0/src/webview2/mod.rs:155）。没有处理器时 WebView2
- * 走默认外部拖放 —— 从资源管理器拖进来的文件就是一条普通的 drop 事件。
- * 代价是 dataTransfer.files 里拿不到磁盘路径，所以分两条路：
- *   · 图片   → 读字节写进 assets/（和粘贴截图同一条路）
- *   · 其它   → 只能提示走「文件 → 打开」，DOM 里没有路径可用
+ * 文件拖放。窗口配置开着 dragDropEnabled（Tauri 默认值），wry 只在**注册了原生
+ * 处理器**时才把 WebView2 的 AllowExternalDrop 关掉（wry-0.57.0/src/webview2/mod.rs:155），
+ * 外部拖放于是全部走 onDragDropEvent 给我们**真实磁盘路径** —— 这正是「拖个 .md
+ * 进来直接打开」和「拖图片保留原文件名」需要的东西。
+ * 以前这里反过来设了 false：那样文件只是普通的 HTML5 drop，dataTransfer.files
+ * 有字节没有路径，只能处理图片，拖文档进来啥也做不了。
+ * 下面那条 DOM 分支保留作兜底（万一原生通道没注册上），标签内部拖拽换位不带
+ * files，不会被它误拦。
  */
 function setupDrop() {
   document.addEventListener('dragover', (e) => { e.preventDefault(); });
@@ -2311,17 +2357,13 @@ function setupDrop() {
     for (const f of imgs) await insertImageFromFile(f);
   });
 
-  /* 原生通道：只有把 dragDropEnabled 改成 true 才会触发（那时 WebView2 的外部拖放被关掉，
-     上面那条 DOM 分支就收不到文件了）。留着是给将来 mac / Linux 移植用 —— 那边要真实路径。 */
   import('../vendor/api/webview.js').then(({ getCurrentWebview }) => {
-    getCurrentWebview().onDragDropEvent(async (ev) => {
-      if (ev.payload && ev.payload.type === 'drop') {
-        // 图片拖进窗口的意图是「插到文档里」，不是「打开它」——按扩展名分流
-        for (const p of ev.payload.paths) {
-          if (be.isImagePath(p)) await insertImageFromPath(p);
-          else await openPath(p);
-        }
-      }
+    getCurrentWebview().onDragDropEvent((ev) => {
+      const p = ev.payload || {};
+      if (p.type === 'enter') { showDropHint(p.paths); return; }
+      if (p.type === 'over') return;
+      hideDropHint();                       // leave 和 drop 都要收掉提示
+      if (p.type === 'drop') dropPaths(p.paths);
     });
   }).catch(() => {});
 }
@@ -2976,6 +3018,10 @@ let handleBlock = null;      // 当前画出手柄的那个块，由 placeHandle
 let pointerInside = false;   // 鼠标是否在编辑区里，决定 selectionchange 能不能抢锚点
 let handleTimer = 0;
 let bmMode = 'convert';
+/* 键盘高亮：焦点始终留在编辑区（菜单一抢焦点，正文选区就没了），所以「当前项」
+   用 .hot 类表达，而不是真焦点。bmRows 只收可执行项，head / sep 不在里面。 */
+let bmHot = -1;
+let bmRows = [];
 
 /** 块菜单开着的时候，手柄是它的定位锚点，不能被任何「鼠标离开」逻辑收掉 */
 const blockMenuOpen = () => !el.wBlockMenu.classList.contains('hidden');
@@ -3036,6 +3082,9 @@ function openBlockMenu(mode) {
   bmMode = mode;
   anchorBlock = handleBlock;        // 菜单锚在手柄上，锚点跟它对齐
   box.innerHTML = '';
+  bmRows = [];
+  bmHot = -1;
+  box.scrollTop = 0;                // 重建后别继承上一次的滚动位置
   box.classList.remove('hidden');
 
   const head = (t) => {
@@ -3053,9 +3102,14 @@ function openBlockMenu(mode) {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'bm-item' + (checked ? ' checked' : '');
+    b.setAttribute('role', 'menuitem');
+    if (checked) b.setAttribute('aria-checked', 'true');
     b.innerHTML = svgIco(it.icon || 'type') + `<span>${it.label}</span>`
       + (it.kbd ? `<kbd class="bm-kbd">${it.kbd}</kbd>` : '');
     b.addEventListener('mousedown', (e) => e.preventDefault());   // 保住编辑区选区
+    /* 鼠标停在谁身上，Enter 就作用在谁身上 —— 键盘和鼠标混着用也不会错位 */
+    const idx = bmRows.push(b) - 1;
+    b.addEventListener('mouseenter', () => { bmHot = idx; });
     b.onclick = () => bmRun(it.id);
     box.appendChild(b);
   };
@@ -3092,8 +3146,36 @@ function openBlockMenu(mode) {
 function closeBlockMenu() {
   el.wBlockMenu.classList.add('hidden');
   el.wBlockMenu.innerHTML = '';
+  bmRows = [];
+  bmHot = -1;
   el.whAdd.classList.remove('open');
   el.whMenu.classList.remove('open');
+}
+
+/** 高亮第 i 项（-1 = 都不亮），并保证它在菜单可视范围内 */
+function bmHover(i) {
+  bmHot = i;
+  bmRows.forEach((b, n) => b.classList.toggle('hot', n === i));
+  const b = bmRows[i];
+  if (!b) return;
+  /* 不用 scrollIntoView：它会把所有可滚动祖先一起滚，正文会跟着跳一下。
+     菜单自己这层的 overflow 才是要调的对象。 */
+  const box = el.wBlockMenu;
+  const top = b.offsetTop;
+  const h = b.offsetHeight;
+  if (top < box.scrollTop) box.scrollTop = top - 4;
+  else if (top + h > box.scrollTop + box.clientHeight) box.scrollTop = top + h - box.clientHeight + 4;
+}
+
+/** ↑↓ 环绕着走，跟顶栏菜单一个手感 */
+function bmStep(dir) {
+  const n = bmRows.length;
+  if (!n) return;
+  let i = bmHot;
+  for (let k = 0; k < n; k++) {
+    i = (i + dir + n) % n;
+    if (bmRows[i] && !bmRows[i].disabled) { bmHover(i); return; }
+  }
 }
 
 function bmRun(id) {
@@ -3168,11 +3250,31 @@ function setupBlockHandle() {
     if (el.wBlockMenu.contains(e.target) || el.wHandle.contains(e.target)) return;
     closeBlockMenu();
   });
+  /* 菜单开着时的键盘：↑↓ Home End 选，Enter 执行，Esc 关。
+     其余按键（字母、空格、退格）一律当成「我要打字了」—— 收起菜单、事件照常往下走，
+     字符落进正文。不能像顶栏菜单那样拿空格当执行：这里焦点始终在编辑区，
+     按空格的人百分之百是想打空格。Tab / ←→ 同理（不拦，让焦点或光标照常动）。 */
   document.addEventListener('keydown', (e) => {
-    if (e.key !== 'Escape' || el.wBlockMenu.classList.contains('hidden')) return;
-    e.preventDefault();
-    e.stopPropagation();
-    closeBlockMenu();
+    if (el.wBlockMenu.classList.contains('hidden')) return;
+    /* 输入法组字中：Enter 是选候选，不是执行菜单项。229 是旧浏览器给的组字标记 */
+    if (e.isComposing || e.keyCode === 229) return;
+    const k = e.key;
+    if (k === 'Escape') {
+      e.preventDefault(); e.stopPropagation();
+      closeBlockMenu();
+      return;
+    }
+    if (k === 'Tab' || k === 'ArrowLeft' || k === 'ArrowRight') { closeBlockMenu(); return; }
+    if (k === 'ArrowDown') { e.preventDefault(); e.stopPropagation(); bmStep(1); return; }
+    if (k === 'ArrowUp') { e.preventDefault(); e.stopPropagation(); bmStep(-1); return; }
+    if (k === 'Home') { e.preventDefault(); e.stopPropagation(); bmHover(0); return; }
+    if (k === 'End') { e.preventDefault(); e.stopPropagation(); bmHover(bmRows.length - 1); return; }
+    if (k === 'Enter') {
+      if (bmHot >= 0 && bmRows[bmHot]) { e.preventDefault(); e.stopPropagation(); bmRows[bmHot].click(); }
+      else closeBlockMenu();
+      return;
+    }
+    if (!e.ctrlKey && !e.metaKey && !e.altKey) closeBlockMenu();
   }, true);
 }
 
