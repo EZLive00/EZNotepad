@@ -815,11 +815,12 @@ input[type="search"] { cursor: var(--cur-text), text; }
 .md li > input[type=checkbox] { margin-right: 6px; }
 .md hr { border: none; border-top: 1px solid var(--line-strong); margin: 2.4em 0; }
 .md img { max-width: 100%; border-radius: var(--r-md); }
-/* 表格走「横线表」：只有表头上下一道、行间一道，去掉全部竖线和外框 */
-.md table { border-collapse: collapse; margin: 1.2em 0; font-size: .93em; width: 100%; }
-.md th, .md td { border: none; border-bottom: 1px solid var(--line); padding: 9px 12px; text-align: left; }
-.md th { border-bottom-color: var(--line-strong); color: var(--fg-soft); font-weight: 600; font-size: .92em; }
-.md tbody tr:last-child td { border-bottom: none; }
+/* 表格：和所见即所得（.wysiwyg .w-table）用同一套网格 —— 外框、竖向分隔线、
+   表头底色都在。早先这里是「横线表」（只留行间细线），预览一进去格子边界全没了，
+   两个模式看起来不是同一份文档，已统一 */
+.md table { border-collapse: collapse; margin: 1.2em 0; font-size: .94em; width: 100%; }
+.md th, .md td { border: 1px solid var(--line); padding: 7px 11px; text-align: left; vertical-align: top; }
+.md th { background: var(--bg-soft); font-weight: 620; }
 .md del { color: var(--fg-faint); }
 .md .task-list { list-style: none; padding-left: .35em; }
 .md .task-list li { margin: .22em 0; }
