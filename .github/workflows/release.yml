@@ -53,6 +53,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
+          # 本仓库用 npm（package-lock.json）；tauri-action 不指定时默认 pnpm，
+          # CI 里没有 pnpm，第一步就会挂
+          tauriScript: npx tauri
           # 推标签时用标签名；手动跑时 __VERSION__ 会被替换成 tauri.conf.json 的 version
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || 'v__VERSION__' }}
           releaseName: ${{ github.ref_type == 'tag' && github.ref_name || 'v__VERSION__' }}
