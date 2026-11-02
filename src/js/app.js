@@ -24,6 +24,7 @@ import { freeUntitledName, moveById } from './taborder.js';
 import { listen } from '../vendor/api/event.js';
 import * as win from './win.js';
 import { tt, setLang, resolveLang, getLang, applyDom, LANGS } from './i18n.js';
+import { errText } from './errors.js';
 import { welcomeDoc } from './welcome.js';
 
 const $ = (id) => document.getElementById(id);
@@ -812,7 +813,7 @@ async function replaceInFolderNow() {
   try {
     r = await be.replaceInFolder(root, q, rep, tree.regex, tree.caseSensitive);
   } catch (e) {
-    dialog({ title: tt('替换失败'), body: String(e) });
+    dialog({ title: tt('替换失败'), body: errText(e) });
     return;
   }
   toast(tt('替换完成：{files} 个文件、{hits} 处', { files: r.files, hits: r.hits }) + (r.skipped ? tt('（跳过 {n} 个）', { n: r.skipped }) : ''));
@@ -1384,7 +1385,7 @@ export async function openPath(path) {
     addRecent(path);
     return t;
   } catch (e) {
-    dialog({ title: tt('无法打开'), body: String(e) });
+    dialog({ title: tt('无法打开'), body: errText(e) });
     return null;
   }
 }
@@ -1437,7 +1438,7 @@ async function saveTab(t = activeTab(), saveAs = false, opts = {}) {
     if (!silent) toast(tt('已保存 {name}', { name: t.name }));
     return true;
   } catch (e) {
-    dialog({ title: tt('保存失败'), body: String(e) });
+    dialog({ title: tt('保存失败'), body: errText(e) });
     return false;
   }
 }

@@ -9,6 +9,7 @@
 import { dialog, toast } from './ui.js';
 import * as be from './backend.js';
 import { tt } from './i18n.js';
+import { errText } from './errors.js';
 
 const pad = (n) => String(n).padStart(2, '0');
 
@@ -33,7 +34,7 @@ const size = (n) => (n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} KB`);
  */
 export async function showHistory(o) {
   const list = await be.listHistory(o.path).catch((e) => {
-    toast(String(e));
+    toast(errText(e));
     return [];
   });
 
@@ -71,7 +72,7 @@ export async function showHistory(o) {
         const text = await be.readHistory(snap.path);
         o.onOpen({ ...snap, text });
       } catch (e) {
-        toast(String(e));
+        toast(errText(e));
       }
     };
 
@@ -84,7 +85,7 @@ export async function showHistory(o) {
         const text = await be.readHistory(snap.path);
         o.onApply(text);
       } catch (e) {
-        toast(String(e));
+        toast(errText(e));
       }
     };
 

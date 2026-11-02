@@ -7,6 +7,7 @@ import * as be from './backend.js';
 import { merge3 } from './diff.js';
 import { toast } from './ui.js';
 import { tt } from './i18n.js';
+import { errText } from './errors.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -35,7 +36,7 @@ export class MergeWizard {
           this.files[side] = r;
           $(`mergeName${side === 'base' ? 'Base' : side === 'a' ? 'A' : 'B'}`).textContent = `${r.name} · ${r.path}`;
           $('mergeResult').textContent = '';
-        } catch (e) { toast(String(e)); }
+        } catch (e) { toast(errText(e)); }
       };
     });
     $('mergeRun').onclick = () => this.run();

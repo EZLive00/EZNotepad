@@ -5,6 +5,7 @@
 
 /** 由扩展名判断格式类型 */
 import { tt } from './i18n.js';
+import { errText } from './errors.js';
 export function detectKind(fileName = '') {
   const ext = (fileName.split('.').pop() || '').toLowerCase();
   if (!fileName.includes('.')) return 'txt';
@@ -35,7 +36,7 @@ const trimTrailing = (s) => s.replace(/[ \t]+$/gm, '');
 
 /** 找到 JSON 语法错误的行列（基于 V8 报错信息） */
 export function jsonErrorPosition(text, err) {
-  const msg = String((err && err.message) || err);
+  const msg = errText(err);
   const mLineCol = msg.match(/line (\d+) column (\d+)/);
   if (mLineCol) return { line: +mLineCol[1], col: +mLineCol[2], message: msg };
   const mPos = msg.match(/position (\d+)/);

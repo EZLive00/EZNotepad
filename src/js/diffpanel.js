@@ -7,6 +7,7 @@
 import * as be from './backend.js';
 import { toast } from './ui.js';
 import { tt } from './i18n.js';
+import { errText } from './errors.js';
 
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const $ = (id) => document.getElementById(id);
@@ -122,7 +123,7 @@ export class DiffPanel {
         };
       });
     } catch (e) {
-      body.innerHTML = '<div class="diff-empty">' + tt('扫描失败：{msg}', { msg: esc(String(e)) }) + '</div>';
+      body.innerHTML = '<div class="diff-empty">' + tt('扫描失败：{msg}', { msg: esc(errText(e)) }) + '</div>';
     }
   }
 }

@@ -1,8 +1,8 @@
 // ============================================================
 // i18n.js —— 界面多语言
 //
-// 词条表的键就是**简体中文原文**（gettext 那套做法）：源码里写 t('保存')，
-// 而不是 t('menu.save')。好处是改文案时不用同步两份、也不会出现
+// 词条表的键就是**简体中文原文**（gettext 那套做法）：源码里写 tt('保存')，
+// 而不是 tt('menu.save')。好处是改文案时不用同步两份、也不会出现
 // 「键叫 save 但值写着删除」的漂移；代价是原文改动时要在词条表里跟着改，
 // test/run-i18n.mjs 会把「源码用了但表里没有」的键全部揪出来。
 //
@@ -90,32 +90,10 @@ export function tt(text, vars) {
   return out;
 }
 
-/* 中文/日文用全角冒号，西文要「冒号 + 空格」 */
-const FULLWIDTH_COLON = new Set(['zh-CN', 'zh-TW', 'ja']);
+/* 后端错误的翻译在 errors.js：后端只回错误码，文案由前端拼（见那里的注释） */
 
-/**
- * 后端（Rust）回来的错误文案在这里过一道。
- * 后端不认识界面语言，只会给中文；但它的消息只有两种形状：
- *   ① 整条固定文案（"文件过大"）      → 直接查表
- *   ② 「前缀：系统细节」（"保存失败：拒绝访问"）→ 只翻前缀
- * 细节那半是 Windows 自己给的错误文本，本来就跟随系统语言，翻它反而会错。
- */
-export function ttBackend(msg) {
-  if (!msg) return msg;
-  const s = String(msg);
-  if (DICT[s]) return tt(s);
-  const i = s.search(/[：:]/);
-  if (i > 0) {
-    const head = s.slice(0, i);
-    if (DICT[head]) {
-      const tail = s.slice(i + 1).replace(/^[\s：:]+/, '');
-      return tt(head) + (FULLWIDTH_COLON.has(lang) ? '：' : ': ') + tail;
-    }
-  }
-  return s;
-}
-
-/** 给静态 HTML 用：data-i18n / data-i18n-title / data-i18n-ph / data-i18n-aria */export function applyDom(root = document) {
+/** 给静态 HTML 用：data-i18n / data-i18n-title / data-i18n-ph / data-i18n-aria */
+export function applyDom(root = document) {
   for (const n of root.querySelectorAll('[data-i18n]')) n.textContent = tt(n.dataset.i18n);
   for (const n of root.querySelectorAll('[data-i18n-title]')) n.title = tt(n.dataset.i18nTitle);
   for (const n of root.querySelectorAll('[data-i18n-ph]')) n.placeholder = tt(n.dataset.i18nPh);

@@ -18,6 +18,7 @@ import { listen } from '../vendor/api/event.js';
 import { getCurrentWindow } from '../vendor/api/window.js';
 import { PhysicalPosition, PhysicalSize } from '../vendor/api/dpi.js';
 import { tt, setLang, resolveLang, applyDom } from './i18n.js';
+import { settings } from './state.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -74,11 +75,9 @@ async function fitToScreen() {
 /* ---------------- 主题 ---------------- */
 /** 字号跟主窗口设置保持一致：13.5 是默认，对比窗口整体小 1px 更紧凑 */
 function applyFontSize() {
-  let fs = 13.5;
-  try {
-    const st = JSON.parse(localStorage.getItem('snp.settings') || '{}');
-    if (st && Number.isFinite(st.fontSize) && st.fontSize > 0) fs = st.fontSize;
-  } catch {}
+  /* 字号跟着主窗口的设置走，直接读 state.js 里那份已经合并过默认值的 settings：
+     自己再解析一遍 localStorage 就是三份真相（默认值也会各自漂） */
+  const fs = Number.isFinite(settings.fontSize) && settings.fontSize > 0 ? settings.fontSize : 13.5;
   const cfs = Math.max(10, fs - 1);
   ROW_H = Math.round(cfs * 1.6);
   document.body.style.setProperty('--cmp-fs', cfs + 'px');
@@ -86,13 +85,8 @@ function applyFontSize() {
 }
 
 function applyTheme() {
-  let t = 'light';
-  try {
-    const raw = localStorage.getItem('snp.settings');
-    const st = raw ? JSON.parse(raw) : {};
-    t = st.theme || 'auto';
-  } catch { t = 'auto'; }
-  if (t === 'auto' || !t) {
+  let t = settings.theme || 'auto';
+  if (t === 'auto') {
     t = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   }
   document.body.dataset.theme = t;
@@ -879,11 +873,8 @@ function pickSide(side) {
 
 /* ---------------- 启动 ---------------- */
 (async function boot() {
-  /* 对比窗口是独立页面，不引 state.js（那是主窗口的模型），
-     语言偏好直接从同一份 localStorage 里读，保证两个窗口一致 */
-  let langPref = 'auto';
-  try { langPref = JSON.parse(localStorage.getItem('snp.settings') || '{}').lang || 'auto'; } catch {}
-  setLang(resolveLang(langPref));
+  /* 对比窗口是独立页面，自己把语言定一次 —— 读的是同一份设置，和主窗口一致 */
+  setLang(resolveLang(settings.lang));
   applyDom();
   document.title = 'EZNotepad · ' + tt('对比');
   /* 两侧槽位在没选文件时显示占位文字；这两处是按文件动态写的，只能在这里给初值 */

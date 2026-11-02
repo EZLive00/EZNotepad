@@ -17,6 +17,7 @@ import { activeTab } from './state.js';
 import { dialog, toast } from './ui.js';
 import * as be from './backend.js';
 import { tt, getLang } from './i18n.js';
+import { errText } from './errors.js';
 
 const MIME = {
   png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif',
@@ -128,6 +129,6 @@ ${body}
     const kb = Math.round(html.length / 1024);
     toast(tt('已导出 {name}（{kb} KB{extra}）', { name: be.baseName(target), kb, extra: embedded ? tt('，内嵌 {n} 张图', { n: embedded }) : '' }), 3000);
   } catch (e) {
-    dialog({ title: tt('导出失败'), body: String(e) });
+    dialog({ title: tt('导出失败'), body: errText(e) });
   }
 }

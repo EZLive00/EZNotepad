@@ -4,7 +4,8 @@
 // ============================================================
 import { invoke as rawInvoke } from '../vendor/api/core.js';
 import { open as openDialog, save as saveDialog } from '../vendor/plugin-dialog/dist-js/index.js';
-import { tt, ttBackend } from './i18n.js';
+import { tt } from './i18n.js';
+import { localizeError } from './errors.js';
 
 /* 对话框过滤器名称要跟着界面语言走，所以在调用时才构建 */
 const fileFilters = () => [
@@ -14,18 +15,10 @@ const fileFilters = () => [
   { name: tt('所有文件'), extensions: ['*'] },
 ];
 
-/* Rust 侧的错误文案是中文（后端不认识界面语言），统一在这个出口翻一道：
-   整条命中词条就整条翻，「前缀：系统细节」只翻前缀。别处 invoke 的地方
-   （对比窗口、历史版本）各自处理，不走这里。 */
-const invoke = (cmd, args) => rawInvoke(cmd, args).catch((e) => {
-  /* 原样保留错误对象的类型（栈还在），只把 message 换掉；
-     Tauri 一般直接 reject 一个字符串，那就整条换 */
-  if (e && typeof e === 'object' && typeof e.message === 'string') {
-    e.message = ttBackend(e.message);
-    throw e;
-  }
-  throw ttBackend(e);
-});
+/* 后端只回 { code, vars, detail }（见 src-tauri/src/error.rs），
+   在这个唯一出口翻成界面语言：所有命令都从这儿过，
+   调用方 catch 到的一定是带人话 message 的 Error。 */
+const invoke = (cmd, args) => rawInvoke(cmd, args).catch((e) => { throw localizeError(e); });
 
 export const baseName = (p) => (p ? String(p).split(/[\\/]/).pop() : '');
 export const dirName = (p) => {

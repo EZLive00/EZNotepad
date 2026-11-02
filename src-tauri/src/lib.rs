@@ -1,6 +1,9 @@
 // EZNotepad - Rust 后端
 // 只做网页端做不了的事：原生文件对话框、磁盘读写与编码转换、目录遍历。
 
+mod error;
+
+use error::AppError;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -50,11 +53,11 @@ fn detect_eol(text: &str) -> String {
 }
 
 #[tauri::command]
-fn read_text_file(path: String, encoding: Option<String>) -> Result<ReadResult, String> {
+fn read_text_file(path: String, encoding: Option<String>) -> Result<ReadResult, AppError> {
     let p = PathBuf::from(&path);
-    let bytes = fs::read(&p).map_err(|e| format!("无法读取文件：{e}"))?;
+    let bytes = fs::read(&p).map_err(|e| AppError::detail("io.read", e))?;
     if bytes.iter().take(8192).any(|b| *b == 0) {
-        return Err("这是二进制文件，无法以文本方式打开".into());
+        return Err(AppError::new("file.binary"));
     }
     let (content, encoding, bom) = match encoding.as_deref() {
         Some(enc) => {
@@ -95,11 +98,11 @@ struct SaveOptions {
 }
 
 #[tauri::command]
-fn save_text_file(opts: SaveOptions) -> Result<String, String> {
+fn save_text_file(opts: SaveOptions) -> Result<String, AppError> {
     let p = PathBuf::from(&opts.path);
     if let Some(dir) = p.parent() {
         if !dir.as_os_str().is_empty() && !dir.exists() {
-            fs::create_dir_all(dir).map_err(|e| format!("无法创建目录：{e}"))?;
+            fs::create_dir_all(dir).map_err(|e| AppError::detail("io.mkdir", e))?;
         }
     }
     let mut out: Vec<u8> = Vec::with_capacity(opts.content.len() + 3);
@@ -125,17 +128,17 @@ fn save_text_file(opts: SaveOptions) -> Result<String, String> {
             let (bytes, _, _) = encoding_rs::GB18030.encode(&opts.content);
             out.extend_from_slice(&bytes);
             if out.len() > 512 * 1024 * 1024 {
-                return Err("文件过大".into());
+                return Err(AppError::new("file.too_large"));
             }
         }
         _ => out.extend_from_slice(opts.content.as_bytes()),
     }
-    fs::write(&p, &out).map_err(|e| format!("保存失败：{e}"))?;
+    fs::write(&p, &out).map_err(|e| AppError::detail("io.save", e))?;
     Ok(p.to_string_lossy().to_string())
 }
 
 #[tauri::command]
-fn file_stat(path: String) -> Result<bool, String> {
+fn file_stat(path: String) -> Result<bool, AppError> {
     Ok(Path::new(&path).is_dir())
 }
 
@@ -143,63 +146,63 @@ fn file_stat(path: String) -> Result<bool, String> {
    只接受**单层名字**：路径分隔符一律拒绝，免得前端传个 "../.." 就把操作范围
    伸到工作目录外面。删除走系统回收站，误点了还能捞回来。 */
 
-fn check_simple_name(name: &str) -> Result<String, String> {
+fn check_simple_name(name: &str) -> Result<String, AppError> {
     let n = name.trim();
     if n.is_empty() {
-        return Err("名字不能为空".into());
+        return Err(AppError::new("name.empty"));
     }
     if n.contains('/') || n.contains('\\') || n == "." || n == ".." {
-        return Err("名字里不能带路径分隔符".into());
+        return Err(AppError::new("name.path_sep"));
     }
     if n.chars().any(|c| matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*')) {
-        return Err("名字里有不允许的字符（< > : \" | ? *）".into());
+        return Err(AppError::new("name.invalid_chars"));
     }
     Ok(n.to_string())
 }
 
 /// 在 parent 下新建空文件或空目录，返回新条目的完整路径
 #[tauri::command]
-fn create_entry(parent: String, name: String, dir: bool) -> Result<String, String> {
+fn create_entry(parent: String, name: String, dir: bool) -> Result<String, AppError> {
     let parent = PathBuf::from(&parent);
     if !parent.is_dir() {
-        return Err("目标文件夹不存在".into());
+        return Err(AppError::new("dir.missing"));
     }
     let name = check_simple_name(&name)?;
     let p = parent.join(&name);
     if p.exists() {
-        return Err(format!("「{name}」已经存在"));
+        return Err(AppError::var("entry.exists", "name", &name));
     }
     if dir {
         fs::create_dir(&p)
     } else {
         fs::write(&p, b"")
     }
-    .map_err(|e| format!("创建失败：{e}"))?;
+    .map_err(|e| AppError::detail("io.create", e))?;
     Ok(p.to_string_lossy().to_string())
 }
 
 /// 原地改名（父目录不变），返回新路径
 #[tauri::command]
-fn rename_entry(path: String, new_name: String) -> Result<String, String> {
+fn rename_entry(path: String, new_name: String) -> Result<String, AppError> {
     let src = PathBuf::from(&path);
     if !src.exists() {
-        return Err("这个条目已经不存在了".into());
+        return Err(AppError::new("entry.missing"));
     }
     let name = check_simple_name(&new_name)?;
-    let parent = src.parent().ok_or("找不到所在文件夹")?;
+    let parent = src.parent().ok_or_else(|| AppError::new("entry.no_parent"))?;
     let dst = parent.join(&name);
     if dst == src {
         return Ok(path);
     }
     if dst.exists() {
-        return Err(format!("「{name}」已经存在"));
+        return Err(AppError::var("entry.exists", "name", &name));
     }
-    fs::rename(&src, &dst).map_err(|e| format!("重命名失败：{e}"))?;
+    fs::rename(&src, &dst).map_err(|e| AppError::detail("io.rename", e))?;
     Ok(dst.to_string_lossy().to_string())
 }
 
 #[cfg(target_os = "windows")]
-fn delete_file_impl(p: &Path) -> Result<(), String> {
+fn delete_file_impl(p: &Path) -> Result<(), AppError> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::UI::Shell::{
         SHFileOperationW, SHFILEOPSTRUCTW, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NOERRORUI,
@@ -215,29 +218,29 @@ fn delete_file_impl(p: &Path) -> Result<(), String> {
     op.fFlags = (FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI) as u16;
     let rc = unsafe { SHFileOperationW(&mut op) };
     if rc != 0 {
-        return Err(format!("移入回收站失败（错误码 {rc}）"));
+        return Err(AppError::var("recycle.failed", "rc", rc));
     }
     if op.fAnyOperationsAborted != 0 {
-        return Err("操作已取消".into());
+        return Err(AppError::new("op.cancelled"));
     }
     Ok(())
 }
 
 #[cfg(not(target_os = "windows"))]
-fn delete_file_impl(p: &Path) -> Result<(), String> {
-    fs::remove_file(p).map_err(|e| format!("删除失败：{e}"))
+fn delete_file_impl(p: &Path) -> Result<(), AppError> {
+    fs::remove_file(p).map_err(|e| AppError::detail("io.delete", e))
 }
 
 /// 删除文件（进回收站）或空目录
 #[tauri::command]
-fn delete_entry(path: String) -> Result<(), String> {
+fn delete_entry(path: String) -> Result<(), AppError> {
     let p = PathBuf::from(&path);
     if !p.exists() {
-        return Err("这个条目已经不存在了".into());
+        return Err(AppError::new("entry.missing"));
     }
     if p.is_dir() {
         // 目录只删空的：递归删除风险太大，让人先在里面清干净
-        return fs::remove_dir(&p).map_err(|e| format!("目录里还有东西，无法删除：{e}"));
+        return fs::remove_dir(&p).map_err(|e| AppError::detail("dir.not_empty", e));
     }
     delete_file_impl(&p)
 }
@@ -287,18 +290,18 @@ struct DirEntryInfo {
 
 /// 递归列出目录下所有文件（忽略隐藏文件与超大目录），用于文件夹对比
 #[tauri::command]
-fn list_dir_recursive(path: String, max_files: Option<usize>) -> Result<Vec<DirEntryInfo>, String> {
+fn list_dir_recursive(path: String, max_files: Option<usize>) -> Result<Vec<DirEntryInfo>, AppError> {
     let limit = max_files.unwrap_or(20000);
     let mut out = Vec::new();
     let root = PathBuf::from(&path);
     if !root.is_dir() {
-        return Err("不是文件夹".into());
+        return Err(AppError::new("dir.not_folder"));
     }
     walk(&root, &mut out, limit, 0)?;
     Ok(out)
 }
 
-fn walk(dir: &Path, out: &mut Vec<DirEntryInfo>, limit: usize, depth: usize) -> Result<(), String> {
+fn walk(dir: &Path, out: &mut Vec<DirEntryInfo>, limit: usize, depth: usize) -> Result<(), AppError> {
     if out.len() >= limit || depth > 24 {
         return Ok(());
     }
@@ -348,12 +351,12 @@ fn walk(dir: &Path, out: &mut Vec<DirEntryInfo>, limit: usize, depth: usize) -> 
 /// 列一层目录（不递归）。侧栏文件树按需展开，一次只读一层，
 /// 打开一个大仓库也不会先把几万个文件全读进来。
 #[tauri::command]
-fn read_dir_shallow(path: String) -> Result<Vec<DirEntryInfo>, String> {
+fn read_dir_shallow(path: String) -> Result<Vec<DirEntryInfo>, AppError> {
     let root = PathBuf::from(&path);
     if !root.is_dir() {
-        return Err("不是文件夹".into());
+        return Err(AppError::new("dir.not_folder"));
     }
-    let rd = fs::read_dir(&root).map_err(|e| format!("读取目录失败：{e}"))?;
+    let rd = fs::read_dir(&root).map_err(|e| AppError::detail("dir.read", e))?;
     let mut out = Vec::new();
     for entry in rd.flatten() {
         let p = entry.path();
@@ -413,20 +416,20 @@ fn search_in_folder(
     max_results: Option<usize>,
     regex: Option<bool>,
     case_sensitive: Option<bool>,
-) -> Result<Vec<SearchHit>, String> {
+) -> Result<Vec<SearchHit>, AppError> {
     if query.trim().is_empty() {
         return Ok(Vec::new());
     }
     let cs = case_sensitive.unwrap_or(false);
     let pat = if regex.unwrap_or(false) {
-        Some(regex::Regex::new(&query).map_err(|e| format!("正则写错了：{e}"))?)
+        Some(regex::Regex::new(&query).map_err(|e| AppError::detail("regex.invalid", e))?)
     } else {
         None
     };
     let needle = query.to_lowercase();
     let root_path = PathBuf::from(&root);
     if !root_path.is_dir() {
-        return Err("不是文件夹".into());
+        return Err(AppError::new("dir.not_folder"));
     }
     let limit = max_results.unwrap_or(300);
     let mut files = Vec::new();
@@ -486,24 +489,24 @@ fn replace_in_folder(
     replacement: String,
     regex: Option<bool>,
     case_sensitive: Option<bool>,
-) -> Result<ReplaceResult, String> {
+) -> Result<ReplaceResult, AppError> {
     if query.is_empty() {
-        return Err("要找的内容是空的".into());
+        return Err(AppError::new("search.empty"));
     }
     let root_path = PathBuf::from(&root);
     if !root_path.is_dir() {
-        return Err("不是文件夹".into());
+        return Err(AppError::new("dir.not_folder"));
     }
     let use_regex = regex.unwrap_or(false);
     let pat = if use_regex {
-        regex::Regex::new(&query).map_err(|e| format!("正则写错了：{e}"))?
+        regex::Regex::new(&query).map_err(|e| AppError::detail("regex.invalid", e))?
     } else {
         let src = if case_sensitive.unwrap_or(false) {
             regex::escape(&query)
         } else {
             format!("(?i){}", regex::escape(&query))
         };
-        regex::Regex::new(&src).map_err(|e| format!("匹配式无效：{e}"))?
+        regex::Regex::new(&src).map_err(|e| AppError::detail("regex.bad_pattern", e))?
     };
     /* 字面替换里用户输的 $ 是普通字符，不该被当成捕获组引用 */
     let rep = if use_regex {
@@ -575,8 +578,8 @@ fn plan_replace(f: &DirEntryInfo, pat: &regex::Regex, rep: &str, size: u64) -> P
 }
 
 #[tauri::command]
-fn write_binary_file(path: String, bytes: Vec<u8>) -> Result<String, String> {
-    fs::write(&path, &bytes).map_err(|e| format!("写入失败：{e}"))?;
+fn write_binary_file(path: String, bytes: Vec<u8>) -> Result<String, AppError> {
+    fs::write(&path, &bytes).map_err(|e| AppError::detail("io.write", e))?;
     Ok(path)
 }
 
@@ -599,16 +602,16 @@ fn b64_encode(bytes: &[u8]) -> String {
 
 /// 读二进制文件转 base64（导出 HTML 内嵌图片用）。超限直接报错，不静默截断。
 #[tauri::command]
-fn read_file_base64(path: String, max_bytes: Option<usize>) -> Result<String, String> {
+fn read_file_base64(path: String, max_bytes: Option<usize>) -> Result<String, AppError> {
     let p = PathBuf::from(&path);
     let size = fs::metadata(&p)
-        .map_err(|e| format!("读不到文件：{e}"))?
+        .map_err(|e| AppError::detail("io.read", e))?
         .len() as usize;
     let limit = max_bytes.unwrap_or(4 * 1024 * 1024);
     if size > limit {
-        return Err(format!("图片超过 {}MB，没有内嵌", limit / 1024 / 1024));
+        return Err(AppError::var("image.too_large_embed", "mb", limit / 1024 / 1024));
     }
-    let bytes = fs::read(&p).map_err(|e| format!("读不到文件：{e}"))?;
+    let bytes = fs::read(&p).map_err(|e| AppError::detail("io.read", e))?;
     Ok(b64_encode(&bytes))
 }
 
@@ -616,21 +619,21 @@ fn read_file_base64(path: String, max_bytes: Option<usize>) -> Result<String, St
 /// 用相对路径而不是绝对路径，文档连着 assets 一起拷走才还能显示。
 /// 同名文件不覆盖，自动加 -1、-2 后缀。
 #[tauri::command]
-fn copy_image_to_assets(src_path: String, doc_path: String) -> Result<String, String> {
+fn copy_image_to_assets(src_path: String, doc_path: String) -> Result<String, AppError> {
     let src = PathBuf::from(&src_path);
     if !src.is_file() {
-        return Err("图片文件不存在".into());
+        return Err(AppError::new("image.missing"));
     }
     let doc = PathBuf::from(&doc_path);
     let dir = doc
         .parent()
-        .ok_or("文档路径无效")?
+        .ok_or_else(|| AppError::new("path.invalid"))?
         .join("assets");
-    fs::create_dir_all(&dir).map_err(|e| format!("创建 assets 目录失败：{e}"))?;
+    fs::create_dir_all(&dir).map_err(|e| AppError::detail("dir.assets", e))?;
 
     let name = src
         .file_name()
-        .ok_or("图片文件名无效")?
+        .ok_or_else(|| AppError::new("image.name_invalid"))?
         .to_string_lossy()
         .to_string();
     let (stem, ext) = match name.rsplit_once('.') {
@@ -644,14 +647,14 @@ fn copy_image_to_assets(src_path: String, doc_path: String) -> Result<String, St
         target = dir.join(format!("{stem}-{i}{ext}"));
         i += 1;
         if i > 999 {
-            return Err("同名图片太多了，换个文件名吧".into());
+            return Err(AppError::new("image.too_many"));
         }
     }
-    fs::copy(&src, &target).map_err(|e| format!("复制图片失败：{e}"))?;
+    fs::copy(&src, &target).map_err(|e| AppError::detail("io.copy", e))?;
 
     let file = target
         .file_name()
-        .ok_or("目标文件名无效")?
+        .ok_or_else(|| AppError::new("image.target_invalid"))?
         .to_string_lossy()
         .to_string();
     Ok(format!("assets/{file}"))
@@ -661,7 +664,7 @@ fn copy_image_to_assets(src_path: String, doc_path: String) -> Result<String, St
 /// 打开/保存时记下，窗口重新获得焦点时再读一次，不一致就提示。
 /// 文件不存在返回 None（不是错误——用户可能刚把它删了）。
 #[tauri::command]
-fn file_mtime(path: String) -> Result<Option<u64>, String> {
+fn file_mtime(path: String) -> Result<Option<u64>, AppError> {
     match fs::metadata(&path) {
         Ok(m) => Ok(m
             .modified()
@@ -669,7 +672,7 @@ fn file_mtime(path: String) -> Result<Option<u64>, String> {
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_millis() as u64)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(format!("读取文件信息失败：{e}")),
+        Err(e) => Err(AppError::detail("file.stat", e)),
     }
 }
 
@@ -677,19 +680,19 @@ fn file_mtime(path: String) -> Result<Option<u64>, String> {
 /// 和 copy_image_to_assets 的区别：那边源是磁盘上的文件，这边源是内存里的字节，
 /// 所以名字由我们来起（img-<时间戳>），不沿用原文件名。
 #[tauri::command]
-fn save_image_bytes(doc_path: String, bytes: Vec<u8>, ext: Option<String>) -> Result<String, String> {
+fn save_image_bytes(doc_path: String, bytes: Vec<u8>, ext: Option<String>) -> Result<String, AppError> {
     if bytes.is_empty() {
-        return Err("图片内容为空".into());
+        return Err(AppError::new("image.empty"));
     }
     if bytes.len() > 64 * 1024 * 1024 {
-        return Err("图片超过 64 MB，挡住它比较好".into());
+        return Err(AppError::new("image.too_large_clip"));
     }
     let doc = PathBuf::from(&doc_path);
     let dir = doc
         .parent()
-        .ok_or("文档路径无效")?
+        .ok_or_else(|| AppError::new("path.invalid"))?
         .join("assets");
-    fs::create_dir_all(&dir).map_err(|e| format!("创建 assets 目录失败：{e}"))?;
+    fs::create_dir_all(&dir).map_err(|e| AppError::detail("dir.assets", e))?;
 
     // 只认这几种扩展名，其余一律按 png 存（剪贴板里的图基本都是 png）
     let ext = match ext.as_deref() {
@@ -710,10 +713,10 @@ fn save_image_bytes(doc_path: String, bytes: Vec<u8>, ext: Option<String>) -> Re
         name = format!("img-{stamp}-{i}.{ext}");
         i += 1;
         if i > 999 {
-            return Err("同名图片太多了，换个文件名吧".into());
+            return Err(AppError::new("image.too_many"));
         }
     }
-    fs::write(dir.join(&name), &bytes).map_err(|e| format!("写入图片失败：{e}"))?;
+    fs::write(dir.join(&name), &bytes).map_err(|e| AppError::detail("io.write_image", e))?;
     Ok(format!("assets/{name}"))
 }
 
@@ -739,22 +742,22 @@ fn fnv1a(s: &str) -> u64 {
     h
 }
 
-fn history_dir(app: &tauri::AppHandle, path: &str) -> Result<PathBuf, String> {
+fn history_dir(app: &tauri::AppHandle, path: &str) -> Result<PathBuf, AppError> {
     use tauri::Manager;
     let base = app
         .path()
         .app_data_dir()
-        .map_err(|e| format!("找不到应用数据目录：{e}"))?;
+        .map_err(|e| AppError::detail("appdata.missing", e))?;
     Ok(base.join("history").join(format!("{:016x}", fnv1a(path))))
 }
 
 /// 留一份快照。内容和最新那份一样时直接跳过，不制造一堆重复。
-fn write_history_snapshot(app: &tauri::AppHandle, path: &str, content: &str) -> Result<(), String> {
+fn write_history_snapshot(app: &tauri::AppHandle, path: &str, content: &str) -> Result<(), AppError> {
     if content.is_empty() {
         return Ok(());
     }
     let dir = history_dir(app, path)?;
-    fs::create_dir_all(&dir).map_err(|e| format!("建立历史目录失败：{e}"))?;
+    fs::create_dir_all(&dir).map_err(|e| AppError::detail("dir.history", e))?;
     // 记下来源文件名，方便在文件夹里认
     let _ = fs::write(
         dir.join("name.txt"),
@@ -765,7 +768,7 @@ fn write_history_snapshot(app: &tauri::AppHandle, path: &str, content: &str) -> 
     );
 
     let mut snaps: Vec<(u64, PathBuf)> = fs::read_dir(&dir)
-        .map_err(|e| format!("读历史目录失败：{e}"))?
+        .map_err(|e| AppError::detail("dir.history_read", e))?
         .flatten()
         .filter_map(|e| {
             let p = e.path();
@@ -793,7 +796,7 @@ fn write_history_snapshot(app: &tauri::AppHandle, path: &str, content: &str) -> 
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
     fs::write(dir.join(format!("{stamp}.txt")), content.as_bytes())
-        .map_err(|e| format!("写历史快照失败：{e}"))?;
+        .map_err(|e| AppError::detail("io.history_write", e))?;
 
     // 只留最近 60 份，再按总量 20MB 兜一道
     snaps.insert(0, (stamp, dir.join(format!("{stamp}.txt"))));
@@ -809,18 +812,18 @@ fn write_history_snapshot(app: &tauri::AppHandle, path: &str, content: &str) -> 
 }
 
 #[tauri::command]
-fn save_history(app: tauri::AppHandle, path: String, content: String) -> Result<(), String> {
+fn save_history(app: tauri::AppHandle, path: String, content: String) -> Result<(), AppError> {
     write_history_snapshot(&app, &path, &content)
 }
 
 #[tauri::command]
-fn list_history(app: tauri::AppHandle, path: String) -> Result<Vec<HistoryEntry>, String> {
+fn list_history(app: tauri::AppHandle, path: String) -> Result<Vec<HistoryEntry>, AppError> {
     let dir = history_dir(&app, &path)?;
     if !dir.is_dir() {
         return Ok(Vec::new());
     }
     let mut out: Vec<HistoryEntry> = fs::read_dir(&dir)
-        .map_err(|e| format!("读历史目录失败：{e}"))?
+        .map_err(|e| AppError::detail("dir.history_read", e))?
         .flatten()
         .filter_map(|e| {
             let p = e.path();
@@ -836,18 +839,18 @@ fn list_history(app: tauri::AppHandle, path: String) -> Result<Vec<HistoryEntry>
 }
 
 #[tauri::command]
-fn read_history(path: String) -> Result<String, String> {
-    let bytes = fs::read(&path).map_err(|e| format!("读快照失败：{e}"))?;
+fn read_history(path: String) -> Result<String, AppError> {
+    let bytes = fs::read(&path).map_err(|e| AppError::detail("io.snapshot", e))?;
     let (text, _, _) = decode_bytes(&bytes);
     Ok(text)
 }
 
 /// 清掉某个文件的全部历史（用户主动「清除历史」时用）
 #[tauri::command]
-fn clear_history(app: tauri::AppHandle, path: String) -> Result<(), String> {
+fn clear_history(app: tauri::AppHandle, path: String) -> Result<(), AppError> {
     let dir = history_dir(&app, &path)?;
     if dir.is_dir() {
-        fs::remove_dir_all(&dir).map_err(|e| format!("清除历史失败：{e}"))?;
+        fs::remove_dir_all(&dir).map_err(|e| AppError::detail("io.history_clear", e))?;
     }
     Ok(())
 }
@@ -868,13 +871,13 @@ fn watch_files(
     app: tauri::AppHandle,
     state: tauri::State<'_, WatchState>,
     paths: Vec<String>,
-) -> Result<usize, String> {
+) -> Result<usize, AppError> {
     use notify::{RecursiveMode, Watcher};
     use std::collections::{HashMap, HashSet};
     use tauri::Emitter;
 
     // 1. 先撤掉旧的监听
-    *state.0.lock().map_err(|_| "监听状态锁定失败")? = None;
+    *state.0.lock().map_err(|_| AppError::new("state.lock"))? = None;
     if paths.is_empty() {
         return Ok(0);
     }
@@ -918,7 +921,7 @@ fn watch_files(
             let _ = app.emit("fs-change", hit);
         }
     })
-    .map_err(|e| format!("无法建立文件监听：{e}"))?;
+    .map_err(|e| AppError::detail("watch.create", e))?;
 
     // 3. 每个目录只监听一层。目录不存在（文件已被删）就跳过，不是错误
     let mut n = 0;
@@ -928,7 +931,7 @@ fn watch_files(
         }
     }
 
-    *state.0.lock().map_err(|_| "监听状态锁定失败")? = Some(watcher);
+    *state.0.lock().map_err(|_| AppError::new("state.lock"))? = Some(watcher);
     Ok(n)
 }
 
@@ -982,7 +985,7 @@ async fn open_compare_window(
     app: tauri::AppHandle,
     left: Option<String>,
     right: Option<String>,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     // 必须是 async 命令。同步命令由 Tauri 在主线程上执行，而建窗口时要等
     // WebView2 那边回调，得让主线程继续转 —— 主线程被自己占着，build() 就
     // 卡在那儿不返回：窗口壳子出来了（标题、尺寸都对），页面永远不加载，
@@ -996,7 +999,7 @@ fn spawn_compare_window(
     app: &tauri::AppHandle,
     left: Option<String>,
     right: Option<String>,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     use tauri::{Emitter, Manager};
 
     // 已经开着就复用：把新的一对文件推过去，而不是再开一个窗口
@@ -1009,7 +1012,7 @@ fn spawn_compare_window(
     }
 
     let state = app.state::<CompareRequest>();
-    *state.0.lock().map_err(|_| "对比请求锁定失败")? = Some((left, right));
+    *state.0.lock().map_err(|_| AppError::new("state.lock"))? = Some((left, right));
 
     // 出生尺寸就按工作区给：后面的 SetWindowPos 只是把「DWM 隐形边框」那几像素
     // 也吃掉，不能指望它单独完成铺满（见 fill_work_area 的注释）
@@ -1048,7 +1051,7 @@ fn spawn_compare_window(
         );
     }
 
-    let win = builder.build().map_err(|e| e.to_string())?;
+    let win = builder.build().map_err(|e| AppError::detail("win.create", e))?;
     #[cfg(target_os = "windows")]
     {
         apply_rounded_corners(&win);
@@ -1242,10 +1245,10 @@ fn fill_work_area_when_ready(app: tauri::AppHandle, label: &'static str) {
 /// 无边框窗口没有系统标题栏，也没有真正的最大化状态可切，所以这一对动作
 /// 就是两个矩形：铺满工作区，或者居中一个 1280x860 的常规尺寸。
 #[tauri::command]
-fn compare_set_fullscreen(app: tauri::AppHandle, fill: bool) -> Result<(), String> {
+fn compare_set_fullscreen(app: tauri::AppHandle, fill: bool) -> Result<(), AppError> {
     use tauri::Manager;
     let Some(w) = app.get_webview_window("compare") else {
-        return Err("对比窗口不在".into());
+        return Err(AppError::new("win.compare_missing"));
     };
     #[cfg(target_os = "windows")]
     {
@@ -1264,9 +1267,9 @@ fn compare_set_fullscreen(app: tauri::AppHandle, fill: bool) -> Result<(), Strin
     #[cfg(not(target_os = "windows"))]
     {
         if fill {
-            w.maximize().map_err(|e| e.to_string())
+            w.maximize().map_err(|e| AppError::detail("win.state", e))
         } else {
-            w.unmaximize().map_err(|e| e.to_string())
+            w.unmaximize().map_err(|e| AppError::detail("win.state", e))
         }
     }
 }

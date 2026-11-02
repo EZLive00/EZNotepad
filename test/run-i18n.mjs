@@ -7,13 +7,13 @@
 //   1. 词条表结构：每行 8 列、不缺不缺、都不为空
 //   2. 覆盖率：源码里 tt('…') 与 data-i18n* 用到的键，表里全都有
 //   3. 取词行为：9 种语言逐个走一遍占位符替换、缺键回退
-//   4. 边界：detectLang 认地区码、setLang 拒绝未知码、ttBackend 拆前缀
+//   4. 边界：detectLang 认地区码、setLang 拒绝未知码、后端错误码全链路
 // 词条表的产物是脚本生成的（build-i18n-dict.py），所以这里只验结果不重算。
 // ============================================================
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { LANGS, DICT, tt, setLang, getLang, resolveLang, ttBackend } from '../src/js/i18n.js';
+import { LANGS, DICT, tt, setLang, getLang, resolveLang } from '../src/js/i18n.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const out = [];
@@ -88,13 +88,40 @@ eq('resolveLang: 明确指定就照办', resolveLang('de'), 'de');
 eq('resolveLang: 非法值走检测', typeof resolveLang('klingon'), 'string');
 ok('getLang 与 setLang 一致', (setLang('ja'), getLang() === 'ja'));
 
-setLang('de');
-eq('ttBackend 整条命中', ttBackend('文件过大'), DICT['文件过大'][5]);
-eq('ttBackend 拆前缀（西文冒号带空格）', ttBackend('保存失败：拒绝访问'), DICT['保存失败'][5] + ': 拒绝访问');
-setLang('zh-CN');
-eq('ttBackend 拆前缀（中文全角冒号）', ttBackend('保存失败：拒绝访问'), '保存失败：拒绝访问');
-eq('ttBackend 不认识的原文不动', ttBackend('某个没收录的错误'), '某个没收录的错误');
-eq('ttBackend 空值安全', ttBackend(''), '');
+/* 后端错误现在只回 { code, vars, detail }（见 src-tauri/src/error.rs），
+   文案由 errors.js 按界面语言拼，这里按语言各验一条完整链路 */
+{
+  const { localizeError, errText, ERR_TEXT } = await import('../src/js/errors.js');
+
+  eq('ERR_TEXT 的每个模板都必须在词条表里',
+    Object.keys(ERR_TEXT).filter((c) => !DICT[ERR_TEXT[c]]), []);
+
+  setLang('zh-CN');
+  const zh = localizeError({ code: 'io.read', detail: '拒绝访问。' });
+  eq('zh-CN: 带 detail 的错误', zh.message, '无法读取文件：拒绝访问。');
+
+  setLang('de');
+  const de = localizeError({ code: 'entry.exists', vars: { name: 'a.md' } });
+  eq('de: 带模板参数的错误', de.message, DICT['「{name}」已经存在'][5].replace('{name}', 'a.md'));
+  eq('de: 翻过的错误带回错误码', de.code, 'entry.exists');
+
+  /* 二次翻译防线：localizeError 出来的 Error 一定带 message → isBackend 为假 → 原样返回 */
+  const again = localizeError(zh);
+  eq('不二次翻译', again, zh);
+
+  eq('errText: 后端对象只回一句话', errText({ code: 'file.too_large' }), DICT['文件过大'][5]);
+  eq('errText: 普通 Error 原样取 message', errText(new Error('前端自己的错')), '前端自己的错');
+  eq('errText: 字符串原样', errText('裸字符串'), '裸字符串');
+  setLang('zh-CN');
+
+  /* 没收录的码要露出去（宁可看到码，不要静默吞） */
+  eq('未知错误码露出码本身', errText({ code: 'io.foo', detail: 'boom' }), '[io.foo] boom');
+
+  /* 后端回的码必须前后端对得上：Rust 源里的 code 字符串都要能查到模板 */
+  const rs = (await import('node:fs')).readFileSync(new URL('../src-tauri/src/lib.rs', import.meta.url), 'utf8');
+  const rsCodes = [...new Set([...rs.matchAll(/AppError::\w+\(\s*"([a-z_.]+)"/g)].map((m) => m[1]))];
+  eq('Rust 侧每个错误码前端都有模板', rsCodes.filter((c) => !ERR_TEXT[c]), []);
+}
 
 /* ---------- 汇总 ---------- */
 const fail = out.filter((r) => !r.ok);

@@ -10,6 +10,7 @@
 // ============================================================
 
 import { tt } from './i18n.js';
+import { errText } from './errors.js';
 const baseName = (p) => (p ? String(p).split(/[\\/]/).pop() : '');
 /** 取所在目录，保留原来的分隔符风格（后端给的是 \，别混用手写的 /） */
 const parentOf = (p) => String(p || '').replace(/[\\/][^\\/]*$/, '');
@@ -196,7 +197,7 @@ export class FileTree {
       if (!isDir) this.onOpen(p);          // 建完直接打开：新建文件的下一步就是写
       else await this._expandRow(dir);
     } catch (e) {
-      this.toast(String(e));
+      this.toast(errText(e));
     }
   }
 
@@ -210,7 +211,7 @@ export class FileTree {
       this.onRenamed(entry.path, np);
       this.toast(tt('已重命名'));
     } catch (e) {
-      this.toast(String(e));
+      this.toast(errText(e));
     }
   }
 
@@ -231,7 +232,7 @@ export class FileTree {
       this.onDeleted(entry.path);
       this.toast(entry.is_dir ? tt('文件夹已删除') : tt('已移到回收站'));
     } catch (e) {
-      this.toast(String(e));
+      this.toast(errText(e));
     }
   }
 
