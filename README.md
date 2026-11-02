@@ -165,7 +165,7 @@ folder, separate from your documents.
 - Math renders in preview only and shows as source in WYSIWYG; Mermaid is not supported
 - Cross-file replace handles UTF-8 only — GBK files are skipped rather than silently re-encoded
 - The file tree is not watched; **Refresh** from the context menu after changes made elsewhere
-- Installers must be built on their own OS (see `构建说明.md`)
+- Installers must be built on their own OS (see `docs/构建说明.md`); architecture and porting notes live in `docs/`
 
 ## License
 

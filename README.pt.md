@@ -166,7 +166,7 @@ dos seus documentos.
 - Fórmulas são renderizadas só na visualização e aparecem como código no WYSIWYG; Mermaid não é suportado
 - A substituição entre arquivos trata só UTF-8: arquivos GBK são ignorados em vez de recodificados em silêncio
 - A árvore de arquivos não é monitorada; use **Atualizar** no menu de contexto após mudanças externas
-- Cada instalador precisa ser compilado no próprio sistema (veja `构建说明.md`)
+- Cada instalador precisa ser compilado no próprio sistema (veja `docs/构建说明.md`); as notas de arquitetura e portabilidade ficam em `docs/`
 
 ## Licença
 

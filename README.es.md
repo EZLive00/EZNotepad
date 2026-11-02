@@ -166,7 +166,7 @@ en esa misma carpeta, separadas de tus documentos.
 - Las fórmulas solo se dibujan en la vista previa y se ven como fuente en WYSIWYG; Mermaid no está soportado
 - El reemplazo entre archivos solo trata UTF-8: los archivos GBK se omiten en lugar de recodificarse en silencio
 - El árbol de archivos no se vigila; pulsa **Actualizar** en el menú contextual tras cambios externos
-- Cada instalador debe compilarse en su propio sistema (ver `构建说明.md`)
+- Cada instalador debe compilarse en su propio sistema (ver `docs/构建说明.md`); las notas de arquitectura y portabilidad están en `docs/`
 
 ## Licencia
 

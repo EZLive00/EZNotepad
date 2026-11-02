@@ -165,7 +165,7 @@ am selben Ort, getrennt von deinen Dokumenten.
 - Formeln werden nur in der Vorschau gesetzt und im WYSIWYG als Quelle gezeigt; Mermaid wird nicht unterstützt
 - Ersetzen über Dateien hinweg verarbeitet nur UTF-8 — GBK-Dateien werden übersprungen statt still umkodiert
 - Der Dateibaum selbst wird nicht überwacht; **Aktualisieren** im Kontextmenü nach externen Änderungen
-- Installer müssen auf dem jeweiligen System gebaut werden (siehe `构建说明.md`)
+- Installer müssen auf dem jeweiligen System gebaut werden (siehe `docs/构建说明.md`); Architektur- und Portierungsnotizen liegen in `docs/`
 
 ## Lizenz
 

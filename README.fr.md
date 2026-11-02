@@ -166,7 +166,7 @@ sont dans `history/` au même endroit, séparés de vos documents.
 - Les maths ne sont rendues que dans l'aperçu et s'affichent en source en WYSIWYG ; Mermaid n'est pas pris en charge
 - Le remplacement multi-fichiers ne traite que l'UTF-8 : les fichiers GBK sont ignorés plutôt que réencodés en silence
 - L'arborescence n'est pas surveillée ; **Actualiser** dans le menu contextuel après une modification externe
-- Chaque installateur doit être construit sur son propre système (voir `构建说明.md`)
+- Chaque installateur doit être construit sur son propre système (voir `docs/构建说明.md`) ; notes d'architecture et de portage dans `docs/`
 
 ## Licence
 
