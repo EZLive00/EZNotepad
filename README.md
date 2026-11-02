@@ -91,6 +91,7 @@ only a match crossing bold or a link asks to switch to Edit mode.
 Line-level marks show what changed, character-level marks show which characters. `F7` / `F8` walk the differences, and **Export Report** writes a standalone HTML diff.
 The ruler on the right maps the whole file — hover for line numbers, click or drag to jump; **Differences**
 turns every change into a sortable, filterable list (position, type or size).
+**Sort** reorders both sides alphabetically (blank lines stay at the end), so ordering noise stops drowning the real additions and deletions; `Ctrl+Z` undoes it.
 A single side is capped at 8 MB / 50,000 lines; past that the window says why instead of failing quietly.
 
 **Compare Folders** lists *left only / right only / modified / identical* recursively; click a row to open that file

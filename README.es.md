@@ -93,6 +93,7 @@ y **Exportar informe** genera un diff HTML independiente.
 La regla de la derecha sitúa cada cambio en el archivo completo: pasa el cursor para ver el número de línea
 y haz clic o arrastra para saltar. **Diferencias** lista cada cambio en una tabla ordenable y filtrable
 (posición, tipo, líneas).
+**Ordenar** reordena ambos lados alfabéticamente (las líneas vacías al final) para que el desorden no oculte las diferencias reales; `Ctrl+Z` lo deshace.
 Cada lado tiene un límite de 8 MB / 50 000 líneas; al superarlo, la ventana explica el motivo.
 
 **Comparar carpetas** lista de forma recursiva *solo izquierda / solo derecha / modificado / idéntico*; al pulsar una fila

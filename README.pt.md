@@ -93,6 +93,7 @@ e **Exportar relatório** gera um diff HTML independente.
 A régua da direita situa cada mudança no arquivo inteiro: passe o cursor para ver o número da linha e
 clique ou arraste para saltar. **Diferenças** lista cada mudança numa tabela ordenável e filtrável
 (posição, tipo, linhas).
+**Ordenar** reordena os dois lados alfabeticamente (linhas vazias no fim) para que a desordem não esconda as diferenças reais; `Ctrl+Z` desfaz.
 Cada lado tem limite de 8 MB / 50 000 linhas; acima disso, a janela explica o motivo.
 
 **Comparar pastas** lista recursivamente *só à esquerda / só à direita / modificado / idêntico*; clique numa linha para abrir
