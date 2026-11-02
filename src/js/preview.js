@@ -127,13 +127,86 @@ export function extractOutline(kind, text) {
     });
     return items.slice(0, 300);
   }
-  // 纯文本 / 日志：按「看起来像标题」的行给出大纲（上限 60 条）
-  lines.forEach((l, i) => {
-    const t = l.trim();
-    if (!t) return;
-    if (/^(=+|-{3,}|#{2,}\s+)/.test(t) || /^【.+】/.test(t) || (t.length < 40 && i < 2000 && /^[0-9]+[.、]\s*\S/.test(t))) {
-      items.push({ level: 1, text: t.replace(/^[=#]+\s*/, '').slice(0, 60), line: i });
+  /* csv / tsv 一行一条记录，不是章节。硬凑出来的「大纲」等于把前 60 行抄一遍，
+     点进去毫无导航价值，所以这里干脆不提取（大纲面板会说明原因）。 */
+  if (kind === 'data') return items;
+  return plainOutline(lines);
+}
+
+const PLAIN_MAX = 300;
+
+/** 中文章节单位的层级：章/篇/部 > 节 > 条/款 */
+const CN_LEVEL = { 章: 1, 篇: 1, 部: 1, 节: 2, 条: 3, 款: 3 };
+
+/** 纯文本 / 日志的大纲：只认「确实在声明结构」的标记，不猜
+ *
+ *  以前这条分支是「像标题的行」启发式：`1.` `2.` `3.` 这种连续编号的每一行都
+ *  收进来，于是随手一份清单或带序号的日志，效果就是**每行都是大纲**；而且统统
+ *  记成同一级 —— 1 / 1.1 / 1.1.1 本来写好的层级被抹平，看着像结构，其实只是把
+ *  正文抄了一遍。分隔线更糟：`====` 自己成了标题，文本还是空的。
+ *
+ *  现在的规则：
+ *    · `# 标题`（把 txt 当 Markdown 写的人）、`===` / `---` 下划线式（Setext，
+ *      文字在上一行）
+ *    · 行首 `【章节】`、`第X章` / `第X节` / `第X条`、`一、…`
+ *    · 编号行：全文出现过多级编号（1.1）时才把编号当章节，并按点号段数给层级；
+ *      只有单级编号时，要求它**孤零零成一条**（空行断组后组内只有它），连续排成
+ *      一串的就是列表 —— 一条都不收
+ *  收完再做一次「不许跳级」的归一化：h3 上面没有 h1/h2，缩进会悬空。
+ */
+function plainOutline(lines) {
+  const clip = (s) => String(s).replace(/\s+/g, ' ').trim().slice(0, 80);
+  /* 全文只要有任意一处 1.1 式编号，编号就承担了章节的语义 */
+  const nested = lines.some((l) => /^\s*\d{1,3}(?:\.\d{1,3}){1,3}[.、)]?\s+\S/.test(l));
+  const numRe = /^(\d{1,3}(?:\.\d{1,3}){0,3})[.、)]?\s+(\S.*)$/;
+  const numHit = lines.map((l) => numRe.exec(l.trim()));
+  /* 单级编号的「孤独度」：空行断组，组里只有一条才算章节标题。
+     只看前后空行不行 —— 文件首尾的行天然缺一侧邻居，那份列表会掐头去尾各收一条。 */
+  const solo = new Set();
+  if (!nested) {
+    let group = [];
+    const flush = () => { if (group.length === 1) solo.add(group[0]); group = []; };
+    lines.forEach((l, i) => {
+      if (!l.trim()) flush();
+      else if (numHit[i] && !numHit[i][1].includes('.')) group.push(i);
+    });
+    flush();
+  }
+
+  const items = [];
+  const taken = new Set();
+  const push = (level, text, line) => {
+    if (!text || taken.has(line)) return;     // 同一行只记一次（Setext 会回看上一行）
+    taken.add(line);
+    items.push({ level, text, line });
+  };
+  lines.forEach((raw, i) => {
+    const s = raw.trim();
+    if (!s) return;
+
+    /* 下划线式标题：本行全是 = 或 -，真正的文字在上面一行。
+       上面那行自己也是符号/空行时不算 —— 否则 `====` 下面的 `----` 会拿 `====` 当标题。 */
+    if (/^={2,}$/.test(s) || /^-{3,}$/.test(s)) {
+      const up = (lines[i - 1] || '').trim();
+      if (up && !/^[=\-_*~#\s]{2,}$/.test(up)) push(s[0] === '=' ? 1 : 2, clip(up), i - 1);
+      return;
+    }
+    const atx = s.match(/^#{1,6}\s+(.+)$/);
+    if (atx) { push(atx[1].length, clip(atx[1].replace(/\s*#+$/, '')), i); return; }
+    /* 行首的【…】常常后面还跟着标题文字（`【一】概述`），保留原样 */
+    if (/^【[^】]{1,40}】/.test(s) && s.length <= 60) { push(1, clip(s), i); return; }
+    /* 章 / 节 / 条本身就是三级，别一律压成一级 */
+    const cn = s.match(/^第[一二三四五六七八九十百零〇\d]+([章节条款篇部])/);
+    if (cn) { push(CN_LEVEL[cn[1]] || 1, clip(s), i); return; }
+    if (/^[一二三四五六七八九十]+、\s*\S/.test(s)) { push(1, clip(s), i); return; }
+
+    if (numHit[i]) {
+      if (nested) push(numHit[i][1].split('.').length, clip(s), i);
+      else if (solo.has(i)) push(1, clip(s), i);
     }
   });
-  return items.slice(0, 60);
+
+  let prev = 0;
+  for (const it of items) { it.level = Math.min(it.level, prev + 1); prev = it.level; }
+  return items.slice(0, PLAIN_MAX);
 }

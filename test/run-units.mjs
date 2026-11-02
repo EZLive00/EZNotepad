@@ -9,6 +9,7 @@
 // ============================================================
 import { freeUntitledName, moveById } from '../src/js/taborder.js';
 import { slugify, headingSlugs, inline, renderMarkdown } from '../src/js/markdown.js';
+import { extractOutline } from '../src/js/preview.js';
 
 const out = [];
 const eq = (name, got, want) => out.push({ name, ok: JSON.stringify(got) === JSON.stringify(want), got, want });
@@ -73,6 +74,22 @@ ok('别名显示成功标签（tip → success）', renderMarkdown('> [!tip]').i
 ok('未知标记保持普通引用', !/md-callout/.test(renderMarkdown('> [!foo] 未知')));
 ok('普通引用不受影响', !/md-callout/.test(renderMarkdown('> 普通引用')));
 ok('标记行必须顶格在引用内', !/md-callout/.test(renderMarkdown('正文里的 [!info] 标记')));
+
+/* ---------- 大纲提取：纯文本不能把每一行都当标题 ----------
+   老实现把 `1.` `2.` `3.` 逐行收进来、且全是同一级，于是随手一份清单的效果是
+   「每行都是大纲」；`====` 这类分隔线自己还会变成一条空标题。 */
+const ol = (kind, md) => extractOutline(kind, md).map((x) => `${x.level}:${x.text}`);
+eq('散文不产生大纲', ol('txt', '今天开会。\n讨论了三个问题。\n明天再议。'), []);
+eq('连续编号是列表，不是章节', ol('txt', '1. 买菜\n2. 做饭\n3. 洗碗'), []);
+eq('空行分隔的编号算章节', ol('txt', '1. 引言\n\n正文\n\n2. 方法'), ['1:1. 引言', '1:2. 方法']);
+eq('多级编号按深度展开', ol('txt', '1. 总论\n1.1 背景\n1.1.1 细节\n2. 方法'), ['1:1. 总论', '2:1.1 背景', '3:1.1.1 细节', '1:2. 方法']);
+eq('分隔线取上一行当标题', ol('txt', '第一章\n=====\n正文\n\n第二章\n-----'), ['1:第一章', '1:第二章']);
+eq('分隔线自身不当标题', ol('txt', '=====\n-----\n正文'), []);
+eq('【】标题保留原文', ol('txt', '【一】概述\n内容'), ['1:【一】概述']);
+eq('中文章节三级', ol('txt', '第一章 总论\n第一节 背景\n第一条 目的'), ['1:第一章 总论', '2:第一节 背景', '3:第一条 目的']);
+eq('把 txt 当 Markdown 写也认', ol('txt', '# 一\n## 一点一'), ['1:一', '2:一点一']);
+eq('csv 不提取大纲', ol('data', 'name,age\nTom,3'), []);
+eq('跨级编号压平到不跳级', extractOutline('txt', '1.1.1 深').map((x) => x.level), [1]);
 
 /* ---------- 汇总 ---------- */
 const fail = out.filter((r) => !r.ok);
