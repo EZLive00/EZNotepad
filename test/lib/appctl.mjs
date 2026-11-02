@@ -10,14 +10,27 @@
 // 漏掉 `--disable-gpu-sandbox` 就会重新踩到 WebView2 沙箱崩溃。
 // ============================================================
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 
 const CONF_ARGS = '--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-gpu-sandbox';
-/* 探针专用的额外参数：把 WebView2 的落盘缓存压到最小。
-   应用退出时 WebView2 会清理缓存/日志，本机删除进回收站，实测每次十几条。
-   这几个开关只影响缓存，不改渲染行为。 */
-const PROBE_ARGS = '--disable-application-cache --disk-cache-size=1 --media-cache-size=1 --disable-background-networking';
+
+/* 探针用**自己的** WebView2 用户数据目录（固定在 %TEMP% 下，复用、永不删除）。
+   不沿用 %LOCALAPPDATA%\com.simple.notepad\EBWebView，有两个理由：
+
+   1) 那是用户的真实配置目录。探针在里面写 localStorage/settings，残留状态会让
+      断言假红 —— probe-app 的「默认停在大纲页」就是这么红的，改成断言真实契约
+      才算治本；但探针本来就不该动用户数据。
+   2) Chromium 每次会话结束都要重建 Session Storage（LOCK/CURRENT/MANIFEST/LOG）
+      和 Code Cache 索引，本机的深信服 SGuard 会把这类删除重定向进回收站，
+      一次 10 条。而 SGuard 对 %TEMP% 下的删除不做重定向：同一个数据目录连续
+      启动 4 次，实测 0 条。
+
+   曾经试过 --disable-application-cache / --disk-cache-size=1 / --media-cache-size=1
+   来"少写缓存"，对上面这些删除一概无效（测下来还是 10 条），已移除，
+   别再加回来。 */
+const PROBE_PROFILE = process.env.APP_PROFILE || path.join(os.tmpdir(), 'eznotepad-probe');
 
 const EXE_CANDIDATES = [
   process.env.APP_EXE,
@@ -107,7 +120,11 @@ export async function ensureApp(port = Number(process.env.CDP_PORT || 9333), { t
 
   const proc = spawn(path.resolve(exe), [], {
     stdio: 'ignore',
-    env: { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `${CONF_ARGS} ${PROBE_ARGS} --remote-debugging-port=${port}` },
+    env: {
+      ...process.env,
+      WEBVIEW2_USER_DATA_FOLDER: PROBE_PROFILE,
+      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `${CONF_ARGS} --remote-debugging-port=${port}`,
+    },
   });
   proc.on('error', () => {});
   process.on('exit', () => killTree(proc));
