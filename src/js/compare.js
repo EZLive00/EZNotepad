@@ -849,9 +849,11 @@ function bind() {
   $('save').onclick = save;
   $('report').onclick = saveReport;
 
-  /* 编辑开关抽成函数：空状态「直接粘贴文本」也要进同一个状态机 */
+  /* 编辑开关抽成函数：空状态「直接粘贴文本」也要进同一个状态机。
+     两侧都空时点「编辑」，直接当成「我要粘两段文本」处理 —— 比弹一句
+     「先选文件」有用得多 */
   $('toggleEdit').onclick = () => {
-    if (!S.sides.l.loaded && !S.sides.r.loaded) { toast(tt('先选文件，或者直接粘贴文本')); return; }
+    if (!S.sides.l.loaded && !S.sides.r.loaded) { startPairText(); return; }
     setEdit(!S.edit);
     toast(S.edit ? tt('编辑已打开：直接改字，Ctrl+S 写回磁盘') : tt('编辑已关闭'));
   };

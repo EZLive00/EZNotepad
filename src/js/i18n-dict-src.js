@@ -348,7 +348,6 @@ export const SRC = {
   '仅右 {n} 行': ["{n} right-only lines", "右のみ {n} 行", "오른쪽만 {n}행", "{n} lignes à droite", "{n} nur rechts", "{n} líneas solo derecha", "{n} linhas só à direita"],
   '差异 {n} 处': ["{n} differences", "差異 {n} 箇所", "차이 {n}곳", "{n} différences", "{n} Unterschiede", "{n} diferencias", "{n} diferenças"],
   '报告已导出：': ["Report exported: ", "レポートを書き出しました：", "보고서를 내보냈습니다: ", "Rapport exporté : ", "Bericht exportiert: ", "Informe exportado: ", "Relatório exportado: "],
-  '先选文件，或者直接粘贴文本': ["Pick a file first, or paste text directly", "先にファイルを選ぶか、テキストを直接貼り付けてください", "먼저 파일을 선택하거나 텍스트를 붙여넣으세요", "Choisissez d'abord un fichier ou collez du texte", "Zuerst eine Datei wählen oder Text einfügen", "Elige un archivo primero o pega texto", "Escolha um arquivo primeiro ou cole texto"],
   '比较这两个文件': ["Compare These Two Files", "この2つのファイルを比較", "이 두 파일 비교", "Comparer ces deux fichiers", "Diese zwei Dateien vergleichen", "Comparar estos dos archivos", "Comparar estes dois arquivos"],
   '粘贴两段文本': ["Paste Two Texts", "2つのテキストを貼り付け", "두 텍스트 붙여넣기", "Coller deux textes", "Zwei Texte einfügen", "Pegar dos textos", "Colar dois textos"],
   '两侧都开成空白文本，直接 Ctrl+V 粘进来对比': ["Open both sides as blank text and paste with Ctrl+V", "両側を空のテキストで開き、Ctrl+V で貼り付けて比較", "양쪽을 빈 텍스트로 열고 Ctrl+V로 붙여넣어 비교", "Ouvrir les deux côtés en texte vide et coller avec Ctrl+V", "Beide Seiten als leeren Text öffnen und mit Strg+V einfügen", "Abrir ambos lados como texto vacío y pegar con Ctrl+V", "Abrir os dois lados como texto vazio e colar com Ctrl+V"],
