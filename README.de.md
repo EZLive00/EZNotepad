@@ -93,6 +93,7 @@ Marken pro Zeile zeigen, welche Zeile sich änderte, Marken pro Zeichen, welche 
 Unterschieden, **Bericht exportieren** schreibt einen eigenständigen HTML-Vergleich. Das Lineal rechts verortet jede Änderung in der ganzen Datei: Zeilennummer beim Überfahren, Sprung per Klick
 oder Ziehen. **Unterschiede** listet jede Änderung in einer sortier- und filterbaren Liste (Position, Typ, Zeilen).
 **Sortieren** ordnet beide Seiten alphabetisch (Leerzeilen ans Ende), damit Reihenfolge-Rauschen die echten Unterschiede nicht mehr verdeckt; `Ctrl+Z` macht es rückgängig.
+Im Editiermodus lassen sich Tippen, Zeilenumbrüche, Einrückungen, gelöschte Auswahlen und Sortieren mit `Ctrl+Z` rückgängig machen und mit `Ctrl+Y` wiederherstellen — auch bei Fokus in der Werkzeugleiste.
 Pro Seite gilt ein Limit von 8 MB / 50.000 Zeilen; darüber nennt das Fenster den Grund, statt still zu scheitern.
 
 **Ordner vergleichen** listet rekursiv *nur links / nur rechts / geändert / gleich*; ein Klick auf die Zeile öffnet diesen

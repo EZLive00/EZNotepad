@@ -95,6 +95,7 @@ La regla de la derecha sitúa cada cambio en el archivo completo: pasa el cursor
 y haz clic o arrastra para saltar. **Diferencias** lista cada cambio en una tabla ordenable y filtrable
 (posición, tipo, líneas).
 **Ordenar** reordena ambos lados alfabéticamente (las líneas vacías al final) para que el desorden no oculte las diferencias reales; `Ctrl+Z` lo deshace.
+En modo edición, `Ctrl+Z` / `Ctrl+Y` deshacen y rehacen lo escrito, los saltos de línea, la sangría, el borrado de selecciones y la ordenación — incluso con el foco en la barra de herramientas.
 Cada lado tiene un límite de 8 MB / 50 000 líneas; al superarlo, la ventana explica el motivo.
 
 **Comparar carpetas** lista de forma recursiva *solo izquierda / solo derecha / modificado / idéntico*; al pulsar una fila
