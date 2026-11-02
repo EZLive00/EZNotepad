@@ -9,7 +9,7 @@
 [English](README.md) | [簡體中文](README.zh-CN.md) | **繁體中文** | [日本語](README.ja.md) | [한국어](README.ko.md) | [Français](README.fr.md) | [Deutsch](README.de.md) | [Español](README.es.md) | [Português](README.pt.md)
 
 [![Release](https://img.shields.io/github/v/release/EZLive00/EZNotepad)](https://github.com/EZLive00/EZNotepad/releases)
-[![License](https://img.shields.io/badge/license-PolyForm--NC--1.0.0-orange)](./LICENSE)
+[![License](https://img.shields.io/badge/license-AGPL--v3-blue)](./LICENSE)
 
 </div>
 
@@ -348,8 +348,4 @@
 
 ## 許可證
 
-本專案採用 [PolyForm Noncommercial License 1.0.0](./LICENSE)：
-
-- **非商業用途**（個人使用、學習、科研、公益組織等）：自由使用、修改、分發
-- **商業用途**：需事先取得專案組同意——[提 Issue 說明用途](https://github.com/EZLive00/EZNotepad/issues)即可
-- 原始碼公開但保留商用授權，這是刻意的選擇；分發時必須附帶本許可宣告
+本專案採用 [GNU Affero 通用公共許可證 v3.0（AGPL-3.0）](./LICENSE)：可自由使用、學習、修改與分發；衍生作品（包括基於它的網路託管服務）也必須以 AGPL-3.0 開源。

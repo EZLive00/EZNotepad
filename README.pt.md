@@ -9,7 +9,7 @@
 [English](README.md) | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Français](README.fr.md) | [Deutsch](README.de.md) | [Español](README.es.md) | **Português**
 
 [![Release](https://img.shields.io/github/v/release/EZLive00/EZNotepad)](https://github.com/EZLive00/EZNotepad/releases)
-[![License](https://img.shields.io/badge/license-PolyForm--NC--1.0.0-orange)](./LICENSE)
+[![License](https://img.shields.io/badge/license-AGPL--v3-blue)](./LICENSE)
 
 </div>
 
@@ -348,8 +348,4 @@ Medido na própria máquina (Windows 11, x64, build release):
 
 ## Licença
 
-Este projeto é distribuído sob a [PolyForm Noncommercial License 1.0.0](./LICENSE):
-
-- **Uso não comercial** (uso pessoal, estudo, pesquisa, organizações sem fins lucrativos etc.): uso, modificação e distribuição livres
-- **Uso comercial**: requer consentimento prévio da equipe do projeto — basta [abrir uma Issue descrevendo a finalidade](https://github.com/EZLive00/EZNotepad/issues)
-- O código-fonte é aberto, mas a autorização para uso comercial é reservada — essa é uma escolha deliberada; ao redistribuir, é obrigatório incluir este aviso de licença
+Este projeto é distribuído sob a [GNU Affero General Public License v3.0 (AGPL-3.0)](./LICENSE): livre para usar, estudar, modificar e redistribuir. Obras derivadas — incluindo um serviço hospedado baseado nele — também devem ser publicadas sob a AGPL-3.0.

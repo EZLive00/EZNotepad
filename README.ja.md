@@ -9,7 +9,7 @@
 [English](README.md) | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md) | **日本語** | [한국어](README.ko.md) | [Français](README.fr.md) | [Deutsch](README.de.md) | [Español](README.es.md) | [Português](README.pt.md)
 
 [![Release](https://img.shields.io/github/v/release/EZLive00/EZNotepad)](https://github.com/EZLive00/EZNotepad/releases)
-[![License](https://img.shields.io/badge/license-PolyForm--NC--1.0.0-orange)](./LICENSE)
+[![License](https://img.shields.io/badge/license-AGPL--v3-blue)](./LICENSE)
 
 </div>
 
@@ -349,8 +349,4 @@
 
 ## ライセンス
 
-本プロジェクトは [PolyForm Noncommercial License 1.0.0](./LICENSE) を採用しています：
-
-- **非商用利用**（個人利用、学習、研究、公益団体など）：自由に使用、改変、配布可能
-- **商用利用**：事前にプロジェクトチームの同意が必要——[Issue で用途を説明](https://github.com/EZLive00/EZNotepad/issues)してください
-- ソースは公開しつつ商用ライセンスは留保する、これは意図的な選択です。配布時には本ライセンス声明を必ず添付してください
+本プロジェクトは [GNU Affero General Public License v3.0（AGPL-3.0）](./LICENSE) の下で提供されます。自由に利用・学習・改変・再配布できます。派生物（これを基盤としたホステッドサービスを含む）も AGPL-3.0 として公開する必要があります。
