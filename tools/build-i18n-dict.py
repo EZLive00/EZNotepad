@@ -68,7 +68,7 @@ def main():
         lines.append('  ' + js_str(zh) + ': [' + ', '.join(vals) + '],')
     lines.append('};')
     lines.append('')
-    OUT.write_text('\n'.join(lines), encoding='utf-8')
+    OUT.write_text('\n'.join(lines), encoding='utf-8', newline='\n')  # Windows 上默认会把 \n 翻成 CRLF，仓库要 LF
 
     print(f'词条：{len(src)}  输出：{OUT.relative_to(ROOT)}  '
           f'{OUT.stat().st_size / 1024:.0f} KB')
