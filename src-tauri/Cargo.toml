@@ -1,6 +1,6 @@
 [package]
 name = "simple-notepad"
-version = "1.0.0"
+version = "1.0.1"
 description = "EZNotepad - lightweight Markdown / text editor and diff tool"
 authors = ["EZNotepad"]
 edition = "2021"
