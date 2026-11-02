@@ -324,6 +324,99 @@ try {
   ok('Ctrl+Z 一次撤销两侧排序',
     JSON.stringify(backL) === JSON.stringify(rawL) && JSON.stringify(backR) === JSON.stringify(rawR),
     `${JSON.stringify(backL)} vs ${JSON.stringify(rawL)}`);
+
+  /* ---------- 8. 打字之后的 Ctrl+Z / Ctrl+Y ----------
+     用户问「对比窗口是不是没有撤销」。排序那条路径已经验过，但**打字**这条路
+     一次都没测过 —— 而它才是用户真正会去按 Ctrl+Z 的场景（打错一个字）。
+     这里按真实轨迹走：点进某行、真的插入字符、等输入防抖（300ms）落库，再按快捷键。 */
+  const enterEdit = async () => {
+    if (!(await cmp.ev(`document.getElementById('toggleEdit').classList.contains('on')`))) {
+      await cmp.ev(`document.getElementById('toggleEdit').click()`);
+      await sleep(400);
+    }
+  };
+  const clickRow = async (side, i) => {
+    const at = await rowAt(side, i);
+    const base = { x: at.x, y: at.y, button: 'left', clickCount: 1 };
+    await cmp.send('Input.dispatchMouseEvent', { type: 'mousePressed', ...base });
+    await cmp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...base });
+    await sleep(120);
+    return at;
+  };
+  const typeIn = async (side, i, text) => {
+    await clickRow(side, i);
+    await cmp.send('Input.insertText', { text });
+    await sleep(900);                       // 输入防抖 300ms + 重算重画
+  };
+  const has = (arr, t) => arr.some((s) => s.includes(t));
+
+  await openPair(p('edit-a.txt'), p('edit-a2.txt'));
+  await enterEdit();
+  const plain0 = await rowText('l');
+  await typeIn('l', 0, 'XYZ');
+  const typed = await rowText('l');
+  ok('打字后模型里出现了新字符', has(typed, 'XYZ'), JSON.stringify(typed[0]));
+
+  await pressKey(90, 'z', 'KeyZ', 2);
+  await sleep(700);
+  const afterUndo = await rowText('l');
+  ok('Ctrl+Z 撤销刚打的字', !has(afterUndo, 'XYZ') && JSON.stringify(afterUndo) === JSON.stringify(plain0),
+    `${JSON.stringify(afterUndo[0])} / 期望 ${JSON.stringify(plain0[0])}`);
+
+  await pressKey(89, 'y', 'KeyY', 2);
+  await sleep(700);
+  const afterRedo = await rowText('l');
+  ok('Ctrl+Y 把撤销掉的字重做回来', has(afterRedo, 'XYZ'), JSON.stringify(afterRedo[0]));
+
+  /* 连续两次撤销要退回两步，而不是卡在同一个位置 */
+  await pressKey(90, 'z', 'KeyZ', 2);
+  await sleep(600);
+  await pressKey(90, 'z', 'KeyZ', 2);
+  await sleep(600);
+  const twice = await rowText('l');
+  ok('连按两次 Ctrl+Z 不会崩、内容仍是可读的一侧',
+    Array.isArray(twice) && twice.length > 0 && !has(twice, 'XYZ'), JSON.stringify(twice.slice(0, 2)));
+
+  /* 换行是结构性编辑，跟打字不是一条路径，也要能撤 */
+  await openPair(p('edit-a.txt'), p('edit-a2.txt'));
+  await enterEdit();
+  const lines0 = await maxLine('l');
+  await clickRow('l', 2);
+  await pressKey(35, 'End', 'End');          // 行尾，Enter 在这里断行
+  await pressKey(13, 'Enter', 'Enter');
+  await sleep(700);
+  const linesSplit = await maxLine('l');
+  ok('Enter 把一行断成两行', linesSplit === lines0 + 1, `${lines0} -> ${linesSplit}`);
+  await pressKey(90, 'z', 'KeyZ', 2);
+  await sleep(700);
+  const linesBack = await maxLine('l');
+  ok('Ctrl+Z 撤销回车断行', linesBack === lines0, `${linesSplit} -> ${linesBack}`);
+
+  /* 焦点不在可编辑行时也必须能撤 —— 点过工具栏按钮（排序、编辑开关）之后
+     焦点就在按钮上，这是「按了没反应」最常见的来源 */
+  await openPair(p('edit-a.txt'), p('edit-a2.txt'));
+  await enterEdit();
+  await typeIn('l', 0, 'ABC');
+  await cmp.ev(`document.getElementById('sortBtn').focus()`);
+  await sleep(150);
+  await pressKey(90, 'z', 'KeyZ', 2);
+  await sleep(700);
+  const fromBtn = await rowText('l');
+  ok('焦点在工具栏上时 Ctrl+Z 也生效', !has(fromBtn, 'ABC'), JSON.stringify(fromBtn[0]));
+
+  /* 只读态按 Ctrl+Z：没有可撤的东西，但绝不能抛错或改内容 */
+  await openPair(p('edit-a.txt'), p('edit-a2.txt'));
+  if (await cmp.ev(`document.getElementById('toggleEdit').classList.contains('on')`)) {
+    await cmp.ev(`document.getElementById('toggleEdit').click()`);
+    await sleep(400);
+  }
+  const ro0 = await rowText('l');
+  await cmp.ev(`document.querySelector('#rowsL .cmp-tx').focus()`);
+  await pressKey(90, 'z', 'KeyZ', 2);
+  await sleep(500);
+  const ro1 = await rowText('l');
+  ok('只读态 Ctrl+Z 不改内容也不报错',
+    JSON.stringify(ro0) === JSON.stringify(ro1) && (await cmp.ev(`!!document.getElementById('rowsL')`)) === true);
 } finally {
   main.close();
   // 夹具留在 node_modules/.tmp/probe-cmp 下不复用删除：每轮 writeFileSync 直接覆盖。
