@@ -1,7 +1,7 @@
 // ============================================================
 // test/probe-ctx.mjs —— 表格右键菜单的真机验证（CDP）
 //
-// 前置：应用已用 --remote-debugging-port=9333 启动。
+// 端口没开就自动拉起应用，跑完随进程退出收掉；已有实例直接复用。
 //   node test/probe-ctx.mjs
 //
 // 验证三件事：
@@ -12,9 +12,12 @@
 // 右键用 Input.dispatchMouseEvent button:'right' 按真实轨迹触发，
 // 合成 contextmenu 事件测不出 e.target.closest 这条路径。
 // ============================================================
+import { ensureApp } from './lib/appctl.mjs';
 
 const PORT = process.env.CDP_PORT || 9333;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+await ensureApp(PORT);
 
 async function connect() {
   const list = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json();

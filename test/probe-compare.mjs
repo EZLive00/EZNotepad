@@ -1,7 +1,7 @@
 // ============================================================
 // test/probe-compare.mjs —— 对比窗口的真机验证（CDP）
 //
-// 前置：应用已用 --remote-debugging-port=9333 启动。
+// 端口没开就自动拉起应用，跑完随进程退出收掉；已有实例直接复用。
 //   node test/probe-compare.mjs
 //
 // 覆盖四件在单测里做不到的事：
@@ -14,9 +14,11 @@
 // ============================================================
 import fs from 'node:fs';
 import path from 'node:path';
+import { ensureApp } from './lib/appctl.mjs';
 
 const PORT = process.env.CDP_PORT || 9333;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+await ensureApp(PORT);
 const TMP = path.resolve('node_modules/.tmp/probe-cmp');
 
 const out = [];

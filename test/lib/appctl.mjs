@@ -1,0 +1,118 @@
+// ============================================================
+// test/lib/appctl.mjs —— CDP 探针的应用启动与收尾
+//
+// 以前开调试端口要临时改两处（tauri.conf.json 的 additionalBrowserArgs
+// 和 lib.rs::spawn_compare_window），测完再撤掉重打 —— 一轮就是两次全量重编。
+// WebView2 认 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`，而且是进程级的：
+// 主窗口和随后打开的对比窗口都会带上，所以改成启动时注入，零改动零重编。
+//
+// 注意：环境变量会覆盖窗口级参数，`tauri.conf.json` 里那串必须原样带上，
+// 漏掉 `--disable-gpu-sandbox` 就会重新踩到 WebView2 沙箱崩溃。
+// ============================================================
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawn, spawnSync } from 'node:child_process';
+
+const CONF_ARGS = '--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-gpu-sandbox';
+
+const EXE_CANDIDATES = [
+  process.env.APP_EXE,
+  'src-tauri/target/debug/EZNotepad.exe',
+  'src-tauri/target/release/EZNotepad.exe',
+].filter(Boolean);
+
+function findExe() {
+  return EXE_CANDIDATES.find((p) => { try { return fs.existsSync(p); } catch { return false; } });
+}
+
+export async function cdpReady(port, ms = 1200) {
+  try {
+    const r = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(ms) });
+    return r.ok;
+  } catch { return false; }
+}
+
+/* 子进程被 TerminateProcess 掉之后，WebView2 的渲染进程一般会跟着退，
+   但偶尔残留 —— 用 taskkill /T 连树一起收。exit 钩子里只能同步操作。 */
+function killTree(proc) {
+  if (!proc || proc.killed) return;
+  try {
+    spawnSync('taskkill', ['/PID', String(proc.pid), '/T', '/F'], { stdio: 'ignore', timeout: 5000 });
+  } catch {
+    try { proc.kill(); } catch {}
+  }
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/* 连上去算一个表达式的值，用完就断 —— 只用于就绪判定 */
+function evalIn(url, expression, timeout = 3000) {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(url);
+    const timer = setTimeout(() => { try { ws.close(); } catch {} reject(new Error('未响应')); }, timeout);
+    ws.addEventListener('open', () => {
+      ws.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression, returnByValue: true } }));
+    });
+    ws.addEventListener('message', (e) => {
+      const m = JSON.parse(e.data);
+      if (m.id !== 1) return;
+      clearTimeout(timer);
+      try { ws.close(); } catch {}
+      resolve(m.result && m.result.result ? m.result.result.value : undefined);
+    });
+    ws.addEventListener('error', () => { clearTimeout(timer); reject(new Error('连接失败')); });
+  });
+}
+
+/**
+ * 等主窗口真正可用：端口通了只代表 WebView2 起来了，前端脚本可能还没跑。
+ * 就绪判据是 document 加载完且 app.js 已经挂上调试面 —— 否则探针会拿 undefined 开打。
+ */
+export async function waitForMainPage(port, { timeout = 25000 } = {}) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    try {
+      const list = await (await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(1500) })).json();
+      const page = list.find((t) => t.type === 'page' && !/compare\.html/.test(t.url));
+      if (page) {
+        const ready = await evalIn(page.webSocketDebuggerUrl, "document.readyState === 'complete' && !!window.__snp");
+        if (ready) { await sleep(250); return page; }
+      }
+    } catch {}
+    await sleep(200);
+  }
+  throw new Error('主窗口没有在预期时间内就绪（前端脚本没跑起来？）');
+}
+
+/**
+ * 端口上已经有应用就直接复用；否则起一个，并登记退出时收掉。
+ * 探针末尾的 process.exit() 也会触发 exit 钩子，所以调用方不需要善后。
+ */
+export async function ensureApp(port = Number(process.env.CDP_PORT || 9333), { timeout = 30000 } = {}) {
+  if (await cdpReady(port)) {
+    await waitForMainPage(port, { timeout });
+    return { reused: true };
+  }
+
+  const exe = findExe();
+  if (!exe) throw new Error('找不到应用产物：先 cargo build（或 tauri build）');
+  if (process.env.NO_LAUNCH === '1') throw new Error(`端口 ${port} 上没有应用，且已禁止自动启动`);
+
+  const proc = spawn(path.resolve(exe), [], {
+    stdio: 'ignore',
+    env: { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `${CONF_ARGS} --remote-debugging-port=${port}` },
+  });
+  proc.on('error', () => {});
+  process.on('exit', () => killTree(proc));
+
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    if (await cdpReady(port)) {
+      await waitForMainPage(port, { timeout: Math.max(5000, deadline - Date.now()) });
+      return { reused: false, pid: proc.pid };
+    }
+    await sleep(200);
+  }
+  killTree(proc);
+  throw new Error(`等了 ${timeout}ms，端口 ${port} 仍未就绪`);
+}

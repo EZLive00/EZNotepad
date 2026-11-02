@@ -1,16 +1,19 @@
 // ============================================================
 // test/probe-bmenu.mjs —— 行首块手柄的真机验证（CDP）
 //
-// 前置：应用已用 --remote-debugging-port=9333 启动。
+// 端口没开就自动拉起应用，跑完随进程退出收掉；已有实例直接复用。
 //   node test/probe-bmenu.mjs
 //
 // 为什么必须真机：手柄靠 mousemove 定位、菜单靠 document 级 mousedown
 // 判定「点了外面」，这些在 jsdom 里都是假的。这里用 Input.dispatchMouseEvent
 // **按真实轨迹移动鼠标**（块 → + 按钮 → 缝隙 → 菜单项），复现用户的手。
 // ============================================================
+import { ensureApp } from './lib/appctl.mjs';
 
 const PORT = process.env.CDP_PORT || 9333;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+await ensureApp(PORT);
 
 async function connect() {
   const list = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json();

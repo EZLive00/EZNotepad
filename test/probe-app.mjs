@@ -1,13 +1,16 @@
 // ============================================================
 // test/probe-app.mjs —— 对着真实窗口跑一遍（CDP）
 //
-// 前置：应用已用 --remote-debugging-port=9333 启动。
+// 端口没开就自动拉起应用，跑完随进程退出收掉；已有实例直接复用。
 // 这里只放「必须跑在真壳子里」的检查：Tauri 命令、侧栏、设置面板、
 // 所见即所得查找、大纲跟随滚动。纯逻辑的部分在 run-units / run.mjs 里。
 //
 //   node test/probe-app.mjs
 // ============================================================
+import { ensureApp } from './lib/appctl.mjs';
+
 const PORT = process.env.CDP_PORT || 9333;
+await ensureApp(PORT);
 
 const list = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json();
 /* 比较窗口是独立页面，也会出现在目标列表里（而且常常排在最前面）。
@@ -58,7 +61,10 @@ try {
 
   // ---- A. 侧栏两个页面 ----
   ok('侧栏有两个页面切换', (await ev(`document.querySelectorAll('.side-tab').length`)) === 2);
-  ok('默认停在大纲页', (await ev(`document.querySelector('.side-tab.active')?.textContent`)) === '大纲');
+  /* 侧栏页签是记住的（settings.side），「重载后停在哪」取决于上次的选择。
+     这里断言的是那个契约；写死「大纲」只在新配置下成立，跑第二遍就红 */
+  const wantSide = await ev(`JSON.parse(localStorage.getItem('snp.settings') || '{}').side === 'files' ? '文件' : '大纲'`);
+  ok('重载后停在上次的侧栏页', (await ev(`document.querySelector('.side-tab.active')?.textContent`)) === wantSide, wantSide);
 
   await ev(`document.querySelector('[data-side="files"]').click()`);
   ok('切到文件页后大纲隐藏', await ev(`document.getElementById('sideOutline').classList.contains('hidden')`));
