@@ -38,7 +38,6 @@ const el = {
   wysiwyg: $('wysiwyg'),
   preview: $('preview'),
   previewPane: $('previewPane'),
-  previewHead: $('previewHeadText'),
   outlineList: $('outlineList'),
   outlinePane: $('outlinePane'),
   mid: $('midSplitter'),
@@ -143,6 +142,14 @@ const wys = new WysiwygEditor(el.wysiwyg, {
     else scheduleStats();
   },
   onChange: (md) => {
+    /* DOM 归谁：切标签的瞬间可能有一次迟到的 flush（失焦 → 序列化），
+       那一刻 activeTab() 已经指向新标签了，直接写就是「开 A 得到 B 的内容」。
+       ownerTabId 是渲染时钉下的归属，只在真的换了标签时才分流。 */
+    const own = wys.ownerTabId != null ? tabs.find((x) => x.id === wys.ownerTabId) : null;
+    if (own && own !== activeTab()) {
+      if (own.content !== md) own.content = md;
+      return;
+    }
     const t = activeTab();
     if (!t) return;
     if (t.content !== md) {
@@ -159,6 +166,13 @@ const wys = new WysiwygEditor(el.wysiwyg, {
   onPasteImage: (file) => insertImageFromFile(file),
   openLink: (href) => openExternal(href),
 });
+
+/** 渲染前先把这块 DOM 钉给当前标签：迟到的 flush 只能写回它自己的标签 */
+function renderWys(content, caret) {
+  const t = activeTab();
+  wys.ownerTabId = t ? t.id : null;
+  wys.render(content, caret);
+}
 
 /* ---------------- 标签 ---------------- */
 /** 标题栏中间那行文字 + 系统窗口标题（任务栏 / Alt+Tab 用） */
@@ -350,8 +364,20 @@ function setMode(mode, opt = {}) {
     toast(tt('{kind} 不支持「{mode}」，已切到「{fallback}」', { kind: kindLabel(kind), mode: modeMeta()[mode].label, fallback: modeMeta()[fallback].label }));
     mode = fallback;
   }
-  const changedTab = !opt.fromActivate;
-  if (t.mode !== mode) changedTab || (t.content = readEditor(t));
+  /* 从所见即所得切走：先把挂起的输入落进 t.content（失焦触发的 flush 是异步的，
+     下面的 plain.load 会抢在前面拿到旧内容）。只在真有未落账的编辑时才读 ——
+     没编辑过就读，会把序列化的规范化写法（* → - 之类）写回去，无编辑也亮脏标记。 */
+  if (t.mode === 'wysiwyg' && mode !== 'wysiwyg') {
+    if (wys.pending()) t.content = wys.toMarkdown();
+    /* 落账完就把挂起标记清掉：DOM 即将换成别的视图，之后那次迟到的 blur
+       不能再 flush 一遍 —— 那时 onChange 眼里的「当前标签」已经是别人了。 */
+    wys.markCommitted();
+  }
+  /* 旧代码这里有一句「changedTab || (t.content = readEditor(t))」：手动切换时
+     短路跳过，activate 时则在 t.mode 不合法、被回退成 allowed[0] 的那次真的
+     去读 —— 而那一刻编辑器 DOM 还是上一个标签的，读回来就是把别人的文档写进
+     这个标签。wys 切走时的同步已由上面的守卫完成（edit 模式的输入本来就走
+     onEditorInput 实时同步），这句只是坏兜底，整句删掉。 */
   t.mode = mode;
   /* 只记忆用户手动切换的模式。激活标签时的自动落位不算「选择」——
      否则默认模式在第一次打开文件时就被写进 lastMode 变成粘滞值，
@@ -376,10 +402,9 @@ function setMode(mode, opt = {}) {
   el.mid.classList.toggle('hidden', !(showEditor && showPreview));
   el.editorPane.style.flex = '1';
   el.previewPane.style.flex = split ? '1' : '1';
-  el.previewHead.textContent = split ? tt('预览') : tt('预览（只读）');
 
   const docDir = t.path ? be.dirName(t.path) : '';
-  if (showWys) { wys.setDocDir(docDir); wys.render(t.content); }
+  if (showWys) { wys.setDocDir(docDir); renderWys(t.content); }
   else if (showEditor) { plain.load(t.content, currentLang); }
   if (showPreview) renderPreview(kind, t.content, currentLang, el.preview, docDir);
 
@@ -899,9 +924,13 @@ function applyLang() {
   if (menuApi) menuApi.update(menuTree());
   const t = activeTab();
   if (t && t.mode) el.modeLabel.textContent = modeMeta()[t.mode].short || modeMeta()[t.mode].label;
-  /* 预览标题是随布局变的（预览 / 预览（只读）），没有静态标记可循，这里补一句 */
-  if (el.previewHead) el.previewHead.textContent = settings.layout === 'split' ? tt('预览') : tt('预览（只读）');
+  /* 模式下拉的说明行是 tt() 渲染时才算的动态区，换语言后要就地重刷 */
+  if (t && t.mode) {
+    const kind = detectKind(t.name);
+    updateModeMenu(kind, modesFor(kind));
+  }
   updateOutline();
+  refreshStats();   // 状态栏「N 字 · N 字符」同属动态区
   updateStatus();
   tree.render();
   schedulePreview();
@@ -999,10 +1028,15 @@ function showSettings() {
     settings.lang = e.target.value;
     saveSettings();
     applyLang();      // applyDom 顺带把这块还开着的面板翻掉
-    /* 对话框标题是 dialog() 一次性写进去的，applyDom 管不到（#dlgTitle 没有、也不能有
-       data-i18n —— 每个对话框的标题都不一样），这里单独补一次 */
+    /* dialog() 的标题和按钮文案是一次性写死的，applyDom 管不到（#dlgTitle 没有、
+       也不能有 data-i18n —— 每个对话框的标题都不一样），这里就地补一次；
+       快捷键列表的命令名同样是渲染时才取词，重画一遍 */
     const dt = document.getElementById('dlgTitle');
     if (dt) dt.textContent = tt('设置');
+    const ok = document.querySelector('#dlgFoot button.primary');
+    if (ok) ok.textContent = tt('完成');
+    paintKeyList(box.querySelector('#setKeysList'));
+    paintFolder();
   };
 
   box.querySelectorAll('.set-seg button').forEach((b) => {
@@ -1210,8 +1244,8 @@ async function restoreDrafts() {
   for (const d of list) {
     if (!d || !d.content) continue;
     if (d.path) {
-      /* 磁盘内容和草稿一样 → 其实已经存过了，不算未保存 */
-      try { const r = await be.readText(d.path); if (r.content === d.content) continue; } catch {}
+      /* 磁盘内容和草稿一样 → 其实已经存过了，不算未保存（两边都按 LF 比） */
+      try { const r = await be.readText(d.path); if (toLF(r.content) === toLF(d.content)) continue; } catch {}
       valid.push(d);
     } else if (d.content.trim()) {
       valid.push(d);           // 未命名文档：有字就值得留
@@ -1237,7 +1271,7 @@ async function restoreDrafts() {
        关窗时也不会提醒，等于把草稿又还回去了 */
     t.savedContent = '';
     if (d.path) {
-      try { const r = await be.readText(d.path); t.savedContent = r.content; } catch {}
+      try { const r = await be.readText(d.path); t.savedContent = toLF(r.content); } catch {}
     }
   }
   renderTabs();
@@ -1361,9 +1395,9 @@ async function reloadTab(t, mtime) {
   t.encoding = r.encoding;
   t.eol = r.eol;
   t.bom = r.bom;
-  t.content = r.content;
-  t.savedContent = r.content;
-  if (activeTab() && activeTab().id === t.id) setContent(r.content);
+  t.content = toLF(r.content);
+  t.savedContent = t.content;
+  if (activeTab() && activeTab().id === t.id) setContent(t.content);
   else updateStatus();
 }
 
@@ -1381,7 +1415,7 @@ export async function openPath(path) {
     const r = await be.readText(path);
     // 先拿到修改时间再建标签：否则「刚打开就被自己当成外部改动」
     const mtime = await be.fileMtime(path).catch(() => null);
-    const t = newTab(r.name, r.content, r.path, { encoding: r.encoding, bom: r.bom, eol: r.eol, mtime });
+    const t = newTab(r.name, toLF(r.content), r.path, { encoding: r.encoding, bom: r.bom, eol: r.eol, mtime });
     addRecent(path);
     return t;
   } catch (e) {
@@ -1549,6 +1583,12 @@ function recentMenuItems() {
 }
 
 /* ---------------- 内容读写 ---------------- */
+/* 内存里的内容统一 LF 表示。磁盘上的 CRLF 只留在 t.eol 这个标记上，保存时按它写回
+   （saveTab 已有 normalize）。不这样做的话，模式切换时 readEditor 序列化出的 LF
+   会和 savedContent 里的 CRLF 对不上 —— 刚打开、一个字没动的文件立刻亮脏标记，
+   只能靠保存一次才消掉。 */
+const toLF = (s) => s.replace(/\r\n?/g, '\n');
+
 /** 从当前视图读回内容（保证不丢编辑） */
 function readEditor(t) {
   if (!t) return '';
@@ -1561,7 +1601,7 @@ function setContent(text, opts = {}) {
   const t = activeTab();
   if (!t) return;
   t.content = text;
-  if (t.mode === 'wysiwyg') wys.render(text, opts.caret);
+  if (t.mode === 'wysiwyg') renderWys(text, opts.caret);
   else plain.value = text;
   schedulePreview();
   scheduleStats();     // 大文档下全文字数统计不便宜，走防抖不挡打开
@@ -1897,7 +1937,7 @@ function transformText(fn, label) {
   if (t.mode === 'wysiwyg') {
     const md = wys.toMarkdown();
     setContent(fn(md));
-    wys.render(fn(md));
+    renderWys(fn(md));
     toast(tt('{op}已应用', { op: label }));
     updateStatus();
     return;
@@ -3660,7 +3700,10 @@ function persistCurrentView() {
        标签随即变脏 —— 自动保存一触发就用残篇覆盖磁盘文件。跳过：
        t.content 保持完整源文本，下次激活时重渲染即可。 */
     if (wys.loading) return;
-    t.content = wys.toMarkdown();
+    /* 同上：没编辑过就别把序列化结果写回 t.content —— 规范化（* → -）会
+       凭空造出一个脏标记。真编辑过的标签 pending() 必然为真。
+       落账后立刻清标记：切到下一个标签时那次迟到的 blur 不该再冲一遍。 */
+    if (wys.pending()) { t.content = wys.toMarkdown(); wys.markCommitted(); }
     t.scrollTop = el.wysiwyg.scrollTop;
     t.caret = null;              // 所见即所得的 DOM 光标映射回源码偏移不可靠，只记住滚动位置
   } else if (t.mode === 'edit') {

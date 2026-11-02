@@ -1171,6 +1171,9 @@ export class WysiwygEditor {
     this.loading = false;     // 大文档分块插入期间为 true，输入一律不响应
     this.onProgress = opts.onProgress || null;
     this._flushTimer = 0;     // 输入路径的延迟序列化（见 queueFlush）
+    /* 这块 DOM 归哪个标签。切标签后迟到的 flush 必须写回它自己的标签 ——
+       只看 activeTab() 会把上一个文件的内容灌进刚打开的那个。 */
+    this.ownerTabId = null;
 
     /* ---- 视口渲染（仅超大文档启用，见 _render 的分流） ----
        records 是块的唯一真相（每项存 md 原文切片），root.children 只是
@@ -1207,7 +1210,10 @@ export class WysiwygEditor {
     root.addEventListener('compositionstart', () => { this.composing = true; });
     root.addEventListener('compositionend', () => { this.composing = false; this.onInput(); });
     root.addEventListener('paste', (e) => this.handlePaste(e));
-    root.addEventListener('blur', () => this.flush());
+    /* 失焦只在真有未落账的编辑时才 flush。没编辑过也 flush 的话，序列化的
+       规范化写法（* → - 之类）会经 onChange 写进 tab.content —— 用户一个字
+       没动，标签却亮脏标记，只能靠保存一次才消掉。 */
+    root.addEventListener('blur', () => { if (this.pending()) this.flush(); });
     root.addEventListener('click', (e) => this.handleClick(e));
     root.addEventListener('pointerdown', (e) => this.handlePointerDown(e));
     root.addEventListener('pointermove', (e) => this.hoverImgCorner(e));
@@ -1855,6 +1861,17 @@ export class WysiwygEditor {
       if (out.length >= 2000) break;
     }
     return out;
+  }
+
+  /** 这块 DOM 还有没有没落账的编辑（切走前要不要读回来的唯一判据） */
+  pending() { return !!(this._edited || this._flushTimer); }
+
+  /** 编辑已落账到属于它的标签：清掉挂起标记与待触发的 flush。
+      不清的话，标签刚切走时那次迟到的 blur 会把旧 DOM 序列化一遍，
+      经 onChange 写进「此刻的 activeTab」——也就是刚打开的下一个文件。 */
+  markCommitted() {
+    if (this._flushTimer) { clearTimeout(this._flushTimer); this._flushTimer = 0; }
+    this._edited = false;
   }
 
   toMarkdown() {
