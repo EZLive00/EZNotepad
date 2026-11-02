@@ -90,7 +90,10 @@ de un mismo tramo se reemplaza en el sitio; solo al cruzar negrita o un enlace s
 
 Las marcas por línea señalan qué línea cambió y las de carácter qué caracteres. `F7` / `F8` recorren las diferencias
 y **Exportar informe** genera un diff HTML independiente.
-La regla de la derecha sitúa cada cambio en el archivo completo.
+La regla de la derecha sitúa cada cambio en el archivo completo: pasa el cursor para ver el número de línea
+y haz clic o arrastra para saltar. **Diferencias** lista cada cambio en una tabla ordenable y filtrable
+(posición, tipo, líneas).
+Cada lado tiene un límite de 8 MB / 50 000 líneas; al superarlo, la ventana explica el motivo.
 
 **Comparar carpetas** lista de forma recursiva *solo izquierda / solo derecha / modificado / idéntico*; al pulsar una fila
 se abre esa comparación. **Fusión de tres vías** toma base + A + B, fusiona y lista los conflictos: el resultado se abre en una

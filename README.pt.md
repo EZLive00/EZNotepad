@@ -90,7 +90,10 @@ trecho é substituído no lugar; só ao cruzar negrito ou link o app oferece o m
 
 As marcas por linha mostram qual linha mudou e as por caractere, quais caracteres. `F7` / `F8` percorrem as diferenças
 e **Exportar relatório** gera um diff HTML independente.
-A régua da direita situa cada mudança no arquivo inteiro.
+A régua da direita situa cada mudança no arquivo inteiro: passe o cursor para ver o número da linha e
+clique ou arraste para saltar. **Diferenças** lista cada mudança numa tabela ordenável e filtrável
+(posição, tipo, linhas).
+Cada lado tem limite de 8 MB / 50 000 linhas; acima disso, a janela explica o motivo.
 
 **Comparar pastas** lista recursivamente *só à esquerda / só à direita / modificado / idêntico*; clique numa linha para abrir
 a comparação daquele arquivo. **Mesclagem de três vias** pega base + A + B, mescla e lista os conflitos — o resultado abre em

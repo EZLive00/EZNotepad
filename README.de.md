@@ -89,7 +89,9 @@ Textlaufs wird direkt ersetzt; nur bei Fett oder Links wird der Wechsel in den B
 - **Beide Seiten bearbeiten** — **Bearbeiten** schaltet beide Spalten frei; **Speichern** schreibt nur dorthin zurück, wo wirklich eine Datei liegt
 
 Marken pro Zeile zeigen, welche Zeile sich änderte, Marken pro Zeichen, welche Zeichen. `F7` / `F8` springen zwischen den
-Unterschieden, **Bericht exportieren** schreibt einen eigenständigen HTML-Vergleich. Das Lineal rechts verortet jede Änderung in der ganzen Datei.
+Unterschieden, **Bericht exportieren** schreibt einen eigenständigen HTML-Vergleich. Das Lineal rechts verortet jede Änderung in der ganzen Datei: Zeilennummer beim Überfahren, Sprung per Klick
+oder Ziehen. **Unterschiede** listet jede Änderung in einer sortier- und filterbaren Liste (Position, Typ, Zeilen).
+Pro Seite gilt ein Limit von 8 MB / 50.000 Zeilen; darüber nennt das Fenster den Grund, statt still zu scheitern.
 
 **Ordner vergleichen** listet rekursiv *nur links / nur rechts / geändert / gleich*; ein Klick auf die Zeile öffnet diesen
 Dateivergleich. **Drei-Wege-Zusammenführung** nimmt Basis + A + B, führt zusammen und listet Konflikte — das Ergebnis öffnet

@@ -90,7 +90,10 @@ morceau de texte est remplacée sur place ; seule une correspondance traversant 
 
 Les marques par ligne montrent ce qui a changé, celles par caractère montrent quels caractères. `F7` / `F8` parcourent
 les différences et **Exporter le rapport** produit un diff HTML autonome.
-La règle de droite situe chaque différence dans le fichier entier.
+La règle de droite situe chaque différence dans le fichier entier : survolez pour le numéro de ligne,
+cliquez ou faites glisser pour vous déplacer. **Différences** liste chaque changement dans un tableau triable
+et filtrable (position, type, nombre de lignes).
+Chaque côté est limité à 8 Mo / 50 000 lignes ; au-delà, la fenêtre explique pourquoi au lieu d'échouer en silence.
 
 **Comparer des dossiers** liste récursivement *gauche seule / droite seule / modifié / identique* ; cliquez une ligne pour
 ouvrir la comparaison de ce fichier. **Fusion à trois** prend base + A + B, fusionne et liste les conflits — le résultat
