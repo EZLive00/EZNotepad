@@ -3927,6 +3927,7 @@ window.__snp = {
   isBusy: () => wys.loading,
   editor: wys,          // 编辑器实例（与 __diff / __merge 同类调试面：真机 CDP 探针要用）
   capture: persistCurrentView,
+  openCompare: (l, r) => be.openCompareWindow(l, r),
 };
 window.__diff = diff;
 window.__merge = merge;

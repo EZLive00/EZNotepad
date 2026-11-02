@@ -17,6 +17,9 @@ body {
   --cmp-mark-2: rgba(217, 43, 43, .32);
   --cmp-ln-w: 54px;
   --cmp-cur-bg: rgba(51, 102, 240, .045);
+  /* 预览条宽度。16px 时差异段只有 5px 宽，一眼看不出有没有差异；
+     22px 能把轨道做到 12px，段还能留出圆角 */
+  --cmp-ruler-w: 22px;
 }
 
 body[data-theme="dark"] {
@@ -70,18 +73,20 @@ body[data-theme="dark"] {
   stroke-linejoin: round;
 }
 
+/* 两栏等宽，交换按钮永远落在正中：
+   槽位宽度只跟窗口走，文件名长短只影响省略号，不会再让按钮左右漂 */
 .cmp-slots {
   flex: 1;
   min-width: 0;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 26px minmax(0, 1fr);
   align-items: center;
-  justify-content: center;
   gap: 4px;
 }
 
 .cmp-slot {
   height: 22px;
-  max-width: 320px;
+  width: 100%;
   min-width: 0;
   display: flex;
   align-items: center;
@@ -97,7 +102,7 @@ body[data-theme="dark"] {
 }
 
 .cmp-slot:hover { background: var(--bg-hover); color: var(--fg); }
-.cmp-slot-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cmp-slot-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 
 /* 有未保存改动时点亮的小圆点 */
 .cmp-dot {
@@ -233,7 +238,7 @@ body[data-theme="dark"] {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 1fr 1px 1fr 16px;
+  grid-template-columns: 1fr 1px 1fr var(--cmp-ruler-w);
   background: var(--bg-panel);
   position: relative;
 }
@@ -362,20 +367,230 @@ body[data-theme="dark"] {
 .cmp-pane.editing .cmp-row:hover { background: var(--bg-soft); }
 .cmp-pane.editing .cmp-row.diff:hover { background: var(--cmp-wash-2); }
 
-/* ---------- 预览条 ---------- */
+/* ---------- 预览条 ----------
+   高度由 JS 设成「内容高度」（不超过可视高度），并向下让开每栏 26px 的
+   文件名条：文档只有五行时，预览条就只有五行那么高，不会比正文还长。
+   轨道本身由 drawRuler 画，这里只管宽度与交互。 */
 .cmp-ruler {
-  background: var(--bg);
+  background: transparent;
   position: relative;
   cursor: pointer;
   touch-action: none;
+  align-self: start;
+  margin-top: 26px;
+  height: 0;
 }
+
+.cmp-ruler:hover { background: rgba(127, 127, 127, .07); }
 
 .cmp-ruler canvas { display: block; width: 100%; height: 100%; }
 
+/* 悬停浮标：贴在预览条左侧，告诉你在这一行会跳到哪、那里是什么改动 */
+.cmp-rtip {
+  position: absolute;
+  right: calc(100% + 8px);
+  transform: translateY(-50%);
+  padding: 4px 8px;
+  background: var(--bg-float);
+  color: var(--fg);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow);
+  font-size: 11.5px;
+  line-height: 1.45;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 6;
+}
+
+.cmp-rtip[hidden] { display: none; }
+
+/* ---------- 上限提示条 ----------
+   文件太大 / 行数太多时停在正文上方说明原因，不静默失败。 */
+.cmp-warn {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 12px 8px;
+  padding: 7px 8px 7px 10px;
+  background: var(--cmp-wash-2);
+  color: var(--fg);
+  font-size: 12px;
+  border-radius: var(--r-md);
+}
+
+.cmp-warn[hidden] { display: none; }
+.cmp-warn .cmp-ico { width: 14px; height: 14px; color: var(--cmp-red); flex: none; }
+.cmp-warn-t { flex: 1; min-width: 0; line-height: 1.5; }
+
+.cmp-warn-x,
+.cmp-list-x {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  border: 0;
+  color: var(--fg-soft);
+  cursor: pointer;
+  border-radius: var(--r-sm);
+}
+
+.cmp-warn-x:hover,
+.cmp-list-x:hover { background: var(--bg-hover); color: var(--fg); }
+
+.cmp-warn-x svg,
+.cmp-list-x svg {
+  width: 10px;
+  height: 10px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.2;
+  stroke-linecap: round;
+}
+
+/* ---------- 差异清单 ---------- */
+.cmp-list {
+  position: absolute;
+  top: 76px;
+  /* 让开预览条：面板不压住那条定位控件 */
+  right: calc(var(--cmp-ruler-w) + 12px);
+  width: min(440px, calc(100vw - 24px));
+  max-height: min(62vh, 540px);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-float);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow);
+  z-index: 7;
+  overflow: hidden;
+}
+
+.cmp-list[hidden] { display: none; }
+
+.cmp-list-hd {
+  height: 34px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px 0 12px;
+}
+
+.cmp-list-t { font-size: 12.5px; font-weight: 600; color: var(--fg); }
+.cmp-list-n { font-size: 11.5px; color: var(--fg-faint); font-variant-numeric: tabular-nums; margin-right: auto; }
+
+.cmp-list-ft {
+  flex: none;
+  display: flex;
+  gap: 4px;
+  padding: 0 10px 8px;
+}
+
+.cmp-list-ft button {
+  height: 22px;
+  padding: 0 9px;
+  background: var(--bg-soft);
+  border: 0;
+  border-radius: var(--r-sm);
+  color: var(--fg-soft);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.cmp-list-ft button:hover { background: var(--bg-hover); color: var(--fg); }
+.cmp-list-ft button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+
+/* 表头：三列都是排序按钮，点一次切换升降序 */
+.cmp-list-cols {
+  flex: none;
+  display: grid;
+  grid-template-columns: 96px 46px 42px minmax(0, 1fr);
+  gap: 8px;
+  padding: 0 10px;
+  height: 24px;
+  align-items: center;
+  background: var(--bg-soft);
+  font-size: 11px;
+  color: var(--fg-faint);
+}
+
+.cmp-list-sort {
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cmp-list-sort:hover { color: var(--fg); }
+.cmp-list-sort.on { color: var(--accent); font-weight: 600; }
+
+.cmp-list-bd {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 0 6px;
+  overscroll-behavior: contain;
+}
+
+.cmp-li {
+  display: grid;
+  grid-template-columns: 96px 46px 42px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  height: 26px;
+  padding: 0 10px;
+  background: transparent;
+  border: 0;
+  color: var(--fg-soft);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cmp-li:hover { background: var(--bg-hover); color: var(--fg); }
+.cmp-li.cur { background: var(--accent-soft); color: var(--fg); box-shadow: inset 2px 0 0 var(--accent); }
+
+.cmp-li-pos { font-variant-numeric: tabular-nums; color: var(--fg-faint); font-size: 11px; }
+.cmp-li.cur .cmp-li-pos { color: var(--accent); }
+.cmp-li-kind { color: var(--cmp-red); font-size: 11px; }
+.cmp-li-n { font-variant-numeric: tabular-nums; color: var(--fg-faint); font-size: 11px; text-align: right; }
+.cmp-li-tx { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.cmp-list-empty {
+  padding: 18px 12px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--fg-faint);
+}
+
+.cmp-list-more {
+  padding: 8px 12px 4px;
+  font-size: 11px;
+  color: var(--fg-faint);
+}
+
+.cmp-list-bd::-webkit-scrollbar { width: 10px; }
+.cmp-list-bd::-webkit-scrollbar-thumb {
+  background: var(--scroll);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 6px;
+}
+.cmp-list-bd::-webkit-scrollbar-track { background: transparent; }
+
 /* ---------- 空状态 ---------- */
 .cmp-empty {
+  /* 上限提示条出现时整体下移，别把提示盖住 */
   position: absolute;
-  inset: 72px 0 0 0;
+  inset: calc(72px + var(--cmp-warn-h, 0px)) 0 0 0;
   display: grid;
   place-items: center;
   background: var(--bg-panel);

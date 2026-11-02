@@ -62,12 +62,22 @@
 
     <button class="cmp-btn" id="prev" title="上一处差异 (Shift+F7)" data-i18n-title="上一处差异 (Shift+F7)"><svg class="cmp-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="m18 15-6-6-6 6" /></svg><span data-i18n="上一处">上一处</span></button>
     <button class="cmp-btn" id="next" title="下一处差异 (F8)" data-i18n-title="下一处差异 (F8)"><svg class="cmp-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg><span data-i18n="下一处">下一处</span></button>
+    <button class="cmp-btn" id="listBtn" title="差异清单：按位置 / 类型 / 行数排序，可筛选" data-i18n-title="差异清单：按位置 / 类型 / 行数排序，可筛选" aria-expanded="false" aria-controls="listPanel"><svg class="cmp-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01" /></svg><span data-i18n="差异清单">差异清单</span></button>
 
     <div class="cmp-sep"></div>
 
     <button class="cmp-btn" id="toggleEdit" title="允许直接改写左右两侧的文本（E）" data-i18n-title="允许直接改写左右两侧的文本（E）" data-i18n="编辑">编辑</button>
     <button class="cmp-btn" id="save" title="把改动写回磁盘 (Ctrl+S)" data-i18n-title="把改动写回磁盘 (Ctrl+S)" data-i18n="保存" disabled>保存</button>
     <button class="cmp-btn" id="report" title="导出为独立的 HTML 对比报告" data-i18n-title="导出为独立的 HTML 对比报告" data-i18n="导出报告" disabled>导出报告</button>
+  </div>
+
+  <!-- 上限提示：文件超限时停在这里说明原因，不加载 -->
+  <div class="cmp-warn" id="warn" hidden>
+    <svg class="cmp-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 9v5M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" /></svg>
+    <span class="cmp-warn-t" id="warnText"></span>
+    <button class="cmp-warn-x" id="warnX" title="关闭" data-i18n-title="关闭">
+      <svg viewBox="0 0 12 12" aria-hidden="true"><path d="m3 3 6 6M9 3 3 9" /></svg>
+    </button>
   </div>
 
   <!-- 正文：左栏 / 右栏 / 预览条 -->
@@ -96,7 +106,32 @@
 
     <aside class="cmp-ruler" id="ruler" title="点击或拖动可快速定位" data-i18n-title="点击或拖动可快速定位">
       <canvas id="rulerC"></canvas>
+      <div class="cmp-rtip" id="rulerTip" hidden></div>
     </aside>
+  </div>
+
+  <!-- 差异清单：从工具栏展开，排序 / 筛选 / 跳转 -->
+  <div class="cmp-list" id="listPanel" hidden role="dialog" data-i18n-aria="差异清单">
+    <div class="cmp-list-hd">
+      <span class="cmp-list-t" data-i18n="差异清单">差异清单</span>
+      <span class="cmp-list-n" id="listN"></span>
+      <button class="cmp-list-x" id="listX" title="关闭 (Esc)" data-i18n-title="关闭 (Esc)">
+        <svg viewBox="0 0 12 12" aria-hidden="true"><path d="m3 3 6 6M9 3 3 9" /></svg>
+      </button>
+    </div>
+    <div class="cmp-list-ft" id="listFilter">
+      <button type="button" data-f="all" class="on" data-i18n="全部">全部</button>
+      <button type="button" data-f="chg" data-i18n="修改">修改</button>
+      <button type="button" data-f="del" data-i18n="仅左">仅左</button>
+      <button type="button" data-f="add" data-i18n="仅右">仅右</button>
+    </div>
+    <div class="cmp-list-cols">
+      <button type="button" class="cmp-list-sort" data-sort="pos" data-i18n="位置">位置</button>
+      <button type="button" class="cmp-list-sort" data-sort="kind" data-i18n="类型">类型</button>
+      <button type="button" class="cmp-list-sort" data-sort="size" data-i18n="行数">行数</button>
+      <span data-i18n="内容">内容</span>
+    </div>
+    <div class="cmp-list-bd" id="listBody"></div>
   </div>
 
   <div class="cmp-empty" id="empty">

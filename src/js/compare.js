@@ -12,6 +12,7 @@
 // ============================================================
 import * as be from './backend.js';
 import { buildSideBySide, diffStats, inlineDiff } from './diff.js';
+import { blockItems, arrange, rangeText } from './difflist.js';
 import { toast } from './ui.js';
 import { invoke } from '../vendor/api/core.js';
 import { listen } from '../vendor/api/event.js';
@@ -31,6 +32,17 @@ let ROW_H = (() => {
 
 const sideKey = (s) => (s === 'l' ? 'L' : 'R');
 
+/* 对比窗口的上限。
+   引擎本身很快（实测 5 万行 160ms、两份无关的 5 万行 85ms），真正吃资源的是
+   读取、每行一个对象的行模型，以及导出报告（要把每一行都拼成 HTML）。
+   8MB / 5 万行是「两份几万行的日志或导出文件」这个真实场景的上界。 */
+const MAX_BYTES = 8 * 1024 * 1024;
+const MAX_LINES = 50000;
+
+const fmtSize = (n) => (n >= 1024 * 1024
+  ? (n / (1024 * 1024)).toFixed(1) + ' MB'
+  : Math.max(1, Math.round(n / 1024)) + ' KB');
+
 /* ---------------- 状态 ---------------- */
 const S = {
   /* loaded = 这一侧有内容可比（来自文件，或用户直接粘进来的文本）。
@@ -42,6 +54,7 @@ const S = {
   opt: { ignoreWS: true, ignoreCase: false },
   rows: [],
   blocks: [],
+  items: [],           // 差异清单的数据（recompute 时折好）
   lineRow: { l: new Map(), r: new Map() },
   inline: new Map(),   // 行内字符级 diff 缓存，滚动时不重算
   cur: 0,
@@ -50,6 +63,8 @@ const S = {
   units: { l: 0, r: 0 },
   sig: { l: '', r: '' },
   pending: null,       // 还没合并进模型的那一行（输入防抖）
+  list: { open: false, sort: 'pos', dir: 1, filter: 'all', sig: '' },
+  warn: '',            // 上限提示文案，空串表示没有
 };
 
 /**
@@ -159,6 +174,10 @@ function recompute() {
   if (!hasL) ul = ur;
   S.units = { l: ul, r: ur };
   if (S.cur >= S.blocks.length) S.cur = 0;
+  /* 差异清单在这里一次性折好：render 会被滚动和导航频繁调用，不能每次都
+     把几万行重扫一遍。rev 变化时清单才重建 DOM。 */
+  S.items = blockItems(S.rows, S.blocks);
+  S.list.rev = (S.list.rev || 0) + 1;
 }
 
 /* ---------------- 渲染 ---------------- */
@@ -242,11 +261,16 @@ function render(force = false) {
     cv.style.width = Math.round(S.units[side] * CHAR_W + 54 + 40) + 'px';
     renderRows(side, force);
   }
+  /* 预览条本身只占内容那么高：短文档时它就是一小截，不会拉满整列 */
+  const viewH = el('l', 'scroll').clientHeight || 0;
+  $('ruler').style.height = Math.max(1, Math.min(viewH || h, h || 1)) + 'px';
+  rulerCache = null;               // 高度/行数都可能刚变过，几何缓存作废
   updateCurBox();
   updateStats();
   updateMeta();
   drawRuler();
   updateEmpty();
+  renderList();
 }
 
 // 当前定位块用一个覆盖层框住，而不是给每行各画一个框：
@@ -268,11 +292,15 @@ function updateStats() {
   if (!hasL && !hasR) {
     $('stat').textContent = tt('选两个文件，或者直接粘贴两段文本');
     $('curInfo').textContent = '';
+    $('listBtn').disabled = true;
+    if (S.list.open) toggleList(false);
     return;
   }
   if (!hasL || !hasR) {
     $('stat').textContent = tt('只打开了一侧：可以当并排阅读器用，选另一侧即开始对比');
     $('curInfo').textContent = '';
+    $('listBtn').disabled = true;
+    if (S.list.open) toggleList(false);
     return;
   }
   const st = diffStats(S.rows);
@@ -284,6 +312,8 @@ function updateStats() {
   $('prev').disabled = !S.blocks.length;
   $('next').disabled = !S.blocks.length;
   $('report').disabled = same;
+  $('listBtn').disabled = same;
+  if (same && S.list.open) toggleList(false);
 }
 
 function updateMeta() {
@@ -323,6 +353,99 @@ function updateEmpty() {
   $('empty').hidden = !empty;
 }
 
+/* ---------------- 差异清单 ----------------
+   一个可排序的差异索引：大文件里 F8 只能一处一处挪，想「先把所有仅右的
+   新增过一遍」就没有入口。清单把每个差异块摊平成一行，按位置 / 类型 /
+   行数排序，也能按类型筛。 */
+const LIST_MAX = 300;      // 超过就只画前 300 条：几万条 DOM 会让展开变卡
+
+const kindText = (k) => (k === 'chg' ? tt('修改') : (k === 'add' ? tt('仅右') : tt('仅左')));
+
+function renderList() {
+  const panel = $('listPanel');
+  if (!S.list.open) { panel.hidden = true; return; }
+  panel.hidden = false;
+
+  const list = arrange(S.items, S.list);
+  $('listN').textContent = tt('共 {n} 处', { n: list.length });
+
+  for (const b of $('listFilter').querySelectorAll('button')) {
+    b.classList.toggle('on', b.dataset.f === S.list.filter);
+  }
+  for (const b of document.querySelectorAll('.cmp-list-sort')) {
+    const on = b.dataset.sort === S.list.sort;
+    b.classList.toggle('on', on);
+    b.textContent = (b.dataset.k || b.textContent) + (on ? (S.list.dir > 0 ? ' ↑' : ' ↓') : '');
+  }
+
+  /* 只在内容真的变了才重建 DOM：点清单里的某一条会触发 render，重建会把
+     清单自己的滚动位置扔回顶部，连续浏览时很难用 */
+  const sig = `${S.list.rev}:${S.list.sort}:${S.list.dir}:${S.list.filter}`;
+  let rebuilt = false;
+  if (sig !== S.list.drawn) {
+    S.list.drawn = sig;
+    S.list.cur = -1;
+    rebuilt = true;
+    if (!list.length) {
+      $('listBody').innerHTML = `<div class="cmp-list-empty">${esc(tt('两侧没有差异'))}</div>`;
+    } else {
+      const out = list.slice(0, LIST_MAX).map((it) => {
+        const pos = it.lFrom && it.rFrom
+          ? `${it.lFrom} ⇄ ${it.rFrom}`
+          : String(it.lFrom || it.rFrom);
+        return `<button type="button" class="cmp-li" data-i="${it.index}">`
+          + `<span class="cmp-li-pos">${pos}</span>`
+          + `<span class="cmp-li-kind">${esc(kindText(it.kind))}</span>`
+          + `<span class="cmp-li-n">${it.lines}</span>`
+          + `<span class="cmp-li-tx">${esc(it.text || '')}</span>`
+          + '</button>';
+      }).join('');
+      const more = list.length > LIST_MAX
+        ? `<div class="cmp-list-more">${esc(tt('仅显示前 {n} 处，用 F8 继续浏览', { n: LIST_MAX }))}</div>`
+        : '';
+      $('listBody').innerHTML = out + more;
+    }
+  }
+
+  if (S.list.cur !== S.cur) {
+    S.list.cur = S.cur;
+    for (const n of $('listBody').querySelectorAll('.cmp-li')) {
+      n.classList.toggle('cur', +n.dataset.i === S.cur);
+    }
+    /* 重建后把当前项带进可视区。用 rect 差值手动改 scrollTop，
+       scrollIntoView 会连正文一起滚 */
+    const bd = $('listBody');
+    const hit = bd.querySelector('.cmp-li.cur');
+    if (rebuilt && hit) {
+      const hb = hit.getBoundingClientRect(), bb = bd.getBoundingClientRect();
+      bd.scrollTop += hb.top - bb.top - bd.clientHeight / 2 + hb.height / 2;
+    }
+  }
+}
+
+function toggleList(open) {
+  S.list.open = open === undefined ? !S.list.open : !!open;
+  $('listBtn').classList.toggle('on', S.list.open);
+  $('listBtn').setAttribute('aria-expanded', String(S.list.open));
+  $('listPanel').hidden = !S.list.open;
+  if (S.list.open) renderList();
+}
+
+/* ---------------- 上限提示 ---------------- */
+function showWarn(text) {
+  const was = !!S.warn;
+  S.warn = text || '';
+  $('warnText').textContent = S.warn;
+  $('warn').hidden = !S.warn;
+  /* 提示条会挤占正文：空状态整体下移，预览条高度也要重算。
+     高度取实测值 —— 文案长短不同会换行，写死一个数会差几像素。 */
+  requestAnimationFrame(() => {
+    const h = $('warn').hidden ? 0 : Math.round($('warn').getBoundingClientRect().height) + 8;
+    document.body.style.setProperty('--cmp-warn-h', h + 'px');
+    if (was !== !!S.warn) render(true);
+  });
+}
+
 /* ---------------- 预览条 ---------------- */
 let RED = '#d92b2b';
 let ACCENT = '#3366f0';
@@ -333,80 +456,150 @@ function cacheColors() {
   ACCENT = (cs.getPropertyValue('--accent') || '#3366f0').trim();
 }
 
-function drawRuler() {
+/** 圆角矩形：canvas 的 roundRect 在旧 WebView2 上不一定有，自己画 */
+function roundRect(g, x, y, w, h, r) {
+  const rad = Math.max(0, Math.min(r, w / 2, h / 2));
+  g.beginPath();
+  g.moveTo(x + rad, y);
+  g.arcTo(x + w, y, x + w, y + h, rad);
+  g.arcTo(x + w, y + h, x, y + h, rad);
+  g.arcTo(x, y + h, x, y, rad);
+  g.arcTo(x, y, x + w, y, rad);
+  g.closePath();
+}
+
+/**
+ * 预览条的几何。
+ *
+ * 轨道从**滚动区顶部**开始，不是从预览条顶部：预览条与整列同高，而每栏
+ * 顶上还有 26px 的文件名条。原先按预览条自身高度映射，最下面那 26px 的
+ * 内容永远画不到，点击也差一截 —— 这就是「定位不准」的来源。
+ *
+ * 轨道高度 = min(可视高度, 内容高度)：文档不足一屏时按 1:1 画，预览条
+ * 不会比正文还长，也不会再出现「视口框比容器还高」。
+ */
+let rulerCache = null;   // 滚动时几何不变，别每帧都量一遍（getBoundingClientRect 会触发 layout）
+
+function rulerGeom(force = false) {
+  if (!force && rulerCache) return rulerCache;
   const box = $('ruler');
-  const cv = $('rulerC');
-  const w = box.clientWidth || 16;
-  const h = box.clientHeight || 1;
+  const sc = el('l', 'scroll');
+  const rb = box.getBoundingClientRect();
+  const sb = sc.getBoundingClientRect();
+  const total = S.rows.length;
+  const contentH = total * ROW_H;
+  const viewH = sc.clientHeight || box.clientHeight || 1;
+  const top = Math.max(0, Math.round(sb.top - rb.top));
+  const h = Math.max(1, Math.round(Math.min(viewH, contentH || 1)));
+  rulerCache = { box, cv: $('rulerC'), rb, top, h, contentH, viewH, total };
+  return rulerCache;
+}
+
+function drawRuler() {
+  const { box, cv, top, h, contentH, viewH, total } = rulerGeom();
+  const w = Math.max(1, Math.round(box.clientWidth));
+  const totalH = Math.max(1, Math.round(box.clientHeight));
   const dpr = window.devicePixelRatio || 1;
-  if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
+  if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(totalH * dpr)) {
     cv.width = Math.round(w * dpr);
-    cv.height = Math.round(h * dpr);
+    cv.height = Math.round(totalH * dpr);
   }
   const g = cv.getContext('2d');
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
-  g.clearRect(0, 0, w, h);
-
-  const total = S.rows.length;
+  g.clearRect(0, 0, w, totalH);
   if (!total) return;
 
-  const per = h / total;
-  const halfW = Math.max(3, (w - 5) / 2);
-  const leftX = 2;
-  const rightX = 2 + halfW + 1;
+  // 轨道：整条竖槽，告诉用户「这块区域代表整个文件」
+  const tw = 10;
+  const tx = Math.round((w - tw) / 2);
+  g.fillStyle = 'rgba(127,127,127,.15)';
+  roundRect(g, tx, top, tw, h, 3);
+  g.fill();
 
-  // 差异块：左边一半标记左栏、右边一半标记右栏，两半都红，一眼能看出
-  // 「这一段两侧都有改动」还是「只有一边有」
-  g.fillStyle = RED;
-  let i = 0;
-  while (i < total) {
-    const row = S.rows[i];
-    if (row.kind === 'same') { i++; continue; }
-    const start = i;
-    while (i < total && S.rows[i].kind !== 'same') i++;
-    const y = start * per;
-    const hh = Math.max(2, (i - start) * per);
-    // 整段里只要有一行在左/右存在，就在那半边画
-    let onL = false, onR = false;
-    for (let k = start; k < i; k++) {
-      if (S.rows[k].l) onL = true;
-      if (S.rows[k].r) onR = true;
+  const per = h / total;
+  const sc = el('l', 'scroll');
+
+  /* 差异段。直接用 recompute 折好的 S.items：每帧扫 5 万行去拼段，
+     光这一步就能吃掉十几毫秒，滚动会明显发黏。
+     密集处（每两行一处）几千个 3px 方块会叠成一整条红 —— 那本来就是实话，
+     但逐块 fill 太碎，先把间距不足 1px 的合并成一段，再统一上色。 */
+  const segs = [];
+  for (const it of S.items) {
+    const y = top + it.start * per;
+    const hh = Math.max(3, (it.end - it.start + 1) * per);
+    const last = segs[segs.length - 1];
+    if (last && y <= last.y + last.h + .75) {
+      last.h = Math.max(last.h, y + hh - last.y);
+      last.cur = last.cur || it.index === S.cur;
+    } else {
+      segs.push({ y, h: hh, cur: it.index === S.cur });
     }
-    if (onL) g.fillRect(leftX, y, halfW, hh);
-    if (onR) g.fillRect(rightX, y, halfW, hh);
+  }
+  for (const s of segs) {
+    g.fillStyle = s.cur ? ACCENT : RED;
+    roundRect(g, tx, s.y, tw, s.h, Math.min(2, s.h / 2));
+    g.fill();
   }
 
-  // 视口指示：细框，别盖住红点
-  const sc = el('l', 'scroll');
-  const totalH = total * ROW_H;
-  const top = (sc.scrollTop / totalH) * h;
-  const vh = Math.max(8, (sc.clientHeight / totalH) * h);
-  g.globalAlpha = .16;
+  /* 视口框：内容装得下一屏时不画 —— 那时整条轨道就是视口，
+     画一个比容器还高的框既不准确也没有信息量（原先短文档就是这样） */
+  if (contentH <= viewH + 1) return;
+  const y = top + (sc.scrollTop / contentH) * h;
+  const vh = clamp((viewH / contentH) * h, 12, h);
   g.fillStyle = ACCENT;
-  g.fillRect(0, top, w, vh);
+  g.globalAlpha = .14;
+  roundRect(g, tx - 1, y, tw + 2, vh, 3);
+  g.fill();
   g.globalAlpha = .5;
   g.strokeStyle = ACCENT;
   g.lineWidth = 1;
-  g.strokeRect(.5, Math.round(top) + .5, w - 1, Math.max(6, vh) - 1);
+  roundRect(g, tx - .5, Math.round(y) + .5, tw + 1, Math.max(11, vh - 1), 3);
+  g.stroke();
   g.globalAlpha = 1;
+}
+
+/** 指针落在轨道上时返回 0..1；落在轨道外返回 null（短文档下半截是空白） */
+function rulerRatio(e) {
+  const { rb, top, h } = rulerGeom();
+  const y = e.clientY - rb.top - top;
+  if (y < 0 || y > h) return null;
+  return clamp(y / h, 0, 1);
 }
 
 function jumpToRatio(ratio) {
   const total = S.rows.length;
-  if (!total) return;
+  if (!total || ratio === null) return;
   const sc = el('l', 'scroll');
   const y = ratio * total * ROW_H;
   sc.scrollTop = clamp(y - sc.clientHeight / 2, 0, Math.max(0, total * ROW_H - sc.clientHeight));
   syncFrom('l', sc.scrollTop, sc.scrollLeft);
-  render(true);
+  renderRows('l');
+  renderRows('r');
+  drawRuler();
+}
+
+/** 悬停浮标：这一行是哪一侧的第几行、属于哪种改动 */
+function rulerHover(e) {
+  const tip = $('rulerTip');
+  const gg = rulerGeom();
+  const total = gg.total;
+  if (!total) { tip.hidden = true; return; }
+  const y = e.clientY - gg.rb.top - gg.top;
+  if (y < 0 || y > gg.h) { tip.hidden = true; return; }
+  const rowIdx = Math.min(total - 1, Math.floor((y / gg.h) * total));
+  const r = S.rows[rowIdx];
+  if (!r) { tip.hidden = true; return; }
+  /* 并排行号对用户没意义，显示的是两侧文件里的真实行号 */
+  const pos = r.l && r.r
+    ? `${r.l.no} ⇄ ${r.r.no}`
+    : (r.l ? tt('仅左') + ' ' + r.l.no : tt('仅右') + ' ' + r.r.no);
+  const kind = r.kind === 'same' ? '' : ' · ' + (r.kind === 'chg' ? tt('修改') : (r.kind === 'add' ? tt('仅右') : tt('仅左')));
+  tip.textContent = pos + kind;
+  tip.hidden = false;
+  tip.style.top = clamp(e.clientY - gg.rb.top, 14, gg.rb.height - 14) + 'px';
 }
 
 let rulerDrag = false;
-
-function rulerRatio(e) {
-  const r = $('ruler').getBoundingClientRect();
-  return clamp((e.clientY - r.top) / Math.max(1, r.height), 0, 1);
-}
 
 /* ---------------- 滚动同步 ---------------- */
 let syncing = false;
@@ -446,25 +639,66 @@ function gotoBlock(i) {
 }
 
 /* ---------------- 打开文件 ---------------- */
-async function loadSide(side, path) {
-  if (!path) return;
+
+/** 让浏览器先画一帧（toast / 按钮态），再做同步的重活 */
+const nextPaint = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+async function loadSide(side, path, opts = {}) {
+  if (!path) return false;
+  const name = be.baseName(path) || path;
+  const st = S.sides[side];
+
+  /* 「打开一对文件」时先清掉这一侧的旧内容：否则新文件因为超限没读进来，
+     界面会拿上一轮的旧文件和新文件的另一侧去比，给出一个看似正常的结论 */
+  if (opts.reset) {
+    st.path = '';
+    st.name = '';
+    st.loaded = false;
+    st.lines = [''];
+    st.dirty = false;
+    st.undo.length = 0;
+    st.redo.length = 0;
+  }
+
+  /* 先问大小再读：几百 MB 的文件读进内存再放弃，代价比一次 metadata 大得多 */
+  let size = 0;
+  try { size = await be.fileSize(path); } catch { size = 0; }
+  if (size > MAX_BYTES) {
+    const msg = tt('{name} 太大：{size}，上限 {limit}。请拆分后再比较。', {
+      name, size: fmtSize(size), limit: fmtSize(MAX_BYTES),
+    });
+    showWarn(msg);
+    toast(msg);
+    return false;
+  }
+
   try {
     const r = await be.readText(path);
-    const st = S.sides[side];
+    const lines = String(r.content).replace(/\r\n?/g, '\n').split('\n');
+    if (lines.length > MAX_LINES) {
+      const msg = tt('{name} 行数太多：{n} 行，上限 {max} 行。请拆分后再比较。', {
+        name, n: lines.length, max: MAX_LINES,
+      });
+      showWarn(msg);
+      toast(msg);
+      return false;
+    }
     st.path = r.path;
     st.name = r.name;
     st.loaded = true;
     st.enc = r.encoding || 'UTF-8';
     st.bom = !!r.bom;
     st.eol = r.eol === 'CRLF' ? '\r\n' : '\n';
-    st.lines = String(r.content).replace(/\r\n?/g, '\n').split('\n');
+    st.lines = lines;
     st.dirty = false;
     st.undo.length = 0;
     st.redo.length = 0;
   } catch (e) {
     toast(tt('读取失败：') + e);
-    return;
+    return false;
   }
+  if (opts.defer) return true;    // 成对打开时交给 loadPair 统一算一次
+
   S.pending = null;
   S.ver++;
   recompute();
@@ -473,15 +707,33 @@ async function loadSide(side, path) {
   S.cur = 0;
   render(true);
   updateMeta();
+  return true;
 }
 
 async function loadPair(left, right) {
-  if (left) await loadSide('l', left);
-  if (right) await loadSide('r', right);
-  if (left || right) {
+  /* 清提示放在「用户发起了新的一次比较」这一刻：如果放进 loadSide 的成功
+     分支，先失败（文件超限）、后成功（另一侧）会把刚给出的原因抹掉 */
+  showWarn('');
+  let got = false;
+  const asked = !!(left || right);
+  if (left) got = (await loadSide('l', left, { defer: true, reset: true })) || got;
+  if (right) got = (await loadSide('r', right, { defer: true, reset: true })) || got;
+  if (asked) {
+    /* 上万行时先让「正在比较」这一帧画出来再算：同步计算会把整段
+       绘制一起挡住，看上去就是点了没反应 */
+    const n = Math.max(S.sides.l.lines.length, S.sides.r.lines.length);
+    if (got && n > 20000) {
+      toast(tt('正在比较 {n} 行…', { n }));
+      await nextPaint();
+    }
+    S.pending = null;
+    S.ver++;
     recompute();
     S.cur = 0;
+    el('l', 'scroll').scrollTop = 0;
+    el('r', 'scroll').scrollTop = 0;
     render(true);
+    updateMeta();
   }
   updateEmpty();
 }
@@ -849,6 +1101,27 @@ function bind() {
   $('save').onclick = save;
   $('report').onclick = saveReport;
 
+  /* 差异清单 */
+  $('listBtn').onclick = () => toggleList();
+  $('listX').onclick = () => toggleList(false);
+  $('warnX').onclick = () => showWarn('');
+  for (const b of document.querySelectorAll('.cmp-list-sort')) {
+    b.dataset.k = b.textContent;      // 记住译文，排序箭头是拼在后面的
+    b.onclick = () => {
+      const s = b.dataset.sort;
+      if (S.list.sort === s) S.list.dir = -S.list.dir;
+      else { S.list.sort = s; S.list.dir = 1; }
+      renderList();
+    };
+  }
+  for (const b of $('listFilter').querySelectorAll('button')) {
+    b.onclick = () => { S.list.filter = b.dataset.f; renderList(); };
+  }
+  $('listBody').addEventListener('click', (e) => {
+    const it = e.target.closest('.cmp-li');
+    if (it) gotoBlock(+it.dataset.i);
+  });
+
   /* 编辑开关抽成函数：空状态「直接粘贴文本」也要进同一个状态机。
      两侧都空时点「编辑」，直接当成「我要粘两段文本」处理 —— 比弹一句
      「先选文件」有用得多 */
@@ -877,18 +1150,26 @@ function bind() {
   }
 
   const ruler = $('ruler');
+  const rulerTip = $('rulerTip');
   ruler.addEventListener('pointerdown', (e) => {
+    const r = rulerRatio(e);
+    if (r === null) return;          // 轨道下方的空白不响应
     rulerDrag = true;
+    rulerTip.hidden = true;
     try { ruler.setPointerCapture(e.pointerId); } catch {}
-    jumpToRatio(rulerRatio(e));
+    jumpToRatio(r);
   });
-  ruler.addEventListener('pointermove', (e) => { if (rulerDrag) jumpToRatio(rulerRatio(e)); });
+  ruler.addEventListener('pointermove', (e) => {
+    if (rulerDrag) { jumpToRatio(rulerRatio(e)); return; }
+    rulerHover(e);
+  });
   const endDrag = (e) => {
     rulerDrag = false;
     try { ruler.releasePointerCapture(e.pointerId); } catch {}
   };
   ruler.addEventListener('pointerup', endDrag);
   ruler.addEventListener('pointercancel', endDrag);
+  ruler.addEventListener('pointerleave', () => { rulerTip.hidden = true; });
   ruler.addEventListener('wheel', (e) => {
     const sc = el('l', 'scroll');
     sc.scrollTop += e.deltaY;
@@ -898,6 +1179,7 @@ function bind() {
   document.addEventListener('keydown', (e) => {
     if (e.defaultPrevented) return;
     const k = e.key;
+    if (k === 'Escape' && S.list.open) { e.preventDefault(); toggleList(false); return; }
     if (k === 'F8') { e.preventDefault(); gotoBlock(S.cur + 1); return; }
     if (k === 'F7') { e.preventDefault(); gotoBlock(S.cur - 1); return; }
     if ((e.ctrlKey || e.metaKey) && (k === 's' || k === 'S')) {
@@ -921,7 +1203,7 @@ function bind() {
 function pickSide(side) {
   return async () => {
     const p = await be.pickFile(side === 'l' ? tt('选择左侧文件') : tt('选择右侧文件'));
-    if (p) await loadSide(side, p);
+    if (p) { showWarn(''); await loadSide(side, p); }
   };
 }
 
