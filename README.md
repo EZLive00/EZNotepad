@@ -1,293 +1,357 @@
+<div align="center">
+
 # EZNotepad
 
-> 一个 **5MB** 的桌面小工具：Markdown 写作 + 文本读写 + 文件对比。
-> 免安装、不联网、双击就用。
-> 界面支持 **简体中文 / 繁體中文 / English / 日本語 / 한국어 / Français / Deutsch / Español / Português**，
-> 默认跟随系统语言，也可以在「设置 → 语言」里手动切换。
+> A **5 MB** desktop utility: Markdown writing + text editing + file comparison.
+> Portable, offline, ready to use on double-click.
+> The UI supports 9 languages and follows the system language by default; switch manually under **Settings → Language**.
+
+**English** | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Français](README.fr.md) | [Deutsch](README.de.md) | [Español](README.es.md) | [Português](README.pt.md)
+
+[![Release](https://img.shields.io/github/v/release/EZLive00/EZNotepad)](https://github.com/EZLive00/EZNotepad/releases)
+[![License](https://img.shields.io/badge/license-PolyForm--NC--1.0.0-orange)](./LICENSE)
+
+</div>
 
 ---
 
-## 它替代了什么
+## Download & Installation
 
-| 原来用什么 | 为什么用 | 用它之后 |
-|---|---|---|
-| 记事本 | 打开任意文本、改编码、看日志 | 一样能开，还多了行号、高亮、大纲 |
-| Typora | 边写边看 Markdown | 三种模式任选，轻了 20 倍 |
-| BeyondCompare | 比两个文件哪里不一样 | 并排高亮、字符级标红、F7/F8 跳差异 |
+Download from [Releases](https://github.com/EZLive00/EZNotepad/releases):
 
----
-
-## 三种模式（一个下拉，按文件类型自动适配）
-
-| 模式 | 做什么 | 快捷 |
-|---|---|---|
-| **所见即所得** | 输入 `# ` 变标题、`**粗**` 立刻加粗 | `Ctrl+1` |
-| **编辑模式** | 看原始 Markdown / 源码，带行号、语法着色、折叠 | `Ctrl+2` |
-| **预览模式** | 只读渲染，专注阅读 | `Ctrl+3` |
-
-**支持的文件类型**：`.md`（三种模式全开）、`.json`（校验 + 高亮 + 错误定位）、
-`.txt` `.log` `.csv`、常见代码文件（`.js/.ts/.py/.rs/.go/.html/.css/.sql/.yml/...`）。
-**新建时会让你先选类型**（Markdown / 纯文本 / JSON / CSV / 代码），非 Markdown 的文件
-只开放「编辑 / 预览」，当成普通文本编辑器用。
-
-## 编辑模式用的是 CodeMirror 6
-
-不是套了个 `<textarea>`。真正带代码编辑器的那一套：
-
-| | 说明 |
+| Artifact | Best for |
 |---|---|
-| **语法着色** | JS/TS/JSX、Python、Rust、Go、Java、C/C++、JSON、CSS、HTML、SQL、YAML、Shell、INI、Markdown，增量解析 |
-| **行号 / 当前行** | 行号槽、当前行底色、括号匹配、代码折叠 |
-| **撤销** | CM6 自己的事务级 history，比浏览器的 contenteditable 靠谱 |
-| **大文件** | 只渲染可视行。实测 5 万行打开 49ms，10 万行 20ms，DOM 里只留一百多行 |
-| **缩进** | Tab 有选区缩整段、没选区缩当前行；Shift+Tab 反缩进；回车沿用上一行缩进 |
-| **括号配对** | 打 `(` 自动补 `)`、引号同理；光标停在一对中间时，再打右括号是「跳过去」而不是插一个 |
-| **主题** | 明暗两套跟随应用切换，语法配色与预览共用同一组 CSS 变量 |
+| `EZNotepad_<version>_x64-setup.exe` | **Installer**: setup wizard + file associations — double-click a `.md` / `.txt` file to open it directly |
+| `EZNotepad_<version>_x64-portable.zip` | **Portable**: extract anywhere and double-click `EZNotepad.exe` |
 
-配色只在 `styles.css` 的 `body[data-theme]` 里定义一次，编辑器和预览渲染器各取一次，
-不存在两套色值对不上的问题。
-
-不支持的选项会自动置灰 —— 打开 JSON 时「所见即所得」会变灰，不会让你误点。
+- Neither build is code-signed, so SmartScreen will block it once on first launch: click **More info** → **Run anyway**
+- The portable build relies on the system WebView2 runtime (preinstalled on Win10 / Win11); it writes nothing to the registry and registers no file associations
+- Windows x64 builds only, for now
 
 ---
 
-## 界面分区（每个功能只有一个入口）
+## Screenshots
+
+**Light theme**
+
+![EZNotepad main window in light theme](docs/screenshots/light.png)
+
+**Dark theme**
+
+![EZNotepad main window in dark theme](docs/screenshots/dark.png)
+
+---
+
+## What It Replaces
+
+| Used to use | Why | With EZNotepad |
+|---|---|---|
+| Notepad | Open any text file, change encoding, read logs | All of that, plus line numbers, highlighting, and an outline |
+| Typora | Write Markdown with live rendering | Three modes to choose from, 20× lighter |
+| BeyondCompare | Compare two files | Side-by-side with highlighting, character-level diff marks, F7/F8 to jump between differences |
+
+---
+
+## Three Modes (One Dropdown, Auto-Switched by File Type)
+
+| Mode | What it does | Shortcut |
+|---|---|---|
+| **WYSIWYG** | Type `# ` for a heading, `**bold**` turns bold instantly | `Ctrl+1` |
+| **Edit mode** | Raw Markdown / source with line numbers, syntax coloring, and code folding | `Ctrl+2` |
+| **Preview mode** | Read-only rendering, built for reading | `Ctrl+3` |
+
+**Supported file types**: `.md` (all three modes), `.json` (validation + highlighting + error location),
+`.txt` `.log` `.csv`, and common code files (`.js/.ts/.py/.rs/.go/.html/.css/.sql/.yml/...`).
+**New files ask you to pick a type first** (Markdown / Plain text / JSON / CSV / Code); non-Markdown files
+only offer **Edit / Preview**, so they work as a plain text editor.
+
+## Edit Mode Is Powered by CodeMirror 6
+
+Not a `<textarea>` in disguise — a real code editor underneath:
+
+| | Details |
+|---|---|
+| **Syntax coloring** | JS/TS/JSX, Python, Rust, Go, Java, C/C++, JSON, CSS, HTML, SQL, YAML, Shell, INI, Markdown — incremental parsing |
+| **Line numbers / current line** | Line number gutter, current-line background, bracket matching, code folding |
+| **Undo** | CM6's own transaction-level history — far more reliable than the browser's contenteditable |
+| **Large files** | Only visible lines are rendered. In testing, 50k lines open in 49 ms, 100k lines in 20 ms, with only ~100 lines in the DOM |
+| **Indentation** | `Tab` indents the selection or the current line; `Shift+Tab` outdents; Enter keeps the previous line's indent |
+| **Bracket matching** | Typing `(` auto-inserts `)`, same for quotes; when the cursor sits inside a pair, typing the closing bracket skips over it instead of inserting another |
+| **Themes** | Light and dark themes follow the app; syntax colors share the same set of CSS variables as the preview |
+
+Colors are defined once in `styles.css` under `body[data-theme]` and consumed separately by the editor and
+the preview renderer, so the two can never drift apart.
+
+Unsupported options are grayed out automatically — with a JSON file open, **WYSIWYG** is disabled so you can't click it by mistake.
+
+---
+
+## Layout (Every Feature Has Exactly One Entry Point)
 
 ```
 ┌──────────────────────────────────────────────┐
-│ ▣ 文件 编辑 格式 视图 工具 帮助  欢迎.md  － □ ✕│ ← 标题栏（40px）
+│ ▣ File Edit Format View Tools Help  Welcome.md  － □ ✕│ ← Title bar (40px)
 ├──────────────────────────────────────────────┤
-│ 欢迎.md × │ test.json × │ +         编辑▾ ⌕ 保存 │ ← 标签与工具同一行
+│ Welcome.md × │ test.json × │ +         Edit▾ ⌕ Save │ ← Tabs and toolbar share one row
 ├────────┬──────────────────┬──────────────────┤
 │        │                  │                  │
-│ 大纲   │   编辑 / 所见即所得 │      预览        │
+│ Outline│  Edit / WYSIWYG  │     Preview      │
 │        │                  │                  │
 ├────────┴──────────────────┴──────────────────┤
-│ 行 1,列 1 │ 36 行 │ 243 字 │ Markdown │ LF │ UTF-8 │ 已保存 │
+│ Ln 1,Col 1 │ 36 lines │ 243 chars │ Markdown │ LF │ UTF-8 │ Saved │
 └──────────────────────────────────────────────┘
 ```
 
-内容区上方只有两行：标题栏（菜单 + 文档标题 + 窗口按钮），以及标签与工具合起来的一行
-（左边标签、右边只放**模式切换 / 查找 / 保存**三个高频动作，其余全部在菜单里，不重复摆放）。
-窗口变窄时工具退成纯图标。
+Above the content area there are only two rows: the title bar (menu + document title + window buttons), and
+a single row combining tabs and tools (tabs on the left; on the right only the three high-frequency actions —
+**mode switch / Find / Save**. Everything else lives in the menus and is never duplicated).
+When the window gets narrow, the toolbar collapses to icons only.
 
-窗口没有系统标题栏（`decorations: false`）：菜单、文档标题、窗口按钮都在最上面一行，
-中间空白处可以拖动窗口，双击最大化 —— 和 VS Code、WorkBuddy 这类应用一致。
-窗口四角用 Win11 的 DWM 原生圆角，拖动边缘仍可缩放。
-「视图 → 标题栏显示文件名」可以关掉标题文字，只留菜单和按钮。
+The window has no system title bar (`decorations: false`): menu, document title, and window buttons all sit
+on the top row; the empty space in between is draggable, and double-clicking it maximizes the window —
+the same behavior as VS Code and WorkBuddy. The four corners use Win11's native DWM rounded corners,
+and dragging the edges still resizes the window.
+**View → Show Filename in Title Bar** hides the title text, leaving only the menu and buttons.
 
-- **大纲** —— 只管导航
-- **侧栏** —— 两页：大纲（跟随滚动高亮当前章节）／文件（目录树 + 全目录搜内容）
-- **工具行** —— 只有模式、查找、保存三个高频动作，其他命令一律走菜单
-- **正文区** —— 只管编辑
-- **状态栏** —— 只管信息，编码和换行符可点击修改
-- **菜单** —— 只管全集入口
-- **设置** —— `Ctrl+,` 一个面板：主题、字号、界面、自动保存、工作文件夹
-- **对比中心** —— 独立全屏面板，不和编辑器揉在一起
-
----
-
-### 侧栏「文件」页：目录树与跨文件搜索
-
-- 展开一层读一层（懒加载），打开大仓库不会先把几万个文件读进来
-- **右键就能改**：在任意目录下新建文件 / 文件夹，给文件改名，或者删除
-  - 删除进**系统回收站**，误点了还能捞回来；文件夹只删空的，不会连锅端
-  - 改名或删除时，已经打开的那个标签会跟着走（不会指着旧路径再写回去）
-- 搜索在 Rust 里扫，跳过二进制与 4MB 以上的文件，最多返回 200 条
-- 搜索框上的 `.*` 切正则、`Aa` 区分大小写
-- 结果按文件分组，带行号与片段，点一下打开并跳到那一行
-- **跨文件替换**：搜索框下面填「替换为」，点「全部替换」。会先问一次，说明要动磁盘；
-  改每个文件之前都留一份历史快照，出问题能找回
-- 记住上次打开的文件夹；设置面板里可以换或清空
+- **Outline** — navigation only
+- **Sidebar** — two pages: Outline (highlights the current section as you scroll) / Files (directory tree + full-directory content search)
+- **Toolbar** — only three high-frequency actions: mode, Find, Save; every other command goes through the menus
+- **Editor area** — editing only
+- **Status bar** — information only; encoding and line endings are clickable to change
+- **Menus** — the complete command set
+- **Settings** — one panel at `Ctrl+,`: theme, font size, UI, autosave, working folder
+- **Compare Center** — a standalone full-screen panel, kept separate from the editor
 
 ---
 
-### 查找（`Ctrl+F` / `Ctrl+H`）
+### Sidebar "Files" Page: Directory Tree and Cross-File Search
 
-一个浮层两种状态：点最左边的箭头展开成「查找 + 替换」两行，收起就只剩查找。
-`Ctrl+F` 只管聚焦（不会把已经摊开的替换行收回去），`Ctrl+H` 直接展开。
+- Lazy loading: each expanded level is read on demand, so opening a large repository doesn't load tens of thousands of files up front
+- **Right-click to manage**: create files / folders in any directory, rename files, or delete them
+  - Deletions go to the system **Recycle Bin**, so mistakes are recoverable; folders can only be deleted when empty — never recursively
+  - Rename or delete keeps the already-open tab in sync (it never keeps pointing at the old path and writing back there)
+- Search runs in Rust, skipping binary files and anything over 4 MB, returning at most 200 results
+- The `.*` toggle on the search box enables regex; `Aa` toggles case sensitivity
+- Results are grouped by file with line numbers and snippets; clicking one opens the file and jumps to that line
+- **Cross-file replace**: enter the replacement in the box below the search field and click **Replace All**. It asks once first, since it writes to disk;
+  a history snapshot is saved before each file is modified, so you can always recover
+- Remembers the last opened folder; change or clear it in the Settings panel
 
-| 能力 | 说明 |
+---
+
+### Find (`Ctrl+F` / `Ctrl+H`)
+
+One overlay with two states: clicking the leftmost arrow expands it into two rows — **Find + Replace**; collapsed, it's Find only.
+`Ctrl+F` only focuses the overlay (it never collapses an already-expanded replace row); `Ctrl+H` expands it directly.
+
+| Capability | Details |
 |---|---|
-| **所见即所得里原位查找** | 不再为了查找切到编辑模式；高亮画在渲染层上（CSS Highlight API），不往正文里插标记 |
-| **模式开关** | 输入框右侧四个小方格：`Aa` 区分大小写、`.*` 正则、`全词`、`选区`。激活时走 accent 色 |
-| **整词** | 只在查询串两端是英文单词字符时加边界——中文没有词边界，硬套 `\b` 会永远匹配不到 |
-| **选区内** | 只在选中的那段里查找/替换，没选中时这一项是灰的 |
-| **换行** | 输入框右端的 `↵`（或 `Ctrl+Enter`）插一个换行，框会自己长高；不带换行的查询照旧不会跨段假命中 |
-| **替换** | 命中在同一段文字内时**直接就改**，不弹窗；只有跨越加粗/链接这类格式边界才问「是否切到编辑模式」 |
-| **跨文件** | 侧栏「文件」页的搜索框，按文件分组列出命中行 |
+| **In-place Find in WYSIWYG** | No more switching to Edit mode just to search; highlights are painted on a rendering layer (CSS Highlight API), with no markup injected into the text |
+| **Mode toggles** | Four small squares at the right of the input: `Aa` case-sensitive, `.*` regex, `Whole word`, `Selection`. Active toggles use the accent color |
+| **Whole word** | Word boundaries are only added when both ends of the query are English word characters — Chinese has no word boundaries, and forcing `\b` would never match |
+| **In selection** | Find/replace only within the selected text; grayed out when nothing is selected |
+| **Newlines** | The `↵` button at the right end of the input (or `Ctrl+Enter`) inserts a newline and the box grows to fit; newline-free queries still never produce false matches across paragraphs |
+| **Replace** | When the match is within the same run of text it's **replaced in place**, no dialog; only when it crosses a formatting boundary such as bold or a link does it ask to switch to Edit mode |
+| **Cross-file** | The search box on the sidebar "Files" page, listing matching lines grouped by file |
 
 ---
 
-## 快捷键
+## Keyboard Shortcuts
 
-| 操作 | 快捷键 |
+| Action | Shortcut |
 |---|---|
-| 新建 / 打开 / 保存 / 另存为 | `Ctrl+N` / `Ctrl+O` / `Ctrl+S` / `Ctrl+Shift+S` |
-| 关闭标签 / 切换标签 | `Ctrl+W` / `Ctrl+Tab` |
-| 查找 / 替换 / 跳转行 | `Ctrl+F` / `Ctrl+H` / `Ctrl+G` |
-| **命令面板** | `Ctrl+Shift+P` |
-| 设置 | `Ctrl+,` |
-| **一键格式化** | `Ctrl+Shift+F` |
-| **文本对比** | `Ctrl+D` |
-| 下一处 / 上一处差异 | `F8` / `F7` |
-| 单栏 ⇄ 双栏 | `Ctrl+Shift+L` |
-| 显示 / 隐藏大纲 | `Ctrl+Shift+O` |
-| 专注模式（`Esc` 退出） / 全屏 | `F9` / `F11` |
-| 加粗 / 斜体 | `Ctrl+B` / `Ctrl+I` |
-| 删除线 / 行内代码 | `Ctrl+Shift+X` / — |
-| 插入链接 / 插入表格 | `Ctrl+K` / `Ctrl+Shift+T` |
-| 正文 / 一~三级标题 | `Ctrl+Alt+0` / `Ctrl+Alt+1~3` |
-| 无序 / 有序 / 任务列表 | `Ctrl+Shift+8` / `Ctrl+Shift+7` / `Ctrl+Shift+9` |
-| 引用 / 代码块 | `Ctrl+Shift+Q` / `Ctrl+Shift+K` |
-| 列表增 / 减缩进 | `Tab` / `Shift+Tab` |
-| 字号放大 / 缩小 / 重置 | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` |
-| 导出 PDF | `Ctrl+P` |
+| New / Open / Save / Save As | `Ctrl+N` / `Ctrl+O` / `Ctrl+S` / `Ctrl+Shift+S` |
+| Close tab / Switch tabs | `Ctrl+W` / `Ctrl+Tab` |
+| Find / Replace / Go to Line | `Ctrl+F` / `Ctrl+H` / `Ctrl+G` |
+| **Command palette** | `Ctrl+Shift+P` |
+| Settings | `Ctrl+,` |
+| **One-click format** | `Ctrl+Shift+F` |
+| **Text compare** | `Ctrl+D` |
+| Next / previous difference | `F8` / `F7` |
+| Single pane ⇄ dual pane | `Ctrl+Shift+L` |
+| Show / hide outline | `Ctrl+Shift+O` |
+| Focus mode (`Esc` to exit) / Fullscreen | `F9` / `F11` |
+| Bold / Italic | `Ctrl+B` / `Ctrl+I` |
+| Strikethrough / Inline code | `Ctrl+Shift+X` / — |
+| Insert link / Insert table | `Ctrl+K` / `Ctrl+Shift+T` |
+| Body text / Headings 1–3 | `Ctrl+Alt+0` / `Ctrl+Alt+1~3` |
+| Bullet / Numbered / Task list | `Ctrl+Shift+8` / `Ctrl+Shift+7` / `Ctrl+Shift+9` |
+| Quote / Code block | `Ctrl+Shift+Q` / `Ctrl+Shift+K` |
+| Indent / Outdent list | `Tab` / `Shift+Tab` |
+| Zoom in / out / reset | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` |
+| Export PDF | `Ctrl+P` |
 
 ---
 
-## 几种用得最多的功能
+## The Most-Used Features
 
-### 所见即所得：真的能当编辑器用
+### WYSIWYG: Genuinely Usable as an Editor
 
-不只是「输入 `# ` 变标题」，块级结构都能直接操作，Markdown 语法与所见即所得双向一致。标记只要落在**行首**就行，不必写在行尾——文字先写好，回头在行首补一个 `## ` 一样升级成标题，标记后面的文字（连同加粗、链接）原样保留：
+More than "type `# ` for a heading" — block-level structures are directly manipulable, and Markdown syntax stays consistent with WYSIWYG in both directions. Markers only need to be at the **start of a line**, not the end — write the text first, come back and add `## ` at the start of the line, and it still becomes a heading, with the text after the marker (including bold and links) preserved as-is:
 
-| 能力 | 怎么用 |
+| Capability | How |
 |---|---|
-| **标题 / 正文** | 行首输 `# `～`###### `（已有文字前面补也行）；`Ctrl+Alt+1~3` 换级，再按一次回正文 |
-| **无序 / 有序 / 任务列表** | 行首输 `- ` / `1. ` / `- [ ] `；`Tab` 缩进成子项、`Shift+Tab` 退一级 |
-| **嵌套列表** | 最多 6 层，切换有序/无序不会丢层级，序号自动重排 |
-| **引用** | 行首输 `> `；`Tab` 增加引用层级，空行回车即退出 |
-| **代码块 / 分割线** | 行首输 ` ``` ` / `---`；代码块里回车自动换行、缩进两格 |
-| **表格** | `Ctrl+Shift+T` 插 3×3，或「格式 → 插入表格（自定大小）」 |
-| **表格编辑** | `Tab` / `Shift+Tab` 在单元格间移动（到末尾自动加行）、`Enter` 到下一行同列、右键增删行列与列对齐 |
-| **行内样式** | 输入 `**粗**`、`*斜*`、`~~删~~`、`` `码` ``、`[文字](链接)` 边打边变 |
-| **数学公式** | 行内 `$a^2+b^2=c^2$`、块级 `$$ … $$`（可跨行），预览里由 KaTeX 排版 |
-| **目录** | 「插入 → 目录…」扫一遍标题生成可点击的列表，`Ctrl+点击` 条目跳到对应章节 |
-| **插入图片** | 截图后直接 `Ctrl+V`、或把图片文件拖进窗口、或「插入 → 图片…」：都会复制到文档同目录 `assets/` 用相对路径引用；也可以直接填网络地址 |
-| **图片尺寸** | 所见即所得里拖图片右下角直接改宽（拖完自动写进 alt 后缀）；也可以手写 `![说明\|300](a.png)` 限宽、`![说明\|300x200](a.png)` 限宽高；不写就按原比例显示（最高 320px） |
-| **退格语义** | 标题行首退格先把 `###` 亮出来、再一级一级往回删；列表项开头退格先降级、再变段落；段落开头退格并入上一行；`Delete` 反向同理 |
-| **粘贴** | 多行文本按 Markdown 解析成真正的标题/列表/表格块，不会糊成一坨 |
+| **Headings / body text** | Type `# `–`###### ` at the start of a line (adding it before existing text works too); `Ctrl+Alt+1~3` changes the level, press again to return to body text |
+| **Bullet / Numbered / Task list** | Type `- ` / `1. ` / `- [ ] ` at the start of a line; `Tab` indents into a sub-item, `Shift+Tab` outdents a level |
+| **Nested lists** | Up to 6 levels; switching between ordered and unordered keeps the hierarchy and renumbers automatically |
+| **Quote** | Type `> ` at the start of a line; `Tab` increases the quote level, an empty line + Enter exits |
+| **Code block / Horizontal rule** | Type ` ``` ` / `---` at the start of a line; inside a code block, Enter wraps lines and indents two spaces |
+| **Tables** | `Ctrl+Shift+T` inserts a 3×3 table, or use **Format → Insert Table (custom size)** |
+| **Table editing** | `Tab` / `Shift+Tab` moves between cells (a row is added automatically at the end), `Enter` moves to the same column on the next row, right-click adds/removes rows and columns and sets column alignment |
+| **Inline styles** | Type `**bold**`, `*italic*`, `~~strike~~`, `` `code` ``, `[text](link)` and watch it render as you type |
+| **Math** | Inline `$a^2+b^2=c^2$`, block-level `$$ … $$` (may span lines), typeset by KaTeX in the preview |
+| **Table of contents** | **Insert → Table of Contents…** scans the headings and builds a clickable list; `Ctrl+click` an entry to jump to that section |
+| **Insert image** | Paste a screenshot with `Ctrl+V`, drag an image file into the window, or use **Insert → Image…**: the image is copied to `assets/` next to the document and referenced with a relative path; you can also paste a web URL directly |
+| **Image size** | In WYSIWYG, drag the image's bottom-right corner to change its width (the width is written into the alt suffix automatically); or write `![alt|300](a.png)` to cap width, `![alt|300x200](a.png)` to cap width and height; without a size, images display at original aspect ratio (max 320px tall) |
+| **Backspace semantics** | Backspace at the start of a heading first reveals the `###` markers, then removes them one level at a time; at the start of a list item it first demotes the item, then turns it into a paragraph; at the start of a paragraph it merges the line into the previous one; `Delete` works the same in reverse |
+| **Paste** | Multi-line text is parsed as Markdown into real headings/lists/tables instead of collapsing into one blob |
 
-**行首块手柄**：光标或鼠标所在那一行的左边会浮出 `+` 和 `⋮⋮` 两个小按钮（不会盖住字，也选不中）。
-`⋮⋮` 把这一块换成别的类型（正文 / 标题 1~3 / 列表 / 引用 / 代码块），`+` 在下方插入新块。
-它和顶栏「格式」菜单执行的是同一套命令，只是把入口挪到了手边。
+**Block handles at line start**: two small buttons — `+` and `⋮⋮` — float out to the left of the line with the cursor or mouse (they never cover text and can't be selected).
+`⋮⋮` converts the block to a different type (body text / Heading 1–3 / list / quote / code block); `+` inserts a new block below.
+They run the same commands as the top **Format** menu, just within reach.
 
-标题的 `###` 只在你要改级别时才出现：行首按一次退格亮标记（正文一个字不动），再按就删掉一个 `#`，删光才退回正文——手滑按到退格不会把级别和文字一起弄丢。光标移开这一行或按回车，标记自动收起。
+The `###` markers on headings only appear when you actually change the level: backspace once at the start of the line reveals the markers (body text untouched), backspace again removes one `#`, and only when they're all gone does the line revert to body text — an accidental backspace never takes the level and the text down together. Moving the cursor away or pressing Enter hides the markers again.
 
-标记认的位置是「光标前面这一小段」而不是整个行尾，所以三种写法等价：先打 `## ` 再写标题、写完标题回行首补 `## `、把一段普通文字升级成标题。只剩标记本身才认（`## ` 后面紧跟空格），所以正文里的 `#话题` 不会被误转成标题；光标不在行首时输 `- ` 也不会把句子拆成列表。
+Markers are recognized at "the short stretch just before the cursor," not the whole end of the line, so all three ways are equivalent: type `## ` then the heading, write the heading first and add `## ` at the start, or promote a plain paragraph to a heading. A stretch is only recognized when it consists of the marker itself (`## ` followed immediately by a space), so `#topic` inside body text is never mistaken for a heading, and typing `- ` with the cursor mid-line won't split a sentence into a list.
 
-所有块级操作也在 **「格式」菜单** 和 **右键菜单** 里，且会用不到的项自动置灰（比如光标不在表格里时表格局命令全灰）。
+All block-level operations are also in the **Format menu** and the **context menu**, with inapplicable items grayed out automatically (e.g., all table commands are gray when the cursor isn't in a table).
 
-### 数学公式
+### Math
 
-- 行内 `$a^2 + b^2 = c^2$`、块级 `$$ … $$`（允许跨行，矩阵和多行推导不必挤成一行）
-- 渲染只发生在**预览侧**：KaTeX 是「真的遇到公式才加载」的（约 546 KB），不写公式的文档一分钱都不付
-- 所见即所得里公式不渲染、只加一层底色 —— 往 contenteditable 里塞 KaTeX 的 DOM，退格删不掉、光标会卡住，代价远大于收益。要看成 `Ctrl+3`，或者开双栏让预览就在旁边
-- 公式段在解析强调语法**之前**就被保护起来，所以 `$x_1 * y$` 里的 `_` 和 `*` 是下标与乘号，不会被当成斜体
+- Inline `$a^2 + b^2 = c^2$`, block-level `$$ … $$` (may span lines, so matrices and multi-line derivations don't have to be crammed onto one line)
+- Rendering happens only on the **preview side**: KaTeX is loaded lazily — only when an actual formula appears (~546 KB), so documents without math pay nothing
+- In WYSIWYG, formulas are not rendered, only highlighted with a background — stuffing KaTeX's DOM into a contenteditable makes backspace fail and the cursor stick, a cost far outweighing the benefit. Press `Ctrl+3` to preview, or enable dual-pane so the preview sits alongside
+- Formula segments are protected **before** emphasis syntax is parsed, so the `_` and `*` in `$x_1 * y$` remain a subscript and a multiplication sign rather than becoming italics
 
-### 专注模式（`F9`，`Esc` 退出）
+### Focus Mode (`F9`, `Esc` to Exit)
 
-标签行、侧栏、状态栏、菜单全部收起来，只剩正文。标题栏会淡到几乎看不见，鼠标移上去才恢复 —— 窗口是无边框的，要是连标题栏都没了就没法拖、没法最小化关闭，等于把人关在自己写的文档里。
+Tabs, sidebar, status bar, and menus all fold away, leaving only the text. The title bar fades to near-invisible and returns when the mouse moves over it — since the window is borderless, losing the title bar too would mean no dragging, no minimize, no close, effectively locking you inside your own document.
 
-### 双击就能打开 / 只开一个窗口
+### Double-Click to Open / Single Instance
 
-安装包装好之后，`.md` `.markdown` `.txt` `.log` `.json` `.csv` 都注册了文件关联，
-在资源管理器里右键「打开方式」就能找到「EZNotepad」。
+Once the installer finishes, `.md` `.markdown` `.txt` `.log` `.json` `.csv` are all registered as file associations;
+right-click → **Open with** in Explorer and you'll find **EZNotepad**.
 
-同一个程序只会有一个窗口：再双击一个文件，不会起第二个进程，
-而是把路径交给已经开着的窗口打开（顺带把它从最小化叫回来）。
-两个窗口同时改一个文件、互相覆盖这种事，从源头上没有了。
+Only one window per program: double-clicking another file never spawns a second process —
+the path is handed to the already-running window to open (and it's restored from the minimized state along the way).
+Two windows editing the same file and overwriting each other is impossible by design.
 
-> 只有**安装版**会注册关联。直接跑 `cargo build` 出来的 exe 不写注册表。
+> Only the **installer** registers file associations. The portable build and a bare exe from `cargo build` write nothing to the registry.
 
-### 文件变化监听
+### File Change Watching
 
-已打开的文档会被实时盯着（后端用系统的 `ReadDirectoryChangesW` / `inotify`，只监听文件所在目录这一层，并且只放行名单里的文件名）。别的程序改动文件时：
+Open documents are watched in real time (the backend uses the system's `ReadDirectoryChangesW` / `inotify`, listening only to the file's own directory level and only to whitelisted filenames). When another program modifies a file:
 
-- 文件在**当前标签**：没改过就静默重载并提示；有未保存的修改就先问
-- 文件在**后台标签**：不弹窗打扰，标签上冒一个琥珀色小点，切过去时才问
+- File in the **current tab**: silently reloads with a notice if you have no local changes; asks first if there are unsaved changes
+- File in a **background tab**: no popup interruption — an amber dot appears on the tab, and it asks when you switch to it
 
-自己保存不会自激（保存后修改时间已同步）。设置里可以整体关掉。
+Saving your own work never triggers it (the modification time is already synced after save). Can be disabled entirely in Settings.
 
-### 一键格式化（按文件类型智能处理）
+### One-Click Format (Smart per File Type)
 
-| 类型 | 做什么 |
+| Type | What it does |
 |---|---|
-| **JSON** | 校验 + 重排缩进；自动修正全角引号、多余逗号、注释；**语法错误时不改文件，弹出「第 X 行第 Y 列」** |
-| **Markdown** | 标题前后补空行、列表符号统一、去行尾空格、压缩空行 |
-| **TXT / 日志 / 代码** | 统一换行符、去行尾空格、压缩连续空行 |
+| **JSON** | Validate + re-indent; auto-fixes fullwidth quotes, trailing commas, and comments; **on a syntax error, the file is left untouched and a "line X, column Y" error is shown** |
+| **Markdown** | Blank lines around headings, unified list markers, trailing whitespace removed, blank lines collapsed |
+| **TXT / logs / code** | Line endings normalized, trailing whitespace removed, consecutive blank lines collapsed |
 
-格式化后可一键「撤销」回到原样。
+After formatting, one **Undo** restores the original.
 
-### 历史版本（文件 → 历史版本…）
+### Version History (File → Version History…)
 
-每保存一次，**保存前**的内容就留一份快照，存在本机应用数据目录（不往你的文档目录里塞东西）。
-一键格式化、排序去重、批量替换之后想反悔，`Ctrl+Z` 未必翻得回去，这里是最后一道。
+Every save snapshots the content **before** saving, stored in the local app data directory (nothing gets dumped into your documents folder).
+After one-click format, sort/dedupe, or bulk replace, `Ctrl+Z` may not get you back — this is the last line of defense.
 
-- 每个文件最多留 60 份、总量 20MB，超了从最旧的开始清
-- 「查看」把那一版开成只读新标签，「恢复」写回编辑器 —— **都要你自己按 `Ctrl+S` 才动磁盘**
-- 和文件对比、三向合并同一个原则：回滚不直接覆盖原文件
+- Up to 60 snapshots per file, 20 MB total; the oldest are cleared first when exceeded
+- **View** opens that version as a read-only new tab; **Restore** writes it back into the editor — **neither touches disk until you press `Ctrl+S` yourself**
+- Same principle as text compare and three-way merge: rollback never overwrites the original file directly
 
-### 导出网页（文件 → 导出网页…）
+### Export Web Page (File → Export Web Page…)
 
-把当前文档存成一个**单文件 HTML**：样式内嵌、图片转成 data URI，
-发给别人或者丢进静态站点都能直接打开，不会出现「图全裂了」。
-图片超过 4MB 的不内嵌（保留原地址），导出提示里会说内嵌了几张。
+Saves the current document as a **single-file HTML**: styles inlined and images converted to data URIs.
+Send it to someone or drop it into a static site and it opens as-is — no broken images.
+Images over 4 MB are not embedded (their original paths are kept); the export notice reports how many were embedded.
 
-### 命令面板（`Ctrl+Shift+P`）
+### Command Palette (`Ctrl+Shift+P`)
 
-菜单里那一百多条命令，输几个字就能定位：`专注`、`格式`、`替换` 都行，
-`↑` `↓` 选、`Enter` 跑、`Esc` 关。列表直接从菜单树生成，菜单加了新命令这里自动有。
-当前状态下用不了的命令会灰掉，点了会告诉你为什么。
+The hundred-plus commands in the menus are a few keystrokes away: type `focus`, `format`, or `replace`,
+pick with `↑` `↓`, run with `Enter`, close with `Esc`. The list is generated directly from the menu tree, so new menu commands appear here automatically.
+Commands unavailable in the current state are grayed out, and clicking one tells you why.
 
-### 快捷键自己改（设置 → 快捷键）
+### Remap Shortcuts Yourself (Settings → Shortcuts)
 
-设置面板里列着所有带快捷键的命令，点「改」之后直接按新的组合键（要带 `Ctrl` / `Alt`，
-或者单用 `F1`–`F12`），`Esc` 取消。自定义的键优先于默认键位，改坏了点「恢复」就回来，
-「恢复默认设置」会一并清空。
+The Settings panel lists every command that has a shortcut. Click **Change** and press the new combination (must include `Ctrl` / `Alt`,
+or be a single `F1`–`F12` key); `Esc` cancels. Custom bindings take priority over defaults; if you break something, **Reset** brings it back,
+and **Restore Defaults** clears them all.
 
-### 文本对比（`Ctrl+D`）
+### Text Compare (`Ctrl+D`)
 
-- 左右并排，**行级 + 字符级**双重高亮（只标出真正改动的几个字）
-- 忽略空白 / 忽略大小写
-- `F7` / `F8` 在差异之间跳跃
-- 每个差异块带 **→** 按钮，一键把左边这块同步到右边
-- 一键导出 HTML 对比报告
+- Side by side with **line-level + character-level** highlighting (only the few characters that actually changed are marked)
+- Ignore whitespace / ignore case
+- `F7` / `F8` jump between differences
+- Each difference block has a **→** button to sync that block from left to right in one click
+- One-click export of an HTML comparison report
 
-### 文件夹对比
+### Folder Compare
 
-递归比两个目录，列出 **仅左 / 仅右 / 已修改 / 相同**，点一行直接进入该文件的文本对比。
+Recursively compares two directories, listing **Left only / Right only / Modified / Identical**; click a row to jump straight into a text compare of that file.
 
-### 三向合并（工具 → 三向合并）
+### Three-Way Merge (Tools → Three-Way Merge)
 
-选「基准版本 + A 侧 + B 侧」，自动合并两边改动，冲突处列清单。
-**结果只在新标签打开，绝不覆盖任何原文件。**
+Pick a **base version + side A + side B**; both sides' changes are merged automatically and conflicts are listed.
+**The result opens only in a new tab — it never overwrites any original file.**
 
-### 编码与换行符
+### Encoding and Line Endings
 
-状态栏右下角点 `UTF-8` 可以换编码另存（UTF-8 / GBK / UTF-16，可加 BOM）；
-点 `LF` 切换 CRLF。打开 GBK 的老 txt 不会乱码。
-
----
-
-## 数据与隐私
-
-- 所有文件只在你电脑上读写，**不联网、不上传**
-- 草稿保存在本机应用数据目录，关掉窗口不会丢：**所有**没保存的标签都会存下来，
-  下次启动时一起问你要不要恢复（不是只保最后一个）
-- 历史快照也在这个目录下的 `history/`，和你的文档目录完全分开
-- 首次打开如果检测到未保存的草稿，会询问是否恢复
+Click `UTF-8` in the bottom-right of the status bar to save with a different encoding (UTF-8 / GBK / UTF-16, BOM optional);
+click `LF` to switch to CRLF. Old GBK-encoded txt files open without garbled text.
 
 ---
 
-## 已知限制
+## Benchmarks
 
-- PDF 导出走系统打印对话框（「另存为 PDF」），排版以打印效果为准
-- 三向合并为半自动版：自动合并 + 冲突清单，不做四栏可视化合并器（复杂冲突建议用文本对比逐块处理）
-- 各平台安装包需在对应系统上构建（详见 `构建说明.md`）
-- 跨文件搜索默认按字面、不区分大小写，可切正则；上限 200 条
-- 跨文件替换只处理 **UTF-8** 文件：GBK 之类原样跳过，不悄悄改掉整个文件的编码
-- 文件树里的删除进系统回收站；**文件夹只能删空的**，不会递归删
-- 文件**树**本身不监听：在别处新建/删除的文件要在空白处右键「刷新」或重新展开目录（已打开的文档会被实时监听，见上文）
-- 数学公式只在预览侧渲染，所见即所得里显示源码；Mermaid 图表尚未支持
+Measured locally (Windows 11, x64, release build):
+
+| Scenario | Metric |
+|---|---|
+| Everyday typing (600-paragraph document, WYSIWYG) | Average **9.1 ms** per keystroke |
+| Huge document open (10.8 MB / 77,866 blocks) | **1.14 s**, UI never freezes (viewport rendering, ~48 blocks kept in the DOM) |
+| Huge document typing | p50 latency **0.3 ms** |
+| Huge document scrolling | ~**17 ms** per frame, full frame rate |
+| Huge document undo | **37 ms** per step, byte-identical round-trip |
+| Large plain-text files (CodeMirror 6) | 50k lines open in **49 ms**, 100k lines in **20 ms**, only visible lines rendered |
+| Memory usage | ~**170 MB** on a clean start (including the WebView2 GPU process) |
+| Size | Installer **2.63 MB** |
+
+---
+
+## Data & Privacy
+
+- All files are read and written only on your machine — **no network access, no uploads**
+- Drafts are saved in the local app data directory and survive closing the window: **all** unsaved tabs are stored,
+  and on next startup you're asked whether to restore them (not just the last one)
+- History snapshots live in `history/` under that same directory, fully separate from your documents folder
+- On first launch, if unsaved drafts are detected, you're asked whether to restore them
+
+---
+
+## Known Limitations
+
+- PDF export goes through the system print dialog ("Save as PDF"); layout follows the print output
+- Three-way merge is semi-automatic: auto-merge + conflict list, no four-pane visual merger (for complex conflicts, work through them block by block with Text Compare)
+- Platform-specific installers must be built on the corresponding OS (see `构建说明.md`)
+- Cross-file search defaults to literal, case-insensitive matching; regex is available; capped at 200 results
+- Cross-file replace only handles **UTF-8** files: GBK and similar encodings are skipped as-is rather than silently re-encoding the whole file
+- Deletions in the file tree go to the system Recycle Bin; **folders can only be deleted when empty** — never recursively
+- The file **tree** itself isn't watched: files created/deleted elsewhere require right-click → **Refresh** in an empty area, or re-expanding the directory (open documents are watched in real time — see above)
+- Math is rendered only on the preview side and shows as source in WYSIWYG; Mermaid diagrams are not yet supported
+
+---
+
+## License
+
+This project is licensed under the [PolyForm Noncommercial License 1.0.0](./LICENSE):
+
+- **Noncommercial use** (personal use, learning, research, non-profit organizations, etc.): free to use, modify, and distribute
+- **Commercial use**: requires prior permission from the project team — just [open an Issue describing your use case](https://github.com/EZLive00/EZNotepad/issues)
+- The source is public but commercial licensing is reserved — a deliberate choice; this license notice must accompany any distribution
