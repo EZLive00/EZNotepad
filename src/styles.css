@@ -460,6 +460,10 @@ body[data-theme="dark"] .am-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 25
 .tb.dirty { color: var(--accent); background: var(--accent-soft); }
 .tb.dirty:hover { color: var(--accent); background: var(--accent-soft); filter: brightness(.97); }
 .tb.icon-only { width: 28px; padding: 0; justify-content: center; }
+/* 撤销 / 重做到栈底时是灰的，且不给 hover 反馈 —— 可点性靠这个表达，
+   点下去什么都不发生是最差的反馈 */
+.tb:disabled { opacity: .34; cursor: default; }
+.tb:disabled:hover, .tb:disabled:active { background: transparent; color: var(--fg-soft); }
 .tb .ico { width: 15px; height: 15px; }
 .caret { width: 12px; height: 12px; stroke-width: 2.2; opacity: .6; margin-left: -1px; }
 

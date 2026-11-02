@@ -49,6 +49,8 @@ const el = {
   modeNote: $('modeNote'),
   fmtBadge: $('fmtBadge'),
   btnSave: $('btnSave'),
+  btnUndo: $('btnUndo'),
+  btnRedo: $('btnRedo'),
   stPos: $('stPos'),
   stLines: $('stLines'),
   stWords: $('stWords'),
@@ -1195,7 +1197,7 @@ function updateCursorPos() {
 
 function updateStatus() {
   const t = activeTab();
-  if (!t) return;
+  if (!t) { syncHist(); return; }
   el.stEOL.textContent = t.eol;
   el.stEncoding.textContent = t.encoding;
   el.fmtBadge.textContent = kindLabel(detectKind(t.name));
@@ -1203,6 +1205,7 @@ function updateStatus() {
   el.stDraft.textContent = isDirty(t) ? tt('未保存') : tt('已保存');
   el.stDraft.classList.toggle('dirty', isDirty(t));
   renderTabs();
+  syncHist();
 }
 
 /* ---------------- 草稿 ---------------- */
@@ -2563,23 +2566,50 @@ function editTarget() {
   return el.editor;
 }
 
+/** 当前编辑器还能不能撤销 / 重做。工具栏按钮和菜单项都靠它决定要不要变灰 */
+function canUndo() {
+  const t = activeTab();
+  if (!t) return false;
+  if (t.mode === 'wysiwyg') return wys.canUndo();
+  if (t.mode === 'edit') return plain.canUndo();
+  return false;
+}
+
+function canRedo() {
+  const t = activeTab();
+  if (!t) return false;
+  if (t.mode === 'wysiwyg') return wys.canRedo();
+  if (t.mode === 'edit') return plain.canRedo();
+  return false;
+}
+
+/** 工具行两个箭头的可用状态。输入、撤销、切标签、切模式都会落到这里 */
+function syncHist() {
+  if (el.btnUndo) el.btnUndo.disabled = !canUndo();
+  if (el.btnRedo) el.btnRedo.disabled = !canRedo();
+}
+
 /**
  * 编辑命令分派。
- * 所见即所得没有撤销栈，走 execCommand；纯文本走 CM6 自己的 history，
- * 它的撤销粒度比浏览器的 contenteditable 靠得住得多。
+ * 撤销 / 重做必须走**各自那一套**历史栈：所见即所得有一套自己的（wysiwyg.js），
+ * 纯文本走 CM6 的。以前这里对 wysiwyg 一律 `execCommand('undo')`，用的是浏览器
+ * 原生栈，而那份 DOM 是受控重绘的 —— 两套栈各记各的，混用会退到谁也没预期的
+ * 位置（内容退一半、光标乱跑），比没有撤销更糟。
  */
 function editCmd(cmd) {
   const t = activeTab();
   if (!t) return;
   if (t.mode === 'wysiwyg') {
+    if (cmd === 'undo') { wys.undo(); syncHist(); return; }
+    if (cmd === 'redo') { wys.redo(); syncHist(); return; }
     el.wysiwyg.focus();
     try { document.execCommand(cmd); } catch {}
     return;
   }
   if (t.mode !== 'edit') { toast(tt('预览模式下不能编辑')); return; }
   switch (cmd) {
-    case 'undo': plain.undo(); break;
-    case 'redo': plain.redo(); break;
+    case 'undo': plain.undo(); syncHist(); break;
+    case 'redo': plain.redo(); syncHist(); break;
     case 'selectAll': plain.selectAll(); break;
     default:
       // cut / copy / paste 交给浏览器：CM6 的 contenteditable 会接管这些剪贴板事件
@@ -2824,8 +2854,8 @@ const menuTree = () => [
   {
     label: tt('编辑'),
     items: [
-      { id: 'undo', label: tt('撤销'), kbd: 'Ctrl+Z', disabled: () => !hasTab() },
-      { id: 'redo', label: tt('重做'), kbd: 'Ctrl+Y', disabled: () => !hasTab() },
+      { id: 'undo', label: tt('撤销'), kbd: 'Ctrl+Z', disabled: () => !canUndo() },
+      { id: 'redo', label: tt('重做'), kbd: 'Ctrl+Y', disabled: () => !canRedo() },
       { sep: true },
       { id: 'cut', label: tt('剪切'), kbd: 'Ctrl+X', disabled: () => !hasTab() },
       { id: 'copy', label: tt('复制'), kbd: 'Ctrl+C', disabled: () => !hasTab() },
@@ -3305,6 +3335,8 @@ function bindEvents() {
   window.addEventListener('focus', () => { setBlur(false); syncMaxState(); });
   document.addEventListener('visibilitychange', () => setBlur(document.hidden));
 
+  on('btnUndo', commands.undo);
+  on('btnRedo', commands.redo);
   on('btnFind', () => openFind());
   on('btnSave', commands.save);
   on('tabAdd', commands.new);

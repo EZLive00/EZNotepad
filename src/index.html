@@ -199,6 +199,10 @@
       <path d="M5 12h14" />
       <path d="M12 5v14" />
     </symbol>
+    <symbol id="i-redo" viewBox="0 0 24 24">
+      <path d="m15 14 5-5-5-5" />
+      <path d="M20 9H9.5A5.5 5.5 0 0 0 4 14.5 5.5 5.5 0 0 0 9.5 20H13" />
+    </symbol>
     <symbol id="i-rotate-ccw" viewBox="0 0 24 24">
       <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
       <path d="M3 3v5h5" />
@@ -269,6 +273,10 @@
       <path d="M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2" />
       <path d="M9 20h6" />
     </symbol>
+    <symbol id="i-undo" viewBox="0 0 24 24">
+      <path d="M9 14 4 9l5-5" />
+      <path d="M4 9h10.5A5.5 5.5 0 0 1 20 14.5 5.5 5.5 0 0 1 14.5 20H11" />
+    </symbol>
     <symbol id="i-wand-sparkles" viewBox="0 0 24 24">
       <path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72" />
       <path d="m14 7 3 3" />
@@ -306,8 +314,9 @@
       <button class="tab-add" id="tabAdd" title="新建标签 (Ctrl+T)" data-i18n-title="新建标签 (Ctrl+T)"><svg class="ico" aria-hidden="true"><use href="#i-plus" /></svg></button>
       <div class="tabbar-fill" data-tauri-drag-region></div>
 
-      <!-- 工具行只留三个高频动作，其余（新建/打开/单栏双栏/大纲/格式化/对比/主题）
-           都在菜单里有，且带勾选状态 —— 宁可省行宽，也不重复摆放 -->
+      <!-- 工具行只留高频动作（撤销/重做/查找/保存），其余（新建/打开/单栏双栏/大纲/
+           格式化/对比/主题）都在菜单里有，且带勾选状态 —— 宁可省行宽，也不重复摆放。
+           撤销 / 重做常年变灰没人会注意，但真用得上时找不到入口就只能靠记快捷键 -->
       <div class="toolbar" id="toolbar">
         <div class="dropdown" id="modeDropdown">
           <button class="tb" id="btnMode">
@@ -321,6 +330,8 @@
           </div>
         </div>
 
+        <button class="tb icon-only" id="btnUndo" title="撤销 (Ctrl+Z)" data-i18n-title="撤销 (Ctrl+Z)" disabled><svg class="ico" aria-hidden="true"><use href="#i-undo" /></svg></button>
+        <button class="tb icon-only" id="btnRedo" title="重做 (Ctrl+Y)" data-i18n-title="重做 (Ctrl+Y)" disabled><svg class="ico" aria-hidden="true"><use href="#i-redo" /></svg></button>
         <button class="tb icon-only" id="btnFind" title="查找替换 (Ctrl+F)" data-i18n-title="查找替换 (Ctrl+F)"><svg class="ico" aria-hidden="true"><use href="#i-search" /></svg></button>
         <button class="tb" id="btnSave" title="保存 (Ctrl+S)" data-i18n-title="保存 (Ctrl+S)"><svg class="ico" aria-hidden="true"><use href="#i-save" /></svg><span data-i18n="保存">保存</span></button>
       </div>

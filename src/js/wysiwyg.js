@@ -1960,6 +1960,10 @@ export class WysiwygEditor {
     this.hLast = now;
   }
 
+  /** 工具栏 / 菜单用它决定能不能点：到栈底了就该是灰的，点了没反应更糟 */
+  canUndo() { return this.hIndex > 0; }
+  canRedo() { return this.hIndex < this.history.length - 1; }
+
   undo() {
     // 停手 400ms 内按撤销：先把挂起的输入落成快照，不然这几下会丢
     if (this._flushTimer) this.flush();

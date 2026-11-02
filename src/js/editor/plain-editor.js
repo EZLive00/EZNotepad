@@ -23,6 +23,7 @@ import {
   rectangularSelection, crosshairCursor,
   history, defaultKeymap, historyKeymap, indentWithTab,
   indentMore, indentLess, undo as cmUndo, redo as cmRedo, selectAll as cmSelectAll,
+  undoDepth, redoDepth,
   syntaxHighlighting, indentOnInput, indentUnit, bracketMatching, foldGutter, foldKeymap,
   closeBrackets, closeBracketsKeymap, StreamLanguage,
   javascript, python, rust, go, json, css, html, sql, yaml, markdown, java, cpp,
@@ -284,6 +285,10 @@ export class PlainEditor {
 
   undo() { return cmUndo(this.view); }
   redo() { return cmRedo(this.view); }
+  /* 工具栏/菜单的可用状态：CM6 的撤销深度只能问这两个函数，
+     view.state 里翻不出来（historyField 没导出） */
+  canUndo() { return undoDepth(this.view.state) > 0; }
+  canRedo() { return redoDepth(this.view.state) > 0; }
   selectAll() { cmSelectAll(this.view); }
 
   /** 用文本替换当前选区（粘贴、插入片段） */

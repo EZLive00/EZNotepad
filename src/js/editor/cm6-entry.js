@@ -38,7 +38,10 @@ export {
   indentMore,
   indentLess,
   undo,
+  /* 工具栏要显示「还能不能退」，CM6 只能问这两个：view.state 里翻不出深度 */
+  undoDepth,
   redo,
+  redoDepth,
   selectAll,
 } from '@codemirror/commands';
 
