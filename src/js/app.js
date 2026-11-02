@@ -2938,28 +2938,32 @@ function setupAppMenu() {
 
 const svgIco = (n) => `<svg class="ico" aria-hidden="true"><use href="#i-${n}" /></svg>`;
 
+/* 图标要和「点了会发生什么」对得上：以前标题三级都画 `type`、列表两种都画
+   `list-tree`、引用也是 `type`、表格是个空方框、链接是两个箭头，一列看下来
+   分不出谁是谁。现在每个都用自己的图标。
+   group 只用来在菜单里插分隔线：文本类 / 提示块，13 项一坨太难扫。 */
 const blockKinds = () => [
-  { id: 'body', label: tt('正文段落'), icon: 'type' },
-  { id: 'h1', label: tt('标题 1'), icon: 'type' },
-  { id: 'h2', label: tt('标题 2'), icon: 'type' },
-  { id: 'h3', label: tt('标题 3'), icon: 'type' },
-  { id: 'ul', label: tt('无序列表'), icon: 'list-tree' },
-  { id: 'ol', label: tt('有序列表'), icon: 'list-tree' },
-  { id: 'taskList', label: tt('任务列表'), icon: 'check' },
-  { id: 'quote', label: tt('引用'), icon: 'type' },
-  { id: 'calloutInfo', label: tt('信息提示块'), icon: 'info' },
-  { id: 'calloutWarning', label: tt('警告提示块'), icon: 'triangle-alert' },
-  { id: 'calloutDanger', label: tt('危险提示块'), icon: 'octagon-alert' },
-  { id: 'calloutSuccess', label: tt('成功提示块'), icon: 'circle-check' },
-  { id: 'codeBlock', label: tt('代码块'), icon: 'code' },
+  { id: 'body', label: tt('正文段落'), icon: 'pilcrow', group: 'text' },
+  { id: 'h1', label: tt('标题 1'), icon: 'heading-1', group: 'text' },
+  { id: 'h2', label: tt('标题 2'), icon: 'heading-2', group: 'text' },
+  { id: 'h3', label: tt('标题 3'), icon: 'heading-3', group: 'text' },
+  { id: 'ul', label: tt('无序列表'), icon: 'list', group: 'text' },
+  { id: 'ol', label: tt('有序列表'), icon: 'list-ordered', group: 'text' },
+  { id: 'taskList', label: tt('任务列表'), icon: 'list-todo', group: 'text' },
+  { id: 'quote', label: tt('引用'), icon: 'text-quote', group: 'text' },
+  { id: 'codeBlock', label: tt('代码块'), icon: 'code', group: 'text' },
+  { id: 'calloutInfo', label: tt('信息提示块'), icon: 'info', group: 'callout' },
+  { id: 'calloutWarning', label: tt('警告提示块'), icon: 'triangle-alert', group: 'callout' },
+  { id: 'calloutDanger', label: tt('危险提示块'), icon: 'octagon-alert', group: 'callout' },
+  { id: 'calloutSuccess', label: tt('成功提示块'), icon: 'circle-check', group: 'callout' },
 ];
 
-/** 插入类：这几件事自己知道往哪插，不用先造空块 */
+/** 插入类：这几件事自己知道往哪插，不用先造空块。kbd 只是提示，真正的按键在快捷键表里 */
 const blockInserts = () => [
-  { id: 'table', label: tt('表格（3 × 3）'), icon: 'square' },
-  { id: 'tablePrompt', label: tt('表格（自定大小）…'), icon: 'square' },
+  { id: 'table', label: tt('表格（3 × 3）'), icon: 'table', kbd: 'Ctrl+Shift+T' },
+  { id: 'tablePrompt', label: tt('表格（自定大小）…'), icon: 'table' },
   { id: 'image', label: tt('图片…'), icon: 'image' },
-  { id: 'link', label: tt('链接…'), icon: 'arrow-left-right' },
+  { id: 'link', label: tt('链接…'), icon: 'link', kbd: 'Ctrl+K' },
   { id: 'hr', label: tt('分割线'), icon: 'minus' },
 ];
 const SELF_INSERTING = new Set(['table', 'tablePrompt', 'image', 'link', 'hr']);
@@ -3049,7 +3053,8 @@ function openBlockMenu(mode) {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'bm-item' + (checked ? ' checked' : '');
-    b.innerHTML = svgIco(it.icon || 'type') + `<span>${it.label}</span>`;
+    b.innerHTML = svgIco(it.icon || 'type') + `<span>${it.label}</span>`
+      + (it.kbd ? `<kbd class="bm-kbd">${it.kbd}</kbd>` : '');
     b.addEventListener('mousedown', (e) => e.preventDefault());   // 保住编辑区选区
     b.onclick = () => bmRun(it.id);
     box.appendChild(b);
@@ -3057,7 +3062,12 @@ function openBlockMenu(mode) {
 
   const cur = mode === 'convert' ? kindOfBlock(handleBlock) : '';
   head(mode === 'insert' ? tt('在下方插入') : tt('转换这一块'));
-  blockKinds().forEach((it) => item(it, it.id === cur));
+  let prevGroup = '';
+  blockKinds().forEach((it) => {
+    if (prevGroup && it.group && it.group !== prevGroup) sep();
+    if (it.group) prevGroup = it.group;
+    item(it, it.id === cur);
+  });
   if (mode === 'insert') {
     sep();
     head(tt('插入'));
