@@ -53,7 +53,10 @@ const server = http.createServer((req, res) => {
   if (!file.startsWith(ROOT)) { res.writeHead(403); res.end('forbidden'); return; }
   fs.readFile(file, (err, buf) => {
     if (err) { res.writeHead(404); res.end('not found'); return; }
-    res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream' });
+    res.writeHead(200, {
+      'Content-Type': MIME[path.extname(file)] || 'application/octet-stream',
+      'Cache-Control': 'no-store, must-revalidate',   // profile 复用，靠这个保证拿到最新资源
+    });
     res.end(buf);
   });
 });
@@ -104,21 +107,11 @@ const killChromeWhere = (marker) => {
 const TMP_WIN = path.join(ROOT, 'node_modules', '.tmp').split(path.sep).join('\\');
 const killStaleChrome = () => { killChromeWhere(TMP_WIN + '\\chrome-'); };
 
-// 每次用全新 profile（复用会把上次的磁盘缓存带进来，页面拿旧资源），
-// 但开跑前先清场：收掉上轮遗留的 Chrome 并删掉它们的目录，否则垃圾只增不减。
-const profile = path.join(ROOT, 'node_modules', '.tmp', 'chrome-prof-wys-' + Date.now());
+// profile 固定一个、反复复用，**永不删除**。本机删除全部进回收站（奇安信 QesEngEx），
+// 一个 profile 就是几百个文件，以前「每次全新 profile + 用完即删」等于每跑一轮
+// 往回收站塞几百条。复用带来的旧缓存由静态服务的 Cache-Control: no-store 挡住。
+const profile = path.join(ROOT, 'node_modules', '.tmp', `chrome-prof-wys-${CDP_PORT}`);
 killStaleChrome();
-try {
-  const dir = path.dirname(profile);
-  for (const n of fs.readdirSync(dir)) {
-    if (/^chrome-/.test(n) && n !== path.basename(profile)) {
-      fs.rmSync(path.join(dir, n), { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
-    }
-  }
-} catch { /* 删不掉就下次再收 */ }
-try {
-  fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
-} catch { /* 上轮还没退干净就复用 */ }
 
 (async () => {
   await new Promise((r) => server.listen(PORT, '127.0.0.1', r));
@@ -126,6 +119,8 @@ try {
   const chrome = spawn(CHROME, [
     '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
     '--force-color-profile=srgb', '--hide-scrollbars', '--window-size=900,1200',
+    '--disable-application-cache', '--disk-cache-size=1', '--media-cache-size=1',
+    '--disable-background-networking', '--disable-sync', '--disable-component-update',
     `--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${profile}`,
     `http://127.0.0.1:${PORT}${PAGE}`,
   ], { stdio: 'ignore' });
@@ -136,10 +131,7 @@ try {
     killTree(chrome);
     try { server.close(); } catch { /* ignore */ }
     setTimeout(() => {
-      // 用完即删，否则每跑一次就多一个 14MB 的临时 profile 目录。
-      try {
-        fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
-      } catch { /* ignore */ }
+      // profile 目录留着复用：删它一次就是几百条回收站条目
       process.exit(code);
     }, 400);
   };

@@ -10,7 +10,7 @@
 //   3. 差异清单：计数、位置/类型排序、类型筛选、点击跳转
 //   4. 上限：行数超限时不加载、给出原因、失败侧不会留着上一轮的旧文件
 //
-// 夹具写到 node_modules/.tmp（可写，且不进仓库），跑完删掉。
+// 夹具写到 node_modules/.tmp（可写，且不进仓库），每轮覆盖，不删除。
 // ============================================================
 import fs from 'node:fs';
 import path from 'node:path';
@@ -199,7 +199,8 @@ try {
   cmp.close();
 } finally {
   main.close();
-  fs.rmSync(TMP, { recursive: true, force: true });
+  // 夹具留在 node_modules/.tmp/probe-cmp 下不复用删除：每轮 writeFileSync 直接覆盖。
+  // 本机删除全部进回收站，删目录 = 往回收站塞文件，所以这里一次删除都不做。
 }
 
 /* ---------- 汇总 ---------- */

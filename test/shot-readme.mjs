@@ -232,6 +232,5 @@ await C.shot('readme-compare.png');
 C.close();
 M.close();
 
-// 临时样例文件用完即删（不进仓库）
-fs.rmSync(dir, { recursive: true, force: true });
+// 临时样例文件留在 node_modules/.tmp 下，不删（本机删除会进回收站）
 console.log('done');

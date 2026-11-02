@@ -14,6 +14,10 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 
 const CONF_ARGS = '--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-gpu-sandbox';
+/* 探针专用的额外参数：把 WebView2 的落盘缓存压到最小。
+   应用退出时 WebView2 会清理缓存/日志，本机删除进回收站，实测每次十几条。
+   这几个开关只影响缓存，不改渲染行为。 */
+const PROBE_ARGS = '--disable-application-cache --disk-cache-size=1 --media-cache-size=1 --disable-background-networking';
 
 const EXE_CANDIDATES = [
   process.env.APP_EXE,
@@ -32,13 +36,16 @@ export async function cdpReady(port, ms = 1200) {
   } catch { return false; }
 }
 
-/* 子进程被 TerminateProcess 掉之后，WebView2 的渲染进程一般会跟着退，
-   但偶尔残留 —— 用 taskkill /T 连树一起收。exit 钩子里只能同步操作。 */
+/* 先礼后兵地收掉应用。
+   直接 /F 硬杀会让 WebView2 留下脏状态，下次启动要清理一遍缓存目录 ——
+   本机删除全部进回收站，实测一次硬杀 + 下一次启动会往里塞几十条。
+   所以先发 WM_CLOSE 让它自己关，等 1.2s 再兜底强杀。
+   exit 钩子里只能同步操作，用 Atomics.wait 睡。 */
 function killTree(proc) {
   if (!proc || proc.killed) return;
-  try {
-    spawnSync('taskkill', ['/PID', String(proc.pid), '/T', '/F'], { stdio: 'ignore', timeout: 5000 });
-  } catch {
+  try { spawnSync('taskkill', ['/PID', String(proc.pid)], { stdio: 'ignore', timeout: 4000 }); } catch {}
+  try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1200); } catch {}
+  try { spawnSync('taskkill', ['/PID', String(proc.pid), '/T', '/F'], { stdio: 'ignore', timeout: 5000 }); } catch {
     try { proc.kill(); } catch {}
   }
 }
@@ -100,7 +107,7 @@ export async function ensureApp(port = Number(process.env.CDP_PORT || 9333), { t
 
   const proc = spawn(path.resolve(exe), [], {
     stdio: 'ignore',
-    env: { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `${CONF_ARGS} --remote-debugging-port=${port}` },
+    env: { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `${CONF_ARGS} ${PROBE_ARGS} --remote-debugging-port=${port}` },
   });
   proc.on('error', () => {});
   process.on('exit', () => killTree(proc));

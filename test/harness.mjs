@@ -109,21 +109,11 @@ function portBusy(port) {
 }
 
 /**
- * 清掉其它测试遗留的临时 Chrome 配置目录（keep 是本次自己的，留着）。
- * 调用前已经 killStaleChrome()，所以这些目录没有进程占用，删得掉。
- * 注意：本函数假设测试是串行跑的（各文件的端口本来就是写死的，并行本来也跑不了）。
+ * 以前这里会「开跑前清场」：把其它测试遗留的 chrome-prof-* 目录删掉。
+ * 本机删除全部进回收站（奇安信 QesEngEx），一个 profile 就是几百条，
+ * 跑一轮测试能塞爆回收站 —— 所以现在**一次删除都不做**，
+ * 每个端口固定一个 profile 目录，反复复用（见 runPage）。
  */
-function sweepStaleProfiles(keep) {
-  let names = [];
-  try { names = fs.readdirSync(TMP_DIR); } catch { return; }
-  const mine = path.basename(keep);
-  for (const n of names) {
-    if (!/^chrome-/.test(n) || n === mine) continue;
-    try {
-      fs.rmSync(path.join(TMP_DIR, n), { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
-    } catch { /* 还被占着就下轮再收 */ }
-  }
-}
 
 /**
  * @param {object} o
@@ -148,19 +138,24 @@ export async function runPage(o) {
     if (!file.startsWith(ROOT)) { res.writeHead(403); res.end('forbidden'); return; }
     fs.readFile(file, (err, buf) => {
       if (err) { res.writeHead(404); res.end('not found'); return; }
-      res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream' });
+      res.writeHead(200, {
+        'Content-Type': MIME[path.extname(file)] || 'application/octet-stream',
+        /* profile 现在是复用的，必须让浏览器别缓存：以前靠「每次全新 profile」
+           来保证拿到最新 JS/CSS，那个做法的代价是每轮删掉几百个文件 */
+        'Cache-Control': 'no-store, must-revalidate',
+      });
       res.end(buf);
     });
   });
 
   await new Promise((r) => server.listen(port, '127.0.0.1', r));
 
-  // 每次都用全新的 profile 目录（不要复用：Chrome 的磁盘缓存会把上一次的 JS/CSS 带过来，
-  // 页面拿到旧资源，测试就会莫名其妙地少几项）。关键是「用完即删 + 开跑前清场」，
-  // 以前只做「新建」不做「删除」，跑几百轮就是几个 G 的垃圾和一堆后台 Chrome。
-  const profile = path.join(TMP_DIR, `chrome-prof-${cdpPort}-${Date.now()}`);
-  killStaleChrome(); // 先收掉上轮遗留的 Chrome，它们占着目录句柄，否则下面删不掉
-  sweepStaleProfiles(profile);
+  // 每个端口固定一个 profile 目录，反复复用，**永不删除**：
+  // 本机删除全进回收站（奇安信），一个 profile 是几百个文件，删一次就是几百条垃圾。
+  // 复用会带来「上一轮的磁盘缓存」，所以静态服务统一发 Cache-Control: no-store，
+  // 再用 --disk-cache-size / --disable-application-cache 把落盘缓存放到最小。
+  const profile = path.join(TMP_DIR, `chrome-prof-${cdpPort}`);
+  killStaleChrome(); // 收掉上轮遗留的 Chrome（只杀进程，不碰目录）；它们还占着 profile 句柄
   // 端口还被占着就说明有别人的 Chrome 活着。此时 spawn 的新实例绑不上调试端口，
   // 后面的 /json/list 会接到那个旧实例上——断言全跑在旧页面上，症状是「莫名少几项」。
   if (await portBusy(cdpPort)) {
@@ -174,6 +169,8 @@ export async function runPage(o) {
   const chrome = spawn(CHROME, [
     '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
     '--force-color-profile=srgb', '--hide-scrollbars', `--window-size=${width},${height}`,
+    '--disable-application-cache', '--disk-cache-size=1', '--media-cache-size=1',
+    '--disable-background-networking', '--disable-sync', '--disable-component-update',
     `--remote-debugging-port=${cdpPort}`, `--user-data-dir=${profile}`,
     `http://127.0.0.1:${port}${page}`,
   ], { stdio: 'ignore' });
@@ -184,10 +181,7 @@ export async function runPage(o) {
     killChromeWhere(profile.split(path.sep).join('\\'));
     killTree(chrome);
     try { server.close(); } catch { /* ignore */ }
-    // 进程没了再删目录；删不掉也无妨，下一次 runPage 开头的 sweepStaleProfiles() 会兜底。
-    try {
-      fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
-    } catch { /* ignore */ }
+    // 目录留着，下轮直接复用（删它 = 往回收站塞几百条）
   };
 
   const getJson = (p) => new Promise((resolve, reject) => {

@@ -8,7 +8,7 @@
 // 这些东西离不开真壳子：KaTeX 的脚本是运行时注入的、文件监听走 Rust 的
 // ReadDirectoryChangesW、专注模式靠真实布局像素说话，jsdom 里都测不出来。
 // ============================================================
-import { writeFileSync, unlinkSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 
 const PORT = process.env.CDP_PORT || 9333;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -163,7 +163,7 @@ await ev(`window.__snp.commands.save()`);
 await sleep(1200);
 ok('自己保存不会自激重载', await ev(`window.__snp.getActiveTab().content`).then((c) => c.includes('外部改过了')));
 
-try { unlinkSync(tmp); } catch {}
+// 临时文件留着，不删（本机删除会进回收站，见 test/README 的说明）
 
 /* ---------- 汇总 ---------- */
 ws.close();

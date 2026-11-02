@@ -18,7 +18,7 @@
     "test:menu": "node test/run-menu.mjs",
     "test:filetree": "node test/run-filetree.mjs",
     "test:app": "node test/run-app.mjs",
-    "test:probe": "node test/probe-app.mjs && node test/probe-bmenu.mjs && node test/probe-ctx.mjs && node test/probe-compare.mjs",
+    "test:probe": "node test/run-probe.mjs",
     "test:units": "node test/run-units.mjs",
     "test:i18n": "node test/run-i18n.mjs",
     "build:katex": "node scripts/build-katex.mjs",
