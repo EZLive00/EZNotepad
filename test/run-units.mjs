@@ -12,6 +12,7 @@ import { slugify, headingSlugs, inline, renderMarkdown } from '../src/js/markdow
 import { extractOutline } from '../src/js/preview.js';
 import { diffLines, buildSideBySide, diffStats } from '../src/js/diff.js';
 import { blockItems, arrange, rangeText } from '../src/js/difflist.js';
+import { sortLines, sortKey, isSorted } from '../src/js/linesort.js';
 
 const out = [];
 const eq = (name, got, want) => out.push({ name, ok: JSON.stringify(got) === JSON.stringify(want), got, want });
@@ -156,6 +157,22 @@ eq('行号区间：缺失', rangeText(0, 0), '');
 
 /* 空对比不炸 */
 eq('清单：空对比得到空清单', blockItems([], []), []);
+
+/* ---------- 按字典序排序 ---------- */
+eq('排序：中文按拼音', sortLines(['张三', '李四', '王五', '赵六']), ['李四', '王五', '张三', '赵六']);
+eq('排序：带编号的按数值', sortLines(['a10', 'a9', 'a1']), ['a1', 'a9', 'a10']);
+eq('排序：空行沉到末尾', sortLines(['b', '', 'a', '', 'c']), ['a', 'b', 'c', '', '']);
+eq('排序：全是空行就原样', sortLines(['', '  ']), ['', '  ']);
+eq('排序：同键保持原顺序', sortLines(['b1', 'a', 'b2', 'a']), ['a', 'a', 'b1', 'b2']);
+eq('排序：是置换，行数不变', sortLines(['c', 'a', 'b']).length, 3);
+eq('排序：不改原数组', (() => { const x = ['b', 'a']; sortLines(x); return x; })(), ['b', 'a']);
+eq('排序：默认忽略行首空白', sortLines([' b', 'a']), ['a', ' b']);
+eq('排序：关掉忽略空白按原始字符', sortLines([' b', 'a'], { ignoreWS: false }), [' b', 'a']);
+eq('排序：空数组不炸', sortLines([]), []);
+eq('排序键：去首尾空白', sortKey('  Ab '), 'Ab');
+eq('排序键：去空白并转小写', sortKey('  Ab ', { ignoreCase: true }), 'ab');
+ok('已经是字典序时 isSorted 为真', isSorted(['a', 'b', 'c']));
+ok('乱序时 isSorted 为假', !isSorted(['b', 'a']));
 
 /* ---------- 汇总 ---------- */
 const fail = out.filter((r) => !r.ok);

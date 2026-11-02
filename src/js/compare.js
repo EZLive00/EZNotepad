@@ -13,6 +13,7 @@
 import * as be from './backend.js';
 import { buildSideBySide, diffStats, inlineDiff } from './diff.js';
 import { blockItems, arrange, rangeText } from './difflist.js';
+import { sortLines, isSorted } from './linesort.js';
 import { toast } from './ui.js';
 import { invoke } from '../vendor/api/core.js';
 import { listen } from '../vendor/api/event.js';
@@ -63,6 +64,7 @@ const S = {
   units: { l: 0, r: 0 },
   sig: { l: '', r: '' },
   pending: null,       // 还没合并进模型的那一行（输入防抖）
+  lastSort: null,      // 上一次「按字典排序」前的快照（两侧一起，Ctrl+Z 一次还原）
   list: { open: false, sort: 'pos', dir: 1, filter: 'all', sig: '' },
   warn: '',            // 上限提示文案，空串表示没有
 };
@@ -822,6 +824,58 @@ function caretPos() {
   return { side, i, line: cell.no, col: offsetIn(host, sel.anchorNode, sel.anchorOffset) };
 }
 
+/**
+ * 选区的起点与终点落在哪个可编辑宿主里。折叠（光标）时返回 null。
+ *
+ * 存在的理由：Backspace / Delete 的行首、行尾合并只看「光标」，
+ * 而三击一行给出的选区**锚点就在行首**（实测 anchor.col=0、focus.col=11）。
+ * 不分清楚「选中了一段」和「光标停在行首」，三击后再按 Backspace 就会被
+ * 当成「光标在行首」→ mergeUp()，把整行并进上一行：看着只删掉了一个换行，
+ * 选中的内容一点没动。
+ */
+function selectionSpan() {
+  const sel = window.getSelection();
+  if (!sel || !sel.rangeCount || sel.isCollapsed) return null;
+  const r = sel.getRangeAt(0);
+  const hostOf = (node) => {
+    const e = node && (node.nodeType === 1 ? node : node.parentElement);
+    const h = e && e.closest ? e.closest('.cmp-tx') : null;
+    return h || null;
+  };
+  const ha = hostOf(r.startContainer);
+  const hb = hostOf(r.endContainer);
+  if (!ha || !hb) return null;
+  const sa = sideOf(ha);
+  const sb = sideOf(hb);
+  return {
+    same: ha === hb,
+    side: sa === sb ? sa : '',        // 跨两侧没有「一条文本」可删，别装作能删
+    aI: +ha.dataset.i,
+    bI: +hb.dataset.i,
+    aCol: offsetIn(ha, r.startContainer, r.startOffset),
+    bCol: offsetIn(hb, r.endContainer, r.endOffset),
+  };
+}
+
+/** 删掉跨行的选区：把头尾两行的残段拼起来，中间整行去掉。
+ *  浏览器不能跨 contenteditable 宿主删除，所以这一段必须自己算。 */
+function deleteSpan(span) {
+  const st = S.sides[span.side];
+  const rowA = S.rows[span.aI];
+  const rowB = S.rows[span.bI];
+  if (!rowA || !rowB) return;
+  const cellA = span.side === 'l' ? rowA.l : rowA.r;
+  const cellB = span.side === 'l' ? rowB.l : rowB.r;
+  if (!cellA || !cellB) return;
+  const from = cellA.no - 1;
+  const to = cellB.no - 1;
+  if (from >= to) return;             // 同一行（或方向反常）：交给别的分支
+  const head = st.lines[from] || '';
+  const tail = st.lines[to] || '';
+  st.lines.splice(from, to - from + 1, head.slice(0, span.aCol) + tail.slice(span.bCol));
+  applyEdit(span.side, from + 1, span.aCol);
+}
+
 function nodeAt(host, col) {
   const walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT);
   let rest = col;
@@ -874,6 +928,10 @@ function flush() {
 
 let undoTick = 0;
 function pushUndo(side) {
+  /* 又要改了 —— 「最近一次操作是排序」这个前提不再成立。
+     不清掉的话，排序后打几个字再按 Ctrl+Z，会一次跳回排序前的状态，
+     把这些字连同排序一起抹掉。 */
+  S.lastSort = null;
   const now = Date.now();
   if (now - undoTick < 700) return;
   undoTick = now;
@@ -976,6 +1034,67 @@ function undo(side, redo) {
   applyEdit(side, 1, 0);
 }
 
+/* ---------------- 按字典序排序 ---------------- */
+
+/**
+ * 把有内容的一侧（或两侧）按字典序重排，空行沉到末尾，行数不变。
+ *
+ * 排序会改内容，所以只读态下点它先开编辑 —— 「内容变了但保存按钮是灰的」
+ * 是个更难解释的状态。没有变化时不记快照、不重算，只回一句提示。
+ */
+function sortSides() {
+  const targets = ['l', 'r'].filter((k) => S.sides[k].loaded);
+  if (!targets.length) return false;
+
+  const snap = {};
+  for (const k of targets) {
+    const st = S.sides[k];
+    if (isSorted(st.lines, S.opt)) continue;
+    snap[k] = st.lines.slice();
+    st.undo.push(st.lines.slice());
+    if (st.undo.length > 120) st.undo.shift();
+    st.redo.length = 0;
+    st.lines = sortLines(st.lines, S.opt);
+    st.dirty = true;
+  }
+  if (!Object.keys(snap).length) {
+    toast(tt('已经是字典序了'));
+    return false;
+  }
+
+  /* 快照在改模型之后、重算之前记；setEdit 会重算一次，所以放它前面也没差别 */
+  S.lastSort = snap;
+  if (!S.edit) setEdit(true);
+  S.ver++;
+  recompute();
+  render(true);
+  updateMeta();
+  updateDots();
+  $('save').disabled = false;
+  toast(tt('已按字典序排序，Ctrl+Z 可撤销'));
+  return true;
+}
+
+/** Ctrl+Z：最近一次动的是排序就两侧一起还原 —— 只还原一侧会留下
+ *  「一边排好一边没排」的中间态，比不撤销还难懂。 */
+function undoSort() {
+  const snap = S.lastSort;
+  if (!snap) return false;
+  S.lastSort = null;
+  for (const k of Object.keys(snap)) {
+    const st = S.sides[k];
+    st.redo.push(st.lines.slice());
+    st.lines = snap[k];
+    st.dirty = true;
+  }
+  S.ver++;
+  recompute();
+  render(true);
+  updateMeta();
+  $('save').disabled = false;
+  return true;
+}
+
 function onKey(e) {
   if (!S.edit) return;
   const host = e.target.closest && e.target.closest('.cmp-tx');
@@ -984,11 +1103,30 @@ function onKey(e) {
   const k = (e.key || '').toLowerCase();
 
   if (mod && k === 's') { e.preventDefault(); save(); return; }
-  if (mod && k === 'z') { e.preventDefault(); flush(); undo(sideOf(host), e.shiftKey); return; }
+  if (mod && k === 'z') {
+    e.preventDefault(); flush();
+    if (!e.shiftKey && undoSort()) return;   // 排序是整侧替换，先按整体撤
+    undo(sideOf(host), e.shiftKey);
+    return;
+  }
   if (mod && k === 'y') { e.preventDefault(); flush(); undo(sideOf(host), false); return; }
 
   const side = sideOf(host);
   if (e.key === 'Tab') { e.preventDefault(); const p = caretPos(); flush(); if (p) insertText(side, p.line - 1, p.col, '    '); return; }
+
+  /* 选了一段内容时，按键的语义是「删掉它」，不是「合并行」。
+     必须在行首/行尾的判断之前拦下来 —— 三击一行的锚点就在行首。 */
+  const span = selectionSpan();
+  if (span && (e.key === 'Backspace' || e.key === 'Delete')) {
+    // 落在同一行里：交给浏览器默认删除，input 会经 onInput 写回模型，
+    // 原生的输入法状态与撤销粒度也就保住了
+    if (span.same) return;
+    e.preventDefault();
+    if (!span.side) return;           // 跨两侧：没有一条连续文本可删
+    flush();                          // 先把防抖中的那一行并回模型，再按行号删
+    deleteSpan(selectionSpan() || span);
+    return;
+  }
 
   const pos = caretPos();
   if (!pos) return;
@@ -1131,6 +1269,7 @@ function bind() {
     toast(S.edit ? tt('编辑已打开：直接改字，Ctrl+S 写回磁盘') : tt('编辑已关闭'));
   };
   $('pastePair').onclick = startPairText;
+  $('sortBtn').onclick = () => sortSides();
 
   for (const side of ['l', 'r']) {
     bindScroll(side);

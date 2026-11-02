@@ -45,6 +45,12 @@ fs.writeFileSync(p('big-b.txt'), B.join('\n') + '\n', 'utf8');
 /* 60001 行：超过 50000 的上限（内容行 60000 + 结尾换行后的空行） */
 fs.writeFileSync(p('over.txt'), Array.from({ length: 60000 }, (_, i) => `第 ${i} 行`).join('\n') + '\n', 'utf8');
 
+/* 编辑 / 排序用的小夹具：6 行 + 结尾空行，order 打乱，含中文与数字 */
+const EDIT_A = ['zeta 末行', 'alpha 首行', 'mmm 中间', 'beta 次行', '2020 年份', '第 3 章'];
+fs.writeFileSync(p('edit-a.txt'), EDIT_A.join('\n') + '\n', 'utf8');
+fs.writeFileSync(p('edit-a2.txt'), EDIT_A.join('\n') + '\n', 'utf8');            // 内容相同：一行对一行，便于定位
+fs.writeFileSync(p('edit-b.txt'), EDIT_A.slice().reverse().join('\n') + '\n', 'utf8');
+
 /* ---------- CDP ---------- */
 async function targets() {
   return (await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json());
@@ -60,12 +66,17 @@ async function connect(url) {
     if (q) { pending.delete(m.id); m.error ? q.rej(new Error(m.error.message)) : q.res(m.result); }
   });
   await new Promise((r, j) => { ws.addEventListener('open', r); ws.addEventListener('error', j); });
+  /* send 是给 Input.dispatchMouseEvent / dispatchKeyEvent 用的：
+     三击和按键必须是**真实输入事件**，用 dispatchEvent 合成的假事件
+     不会触发浏览器的默认行为（选段、删除），测不到真正的问题。 */
+  const send = (method, params) => new Promise((res, rej) => {
+    const id = ++seq;
+    pending.set(id, { res, rej });
+    ws.send(JSON.stringify({ id, method, params }));
+  });
   return {
-    ev: (expr) => new Promise((res, rej) => {
-      const id = ++seq;
-      pending.set(id, { res, rej });
-      ws.send(JSON.stringify({ id, method: 'Runtime.evaluate', params: { expression: expr, awaitPromise: true, returnByValue: true } }));
-    }).then((r) => {
+    send,
+    ev: (expr) => send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }).then((r) => {
       if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description || 'eval 异常');
       return r.result.value;
     }),
@@ -197,6 +208,122 @@ try {
   ok('超限的一侧没有被加载', over.nameL !== 'over.txt', `nameL=${over.nameL}`);
   ok('失败侧不会留着上一轮的旧文件', /只打开了一侧/.test(over.stat), over.stat);
   cmp.close();
+
+  /* ---------- 6. 编辑：三击选中一行，按 Backspace / Delete ----------
+     用户报的现象：三击选中一行再按 Backspace，只删掉了上一行的换行，
+     选中内容一点没动。根因是按键分支只看锚点（三击的锚点就在行首），
+     把它当成「光标在行首」→ mergeUp()。这里按真实轨迹验证。 */
+  const pressKey = async (vk, key, code, modifiers = 0) => {
+    const base = { windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk, key, code, modifiers };
+    await cmp.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...base });
+    await cmp.send('Input.dispatchKeyEvent', { type: 'keyUp', ...base });
+  };
+  const triple = async (x, y) => {
+    for (const n of [1, 2, 3]) {
+      await cmp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: n });
+      await cmp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: n });
+      await sleep(50);
+    }
+    await sleep(220);
+  };
+  const rowText = (side) => cmp.ev(`[...document.querySelectorAll('#rows${side.toUpperCase()} .cmp-tx')].map(e => e.textContent)`);
+  const rowAt = (side, i) => cmp.ev(`(() => {
+    const e = document.querySelector('#rows${side.toUpperCase()} .cmp-tx[data-i="${i}"]');
+    if (!e) return null;
+    const r = e.getBoundingClientRect();
+    return { x: Math.round(r.left + r.width * 0.45), y: Math.round(r.top + r.height / 2) };
+  })()`);
+  const openPair = async (a, b) => {
+    await main.ev(`window.__snp.openCompare(${JSON.stringify(a)}, ${JSON.stringify(b)})`);
+    await sleep(1600);
+    if (cmp) cmp.close();
+    cmp = await connect((await compareTarget()).webSocketDebuggerUrl);
+  };
+
+  await openPair(p('edit-a.txt'), p('edit-a2.txt'));
+  if (!(await cmp.ev(`document.getElementById('toggleEdit').classList.contains('on')`))) {
+    await cmp.ev(`document.getElementById('toggleEdit').click()`);
+    await sleep(500);
+  }
+  ok('编辑态下每行是可编辑单元',
+    (await cmp.ev(`document.querySelector('#rowsL .cmp-tx').getAttribute('contenteditable')`)) === 'plaintext-only');
+
+  const beforeBs = await rowText('l');
+  const hit = await rowAt('l', 1);          // 第 2 行
+  await triple(hit.x, hit.y);
+  const sel = await cmp.ev(`(() => { const s = getSelection(); return { collapsed: s.isCollapsed, len: s.toString().length, text: s.toString() }; })()`);
+  ok('三击选中了整行', !sel.collapsed && sel.len > 0, JSON.stringify(sel));
+
+  await pressKey(8, 'Backspace', 'Backspace');
+  await sleep(700);
+  const afterBs = await rowText('l');
+  ok('三击后 Backspace 清空的是选中的行', afterBs[1] === '', `第2行=${JSON.stringify(afterBs[1])}`);
+  ok('三击后 Backspace 不再吞掉上一行', afterBs[0] === beforeBs[0] && afterBs.length === beforeBs.length,
+    `${JSON.stringify(afterBs[0])} / 期望 ${JSON.stringify(beforeBs[0])}`);
+
+  /* Delete 走的是对称分支，同一个毛病，一并盯住 */
+  await openPair(p('edit-a.txt'), p('edit-a2.txt'));
+  const beforeDel = await rowText('l');
+  const hit2 = await rowAt('l', 1);
+  await triple(hit2.x, hit2.y);
+  await pressKey(46, 'Delete', 'Delete');
+  await sleep(700);
+  const afterDel = await rowText('l');
+  ok('三击后 Delete 也清空选中的行', afterDel[1] === '' && afterDel[0] === beforeDel[0],
+    `第2行=${JSON.stringify(afterDel[1])} 第1行=${JSON.stringify(afterDel[0])}`);
+
+  /* ---------- 7. 按字典序排序 ---------- */
+  await openPair(p('edit-a.txt'), p('edit-b.txt'));
+  const rawL = await rowText('l');
+  const rawR = await rowText('r');
+  /* 每侧自己的行数看行号列的最大值 —— 不能数 .cmp-tx：那是 diff 行数，
+     排序后两侧一致了，diff 行数本来就会变（12 → 7），不是 bug。 */
+  const maxLine = (side) => cmp.ev(`Math.max(0, ...[...document.querySelectorAll('#rows${side.toUpperCase()} .cmp-ln')].map(e => +e.textContent || 0))`);
+  const nL0 = await maxLine('l');
+  const nR0 = await maxLine('r');
+
+  const ORDERED = `((sel) => {
+    const rows = [...document.querySelectorAll(sel + ' .cmp-tx')].map(e => e.textContent);
+    const coll = new Intl.Collator('zh-CN', { numeric: true });
+    const body = rows.filter(t => t.trim() !== '');
+    let ordered = true;
+    for (let i = 1; i < body.length; i++) if (coll.compare(body[i - 1].trim(), body[i].trim()) > 0) ordered = false;
+    const ln = [...document.querySelectorAll(sel + ' .cmp-ln')].map(e => +e.textContent || 0);
+    return { n: rows.length, body, ordered, max: Math.max(0, ...ln), blankTail: rows.slice(body.length).every(t => t.trim() === '') };
+  })`;
+
+  /* 退出编辑态再点排序：这是用户最可能走的路径。排序会改内容，
+     只读态点它必须自己进编辑，否则「内容变了但保存按钮是灰的」。 */
+  if (await cmp.ev(`document.getElementById('toggleEdit').classList.contains('on')`)) {
+    await cmp.ev(`document.getElementById('toggleEdit').click()`);
+    await sleep(400);
+  }
+  await cmp.ev(`document.getElementById('sortBtn').click()`);
+  await sleep(700);
+  ok('只读态点排序会自动进编辑', await cmp.ev(`document.getElementById('toggleEdit').classList.contains('on')`));
+  const tools = await cmp.ev(`(() => {
+    const t = document.querySelector('.cmp-tools');
+    const b = document.getElementById('sortBtn').getBoundingClientRect();
+    return { sw: t.scrollWidth, cw: t.clientWidth, w: Math.round(b.width), h: Math.round(b.height) };
+  })()`);
+  ok('工具栏放得下排序按钮（不溢出、不是零宽）',
+    tools.sw <= tools.cw + 1 && tools.w > 20 && tools.h > 10, JSON.stringify(tools));
+  const sl = await cmp.ev(`${ORDERED}('#rowsL')`);
+  const sr = await cmp.ev(`${ORDERED}('#rowsR')`);
+  ok('排序后左侧按字典序', sl.ordered, sl.body.join(' / '));
+  ok('排序后右侧按字典序', sr.ordered, sr.body.join(' / '));
+  ok('排序不改每侧的行数', sl.max === nL0 && sr.max === nR0, `左 ${nL0}->${sl.max} / 右 ${nR0}->${sr.max}`);
+  ok('空行沉到末尾', sl.blankTail && sr.blankTail, JSON.stringify(sl.body));
+
+  /* Ctrl+Z 一次还原两侧（只还原一侧会留下「一边排好一边没排」） */
+  await cmp.ev(`document.querySelector('#rowsL .cmp-tx').focus()`);
+  await pressKey(90, 'z', 'KeyZ', 2);
+  await sleep(700);
+  const backL = await rowText('l');
+  const backR = await rowText('r');
+  ok('Ctrl+Z 一次撤销两侧排序',
+    JSON.stringify(backL) === JSON.stringify(rawL) && JSON.stringify(backR) === JSON.stringify(rawR),
+    `${JSON.stringify(backL)} vs ${JSON.stringify(rawL)}`);
 } finally {
   main.close();
   // 夹具留在 node_modules/.tmp/probe-cmp 下不复用删除：每轮 writeFileSync 直接覆盖。
