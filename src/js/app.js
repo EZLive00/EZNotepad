@@ -734,6 +734,8 @@ const tree = new FileTree({
   ask: askText,
   confirm: (title, html) => confirmBox(title, html, tt('删除'), tt('取消')),
   onReveal: (p) => revealInFolder(p),
+  /* 树里选中两个文件右键「比较」：左边是被右键的那个 */
+  onCompare: (l, r) => be.openCompareWindow(l, r).catch((e) => toast(tt('打不开对比窗口：') + e)),
   /* 改名/删除要带着已打开的标签一起走，否则标签还指着旧路径，
      下次保存就凭空造出一个同名文件（删除的情况则是把内容写回已删位置）。 */
   onRenamed: (oldPath, newPath) => {
@@ -2033,12 +2035,12 @@ function setFindExpanded(on) {
 
 /**
  * 文本对比改成独立窗口：两栏并排 + 侧边预览条，塞在主窗口的浮层里
- * 宽度永远不够（两栏各要 600 起步）。当前文件自动带进左侧。
+ * 宽度永远不够（两栏各要 600 起步）。
+ * 不在打开时自动填左侧：想比的是哪两个文件，只有用户自己知道 ——
+ * 把当前文件塞进左槽只会让人先把它清掉。两侧都空着，选文件或直接粘文本。
  */
 function openCompareWindow() {
-  const t = activeTab();
-  const left = t && t.path ? t.path : null;
-  be.openCompareWindow(left, null).catch((e) => toast(tt('打不开对比窗口：') + e));
+  be.openCompareWindow(null, null).catch((e) => toast(tt('打不开对比窗口：') + e));
 }
 
 /**

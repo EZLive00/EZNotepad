@@ -33,9 +33,11 @@ const sideKey = (s) => (s === 'l' ? 'L' : 'R');
 
 /* ---------------- 状态 ---------------- */
 const S = {
+  /* loaded = 这一侧有内容可比（来自文件，或用户直接粘进来的文本）。
+     只认 path 的话，剪贴板里两段文本就没法对比 —— 而那正是最常用的用法之一。 */
   sides: {
-    l: { path: '', name: '', lines: [''], enc: 'UTF-8', bom: false, eol: '\n', dirty: false, undo: [], redo: [] },
-    r: { path: '', name: '', lines: [''], enc: 'UTF-8', bom: false, eol: '\n', dirty: false, undo: [], redo: [] },
+    l: { path: '', name: '', loaded: false, lines: [''], enc: 'UTF-8', bom: false, eol: '\n', dirty: false, undo: [], redo: [] },
+    r: { path: '', name: '', loaded: false, lines: [''], enc: 'UTF-8', bom: false, eol: '\n', dirty: false, undo: [], redo: [] },
   },
   opt: { ignoreWS: true, ignoreCase: false },
   rows: [],
@@ -117,7 +119,7 @@ let CHAR_W = 7.6;
 
 function recompute() {
   const L = S.sides.l, R = S.sides.r;
-  const hasL = !!L.path, hasR = !!R.path;
+  const hasL = L.loaded, hasR = R.loaded;
   S.inline.clear();
   S.lineRow = { l: new Map(), r: new Map() };
 
@@ -262,9 +264,9 @@ function updateCurBox() {
 }
 
 function updateStats() {
-  const hasL = !!S.sides.l.path, hasR = !!S.sides.r.path;
+  const hasL = S.sides.l.loaded, hasR = S.sides.r.loaded;
   if (!hasL && !hasR) {
-    $('stat').textContent = tt('选择左右两个文件开始对比');
+    $('stat').textContent = tt('选两个文件，或者直接粘贴两段文本');
     $('curInfo').textContent = '';
     return;
   }
@@ -291,12 +293,15 @@ function updateMeta() {
     const nameEl = $('name' + k);
     const phEl = $('ph' + k);
     const metaEl = $('meta' + k);
-    if (st.path) {
-      nameEl.textContent = st.name;
-      nameEl.title = st.path;
-      phEl.textContent = st.name;
+    if (st.loaded) {
+      /* 没有文件的那一侧是用户粘进来的文本：槽位和栏头都不能写成「未选择」 */
+      nameEl.textContent = st.path ? st.name : (side === 'l' ? tt('左侧文本') : tt('右侧文本'));
+      nameEl.title = st.path || '';
+      phEl.textContent = nameEl.textContent;
       const n = st.lines.length;
-      metaEl.textContent = tt('{n} 行', { n }) + ' · ' + st.enc + (st.eol === '\r\n' ? ' · CRLF' : '') + (st.dirty ? ' · ' + tt('未保存') : '');
+      metaEl.textContent = tt('{n} 行', { n }) + (st.path ? ' · ' + st.enc + (st.eol === '\r\n' ? ' · CRLF' : '') : '');
+      /* 文本侧（无文件）永远存不进磁盘，标脏时也只是提醒「还没落盘过」 */
+      if (!st.path || st.dirty) metaEl.textContent += ' · ' + tt('未保存');
     } else {
       nameEl.textContent = (side === 'l' ? tt('左侧') : tt('右侧')) + tt('未选择');
       nameEl.title = '';
@@ -314,7 +319,7 @@ function updateDots() {
 }
 
 function updateEmpty() {
-  const empty = !S.sides.l.path && !S.sides.r.path;
+  const empty = !S.sides.l.loaded && !S.sides.r.loaded;
   $('empty').hidden = !empty;
 }
 
@@ -448,6 +453,7 @@ async function loadSide(side, path) {
     const st = S.sides[side];
     st.path = r.path;
     st.name = r.name;
+    st.loaded = true;
     st.enc = r.encoding || 'UTF-8';
     st.bom = !!r.bom;
     st.eol = r.eol === 'CRLF' ? '\r\n' : '\n';
@@ -478,6 +484,51 @@ async function loadPair(left, right) {
     render(true);
   }
   updateEmpty();
+}
+
+/**
+ * 没有文件也能比：把一侧开成空白文本，进编辑模式并把光标落进去，
+ * 用户随后 Ctrl+V 粘进来就行（多行粘贴由 onInput 按行拆开并进模型）。
+ * 这一侧已经有文件时只切编辑，不冲掉内容。
+ */
+function startText(side) {
+  const st = S.sides[side];
+  if (st.path) { setEdit(true); focusAt(side, 1, 0); return; }
+  st.name = '';
+  st.loaded = true;
+  st.lines = [''];
+  st.dirty = false;
+  st.enc = 'UTF-8';
+  st.bom = false;
+  st.eol = '\n';
+  st.undo.length = 0;
+  st.redo.length = 0;
+  S.pending = null;
+  S.ver++;
+  recompute();
+  render(true);
+  updateMeta();
+  updateEmpty();
+  setEdit(true);
+  focusAt(side, 1, 0);
+}
+
+/** 空状态里的「直接粘贴两段文本」：两侧都开白，最后把光标落在左侧 */
+function startPairText() {
+  startText('l');
+  startText('r');
+  focusAt('l', 1, 0);
+}
+
+/** 开/关编辑态。按钮与「直接粘贴文本」两条入口共用，避免两套状态切换 */
+function setEdit(on) {
+  if (S.pending) { flush(); S.ver++; recompute(); }
+  S.edit = !!on;
+  $('toggleEdit').classList.toggle('on', S.edit);
+  $('paneL').classList.toggle('editing', S.edit);
+  $('paneR').classList.toggle('editing', S.edit);
+  S.ver++;
+  render(true);
 }
 
 /* ---------------- 编辑 ---------------- */
@@ -704,7 +755,12 @@ function onKey(e) {
 async function save() {
   if (S.pending) { flush(); S.ver++; recompute(); render(true); }
   const dirty = ['l', 'r'].filter((k) => S.sides[k].path && S.sides[k].dirty);
-  if (!dirty.length) { toast(tt('没有需要保存的改动')); return; }
+  if (!dirty.length) {
+    /* 粘进来的文本没有磁盘目标，这时候说「没有需要保存的改动」是在骗人 */
+    const textDirty = ['l', 'r'].some((k) => !S.sides[k].path && S.sides[k].loaded && S.sides[k].dirty);
+    toast(textDirty ? tt('粘贴进来的文本没有对应文件，无法保存') : tt('没有需要保存的改动'));
+    return;
+  }
   for (const k of dirty) {
     const st = S.sides[k];
     try {
@@ -774,7 +830,7 @@ function bind() {
   $('pickR').onclick = pickSide('r');
 
   $('swap').onclick = () => {
-    if (!S.sides.l.path && !S.sides.r.path) return;
+    if (!S.sides.l.loaded && !S.sides.r.loaded) return;
     const t = S.sides.l;
     S.sides.l = S.sides.r;
     S.sides.r = t;
@@ -793,17 +849,13 @@ function bind() {
   $('save').onclick = save;
   $('report').onclick = saveReport;
 
+  /* 编辑开关抽成函数：空状态「直接粘贴文本」也要进同一个状态机 */
   $('toggleEdit').onclick = () => {
-    if (!S.sides.l.path && !S.sides.r.path) { toast(tt('先选两个文件再编辑')); return; }
-    if (S.pending) { flush(); S.ver++; recompute(); }
-    S.edit = !S.edit;
-    $('toggleEdit').classList.toggle('on', S.edit);
-    $('paneL').classList.toggle('editing', S.edit);
-    $('paneR').classList.toggle('editing', S.edit);
-    S.ver++;
-    render(true);
+    if (!S.sides.l.loaded && !S.sides.r.loaded) { toast(tt('先选文件，或者直接粘贴文本')); return; }
+    setEdit(!S.edit);
     toast(S.edit ? tt('编辑已打开：直接改字，Ctrl+S 写回磁盘') : tt('编辑已关闭'));
   };
+  $('pastePair').onclick = startPairText;
 
   for (const side of ['l', 'r']) {
     bindScroll(side);

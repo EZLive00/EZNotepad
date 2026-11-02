@@ -10,7 +10,9 @@
 const PORT = process.env.CDP_PORT || 9333;
 
 const list = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json();
-const page = list.find((t) => t.type === 'page');
+/* 比较窗口是独立页面，也会出现在目标列表里（而且常常排在最前面）。
+   只按 type === 'page' 抓会把比较窗口当成主窗口，断言全落在错误的页面上 */
+const page = list.find((t) => t.type === 'page' && !/compare\.html/.test(t.url));
 if (!page) { console.error('没有找到页面目标'); process.exit(2); }
 
 const ws = new WebSocket(page.webSocketDebuggerUrl);

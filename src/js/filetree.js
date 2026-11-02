@@ -30,9 +30,10 @@ export class FileTree {
    *   menu     (x, y, items) => void           右键菜单（ui.js 的 contextMenu）
    *   ask      (title, label, value) => Promise<string|null>   文本输入框
    *   confirm  (title, html) => Promise<boolean>               二次确认
-   *   onRenamed (oldPath, newPath) => void     让打开着的标签跟着改名
+  *   onRenamed (oldPath, newPath) => void     让打开着的标签跟着改名
    *   onDeleted (path) => void                 让打开着的标签脱离磁盘
    *   onReveal  (path) => void                 在资源管理器里定位
+   *   onCompare (leftPath, rightPath) => void  多选两个文件后右键「比较」
    */
   constructor(opt) {
     this.body = opt.body;
@@ -46,6 +47,10 @@ export class FileTree {
     this.onRenamed = opt.onRenamed || (() => {});
     this.onDeleted = opt.onDeleted || (() => {});
     this.onReveal = opt.onReveal || (() => {});
+    this.onCompare = opt.onCompare || null;
+    /* 多选只对文件生效：Ctrl 点击增减、Shift 点击选一段，用来挑两个文件做比较 */
+    this.sel = new Set();
+    this.anchor = '';
     this.root = '';
     this.expanded = new Set();
     this.regex = false;        // 搜索是否按正则匹配（由侧栏那个 .* 开关控制）
@@ -92,6 +97,12 @@ export class FileTree {
     tree.append(await this._children(this.root, 0));
     this.body.append(tree);
     this.setActive(this.activePath);
+    /* 行是新建的，选择状态要重画；顺手把已经不存在的路径从选择里摘掉 */
+    if (this.sel.size) {
+      const alive = new Set([...this.body.querySelectorAll('.ft-row')].map((r) => r.dataset.path));
+      for (const p of [...this.sel]) if (!alive.has(p)) this.sel.delete(p);
+      this._paintSel();
+    }
   }
 
   async _children(dir, depth) {
@@ -127,7 +138,7 @@ export class FileTree {
         '<span class="ft-name"></span>';
       row.querySelector('.ft-name').textContent = e.name;
       if (e.is_dir) row.onclick = () => this._toggle(row, e, depth);
-      else row.onclick = () => this.onOpen(e.path);
+      else row.onclick = (ev) => this._clickFile(row, e, ev);
       row.oncontextmenu = (ev) => {
         ev.preventDefault();
         ev.stopPropagation();
@@ -158,13 +169,69 @@ export class FileTree {
      树以前是纯只读的：打开一个文件夹写笔记，想新建一个文件还得回资源管理器。
      写操作全部走后端命令，名字只允许单层（后端会再挡一次 ../）。 */
 
+  /* ---------------- 多选 ---------------- */
+
+  /**
+   * 文件行点击。
+   *   · 普通点击：只选它，并且照旧打开（打开是单击的默认动作，别为了多选把这个改掉）
+   *   · Ctrl/⌘ 点击：只增减选择，不打开 —— 想比较两个文件时不该顺手弹出两个标签
+   *   · Shift 点击：从锚点到这一行按可视顺序选一段
+   */
+  _clickFile(row, entry, ev) {
+    if (ev && (ev.ctrlKey || ev.metaKey)) { this._toggleSel(entry.path); return; }
+    if (ev && ev.shiftKey && this.anchor) {
+      const rows = [...this.body.querySelectorAll('.ft-row')].filter((r) => !r.classList.contains('dir'));
+      const a = rows.findIndex((r) => r.dataset.path === this.anchor);
+      const b = rows.indexOf(row);
+      if (a >= 0 && b >= 0) {
+        this.sel.clear();
+        for (let i = Math.min(a, b); i <= Math.max(a, b); i++) this.sel.add(rows[i].dataset.path);
+        this._paintSel();
+        return;
+      }
+    }
+    this.sel.clear();
+    this.sel.add(entry.path);
+    this.anchor = entry.path;
+    this._paintSel();
+    this.onOpen(entry.path);
+  }
+
+  _toggleSel(path) {
+    if (this.sel.has(path)) this.sel.delete(path);
+    else this.sel.add(path);
+    this.anchor = path;
+    this._paintSel();
+  }
+
+  /** 选择状态画在行上；重画树之后要再调一次（行是新建的） */
+  _paintSel() {
+    this.body.querySelectorAll('.ft-row').forEach((r) => {
+      r.classList.toggle('sel', this.sel.has(r.dataset.path));
+    });
+  }
+
   _rowMenu(ev, entry) {
     if (!this.menu) return;
+    /* 右键落在没被选中的文件上时，把选择收束到它 —— 否则「比较」会作用在
+       用户根本没看着的那两个文件上 */
+    if (!entry.is_dir && !this.sel.has(entry.path)) {
+      this.sel.clear();
+      this.sel.add(entry.path);
+      this.anchor = entry.path;
+      this._paintSel();
+    }
     const items = [];
     if (entry.is_dir) {
       items.push({ label: tt('新建文件…'), icon: 'file-plus', action: () => this._create(entry.path, false) });
       items.push({ label: tt('新建文件夹…'), icon: 'folder-plus', action: () => this._create(entry.path, true) });
       items.push({ sep: true });
+    } else if (this.onCompare && this.sel.size === 2) {
+      const other = [...this.sel].find((p) => p !== entry.path);
+      if (other) {
+        items.push({ label: tt('比较这两个文件'), icon: 'file-diff', action: () => this.onCompare(entry.path, other) });
+        items.push({ sep: true });
+      }
     }
     items.push({ label: tt('重命名…'), icon: 'pencil', action: () => this._rename(entry) });
     items.push({ label: tt('删除'), icon: 'trash-2', danger: true, action: () => this._remove(entry) });

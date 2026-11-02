@@ -44,12 +44,11 @@ export class DiffPanel {
     $('overlay').classList.remove('hidden');
   }
 
-  /** 文本对比：把当前文件带过去，关掉浮层 */
+  /** 文本对比：打开独立窗口。不带当前文件 —— 要比较的对象让用户自己挑 */
   async openText() {
     this.close();
-    const tab = window.__snp && window.__snp.getActiveTab();
     try {
-      await be.openCompareWindow(tab && tab.path ? tab.path : null, null);
+      await be.openCompareWindow(null, null);
     } catch (e) {
       toast(tt('打不开对比窗口：') + e);
     }

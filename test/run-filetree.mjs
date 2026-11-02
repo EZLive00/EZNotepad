@@ -78,6 +78,47 @@ try {
   const dirMenu = await labels();
   ok('目录菜单多出两个新建项', dirMenu.includes('新建文件…') && dirMenu.includes('新建文件夹…'), dirMenu.join(' | '));
 
+  // ---- 多选 + 右键比较 ----
+  const clickRow = (name, mod) => ev(`(() => {
+    const row = [...document.querySelectorAll('.ft-row')].find(r => r.querySelector('.ft-name').textContent === ${JSON.stringify(name)});
+    if (!row) return false;
+    row.dispatchEvent(new MouseEvent('click', {
+      bubbles: true,
+      ctrlKey: ${mod === 'ctrl'},
+      shiftKey: ${mod === 'shift'},
+    }));
+    return true;
+  })()`);
+  const selNames = () => ev(`[...document.querySelectorAll('.ft-row.sel')].map(r => r.querySelector('.ft-name').textContent)`);
+
+  /* 先用普通点击落成单选 —— 前面的右键检查也会顺手选中一行，
+     直接从 Ctrl 点击开始会把它取消掉，测出来的就不是多选了 */
+  await clickRow('笔记.md');
+  await ev(`window.__opened.length = 0`);
+  ok('Ctrl 点击文件只选中，不打开', await clickRow('日志.txt', 'ctrl'));
+  ok('Ctrl 点击没有触发打开', (await ev(`window.__opened.length`)) === 0, JSON.stringify(await ev(`window.__opened`)));
+  ok('Ctrl 点击加上第二个文件后两个都选中', (await selNames()).length === 2, (await selNames()).join(','));
+
+  await rightClick('日志.txt');
+  const twoMenu = await labels();
+  ok('选中两个文件后右键出现「比较这两个文件」', twoMenu.includes('比较这两个文件'), twoMenu.join(' | '));
+  ok('点「比较」把两个路径交出去', await pick('比较这两个文件'));
+  const cmp = await ev(`window.__compared`);
+  ok('比较参数是右键的那个文件 + 另一个',
+    JSON.stringify(cmp) === JSON.stringify([['C:/demo/日志.txt', 'C:/demo/笔记.md']]), JSON.stringify(cmp));
+
+  await clickRow('笔记.md');
+  ok('普通点击只选一个并照旧打开', (await selNames()).join(',') === '笔记.md'
+    && (await ev(`window.__opened`) ).includes('C:/demo/笔记.md'), (await selNames()).join(','));
+
+  ok('Shift 点击选一段', await clickRow('日志.txt', 'shift'));
+  ok('Shift 选中的是两行文件', (await selNames()).length === 2, (await selNames()).join(','));
+
+  await clickRow('笔记.md');          // 收回到单选，再验证菜单里没有比较项
+  await rightClick('笔记.md');
+  const singleMenu = await labels();
+  ok('只选一个文件时没有比较项', !singleMenu.includes('比较这两个文件'), singleMenu.join(' | '));
+
   // ---- 重命名 ----
   await ev(`window.__nextName = '改名后.md'`);
   await rightClick('笔记.md');

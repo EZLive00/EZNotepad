@@ -51,7 +51,7 @@
 
   <!-- 第二行：统计 + 选项 + 导航 + 动作 -->
   <div class="cmp-tools">
-    <span class="cmp-stat" id="stat">选择左右两个文件开始对比</span>
+    <span class="cmp-stat" id="stat">选两个文件，或者直接粘贴两段文本</span>
     <span class="cmp-cur" id="curInfo"></span>
     <div class="cmp-tools-gap"></div>
 
@@ -102,10 +102,11 @@
   <div class="cmp-empty" id="empty">
     <div class="cmp-empty-box">
       <div class="cmp-empty-t" data-i18n="没有可对比的内容">没有可对比的内容</div>
-      <div class="cmp-empty-s" data-i18n="选两个文件，或者把它当作左右并排的阅读器">选两个文件，或者把它当作左右并排的阅读器</div>
+      <div class="cmp-empty-s" data-i18n="选两个文件，或者直接粘贴两段文本">选两个文件，或者直接粘贴两段文本</div>
       <div class="cmp-empty-btns">
         <button class="cmp-btn primary" id="pickL" data-i18n="选择左侧文件">选择左侧文件</button>
         <button class="cmp-btn primary" id="pickR" data-i18n="选择右侧文件">选择右侧文件</button>
+        <button class="cmp-btn" id="pastePair" title="两侧都开成空白文本，直接 Ctrl+V 粘进来对比" data-i18n-title="两侧都开成空白文本，直接 Ctrl+V 粘进来对比" data-i18n="粘贴两段文本">粘贴两段文本</button>
       </div>
     </div>
   </div>

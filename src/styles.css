@@ -585,6 +585,10 @@ body[data-theme="dark"] .am-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 25
 }
 .ft-row:hover { background: var(--bg-hover); color: var(--fg); }
 .ft-row.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+/* 多选（挑两个文件做比较）：和「当前打开」区分开 —— 打开是实底强调，
+   多选只加一圈细描边，两个状态同时存在时仍看得出哪个是编辑区里的那一个 */
+.ft-row.sel { background: var(--bg-hover); box-shadow: inset 0 0 0 1px var(--accent); color: var(--fg); }
+.ft-row.sel.active { background: var(--accent-soft); }
 .ft-row .ft-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* 折叠箭头占固定槽位，文件夹和文件的行首才对得齐 */
 .ft-caret { width: 12px; height: 12px; flex: none; color: var(--fg-faint); transition: transform .13s var(--ease); }

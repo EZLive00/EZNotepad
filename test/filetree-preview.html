@@ -46,6 +46,7 @@ window.__calls = calls;
 window.__opened = [];
 window.__renamed = [];
 window.__deleted = [];
+window.__compared = [];
 
 const be = {
   readDirShallow: async (p) => (fs[p] || []).map((e) => ({ ...e })),
@@ -90,6 +91,7 @@ const tree = new FileTree({
   onOpen: (p) => window.__opened.push(p),
   onRenamed: (a, b) => window.__renamed.push([a, b]),
   onDeleted: (p) => window.__deleted.push(p),
+  onCompare: (l, r) => window.__compared.push([l, r]),
 });
 
 window.__tree = tree;
