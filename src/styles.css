@@ -270,20 +270,23 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
 .tabs {
   display: flex; gap: 0; overflow-x: auto; overflow-y: hidden;
   scrollbar-width: none; min-width: 0; flex: 0 1 auto;
-  /* 标签是带四边框的独立小方块：撑满行高让它们垂直居中，
-     上下各留 3px，避免上边框与标签行顶线、下边框与底线叠成双线 */
+  /* 标签撑满整行高度：上下边界直接借用标签栏自己的两道线（.tabbar 的上线 +
+     .appbar 的下线），标签本身不再画上下边框 —— 一旦画了，就是行内一个个
+     独立小方块，看着碎 */
   align-self: stretch;
-  align-items: center;
+  align-items: stretch;
 }
 .tabs::-webkit-scrollbar { display: none; }
 .tabbar-fill { flex: 1; align-self: stretch; min-width: 12px; }
 
+/* 标签：只有左右两道竖线分隔，上下不封口（高度由 align-items:stretch 撑满 32px，
+   竖线正好顶到标签栏的上下两条线上） */
 .tab {
   display: flex; align-items: center; gap: 6px;
-  height: 26px;
   padding: 0 7px 0 11px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
+  border: none;
+  border-left: 1px solid var(--line);
+  border-right: 1px solid var(--line);
   color: var(--fg-soft);
   font-size: 12.5px;
   white-space: nowrap;
@@ -295,13 +298,13 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
 }
 .tab:hover { background: var(--bg-hover); border-color: var(--line-strong); }
 /* 相邻标签共享同一条竖线：后一颗左移 1px，把自己的左边框压在邻居右边框上，
-   这样每颗都有完整四条边，中间又只有一条线（不会出现双线）。 */
+   这样每颗左右都有边界，中间又只有一条线（不会出现双线）。 */
 .tab + .tab { margin-left: -1px; }
 /* 拖拽换位的两个状态：被拖的那颗变淡，落点用 2px 竖线提示 */
 .tab.dragging { opacity: .4; }
 .tab.drop-before::before,
 .tab.drop-after::before {
-  content: ""; position: absolute; top: 3px; bottom: 3px; width: 2px;
+  content: ""; position: absolute; top: 0; bottom: 0; width: 2px;
   background: var(--accent); border-radius: 0;
 }
 .tab.drop-before::before { left: -2px; }
@@ -314,6 +317,11 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
   border-color: var(--line-strong);
   z-index: 1;
 }
+/* 首尾不封口：标签区最左 / 最右那颗（以及只有一颗时）不画外侧边线，
+   否则两头会各多出一根孤立的竖线。只把颜色置透明，宽度留着，布局不动。
+   选择器带 .tabs 前缀是为了盖过上面的 .tab.active */
+.tabs .tab:first-child { border-left-color: transparent; }
+.tabs .tab:last-child { border-right-color: transparent; }
 /* 加粗宽度占位：正常态也预留 600 字重的宽度，激活切换时文字宽了但布局不动。
    伪元素是同文本的加粗版，高度压成 0 且不可见，只贡献宽度 */
 .tab-name::before {
