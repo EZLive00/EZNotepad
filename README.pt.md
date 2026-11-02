@@ -2,9 +2,9 @@
 
 # EZNotepad
 
-> Um pequeno utilitário de desktop de **5 MB**: escrita em Markdown + leitura e escrita de texto + comparação de arquivos.
-> Sem instalação, sem internet, basta dar dois cliques para usar.
-> A interface suporta 9 idiomas, por padrão segue o idioma do sistema, e também pode ser trocado manualmente em "Configurações → Idioma".
+> Um utilitário de desktop de **5 MB**: escrita Markdown, edição de texto e comparação de arquivos.
+> Portátil, offline, pronto no duplo clique.
+> A interface fala 9 idiomas e segue o do sistema; troque em **Configurações → Idioma**.
 
 [English](README.md) | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Français](README.fr.md) | [Deutsch](README.de.md) | [Español](README.es.md) | **Português**
 
@@ -15,337 +15,160 @@
 
 ---
 
-## Download e instalação
+## Download
 
-Baixe em [Releases](https://github.com/EZLive00/EZNotepad/releases):
-
-| Artefato | Para quem é |
+| Arquivo | Para quem |
 |---|---|
-| `EZNotepad_<版本>_x64-setup.exe` | **Versão instalável**: assistente de instalação + associação de arquivos; dê dois cliques em `.md` / `.txt` para abrir diretamente |
-| `EZNotepad_<版本>_x64-portable.zip` | **Versão portátil**: extraia em qualquer diretório, dê dois cliques em `EZNotepad.exe` e pronto |
+| `EZNotepad_<versão>_x64-setup.exe` | **Instalador** — assistente de instalação e associações: um duplo clique em `.md` / `.txt` abre aqui |
+| `EZNotepad_<versão>_x64-portable.zip` | **Portátil** — extraia em qualquer pasta e rode `EZNotepad.exe` (sem registro, sem associações) |
 
-- Nenhuma das duas possui assinatura de código; na primeira execução o SmartScreen vai bloquear uma vez: clique em "Mais informações" → "Executar mesmo assim"
-- A versão portátil depende do runtime WebView2 do sistema (já embutido no Win10 / Win11), não escreve no registro e não registra associações de arquivos
-- Por enquanto, apenas pacotes para Windows x64 estão disponíveis
+As compilações não são assinadas: o SmartScreen bloqueia o primeiro início, clique em **Mais informações → Executar assim mesmo**.
+Por enquanto só Windows x64; a versão portátil usa o WebView2 do sistema (já vem no Windows 10 / 11).
 
----
+## Capturas
 
-## Capturas de tela
+| Tema claro | Tema escuro |
+|---|---|
+| ![Janela principal, tema claro](docs/screenshots/light.png) | ![Janela principal, tema escuro](docs/screenshots/dark.png) |
 
-**Tema claro**
-
-![Interface principal do EZNotepad no tema claro](docs/screenshots/light.png)
-
-**Tema escuro**
-
-![Interface principal do EZNotepad no tema escuro](docs/screenshots/dark.png)
-
----
+| Escreva à esquerda, visualize à direita | Comparação: marcas por linha e por caractere |
+|---|---|
+| ![Dois painéis](docs/screenshots/split.png) | ![Janela de comparação](docs/screenshots/compare.png) |
 
 ## O que ele substitui
 
-| O que você usava antes | Por que usava | Com ele, depois |
+| Antes | Por quê | Aqui |
 |---|---|---|
-| Bloco de notas | Abrir qualquer texto, mudar codificação, ver logs | Abre igual, e ainda ganha números de linha, realce e estrutura do documento |
-| Typora | Escrever e ver o Markdown ao mesmo tempo | Três modos à sua escolha, 20 vezes mais leve |
-| BeyondCompare | Comparar onde dois arquivos diferem | Lado a lado com realce, diferenças marcadas caractere a caractere, salto entre diferenças com F7/F8 |
+| Notepad | Abrir qualquer texto, trocar codificação, ler logs | O mesmo, com números de linha, realce e estrutura |
+| Typora | Markdown com visualização ao digitar | Três modos, 20× mais leve |
+| BeyondCompare | Comparar dois arquivos | Lado a lado, marcas por caractere, `F7` / `F8` pelas diferenças |
 
----
-
-## Três modos (um menu suspenso, adaptação automática por tipo de arquivo)
+## Três modos
 
 | Modo | O que faz | Atalho |
 |---|---|---|
-| **WYSIWYG** | Digite `# ` vira título, `**粗**` fica em negrito na hora | `Ctrl+1` |
-| **Modo de edição** | Vê o Markdown original / código-fonte, com números de linha, coloração de sintaxe e dobramento | `Ctrl+2` |
-| **Modo de visualização** | Renderização somente leitura, focada na leitura | `Ctrl+3` |
+| **WYSIWYG** | `# ` no início da linha vira título, `**negrito**` aplica enquanto você digita | `Ctrl+1` |
+| **Edição** | Markdown / código-fonte, CodeMirror 6 com números de linha e dobramento | `Ctrl+2` |
+| **Visualização** | Renderização somente leitura, feita para ler | `Ctrl+3` |
 
-**Tipos de arquivo suportados**: `.md` (os três modos habilitados), `.json` (validação + realce + localização de erros),
-`.txt` `.log` `.csv`, arquivos de código comuns (`.js/.ts/.py/.rs/.go/.html/.css/.sql/.yml/...`).
-**Ao criar um novo, você escolhe primeiro o tipo** (Markdown / texto simples / JSON / CSV / código); arquivos que não são Markdown
-têm apenas "Editar / Visualizar" disponíveis, funcionando como um editor de texto comum.
+`.md` aceita os três. `.json` ganha validação e localização de erro; `.txt` `.log` `.csv` e arquivos de código
+(`.js .ts .py .rs .go .html .css .sql .yml` …) têm só Edição / Visualização, como um editor de texto comum.
+Arquivos novos pedem o tipo primeiro (Markdown / Texto simples / JSON / CSV / Código).
 
-## O modo de edição usa CodeMirror 6
+## Edição
 
-Não é um `<textarea>` disfarçado. É o pacote completo de um verdadeiro editor de código:
-
-| | Descrição |
+| | |
 |---|---|
-| **Coloração de sintaxe** | JS/TS/JSX, Python, Rust, Go, Java, C/C++, JSON, CSS, HTML, SQL, YAML, Shell, INI, Markdown, com parsing incremental |
-| **Números de linha / linha atual** | Calha de números de linha, fundo da linha atual, correspondência de parênteses, dobramento de código |
-| **Desfazer** | Histórico transacional próprio do CM6, mais confiável que o contenteditable do navegador |
-| **Arquivos grandes** | Renderiza apenas as linhas visíveis. Na prática, 50 mil linhas abrem em 49 ms, 100 mil em 20 ms, com pouco mais de cem linhas no DOM |
-| **Indentação** | Tab indenta a seleção inteira se houver seleção, ou a linha atual se não houver; Shift+Tab remove indentação; Enter herda a indentação da linha anterior |
-| **Pares de parênteses** | Digitar `(` insere `)` automaticamente, o mesmo vale para aspas; quando o cursor está entre um par, digitar o fechamento "pula por cima" em vez de inserir outro |
-| **Temas** | Dois conjuntos, claro e escuro, que acompanham a troca do aplicativo; as cores de sintaxe compartilham as mesmas variáveis CSS da visualização |
+| **Blocos** | Título `# `, listas `- ` / `1. ` / `- [ ] ` (6 níveis), citação `> `, código ` ``` `, separador `---` — a marca só precisa estar no início da linha |
+| **Em linha** | `**negrito**`, `*itálico*`, `~~riscado~~`, `` `código` ``, `[texto](link)` aparecem enquanto você digita |
+| **Tabelas** | `Ctrl+Shift+T` insere uma; `Tab` percorre células, `Enter` desce na mesma coluna, o botão direito adiciona ou remove linhas e colunas |
+| **Imagens** | Cole uma captura, arraste um arquivo ou use **Inserir → Imagem**: ela é copiada para `assets/`, ao lado do documento. Arraste o canto inferior direito para a largura, ou escreva `![texto\|300](a.png)` |
+| **Matemática** | `$a^2+b^2=c^2$` em linha, `$$ … $$` em bloco, composto pelo KaTeX na visualização (só carrega se houver fórmula) |
+| **Avisos** | `> [!info]` / `warning` / `danger` / `success`, com os apelidos do GitHub também |
+| **Alças de bloco** | `+` e `⋮⋮` surgem no início da linha: inserir um bloco ou converter este em outro tipo |
+| **Colar** | Texto de várias linhas é lido como Markdown e vira títulos, listas e tabelas de verdade |
 
-As cores são definidas uma única vez em `body[data-theme]` no `styles.css`; o editor e o renderizador de visualização
-usam-nas separadamente, sem o problema de dois conjuntos de valores que não batem.
+Trocar o tipo do bloco (`Ctrl+Shift+Q` citação, `Ctrl+Shift+K` código…), o menu **Formatar**, o menu de contexto e
+`Ctrl+Shift+P` (paleta de comandos) usam o mesmo conjunto de comandos; o que não se aplica fica cinza sozinho.
 
-As opções não suportadas ficam esmaecidas automaticamente — ao abrir um JSON, o modo "WYSIWYG" fica cinza, para você não clicar por engano.
+### Localizar e substituir
 
----
+Uma camada, dois estados: `Ctrl+F` só foca, `Ctrl+H` abre a linha de substituição.
+A busca funciona **dentro do WYSIWYG** sem trocar de modo — os realces são pintados, nunca injetados no texto.
 
-## Layout da interface (cada função tem uma única entrada)
+`Aa` diferenciar maiúsculas · `.*` regex · palavra inteira (os limites só entram quando as duas pontas são letras latinas;
+o chinês não tem limites de palavra) · só na seleção · `↵` insere quebra de linha na busca. Um resultado dentro do mesmo
+trecho é substituído no lugar; só ao cruzar negrito ou link o app oferece o modo Edição.
 
-```
-┌──────────────────────────────────────────────┐
-│ ▣ Arquivo Editar Formatar Exibir Ferramentas Ajuda  Bem-vindo.md  － □ ✕│ ← Barra de título (40px)
-├──────────────────────────────────────────────┤
-│ Bem-vindo.md × │ test.json × │ +         Editar▾ ⌕ Salvar │ ← Abas e ferramentas na mesma linha
-├────────┬──────────────────┬──────────────────┤
-│        │                  │                  │
-│ Estrutura │   Editar / WYSIWYG │      Visualizar        │
-│        │                  │                  │
-├────────┴──────────────────┴──────────────────┤
-│ Linha 1, Coluna 1 │ 36 linhas │ 243 caracteres │ Markdown │ LF │ UTF-8 │ Salvo │
-└──────────────────────────────────────────────┘
-```
+## Comparação
 
-Acima da área de conteúdo há apenas duas linhas: a barra de título (menu + título do documento + botões da janela) e a linha
-que combina abas e ferramentas (abas à esquerda; à direita ficam apenas as três ações de alta frequência — **troca de modo / localizar / salvar** —, todo o resto fica nos menus, sem duplicação).
-Quando a janela fica estreita, as ferramentas reduzem-se a ícones puros.
+`Ctrl+D` (ou `Ctrl+Shift+N`) abre a janela de comparação. Ela começa vazia de propósito:
 
-A janela não tem barra de título do sistema (`decorations: false`): menu, título do documento e botões da janela ficam todos na linha do topo;
-a área vazia no meio serve para arrastar a janela, e um duplo clique maximiza — igual a aplicativos como VS Code e WorkBuddy.
-Os quatro cantos da janela usam os cantos arredondados nativos do DWM do Win11, e arrastar as bordas ainda redimensiona.
-"Exibir → Mostrar nome do arquivo na barra de título" permite desligar o texto do título, deixando apenas o menu e os botões.
+- **Dois arquivos** — selecione com `Ctrl` / `Shift` na página «Arquivos» da barra lateral, clique com o botão direito → **Comparar estes dois arquivos** (o clicado fica à esquerda)
+- **Dois textos** — clique em **Colar dois textos**, cole nos dois lados e pronto (sem arquivo)
+- **Editar os dois lados** — **Edição** libera os dois painéis; **Salvar** grava só onde existe um arquivo real
 
-- **Estrutura** — serve apenas para navegação
-- **Barra lateral** — duas páginas: Estrutura (acompanha a rolagem e realça a seção atual) / Arquivos (árvore de diretórios + busca de conteúdo em todo o diretório)
-- **Barra de ferramentas** — apenas três ações de alta frequência: modo, localizar e salvar; todos os outros comandos vão pelo menu
-- **Área de texto** — serve apenas para editar
-- **Barra de status** — serve apenas para informações; codificação e quebra de linha são clicáveis e podem ser alteradas
-- **Menu** — guarda a coleção completa de entradas
-- **Configurações** — um painel só, via `Ctrl+,`: tema, tamanho da fonte, interface, salvamento automático, pasta de trabalho
-- **Central de comparação** — painel independente em tela cheia, não misturado ao editor
+As marcas por linha mostram qual linha mudou e as por caractere, quais caracteres. `F7` / `F8` percorrem as diferenças
+e **Exportar relatório** gera um diff HTML independente.
+A régua da direita situa cada mudança no arquivo inteiro.
 
----
+**Comparar pastas** lista recursivamente *só à esquerda / só à direita / modificado / idêntico*; clique numa linha para abrir
+a comparação daquele arquivo. **Mesclagem de três vias** pega base + A + B, mescla e lista os conflitos — o resultado abre em
+outra aba e nunca sobrescreve o original.
 
-### Página "Arquivos" da barra lateral: árvore de diretórios e busca entre arquivos
+## Arquivos e busca
 
-- Expande um nível e lê um nível (carregamento preguiçoso); abrir um repositório grande não lê dezenas de milhares de arquivos de uma vez
-- **O clique direito já permite alterar**: criar arquivo / pasta em qualquer diretório, renomear arquivos ou excluí-los
-  - A exclusão vai para a **lixeira do sistema**; se você errar o clique, ainda dá para recuperar; pastas só são excluídas se estiverem vazias, sem apagar tudo de uma vez
-  - Ao renomear ou excluir, a aba que já está aberta acompanha a mudança (não fica apontando para o caminho antigo e gravando por cima)
-- A busca é feita em Rust, pulando binários e arquivos acima de 4 MB, com no máximo 200 resultados
-- O `.*` na caixa de busca ativa regex, o `Aa` diferencia maiúsculas de minúsculas
-- Os resultados são agrupados por arquivo, com número de linha e trecho; um clique abre e pula para a linha
-- **Substituição entre arquivos**: preencha "Substituir por" abaixo da caixa de busca e clique em "Substituir tudo". Pergunta uma vez antes, avisando que vai mexer no disco;
-  antes de alterar cada arquivo, deixa um instantâneo do histórico, para recuperar caso algo dê errado
-- Lembra da última pasta aberta; no painel de configurações dá para trocar ou limpar
+A barra lateral tem duas páginas: **Estrutura** (realça a seção que você está lendo) e **Arquivos**.
 
----
+- Árvore carregada sob demanda; clique direito para criar, renomear ou excluir — a exclusão vai para a **Lixeira**, e pastas só podem ser excluídas vazias
+- A busca roda em Rust, ignora binários e arquivos acima de 4 MB, e devolve no máximo 200 resultados agrupados por arquivo com número de linha
+- `.*` ativa regex, `Aa` a diferenciação de maiúsculas
+- **Substituir tudo** entre arquivos: pergunta uma vez e tira um instantâneo de cada arquivo antes de alterar
+- Documentos abertos são monitorados em tempo real (`ReadDirectoryChangesW`): a aba atual recarrega em silêncio, uma aba de fundo ganha um ponto âmbar e pergunta ao entrar
 
-### Localizar (`Ctrl+F` / `Ctrl+H`)
+## Todo o resto
 
-Um painel flutuante com dois estados: clicar na seta mais à esquerda expande para duas linhas "Localizar + Substituir"; recolher deixa apenas a localização.
-`Ctrl+F` apenas foca (não recolhe a linha de substituição já aberta), e `Ctrl+H` abre direto expandido.
-
-| Capacidade | Descrição |
+| | |
 |---|---|
-| **Localização in-loco no WYSIWYG** | Não é mais preciso trocar para o modo de edição para localizar; o realce é desenhado na camada de renderização (CSS Highlight API), sem inserir marcações no texto |
-| **Interruptores de modo** | Quatro quadradinhos à direita da caixa de entrada: `Aa` diferencia maiúsculas, `.*` regex, `palavra inteira`, `seleção`. Ativados, usam a cor de destaque |
-| **Palavra inteira** | Adiciona limites apenas quando as pontas da consulta são caracteres de palavra em inglês — chinês não tem fronteira de palavra, e forçar `\b` nunca encontraria nada |
-| **Dentro da seleção** | Localiza/substitui apenas no trecho selecionado; sem seleção, este item fica cinza |
-| **Quebra de linha** | O `↵` na ponta direita da caixa de entrada (ou `Ctrl+Enter`) insere uma quebra de linha e a caixa cresce sozinha; consultas sem quebra de linha continuam sem dar falso positivo atravessando parágrafos |
-| **Substituir** | Quando os acertos estão no mesmo trecho de texto, **altera direto**, sem janela popup; só pergunta "deseja trocar para o modo de edição" quando cruza fronteiras de formatação como negrito/links |
-| **Entre arquivos** | A caixa de busca da página "Arquivos" da barra lateral, listando as linhas com acertos agrupadas por arquivo |
+| **Formatar** | `Ctrl+Shift+F` — JSON validado e reindentado (em caso de erro o arquivo não é tocado e a linha / coluna é informada), Markdown: linhas em branco e marcadores unificados, o resto: espaços finais removidos. Um `Ctrl+Z` desfaz tudo |
+| **Histórico** | Cada salvamento guarda o conteúdo anterior (60 por arquivo, 20 MB no total). **Ver** abre em somente leitura, **Restaurar** devolve ao editor — o disco só muda com `Ctrl+S` |
+| **Exportar** | HTML de arquivo único, estilos embutidos e imagens em data URI; PDF pelo diálogo de impressão do sistema |
+| **Atalhos** | Configurações → Atalhos muda qualquer um; o personalizado vence, **Redefinir** recupera um, **Restaurar padrões** limpa todos |
+| **Modo concentração** | `F9` recolhe abas, barra lateral, barra de status e menus; a barra de título esmaece para 28% em vez de sumir, senão não dá para arrastar nem fechar a janela |
+| **Instância única** | Abrir outro arquivo não inicia um segundo processo: o caminho vai para a janela já aberta |
+| **Codificação** | Clique em `UTF-8` ou `LF` na barra de status para trocar codificação (GBK / UTF-16 / BOM) ou fim de linha |
 
----
+## Atalhos
 
-## Atalhos de teclado
-
-| Ação | Atalho |
+| Ação | Teclas |
 |---|---|
 | Novo / Abrir / Salvar / Salvar como | `Ctrl+N` / `Ctrl+O` / `Ctrl+S` / `Ctrl+Shift+S` |
-| Fechar aba / Alternar abas | `Ctrl+W` / `Ctrl+Tab` |
+| Fechar aba / Próxima aba | `Ctrl+W` / `Ctrl+Tab` |
 | Localizar / Substituir / Ir para linha | `Ctrl+F` / `Ctrl+H` / `Ctrl+G` |
-| **Paleta de comandos** | `Ctrl+Shift+P` |
-| Configurações | `Ctrl+,` |
-| **Formatação com um clique** | `Ctrl+Shift+F` |
-| **Comparação de texto** | `Ctrl+D` |
-| Próxima diferença / Diferença anterior | `F8` / `F7` |
-| Coluna única ⇄ coluna dupla | `Ctrl+Shift+L` |
-| Mostrar / ocultar estrutura | `Ctrl+Shift+O` |
-| Modo foco (`Esc` para sair) / Tela cheia | `F9` / `F11` |
-| Negrito / Itálico | `Ctrl+B` / `Ctrl+I` |
-| Riscado / Código inline | `Ctrl+Shift+X` / — |
-| Inserir link / Inserir tabela | `Ctrl+K` / `Ctrl+Shift+T` |
-| Corpo / Títulos de 1 a 3 níveis | `Ctrl+Alt+0` / `Ctrl+Alt+1~3` |
-| Lista não ordenada / ordenada / de tarefas | `Ctrl+Shift+8` / `Ctrl+Shift+7` / `Ctrl+Shift+9` |
-| Citação / Bloco de código | `Ctrl+Shift+Q` / `Ctrl+Shift+K` |
-| Aumentar / diminuir indentação da lista | `Tab` / `Shift+Tab` |
-| Aumentar / diminuir / redefinir tamanho da fonte | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` |
+| Paleta de comandos / Configurações | `Ctrl+Shift+P` / `Ctrl+,` |
+| Formatar / Comparar | `Ctrl+Shift+F` / `Ctrl+D` |
+| Próxima / anterior diferença | `F8` / `F7` |
+| Um painel ⇄ dois painéis / Estrutura | `Ctrl+Shift+L` / `Ctrl+Shift+O` |
+| Modo concentração / Tela cheia | `F9` / `F11` |
+| Negrito / Itálico / Riscado / Código | `Ctrl+B` / `Ctrl+I` / `Ctrl+Shift+X` / `Ctrl+Shift+K` |
+| Link / Tabela / Citação | `Ctrl+K` / `Ctrl+Shift+T` / `Ctrl+Shift+Q` |
+| Corpo / Títulos 1–3 | `Ctrl+Alt+0` / `Ctrl+Alt+1~3` |
+| Marcadores / Numerada / Tarefas | `Ctrl+Shift+8` / `Ctrl+Shift+7` / `Ctrl+Shift+9` |
+| Indentar / desindentar lista | `Tab` / `Shift+Tab` |
+| Zoom + / − / redefinir | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` |
 | Exportar PDF | `Ctrl+P` |
 
----
+## Desempenho
 
-## Alguns recursos mais usados
-
-### WYSIWYG: dá para usar de verdade como editor
-
-Não é só "digitar `# ` e virar título": todas as estruturas de bloco podem ser manipuladas diretamente, e a sintaxe Markdown e o WYSIWYG são consistentes nos dois sentidos. Basta que a marcação esteja no **início da linha**, não precisa ficar no final — escreva o texto primeiro e, depois, adicione `## ` no começo da linha para transformá-lo em título; o texto depois da marcação (incluindo negrito e links) fica como está:
-
-| Capacidade | Como usar |
-|---|---|
-| **Títulos / corpo** | Digite no início da linha `# ` até `###### ` (dá para adicionar antes de um texto existente); `Ctrl+Alt+1~3` troca o nível, e pressionar de novo volta ao corpo |
-| **Lista não ordenada / ordenada / de tarefas** | Digite no início da linha `- ` / `1. ` / `- [ ] `; `Tab` indenta como subitem, `Shift+Tab` sobe um nível |
-| **Listas aninhadas** | Até 6 níveis; alternar entre ordenada/não ordenada não perde a hierarquia, e os números se reorganizam sozinhos |
-| **Citação** | Digite no início da linha `> `; `Tab` aumenta o nível da citação, e Enter em uma linha vazia encerra |
-| **Bloco de código / linha divisória** | Digite no início da linha ` ``` ` / `---`; dentro do bloco de código, Enter quebra a linha automaticamente com indentação de dois espaços |
-| **Tabela** | `Ctrl+Shift+T` insere uma 3×3, ou "Formatar → Inserir tabela (tamanho personalizado)" |
-| **Edição de tabela** | `Tab` / `Shift+Tab` movem entre as células (chegando ao fim, adiciona uma linha automaticamente), `Enter` vai para a linha seguinte na mesma coluna, e o clique direito adiciona/remove linhas e colunas e define o alinhamento das colunas |
-| **Estilos inline** | Digite `**粗**`, `*斜*`, `~~删~~`, `` `码` ``, `[文字](链接)` e a formatação aparece enquanto digita |
-| **Fórmulas matemáticas** | Inline `$a^2+b^2=c^2$`, em bloco `$$ … $$` (pode atravessar linhas), renderizadas pela KaTeX na visualização |
-| **Sumário** | "Inserir → Sumário…" varre os títulos e gera uma lista clicável; `Ctrl+点击` em um item pula para a seção correspondente |
-| **Inserir imagem** | Cole com `Ctrl+V` direto após uma captura de tela, arraste um arquivo de imagem para a janela, ou "Inserir → Imagem…": em todos os casos, a imagem é copiada para `assets/` no mesmo diretório do documento e referenciada com caminho relativo; também dá para colar um endereço da web |
-| **Tamanho da imagem** | No WYSIWYG, arraste o canto inferior direito da imagem para mudar a largura (ao soltar, o sufixo alt é atualizado automaticamente); também dá para escrever `![说明\|300](a.png)` para limitar a largura, `![说明\|300x200](a.png)` para largura e altura; sem definição, exibe na proporção original (máximo 320px) |
-| **Semântica do backspace** | Dar backspace no início de um título primeiro revela `###`, depois apaga um nível por vez; no começo de um item de lista, primeiro desce o nível, depois vira parágrafo; no começo de um parágrafo, junta com a linha anterior; `Delete` faz o inverso |
-| **Colar** | Texto de várias linhas é analisado como Markdown em blocos reais de título/lista/tabela, sem virar uma bagunça |
-
-**Alças de bloco no início da linha**: à esquerda da linha onde está o cursor ou o mouse aparecem dois botõezinhos flutuantes, `+` e `⋮⋮` (não cobrem o texto e não podem ser selecionados).
-`⋮⋮` troca este bloco por outro tipo (corpo / título 1~3 / lista / citação / bloco de código), e `+` insere um novo bloco abaixo.
-Eles executam os mesmos comandos do menu "Formatar" no topo; apenas aproximaram a entrada da mão.
-
-O `###` do título só aparece quando você quer mudar o nível: um backspace no início da linha revela a marcação (o texto do corpo não se move), e outro apaga um `#`; só quando apaga tudo volta ao corpo — um backspace por engano não faz você perder o nível e o texto juntos. Ao mover o cursor para fora da linha ou pressionar Enter, a marcação se recolhe sozinha.
-
-A posição reconhecida pela marcação é "o pequeno trecho antes do cursor", não a linha inteira até o fim, então as três formas são equivalentes: digitar `## ` e depois escrever o título, escrever o título e voltar ao início da linha para adicionar `## `, ou transformar um trecho de texto comum em título. Só reconhece quando resta apenas a marcação (`## ` seguido imediatamente de espaço), então `#话题` no meio do texto não é convertido em título por engano; e digitar `- ` com o cursor fora do início da linha não parte a frase em uma lista.
-
-Todas as operações de bloco também estão no **menu "Formatar"** e no **menu de contexto (clique direito)**, e os itens inaplicáveis ficam esmaecidos automaticamente (por exemplo, com o cursor fora de uma tabela, todos os comandos de tabela ficam cinza).
-
-### Fórmulas matemáticas
-
-- Inline `$a^2 + b^2 = c^2$`, em bloco `$$ … $$` (pode atravessar linhas; matrizes e derivações de várias linhas não precisam ser espremidas em uma linha)
-- A renderização acontece apenas **no lado da visualização**: a KaTeX "só é carregada quando realmente encontra uma fórmula" (cerca de 546 KB); documentos sem fórmulas não pagam nada
-- No WYSIWYG, as fórmulas não são renderizadas, apenas ganham um fundo colorido — enfiar o DOM da KaTeX dentro de um contenteditable faz o backspace não apagar e o cursor travar; o custo é muito maior que o benefício. Para ver renderizado, use `Ctrl+3`, ou ative a coluna dupla para ter a visualização ao lado
-- Os trechos de fórmula são protegidos **antes** da análise da sintaxe de ênfase, então o `_` e o `*` em `$x_1 * y$` são subscrito e sinal de multiplicação, não interpretados como itálico
-
-### Modo foco (`F9`, `Esc` para sair)
-
-A linha de abas, a barra lateral, a barra de status e o menus se recolhem, restando apenas o texto. A barra de título esmaece quase até desaparecer e só reaparece quando o mouse passa por cima — como a janela é sem bordas, se a barra de título desaparecesse também, não daria para arrastar, minimizar ou fechar, o que equivaleria a trancar você dentro do seu próprio documento.
-
-### Abertura por duplo clique / apenas uma janela
-
-Depois de instalar o pacote, `.md` `.markdown` `.txt` `.log` `.json` `.csv` têm todas as associações de arquivo registradas;
-no Explorador de Arquivos, o clique direito em "Abrir com" já mostra o "EZNotepad".
-
-O mesmo programa mantém apenas uma janela: dar duplo clique em outro arquivo não inicia um segundo processo,
-mas entrega o caminho à janela que já está aberta (aproveitando para chamá-la de volta da minimização).
-Duas janelas editando o mesmo arquivo ao mesmo tempo e sobrescrevendo uma à outra: isso acabou na raiz.
-
-> Apenas a **versão instalável** registra as associações. A versão portátil e o exe simples gerado com `cargo build` não escrevem no registro.
-
-### Monitoramento de mudanças de arquivo
-
-Os documentos abertos são observados em tempo real (o backend usa `ReadDirectoryChangesW` / `inotify` do sistema, ouvindo apenas o nível do diretório do arquivo e só deixando passar os nomes na lista). Quando outro programa altera o arquivo:
-
-- Arquivo na **aba atual**: se você não alterou nada, recarrega em silêncio e avisa; há modificações não salvas, pergunta antes
-- Arquivo em **aba em segundo plano**: sem popup atrapalhando; um pontinho âmbar aparece na aba, e só pergunta quando você troca para ela
-
-Salvar o próprio arquivo não dispara o evento (após salvar, o horário de modificação já está sincronizado). Nas configurações, dá para desligar tudo.
-
-### Formatação com um clique (tratamento inteligente por tipo de arquivo)
-
-| Tipo | O que faz |
-|---|---|
-| **JSON** | Validação + reorganização da indentação; corrige automaticamente aspas de meia largura invertidas, vírgulas extras e comentários; **com erro de sintaxe, não mexe no arquivo e mostra "linha X, coluna Y"** |
-| **Markdown** | Adiciona linhas em branco antes e depois de títulos, unifica marcadores de lista, remove espaços no fim das linhas, comprime linhas em branco |
-| **TXT / logs / código** | Unifica quebras de linha, remove espaços no fim das linhas, comprime linhas em branco consecutivas |
-
-Depois de formatar, um clique em "Desfazer" volta ao original.
-
-### Versões históricas (Arquivo → Versões históricas…)
-
-A cada salvamento, o conteúdo **de antes de salvar** deixa um instantâneo, guardado no diretório de dados do aplicativo no seu computador (sem encher sua pasta de documentos).
-Depois de formatar com um clique, ordenar/deduplicar ou substituir em lote, se quiser voltar atrás, `Ctrl+Z` pode não alcançar; aqui é a última linha de defesa.
-
-- Cada arquivo guarda no máximo 60 versões, total de 20 MB; ao ultrapassar, limpa a partir da mais antiga
-- "Visualizar" abre aquela versão como uma nova aba somente leitura, e "Restaurar" grava de volta no editor — **em ambos os casos, só toca no disco quando você mesmo aperta `Ctrl+S`**
-- Mesmo princípio da comparação de arquivos e da mesclagem de três vias: reverter não sobrescreve o arquivo original diretamente
-
-### Exportar página web (Arquivo → Exportar página web…)
-
-Salva o documento atual como um **HTML de arquivo único**: estilos embutidos, imagens convertidas em data URI;
-envie para outra pessoa ou jogue em um site estático, e ele abre direto, sem aquela história de "todas as imagens quebradas".
-Imagens acima de 4 MB não são embutidas (o endereço original é mantido), e a mensagem de exportação informa quantas foram embutidas.
-
-### Paleta de comandos (`Ctrl+Shift+P`)
-
-Mais de cem comandos dos menus: digite algumas letras e localize; `foco`, `formatar`, `substituir` — tudo funciona,
-com `↑` `↓` para escolher, `Enter` para executar e `Esc` para fechar. A lista é gerada diretamente da árvore de menus, então comandos novos nos menus aparecem aqui automaticamente.
-Comandos indisponíveis no estado atual ficam cinza, e ao clicar, ele explica o porquê.
-
-### Personalize seus atalhos (Configurações → Atalhos)
-
-O painel de configurações lista todos os comandos que têm atalhos; clique em "Alterar" e pressione a nova combinação (deve incluir `Ctrl` / `Alt`,
-ou usar apenas `F1`–`F12`); `Esc` cancela. As teclas personalizadas têm prioridade sobre as padrão; se estragar, clique em "Restaurar" para voltar,
-e "Restaurar configurações padrão" limpa tudo de uma vez.
-
-### Comparação de texto (`Ctrl+D`)
-
-- Lado a lado, com realce duplo **em nível de linha + de caractere** (apenas os poucos caracteres realmente alterados são marcados)
-- Ignorar espaços em branco / ignorar maiúsculas e minúsculas
-- `F7` / `F8` saltam entre as diferenças
-- Cada bloco de diferença tem um botão **→** que sincroniza o bloco da esquerda para a direita com um clique
-- Exportação de relatório de comparação em HTML com um clique
-
-### Comparação de pastas
-
-Compara dois diretórios recursivamente, listando **somente à esquerda / somente à direita / modificados / idênticos**; clicar em uma linha leva direto à comparação de texto daquele arquivo.
-
-### Mesclagem de três vias (Ferramentas → Mesclagem de três vias)
-
-Escolha "versão base + lado A + lado B"; as mudanças dos dois lados são mescladas automaticamente, e os conflitos são listados.
-**O resultado abre apenas em uma nova aba; nenhum arquivo original é jamais sobrescrito.**
-
-### Codificação e quebra de linha
-
-Clique em `UTF-8` no canto inferior direito da barra de status para salvar com outra codificação (UTF-8 / GBK / UTF-16, com BOM opcional);
-clique em `LF` para alternar para CRLF. Abrir um txt antigo em GBK não gera caracteres corrompidos.
-
----
-
-## Desempenho medido
-
-Medido na própria máquina (Windows 11, x64, build release):
+Medido localmente (Windows 11, x64, build release):
 
 | Cenário | Métrica |
 |---|---|
-| Digitação cotidiana (documento de 600 parágrafos, WYSIWYG) | Média de **9.1 ms** por caractere digitado |
-| Abertura de documento gigante (10.8 MB / 77,866 blocos) | **1.14 s**, sem congelar a interface (renderização por viewport, cerca de 48 blocos no DOM) |
-| Digitação em documento gigante | Latência p50 de **0.3 ms** |
-| Rolagem em documento gigante | Cerca de **17 ms** por quadro, taxa cheia |
-| Desfazer em documento gigante | **37 ms** por passo, ida e volta idêntica byte a byte |
-| Arquivo grande de texto simples (CodeMirror 6) | 50 mil linhas abrem em **49 ms**, 100 mil em **20 ms**, renderizando apenas as linhas visíveis |
-| Uso de memória | Cerca de **170 MB** em inicialização limpa (incluindo o processo de GPU do WebView2) |
-| Tamanho | Pacote de instalação de **2.63 MB** |
+| Digitar em um documento de 600 parágrafos | **9,1 ms** por tecla |
+| Abrir 10,8 MB / 77.866 blocos | **1,14 s**, ~48 blocos no DOM, sem travar |
+| Digitar / rolar / desfazer nesse documento | p50 **0,3 ms** / ~**17 ms** por quadro / **37 ms** por passo |
+| CodeMirror 6, texto simples | 50 mil linhas em **49 ms**, 100 mil em **20 ms** |
+| Memória / instalador | ~**170 MB** na partida limpa / **2,63 MB** |
 
----
+Markdown gigantes usam renderização por janela: só os blocos visíveis existem no DOM, o resto são registros.
+Os instantâneos de desfazer são essas matrizes de registros, então uma tecla nunca copia o documento inteiro.
 
-## Dados e privacidade
+## Dados
 
-- Todos os arquivos são lidos e gravados apenas no seu computador, **sem internet, sem upload**
-- Os rascunhos são salvos no diretório de dados do aplicativo local; fechar a janela não os perde: **todas** as abas não salvas são guardadas,
-  e na próxima inicialização pergunta se você quer recuperá-las (não é só a última)
-- Os instantâneos históricos também ficam em `history/` dentro desse diretório, completamente separados da sua pasta de documentos
-- Ao abrir pela primeira vez, se detectar rascunhos não salvos, pergunta se deseja restaurar
-
----
+Tudo fica nesta máquina — **sem rede, sem upload, sem telemetria**. Rascunhos de todas as abas não salvas ficam na pasta de
+dados local e são oferecidos na próxima abertura; os instantâneos de histórico ficam em `history/`, na mesma pasta, separados
+dos seus documentos.
 
 ## Limitações conhecidas
 
-- A exportação para PDF usa o diálogo de impressão do sistema ("Salvar como PDF"); o layout segue o resultado da impressão
-- A mesclagem de três vias é semiautomática: mesclagem automática + lista de conflitos, sem um mesclador visual de quatro colunas (conflitos complexos: use a comparação de texto e trate bloco a bloco)
-- Cada pacote de instalação precisa ser compilado no sistema correspondente (veja `构建说明.md`)
-- A busca entre arquivos é literal por padrão, sem diferenciar maiúsculas; pode alternar para regex; limite de 200 resultados
-- A substituição entre arquivos processa apenas arquivos **UTF-8**: GBK e similares são pulados como estão, sem trocar silenciosamente a codificação do arquivo inteiro
-- A exclusão na árvore de arquivos vai para a lixeira do sistema; **pastas só podem ser excluídas se estiverem vazias**, sem exclusão recursiva
-- A própria **árvore** de arquivos não é monitorada: arquivos criados/excluídos em outros lugares exigem clique direito em uma área vazia → "Atualizar", ou reexpandir o diretório (os documentos abertos são monitorados em tempo real, como descrito acima)
-- As fórmulas matemáticas só são renderizadas no lado da visualização; no WYSIWYG, o código-fonte é exibido; diagramas Mermaid ainda não são suportados
-
----
+- O PDF passa pelo diálogo de impressão do sistema, então o layout segue a saída impressa
+- A mesclagem de três vias mescla e lista conflitos; não há mesclador visual de quatro painéis (use a comparação bloco a bloco)
+- Fórmulas são renderizadas só na visualização e aparecem como código no WYSIWYG; Mermaid não é suportado
+- A substituição entre arquivos trata só UTF-8: arquivos GBK são ignorados em vez de recodificados em silêncio
+- A árvore de arquivos não é monitorada; use **Atualizar** no menu de contexto após mudanças externas
+- Cada instalador precisa ser compilado no próprio sistema (veja `构建说明.md`)
 
 ## Licença
 
-Este projeto é distribuído sob a [GNU Affero General Public License v3.0 (AGPL-3.0)](./LICENSE): livre para usar, estudar, modificar e redistribuir. Obras derivadas — incluindo um serviço hospedado baseado nele — também devem ser publicadas sob a AGPL-3.0.
+[GNU Affero General Public License v3.0](LICENSE) — livre para usar, estudar, modificar e redistribuir. Obras derivadas,
+incluindo um serviço hospedado construído sobre ele, também precisam ser publicadas sob AGPL-3.0.
