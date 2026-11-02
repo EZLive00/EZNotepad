@@ -48,24 +48,35 @@ jobs:
         # 用 ci 而不是 install：严格按 lock 还原，不会悄悄升级 tauri/frontend 版本
         run: npm ci
 
-      - name: 构建并发布
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # 构建/发布拆成显式步骤而不是用 tauri-action 一把梭：
+      # 构建失败时错误行会以 ::error:: 注解打出来，API 匿名就能读到，
+      # 不用管理员令牌拉日志（tauri-action 把输出吞在自己的步骤里，出错了黑箱）。
+      - name: 构建
+        shell: pwsh
+        run: |
+          & npx tauri build --verbose 2>&1 | Tee-Object -FilePath build-output.log
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            $lines = Get-Content build-output.log
+            $hits = @($lines | Where-Object { $_ -match 'error|failed|panicked' } | Select-Object -First 15)
+            $tail = @($lines | Select-Object -Last 6)
+            foreach ($l in ($hits + $tail)) { Write-Output ('::error::' + $l) }
+            exit $code
+          }
+
+      - name: 发布 Release
+        uses: softprops/action-gh-release@v2
         with:
-          # 本仓库用 npm（package-lock.json）；tauri-action 不指定时默认 pnpm，
-          # CI 里没有 pnpm，第一步就会挂
-          tauriScript: npx tauri
-          # 推标签时用标签名；手动跑时 __VERSION__ 会被替换成 tauri.conf.json 的 version
-          tagName: ${{ github.ref_type == 'tag' && github.ref_name || 'v__VERSION__' }}
-          releaseName: ${{ github.ref_type == 'tag' && github.ref_name || 'v__VERSION__' }}
-          releaseBody: |
+          # 推标签时用标签名；手动跑时用 tauri.conf.json 里的版本号
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', '1.0.0') }}
+          name: ${{ github.ref_type == 'tag' && github.ref_name || 'v1.0.0' }}
+          body: |
             Windows 安装包（NSIS），版本取自 tauri.conf.json。
 
             安装包未做代码签名，首次运行 SmartScreen 会拦一次：
             点「更多信息」→「仍要运行」。
-          releaseDraft: false
-          prerelease: false
+          files: src-tauri/target/release/bundle/nsis/*.exe
+          fail_on_unmatched_files: true
 
       - name: 备份产物为 Artifact
         # 即使创建 Release 失败（比如标签冲突、权限问题），
