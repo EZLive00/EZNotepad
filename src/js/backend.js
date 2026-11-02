@@ -3,6 +3,7 @@
 // 所有磁盘读写、原生对话框都在这里集中出口
 // ============================================================
 import { invoke as rawInvoke } from '../vendor/api/core.js';
+import { getVersion } from '../vendor/api/app.js';
 import { open as openDialog, save as saveDialog } from '../vendor/plugin-dialog/dist-js/index.js';
 import { tt } from './i18n.js';
 import { localizeError } from './errors.js';
@@ -112,6 +113,9 @@ export const deleteEntry = (path) => invoke('delete_entry', { path });
 
 /** 启动参数里带的文件（双击 .md 打开时由系统传进来） */
 export const initialFiles = () => invoke('initial_files');
+
+/** 应用版本：取自 tauri.conf.json（编译期注入），前端不写死，免得跟版本号脱节 */
+export const appVersion = () => getVersion().catch(() => '');
 
 /* ---------------- 本地历史 ----------------
    每次保存前把旧内容留一份，存在应用数据目录（不进文档目录，不污染仓库） */

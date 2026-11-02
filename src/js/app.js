@@ -2478,11 +2478,14 @@ function showWordCount() {
   });
 }
 
-function showAbout() {
+/* 版本号从 tauri.conf.json 读（编译期注入），不在这里写死 ——
+   写死就等于每次发版都要记得改第二处，迟早对不上 */
+async function showAbout() {
+  const v = (await be.appVersion()) || '—';
   dialog({
     title: tt('关于 EZNotepad'),
     body: `<div class="dlg-text">
-      <p style="margin-top:0"><b>EZNotepad</b> · ${tt('版本 {v}', { v: '1.0.0' })}</p>
+      <p style="margin-top:0"><b>EZNotepad</b> · ${tt('版本 {v}', { v })}</p>
       <p>${tt('把 Markdown 预览、文本对比、记事本读写，做成一个 10MB 以内、免安装、不联网的小工具。')}</p>
       <p style="color:var(--fg-faint);font-size:12px">${tt('文件只在本机读写，不向任何服务器发送内容。')}</p>
     </div>`,
