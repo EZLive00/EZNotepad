@@ -220,9 +220,24 @@ try {
   ok('编辑模式点击大纲项，滚完该项点亮',
     (await ev(`document.querySelector('.outline-item.active')?.textContent`)) === '第 22 节');
 
-  /* 拖入文件。窗口是 dragDropEnabled=false：Tauri 的 onDragDropEvent 不会触发，
-     文件落进页面是普通的 drop 事件，由 app.js 的 document 处理器接。
-     这里用合成事件验分支（真机 OS 拖放没法在探针里模拟）。 */
+  /* 纯文本大纲只认结构标记。这里守的是那个真实 bug：`1. 2. 3.` 连续编号逐行进面板，
+     而且全被压成同一级 —— 用户看到的是「txt 每行都是大纲」 */
+  const outlineRows = () => ev(`[...document.querySelectorAll('#outlineList .outline-item')].map(b => ((b.className.match(/\\bh[1-6]\\b/) || ['?'])[0]) + ':' + b.textContent)`);
+  await ev(`window.__snp.newTab('清单.txt', '1. 买菜\\n2. 做饭\\n3. 洗碗', null)`);
+  await sleep(400);
+  ok('txt 连续编号不逐行成大纲', (await outlineRows()).length === 0, JSON.stringify(await outlineRows()));
+  ok('txt 空态说明缺什么', /章节标记/.test(await ev(`document.querySelector('#outlineList .outline-empty')?.textContent || ''`)));
+  await ev(`window.__snp.setContent('1. 总论\\n1.1 背景\\n1.1.1 细节\\n2. 方法')`);
+  await sleep(400);
+  ok('多级编号按点号段数分级',
+    (await outlineRows()).join(',') === 'h1:1. 总论,h2:1.1 背景,h3:1.1.1 细节,h1:2. 方法', JSON.stringify(await outlineRows()));
+  await ev(`window.__snp.newTab('表.csv', 'a,b\\n1,2', null)`);
+  await sleep(400);
+  ok('csv 不提取大纲', (await outlineRows()).length === 0);
+
+  /* 拖入文件。窗口开着 dragDropEnabled，正常路径是 Tauri 的 onDragDropEvent，
+     但 OS 级拖放没法在探针里模拟。这里用合成 HTML5 drop 验的是**兜底分支**：
+     真走到它时（原生通道没注册上）图片仍能落 assets、非图片仍会拦下默认行为。 */
   await ev(`window.__snp.newTab('drop.md', '# 拖放\\n', null)`);
   await sleep(300);
   const dropExpr = (type, name) => `(async () => {

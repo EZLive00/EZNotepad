@@ -257,6 +257,38 @@ ok('Esc 能关掉菜单', await ev(`(() => {
   return true;
 })()`) && (await sleep(200), !(await state()).menuOpen));
 
+/* ---------- 6.6 键盘操作：↑↓ Home End Enter ----------
+   焦点始终在编辑区（菜单不抢焦点，否则正文选区没了），所以「当前项」是 .hot 类 */
+const key = (k) => ev(`(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(k)}, bubbles: true, cancelable: true })); return true; })()`);
+const hotIdx = () => ev(`[...document.querySelectorAll('#wBlockMenu .bm-item')].findIndex(b => b.classList.contains('hot'))`);
+
+await click(grip.x, grip.y);
+await sleep(320);
+const total = await ev(`document.querySelectorAll('#wBlockMenu .bm-item').length`);
+ok('键盘：每一项都有 menuitem 角色', (await ev(`document.querySelectorAll('#wBlockMenu [role=menuitem]').length`)) === total);
+ok('键盘：打开时不预选（和顶栏菜单一致）', (await hotIdx()) === -1);
+await key('ArrowDown'); await sleep(80);
+ok('键盘：↓ 选中第一项', (await hotIdx()) === 0);
+await key('ArrowDown'); await sleep(80);
+ok('键盘：再 ↓ 到第二项', (await hotIdx()) === 1);
+await key('ArrowUp'); await key('ArrowUp'); await sleep(100);
+ok('键盘：首项再 ↑ 环绕到末项', (await hotIdx()) === total - 1, `${await hotIdx()} / ${total}`);
+await key('Home'); await sleep(80);
+ok('键盘：Home 回到首项', (await hotIdx()) === 0);
+await key('End'); await sleep(80);
+ok('键盘：End 到末项', (await hotIdx()) === total - 1);
+
+/* 末项是「成功提示块」：Enter 之后这一块必须真的转换过去 */
+await key('Enter'); await sleep(450);
+ok('键盘：Enter 执行末项（块变成成功提示块）',
+  !(await state()).menuOpen && (await ev(`!!document.querySelector('.w-block[data-callout=success]')`)));
+
+await click(grip.x, grip.y);
+await sleep(320);
+await key('a'); await sleep(100);
+ok('键盘：按字母键收起菜单（字符归正文）', !(await state()).menuOpen);
+ok('键盘：菜单全程不抢焦点', await ev(`!document.activeElement.closest('#wBlockMenu')`));
+
 /* ---------- 7. 图标对比度（两套主题都量） ---------- */
 /* 主题挂在 body[data-theme] 上；背景要往上找到第一个不透明的祖先 */
 const contrastOf = async (theme) => ev(`(() => {
