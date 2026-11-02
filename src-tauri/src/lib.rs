@@ -52,6 +52,17 @@ fn detect_eol(text: &str) -> String {
     }
 }
 
+/// 只取文件大小。对比窗口在读入之前先判上限：几百 MB 的文件读进内存再放弃，
+/// 代价比一次 metadata 调用高得多。
+#[tauri::command]
+fn file_size(path: String) -> Result<u64, AppError> {
+    let meta = fs::metadata(&path).map_err(|e| AppError::detail("io.stat", e))?;
+    if meta.is_dir() {
+        return Err(AppError::new("file.is_dir"));
+    }
+    Ok(meta.len())
+}
+
 #[tauri::command]
 fn read_text_file(path: String, encoding: Option<String>) -> Result<ReadResult, AppError> {
     let p = PathBuf::from(&path);
@@ -1299,6 +1310,7 @@ pub fn run() {
         .manage(CompareRequest::default())
         .invoke_handler(tauri::generate_handler![
             read_text_file,
+            file_size,
             save_text_file,
             file_stat,
             list_dir_recursive,

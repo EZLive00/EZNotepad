@@ -20,6 +20,7 @@ import { tt } from './i18n.js';
 export const ERR_TEXT = {
   /* ---- 读写文件 ---- */
   'io.read': '无法读取文件：{detail}',
+  'io.stat': '无法读取文件信息：{detail}',
   'io.write': '写入失败：{detail}',
   'io.save': '保存失败：{detail}',
   'io.mkdir': '无法创建目录：{detail}',
@@ -50,6 +51,7 @@ export const ERR_TEXT = {
 
   /* ---- 文件内容 ---- */
   'file.binary': '这是二进制文件，无法以文本方式打开',
+  'file.is_dir': '这是一个文件夹，不能当文件比较',
   'file.too_large': '文件过大',
 
   /* ---- 搜索 / 替换 ---- */

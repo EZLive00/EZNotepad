@@ -45,6 +45,8 @@ export async function pickSavePath(defaultName = tt('未命名.md'), filters = n
 
 export const readText = (path, encoding = null) => invoke('read_text_file', { path, encoding });
 export const readTextAs = (path, encoding) => invoke('read_text_file', { path, encoding });
+/** 只问大小，不读内容：对比窗口在读入前先判上限 */
+export const fileSize = (path) => invoke('file_size', { path });
 export const saveText = (opts) => invoke('save_text_file', { opts });
 export const listDir = (path) => invoke('list_dir_recursive', { path, maxFiles: 20000 });
 /** 只列一层：侧栏文件树按需展开用 */
