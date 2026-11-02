@@ -11,6 +11,7 @@ import { freeUntitledName, moveById } from '../src/js/taborder.js';
 import { slugify, headingSlugs, inline, renderMarkdown } from '../src/js/markdown.js';
 import { extractOutline } from '../src/js/preview.js';
 import { diffLines, buildSideBySide, diffStats } from '../src/js/diff.js';
+import { blockItems, arrange, rangeText } from '../src/js/difflist.js';
 
 const out = [];
 const eq = (name, got, want) => out.push({ name, ok: JSON.stringify(got) === JSON.stringify(want), got, want });
@@ -123,6 +124,38 @@ eq('大文件：完全无关时整段替换', stUn.chg, 2100);
 
 /* 小文件保持原样：仍然是 del 后接 add */
 eq('小文件：修改拆成删除加新增', diffLines(['a', 'b', 'c'], ['a', 'x', 'c']).map((o) => o.type), ['same', 'del', 'add', 'same']);
+
+/* ---------- 差异清单：折行、排序、筛选 ---------- */
+/* 三段刻意隔开：b→B 是修改、e f 是纯删除、末尾 x y z 是纯新增 */
+const listA = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+const listB = ['a', 'B', 'c', 'd', 'g', 'h', 'x', 'y', 'z'];
+const built = buildSideBySide(listA, listB, { ignoreWS: true });
+const items = blockItems(built.rows, built.blocks);
+
+eq('清单：差异块数量与 blocks 一致', items.length, built.blocks.length);
+eq('清单：三块分别是修改 / 仅左 / 仅右', items.map((i) => i.kind), ['chg', 'del', 'add']);
+eq('清单：第一处两侧都有行号', [items[0].lFrom, items[0].rFrom], [2, 2]);
+eq('清单：整块删除的行号区间', [items[1].lFrom, items[1].lTo], [5, 6]);
+eq('清单：整块新增的行号区间', [items[2].rFrom, items[2].rTo], [7, 9]);
+ok('清单：块尾不会吞掉后面的相同行', built.rows[items[1].end + 1].kind === 'same');
+eq('清单：行数统计含两侧', [items[0].lines, items[1].lines, items[2].lines], [2, 2, 3]);
+
+/* 排序：位置可升可降；类型优先、同类型内按位置升序；行数只作主键 */
+eq('排序：位置升序', arrange(items, { sort: 'pos', dir: 1 }).map((i) => i.index), [0, 1, 2]);
+eq('排序：位置降序', arrange(items, { sort: 'pos', dir: -1 }).map((i) => i.index), [2, 1, 0]);
+eq('排序：类型升序（修改→仅左→仅右）', arrange(items, { sort: 'kind', dir: 1 }).map((i) => i.kind), ['chg', 'del', 'add']);
+eq('排序：类型降序', arrange(items, { sort: 'kind', dir: -1 }).map((i) => i.kind), ['add', 'del', 'chg']);
+eq('排序：按行数降序，同尺寸仍按位置', arrange(items, { sort: 'size', dir: -1 }).map((i) => i.index), [2, 0, 1]);
+eq('筛选：只看仅右', arrange(items, { filter: 'add' }).map((i) => i.kind), ['add']);
+eq('筛选：只看仅左', arrange(items, { filter: 'del' }).map((i) => i.kind), ['del']);
+ok('排序不改原数组', items.map((i) => i.index).join(',') === '0,1,2');
+
+eq('行号区间：单行', rangeText(5, 5), '5');
+eq('行号区间：多行', rangeText(5, 9), '5–9');
+eq('行号区间：缺失', rangeText(0, 0), '');
+
+/* 空对比不炸 */
+eq('清单：空对比得到空清单', blockItems([], []), []);
 
 /* ---------- 汇总 ---------- */
 const fail = out.filter((r) => !r.ok);
