@@ -49,8 +49,8 @@ const S = {
   /* loaded = 这一侧有内容可比（来自文件，或用户直接粘进来的文本）。
      只认 path 的话，剪贴板里两段文本就没法对比 —— 而那正是最常用的用法之一。 */
   sides: {
-    l: { path: '', name: '', loaded: false, lines: [''], enc: 'UTF-8', bom: false, eol: '\n', dirty: false, undo: [], redo: [] },
-    r: { path: '', name: '', loaded: false, lines: [''], enc: 'UTF-8', bom: false, eol: '\n', dirty: false, undo: [], redo: [] },
+    l: { path: '', name: '', loaded: false, lines: [''], enc: 'UTF-8', bom: false, eol: '\n', dirty: false, undo: [], redo: [], undoAt: 0 },
+    r: { path: '', name: '', loaded: false, lines: [''], enc: 'UTF-8', bom: false, eol: '\n', dirty: false, undo: [], redo: [], undoAt: 0 },
   },
   opt: { ignoreWS: true, ignoreCase: false },
   rows: [],
@@ -65,6 +65,7 @@ const S = {
   sig: { l: '', r: '' },
   pending: null,       // 还没合并进模型的那一行（输入防抖）
   lastSort: null,      // 上一次「按字典排序」前的快照（两侧一起，Ctrl+Z 一次还原）
+  lastSide: '',        // 最近一次改动落在哪一侧：光标不在行里时 Ctrl+Z 按它来
   list: { open: false, sort: 'pos', dir: 1, filter: 'all', sig: '' },
   warn: '',            // 上限提示文案，空串表示没有
 };
@@ -660,6 +661,7 @@ async function loadSide(side, path, opts = {}) {
     st.dirty = false;
     st.undo.length = 0;
     st.redo.length = 0;
+    st.undoAt = 0;
   }
 
   /* 先问大小再读：几百 MB 的文件读进内存再放弃，代价比一次 metadata 大得多 */
@@ -695,6 +697,7 @@ async function loadSide(side, path, opts = {}) {
     st.dirty = false;
     st.undo.length = 0;
     st.redo.length = 0;
+    st.undoAt = 0;
   } catch (e) {
     toast(tt('读取失败：') + e);
     return false;
@@ -757,6 +760,7 @@ function startText(side) {
   st.eol = '\n';
   st.undo.length = 0;
   st.redo.length = 0;
+  st.undoAt = 0;
   S.pending = null;
   S.ver++;
   recompute();
@@ -870,6 +874,7 @@ function deleteSpan(span) {
   const from = cellA.no - 1;
   const to = cellB.no - 1;
   if (from >= to) return;             // 同一行（或方向反常）：交给别的分支
+  recordUndo(span.side);
   const head = st.lines[from] || '';
   const tail = st.lines[to] || '';
   st.lines.splice(from, to - from + 1, head.slice(0, span.aCol) + tail.slice(span.bCol));
@@ -926,26 +931,59 @@ function flush() {
   return { side: p.side, line: p.at + 1, parts: parts.length };
 }
 
-let undoTick = 0;
-function pushUndo(side) {
-  /* 又要改了 —— 「最近一次操作是排序」这个前提不再成立。
-     不清掉的话，排序后打几个字再按 Ctrl+Z，会一次跳回排序前的状态，
-     把这些字连同排序一起抹掉。 */
-  S.lastSort = null;
-  const now = Date.now();
-  if (now - undoTick < 700) return;
-  undoTick = now;
-  const st = S.sides[side];
+/* ---------------- 撤销 / 重做 ----------------
+ * 历史上这里只有一个「打字专用」的 pushUndo，而且用**模块级**的 undoTick 节流：
+ *   1. 换行、Tab 缩进、回车合并、删选区这些结构性编辑根本不记快照 → 按 Ctrl+Z 撤不回来
+ *   2. 节流是全局的，左侧刚打完字 700ms 内改右侧，右侧连第一步都记不下
+ * 于是「对比窗口没有撤销」这个印象是成立的。现在分成两条：
+ *   recordUndo —— 结构性编辑，一次算一步，永远记
+ *   pushUndo   —— 打字，700ms 内的连击并成一步（跟原生编辑器的手感一致）
+ */
+function snapshot(st) {
   st.undo.push(st.lines.slice());
   if (st.undo.length > 120) st.undo.shift();
   st.redo.length = 0;
 }
+
+function recordUndo(side) {
+  /* 又要改了 —— 「最近一次操作是排序」这个前提不再成立。
+     不清掉的话，排序后打几个字再按 Ctrl+Z，会一次跳回排序前的状态，
+     把这些字连同排序一起抹掉。 */
+  S.lastSort = null;
+  const st = S.sides[side];
+  if (!st) return;
+  snapshot(st);
+  st.undoAt = 0;        // 下一步打字另起一步，别跟这次结构性编辑并在一起
+}
+
+function pushUndo(side) {
+  S.lastSort = null;
+  const st = S.sides[side];
+  if (!st) return;
+  const now = Date.now();
+  if (now - st.undoAt < 700) return;
+  snapshot(st);
+  st.undoAt = now;
+}
+
+/** Ctrl+Z / Ctrl+Y 落在哪一侧：跟光标走；光标不在行里就跟最近动过的那一侧，
+ *  再退一步用「左边优先」—— 点过工具栏之后焦点在按钮上，不能因此就什么都不做 */
+function undoTarget(e) {
+  const host = e.target && e.target.closest && e.target.closest('.cmp-tx');
+  if (host) return sideOf(host);
+  if (S.lastSide) return S.lastSide;
+  if (S.sides.l.loaded) return 'l';
+  if (S.sides.r.loaded) return 'r';
+  return '';
+}
+
 
 /** 结构性编辑（换行 / 并行 / 缩进 / 撤销）之后统一走这里：重算、重画、把光标放回去。
  *  必须顺手标脏 —— 只有打字那条路径会经 flush() 标脏，换行、并行这些不经过它，
  *  漏掉的话 Ctrl+S 会认为「没有需要保存的改动」，改动直接丢掉（实测踩过）。 */
 function applyEdit(side, line, col) {
   S.sides[side].dirty = true;
+  S.lastSide = side;          // 光标可能随后跑到工具栏上，撤销还得知道落在哪一侧
   S.ver++;
   recompute();
   render(true);
@@ -963,6 +1001,7 @@ function onInput(e) {
   const cell = side === 'l' ? row.l : row.r;
   if (!cell) return;
 
+  S.lastSide = side;
   pushUndo(side);
   const pos = caretPos();
   const col = pos ? pos.col : 0;
@@ -986,6 +1025,7 @@ function onInput(e) {
 
 function insertText(side, lineIdx, col, text) {
   const st = S.sides[side];
+  recordUndo(side);
   const cur = st.lines[lineIdx] || '';
   st.lines[lineIdx] = cur.slice(0, col) + text + cur.slice(col);
   applyEdit(side, lineIdx + 1, col + text.length);
@@ -993,6 +1033,7 @@ function insertText(side, lineIdx, col, text) {
 
 function splitLine(side, lineIdx, col) {
   const st = S.sides[side];
+  recordUndo(side);
   const cur = st.lines[lineIdx] || '';
   st.lines.splice(lineIdx, 1, cur.slice(0, col), cur.slice(col));
   applyEdit(side, lineIdx + 2, 0);
@@ -1001,6 +1042,7 @@ function splitLine(side, lineIdx, col) {
 function mergeUp(side, lineIdx) {
   if (lineIdx <= 0) return;
   const st = S.sides[side];
+  recordUndo(side);
   const prev = st.lines[lineIdx - 1] || '';
   const cur = st.lines[lineIdx] || '';
   st.lines.splice(lineIdx - 1, 2, prev + cur);
@@ -1010,6 +1052,7 @@ function mergeUp(side, lineIdx) {
 function mergeDown(side, lineIdx) {
   const st = S.sides[side];
   if (lineIdx >= st.lines.length - 1) return;
+  recordUndo(side);
   const cur = st.lines[lineIdx] || '';
   const next = st.lines[lineIdx + 1] || '';
   st.lines.splice(lineIdx, 2, cur + next);
@@ -1051,9 +1094,7 @@ function sortSides() {
     const st = S.sides[k];
     if (isSorted(st.lines, S.opt)) continue;
     snap[k] = st.lines.slice();
-    st.undo.push(st.lines.slice());
-    if (st.undo.length > 120) st.undo.shift();
-    st.redo.length = 0;
+    snapshot(st);             // 排序是整侧替换，一次算一步
     st.lines = sortLines(st.lines, S.opt);
     st.dirty = true;
   }
@@ -1103,15 +1144,8 @@ function onKey(e) {
   const k = (e.key || '').toLowerCase();
 
   if (mod && k === 's') { e.preventDefault(); save(); return; }
-  if (mod && k === 'z') {
-    e.preventDefault(); flush();
-    if (!e.shiftKey && undoSort()) return;   // 排序是整侧替换，先按整体撤
-    undo(sideOf(host), e.shiftKey);
-    return;
-  }
-  /* Ctrl+Y 是重做。原本这里传 false（= 撤销），照着 Ctrl+Z 抄错了参数，
-     于是「按 Y 反而又退一步」——比没有重做更让人困惑 */
-  if (mod && k === 'y') { e.preventDefault(); flush(); undo(sideOf(host), true); return; }
+  /* 撤销/重做不在这里做：这个监听挂在两块画布上，点过工具栏之后焦点在按钮上，
+     事件根本到不了这里。统一交给 document 上的处理（见 init 末尾）。 */
 
   const side = sideOf(host);
   if (e.key === 'Tab') { e.preventDefault(); const p = caretPos(); flush(); if (p) insertText(side, p.line - 1, p.col, '    '); return; }
@@ -1318,6 +1352,21 @@ function bind() {
   }, { passive: false });
 
   document.addEventListener('keydown', (e) => {
+    /* 撤销/重做放在 document 上，比「挂在两个画布上」宽一层：
+       点过排序、编辑开关之后焦点就在按钮上，挂在画布上的监听收不到，
+       用户看到的现象就是「Ctrl+Z 没反应」。*/
+    const mod = e.ctrlKey || e.metaKey;
+    const lk = (e.key || '').toLowerCase();
+    if (mod && (lk === 'z' || lk === 'y') && S.edit) {
+      e.preventDefault();
+      flush();
+      const side = undoTarget(e);
+      if (!side) return;
+      if (lk === 'y') { undo(side, true); return; }
+      if (!e.shiftKey && undoSort()) return;   // 排序是整侧替换，先按整体撤
+      undo(side, e.shiftKey);
+      return;
+    }
     if (e.defaultPrevented) return;
     const k = e.key;
     if (k === 'Escape' && S.list.open) { e.preventDefault(); toggleList(false); return; }
