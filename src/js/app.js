@@ -2287,11 +2287,32 @@ async function insertImageFromPath(p) {
 }
 
 /* ---------------- 拖拽 / 分栏 ---------------- */
+
+/**
+ * 文件拖放。必须走页面的 HTML5 事件，不能指望 Tauri 的 onDragDropEvent：
+ * 窗口配置 dragDropEnabled=false，而 wry 只在**注册了原生处理器**时才把 WebView2 的
+ * AllowExternalDrop 关掉（wry-0.57.0/src/webview2/mod.rs:155）。没有处理器时 WebView2
+ * 走默认外部拖放 —— 从资源管理器拖进来的文件就是一条普通的 drop 事件。
+ * 代价是 dataTransfer.files 里拿不到磁盘路径，所以分两条路：
+ *   · 图片   → 读字节写进 assets/（和粘贴截图同一条路）
+ *   · 其它   → 只能提示走「文件 → 打开」，DOM 里没有路径可用
+ */
 function setupDrop() {
   document.addEventListener('dragover', (e) => { e.preventDefault(); });
-  document.addEventListener('drop', (e) => {
-    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) e.preventDefault();
+  document.addEventListener('drop', async (e) => {
+    const files = [...((e.dataTransfer && e.dataTransfer.files) || [])];
+    if (!files.length) return;   // 标签拖拽换位这类内部拖动有自己的处理器，别插手
+    e.preventDefault();          // 后面的 await 之前必须落定，否则默认行为（导航到文件）会跑掉
+    const t = activeTab();
+    if (!t) return;
+    if (t.mode === 'preview') { toast(tt('预览模式是只读的，Ctrl+1 或 Ctrl+2 之后再插入')); return; }
+    const imgs = files.filter((f) => /^image\//.test(f.type));
+    if (!imgs.length) { toast(tt('拖进来的不是图片；要打开文档请用「文件 → 打开」')); return; }
+    for (const f of imgs) await insertImageFromFile(f);
   });
+
+  /* 原生通道：只有把 dragDropEnabled 改成 true 才会触发（那时 WebView2 的外部拖放被关掉，
+     上面那条 DOM 分支就收不到文件了）。留着是给将来 mac / Linux 移植用 —— 那边要真实路径。 */
   import('../vendor/api/webview.js').then(({ getCurrentWebview }) => {
     getCurrentWebview().onDragDropEvent(async (ev) => {
       if (ev.payload && ev.payload.type === 'drop') {

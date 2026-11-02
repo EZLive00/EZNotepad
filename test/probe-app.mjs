@@ -219,6 +219,36 @@ try {
   await sleep(900);
   ok('编辑模式点击大纲项，滚完该项点亮',
     (await ev(`document.querySelector('.outline-item.active')?.textContent`)) === '第 22 节');
+
+  /* 拖入文件。窗口是 dragDropEnabled=false：Tauri 的 onDragDropEvent 不会触发，
+     文件落进页面是普通的 drop 事件，由 app.js 的 document 处理器接。
+     这里用合成事件验分支（真机 OS 拖放没法在探针里模拟）。 */
+  await ev(`window.__snp.newTab('drop.md', '# 拖放\\n', null)`);
+  await sleep(300);
+  const dropExpr = (type, name) => `(async () => {
+    const f = new File([new Uint8Array([137, 80, 78, 71])], '${name}', { type: '${type}' });
+    const dt = new DataTransfer(); dt.items.add(f);
+    const e = new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true });
+    const notCancelled = document.dispatchEvent(e);
+    await new Promise((r) => setTimeout(r, 300));
+    return JSON.stringify({ prevented: !notCancelled, toast: [...document.querySelectorAll('.toast')].pop()?.textContent || '' });
+  })()`;
+  const imgDrop = JSON.parse(await ev(dropExpr('image/png', 'shot.png')));
+  ok('拖入图片：拦下默认行为并提示先存盘',
+    imgDrop.prevented && /assets/.test(imgDrop.toast), imgDrop.toast);
+
+  const docBefore = await ev(`window.__snp.getEditorText()`);
+  const fileDrop = JSON.parse(await ev(dropExpr('text/markdown', 'note.md')));
+  ok('拖入非图片：拦下默认行为、正文不变',
+    fileDrop.prevented && (await ev(`window.__snp.getEditorText()`)) === docBefore, fileDrop.toast);
+
+  const internalDrop = await ev(`(() => {
+    const dt = new DataTransfer();
+    dt.setData('text/plain', 'tab');
+    const e = new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true });
+    return !document.dispatchEvent(e);
+  })()`);
+  ok('无文件的内部拖放（标签换位）不被拦截', internalDrop === false, String(internalDrop));
 } catch (e) {
   ok('探针执行完成', false, e.message);
 } finally {
