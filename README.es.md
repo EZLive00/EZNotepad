@@ -94,11 +94,11 @@ Sigue siendo una pestaña Markdown normal (modos, exportar, buscar): solo que no
 
 ## Comparación
 
-`Ctrl+D` (o `Ctrl+Shift+N`) abre la ventana de comparación. Empieza vacía a propósito:
+`Ctrl+D` (o `Ctrl+Shift+N`) abre la ventana de comparación con **dos paneles en blanco ya editables** y el cursor en el izquierdo: basta con `Ctrl+V`.
 
-- **Dos archivos** — selecciónalos con `Ctrl` / `Shift` en la página «Archivos» de la barra lateral, luego clic derecho → **Comparar estos dos archivos** (el del clic derecho queda a la izquierda)
-- **Dos textos** — pulsa **Pegar dos textos**, pega en ambos lados y listo (sin archivos)
-- **Editar ambos lados** — **Edición** habilita los dos paneles; **Guardar** solo escribe donde hay un archivo real
+- **Dos archivos** — pulsa el icono de carpeta a la izquierda de un nombre en la cabecera; o selecciónalos con `Ctrl` / `Shift` en la página «Archivos» de la barra lateral, luego clic derecho → **Comparar estos dos archivos** (el del clic derecho queda a la izquierda)
+- **Dos textos** — pega uno en cada lado, sin archivos
+- **Editar ambos lados** — los dos paneles se pueden escribir desde el principio; **Guardar** solo escribe donde hay un archivo real
 
 Las marcas por línea señalan qué línea cambió y las de carácter qué caracteres. `F7` / `F8` recorren las diferencias
 y **Exportar informe** genera un diff HTML independiente.
@@ -124,14 +124,13 @@ La barra lateral tiene dos páginas: **Esquema** (resalta la sección que estás
 - Árbol cargado bajo demanda; clic derecho para crear, renombrar o borrar — el borrado va a la **Papelera**, y las carpetas solo se borran si están vacías
 - La búsqueda corre en Rust, omite binarios y archivos de más de 4 MB, y devuelve como máximo 200 resultados agrupados por archivo con número de línea
 - `.*` activa regex, `Aa` la distinción de mayúsculas
-- **Reemplazar todo** entre archivos: pregunta una vez y guarda una instantánea de cada archivo antes de tocarlo
 - Los documentos abiertos se vigilan en tiempo real (`ReadDirectoryChangesW`): la pestaña actual se recarga en silencio, una de fondo recibe un punto ámbar y pregunta al entrar
 
 ## Todo lo demás
 
 | | |
 |---|---|
-| **Formatear** | `Ctrl+Shift+F` — JSON validado y reindentado (si hay error no toca el archivo e indica línea / columna), Markdown: líneas en blanco y viñetas unificadas, el resto: espacios finales fuera. Un `Ctrl+Z` lo deshace todo |
+| **Formatear** | `Ctrl+Alt+L` — JSON validado y reindentado (si hay error no toca el archivo e indica línea / columna), Markdown: líneas en blanco y viñetas unificadas, el resto: espacios finales fuera. Un `Ctrl+Z` lo deshace todo |
 | **Historial** | Cada guardado conserva el contenido anterior (60 por archivo, 20 MB en total). **Ver** lo abre en solo lectura, **Restaurar** lo devuelve al editor — el disco solo cambia al pulsar `Ctrl+S` |
 | **Exportar** | HTML de un solo archivo, estilos incrustados e imágenes en data URI; PDF mediante el diálogo de impresión del sistema |
 | **Atajos** | Ajustes → Atajos permite cambiar cualquiera; lo personalizado gana, **Restablecer** recupera uno, **Valores por defecto** borra todos |
@@ -148,7 +147,7 @@ La barra lateral tiene dos páginas: **Esquema** (resalta la sección que estás
 | Abrir la nota rápida | `Ctrl+Shift+M` |
 | Buscar / Reemplazar / Ir a línea | `Ctrl+F` / `Ctrl+H` / `Ctrl+G` |
 | Paleta de comandos / Ajustes | `Ctrl+Shift+P` / `Ctrl+,` |
-| Formatear / Comparar | `Ctrl+Shift+F` / `Ctrl+D` |
+| Formatear / Comparar | `Ctrl+Alt+L` / `Ctrl+D` |
 | Siguiente / anterior diferencia | `F8` / `F7` |
 | Copiar esta diferencia al otro lado (con `Ctrl` para seguir) | `Alt+←` / `Alt+→` |
 | Buscar en ambos paneles (ventana de comparación) | `Ctrl+F` |

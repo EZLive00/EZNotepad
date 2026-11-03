@@ -94,11 +94,11 @@ Continua a ser uma aba Markdown normal (modos, exportar, pesquisar): só não en
 
 ## Comparação
 
-`Ctrl+D` (ou `Ctrl+Shift+N`) abre a janela de comparação. Ela começa vazia de propósito:
+`Ctrl+D` (ou `Ctrl+Shift+N`) abre a janela de comparação com **dois painéis em branco já editáveis** e o cursor no esquerdo: basta `Ctrl+V`.
 
-- **Dois arquivos** — selecione com `Ctrl` / `Shift` na página «Arquivos» da barra lateral, clique com o botão direito → **Comparar estes dois arquivos** (o clicado fica à esquerda)
-- **Dois textos** — clique em **Colar dois textos**, cole nos dois lados e pronto (sem arquivo)
-- **Editar os dois lados** — **Edição** libera os dois painéis; **Salvar** grava só onde existe um arquivo real
+- **Dois arquivos** — clique no ícone de pasta à esquerda de um nome no cabeçalho; ou selecione com `Ctrl` / `Shift` na página «Arquivos» da barra lateral, clique com o botão direito → **Comparar estes dois arquivos** (o clicado fica à esquerda)
+- **Dois textos** — cole um de cada lado, sem arquivo
+- **Editar os dois lados** — os dois painéis são graváveis desde o início; **Salvar** grava só onde existe um arquivo real
 
 As marcas por linha mostram qual linha mudou e as por caractere, quais caracteres. `F7` / `F8` percorrem as diferenças
 e **Exportar relatório** gera um diff HTML independente.
@@ -124,14 +124,13 @@ A barra lateral tem duas páginas: **Estrutura** (realça a seção que você es
 - Árvore carregada sob demanda; clique direito para criar, renomear ou excluir — a exclusão vai para a **Lixeira**, e pastas só podem ser excluídas vazias
 - A busca roda em Rust, ignora binários e arquivos acima de 4 MB, e devolve no máximo 200 resultados agrupados por arquivo com número de linha
 - `.*` ativa regex, `Aa` a diferenciação de maiúsculas
-- **Substituir tudo** entre arquivos: pergunta uma vez e tira um instantâneo de cada arquivo antes de alterar
 - Documentos abertos são monitorados em tempo real (`ReadDirectoryChangesW`): a aba atual recarrega em silêncio, uma aba de fundo ganha um ponto âmbar e pergunta ao entrar
 
 ## Todo o resto
 
 | | |
 |---|---|
-| **Formatar** | `Ctrl+Shift+F` — JSON validado e reindentado (em caso de erro o arquivo não é tocado e a linha / coluna é informada), Markdown: linhas em branco e marcadores unificados, o resto: espaços finais removidos. Um `Ctrl+Z` desfaz tudo |
+| **Formatar** | `Ctrl+Alt+L` — JSON validado e reindentado (em caso de erro o arquivo não é tocado e a linha / coluna é informada), Markdown: linhas em branco e marcadores unificados, o resto: espaços finais removidos. Um `Ctrl+Z` desfaz tudo |
 | **Histórico** | Cada salvamento guarda o conteúdo anterior (60 por arquivo, 20 MB no total). **Ver** abre em somente leitura, **Restaurar** devolve ao editor — o disco só muda com `Ctrl+S` |
 | **Exportar** | HTML de arquivo único, estilos embutidos e imagens em data URI; PDF pelo diálogo de impressão do sistema |
 | **Atalhos** | Configurações → Atalhos muda qualquer um; o personalizado vence, **Redefinir** recupera um, **Restaurar padrões** limpa todos |
@@ -148,7 +147,7 @@ A barra lateral tem duas páginas: **Estrutura** (realça a seção que você es
 | Abrir a nota rápida | `Ctrl+Shift+M` |
 | Localizar / Substituir / Ir para linha | `Ctrl+F` / `Ctrl+H` / `Ctrl+G` |
 | Paleta de comandos / Configurações | `Ctrl+Shift+P` / `Ctrl+,` |
-| Formatar / Comparar | `Ctrl+Shift+F` / `Ctrl+D` |
+| Formatar / Comparar | `Ctrl+Alt+L` / `Ctrl+D` |
 | Próxima / anterior diferença | `F8` / `F7` |
 | Copiar esta diferença para o outro lado (+`Ctrl` para continuar) | `Alt+←` / `Alt+→` |
 | Localizar nos dois painéis (janela de comparação) | `Ctrl+F` |
@@ -188,7 +187,6 @@ dos seus documentos.
 - O PDF passa pelo diálogo de impressão do sistema, então o layout segue a saída impressa
 - A mesclagem de três vias mescla e lista conflitos; não há mesclador visual de quatro painéis (use a comparação bloco a bloco)
 - Fórmulas são renderizadas só na visualização e aparecem como código no WYSIWYG; Mermaid não é suportado
-- A substituição entre arquivos trata só UTF-8: arquivos GBK são ignorados em vez de recodificados em silêncio
 - A árvore de arquivos não é monitorada; use **Atualizar** no menu de contexto após mudanças externas
 - Cada instalador precisa ser compilado no próprio sistema (veja `docs/构建说明.md`); as notas de arquitetura e portabilidade ficam em `docs/`
 

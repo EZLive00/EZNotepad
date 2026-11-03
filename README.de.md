@@ -94,11 +94,11 @@ Sie bleibt ein gewöhnlicher Markdown-Tab (Modi, Export, Suche) – erscheint ab
 
 ## Vergleichen
 
-`Ctrl+D` (oder `Ctrl+Shift+N`) öffnet das Vergleichsfenster. Es startet absichtlich leer:
+`Ctrl+D` (oder `Ctrl+Shift+N`) öffnet das Vergleichsfenster mit **zwei leeren, editierbaren Bereichen**, der Cursor steht schon links — einfach `Ctrl+V`:
 
-- **Zwei Dateien** — im Seitenleisten-Reiter „Dateien“ mit `Ctrl` / `Shift` auswählen, dann Rechtsklick → **Diese zwei Dateien vergleichen** (die angeklickte bleibt links)
-- **Zwei Texte** — **Zwei Texte einfügen** drücken, beidseitig einfügen, fertig (ohne Datei)
-- **Beide Seiten bearbeiten** — **Bearbeiten** schaltet beide Spalten frei; **Speichern** schreibt nur dorthin zurück, wo wirklich eine Datei liegt
+- **Zwei Dateien** — oben auf das Ordnersymbol links neben einem Dateinamen klicken; oder im Seitenleisten-Reiter „Dateien“ mit `Ctrl` / `Shift` auswählen, dann Rechtsklick → **Diese zwei Dateien vergleichen** (die angeklickte bleibt links)
+- **Zwei Texte** — je einen Text links und rechts einfügen, fertig (ohne Datei)
+- **Beide Seiten bearbeiten** — beide Spalten sind von Anfang an beschreibbar; **Speichern** schreibt nur dorthin zurück, wo wirklich eine Datei liegt
 
 Marken pro Zeile zeigen, welche Zeile sich änderte, Marken pro Zeichen, welche Zeichen. `F7` / `F8` springen zwischen den
 Unterschieden, **Bericht exportieren** schreibt einen eigenständigen HTML-Vergleich. Das Lineal rechts verortet jede Änderung in der ganzen Datei: Zeilennummer beim Überfahren, Sprung per Klick
@@ -122,14 +122,13 @@ Die Seitenleiste hat zwei Reiter: **Gliederung** (hebt beim Scrollen den aktuell
 - Baum lädt bei Bedarf; Rechtsklick zum Anlegen, Umbenennen, Löschen — Löschen geht in den **Papierkorb**, Ordner nur wenn leer
 - Die Suche läuft in Rust, überspringt Binärdateien und alles über 4 MB, liefert höchstens 200 Treffer nach Datei gruppiert mit Zeilennummer
 - `.*` schaltet Regex, `Aa` die Groß-/Kleinschreibung
-- **Alle ersetzen** über alle Dateien: eine Rückfrage vorab, und vor jeder Änderung ein Schnappschuss
 - Offene Dokumente werden live überwacht (`ReadDirectoryChangesW`): der aktuelle Tab lädt still neu, ein Hintergrund-Tab bekommt einen gelben Punkt und fragt beim Wechsel
 
 ## Alles Weitere
 
 | | |
 |---|---|
-| **Formatieren** | `Ctrl+Shift+F` — JSON prüfen und neu einrücken (bei Fehler bleibt die Datei unberührt, Zeile / Spalte werden gemeldet), Markdown: Leerzeilen und Aufzählungszeichen vereinheitlicht, Rest: Leerzeichen am Zeilenende weg. Ein `Ctrl+Z` macht alles rückgängig |
+| **Formatieren** | `Ctrl+Alt+L` — JSON prüfen und neu einrücken (bei Fehler bleibt die Datei unberührt, Zeile / Spalte werden gemeldet), Markdown: Leerzeilen und Aufzählungszeichen vereinheitlicht, Rest: Leerzeichen am Zeilenende weg. Ein `Ctrl+Z` macht alles rückgängig |
 | **Versionsverlauf** | Jedes Speichern sichert den vorherigen Stand (60 pro Datei, 20 MB gesamt). **Ansehen** öffnet schreibgeschützt, **Wiederherstellen** schreibt in den Editor — auf die Platte geht es erst mit `Ctrl+S` |
 | **Export** | Einzelne HTML-Datei mit eingebetteten Stilen und Bildern als data URI; PDF über den Druckdialog des Systems |
 | **Tastenkürzel** | Einstellungen → Tastenkürzel ändert jedes; eigene Belegungen gewinnen, **Zurücksetzen** stellt eines wieder her, **Standard wiederherstellen** löscht alle |
@@ -146,7 +145,7 @@ Die Seitenleiste hat zwei Reiter: **Gliederung** (hebt beim Scrollen den aktuell
 | Notiz öffnen | `Ctrl+Shift+M` |
 | Suchen / Ersetzen / Gehe zu Zeile | `Ctrl+F` / `Ctrl+H` / `Ctrl+G` |
 | Befehlspalette / Einstellungen | `Ctrl+Shift+P` / `Ctrl+,` |
-| Formatieren / Vergleichen | `Ctrl+Shift+F` / `Ctrl+D` |
+| Formatieren / Vergleichen | `Ctrl+Alt+L` / `Ctrl+D` |
 | Nächster / vorheriger Unterschied | `F8` / `F7` |
 | Diesen Unterschied ganz auf die andere Seite übernehmen (mit `Ctrl` weiter) | `Alt+←` / `Alt+→` |
 | In beiden Bereichen suchen (Vergleichsfenster) | `Strg+F` |
@@ -186,7 +185,6 @@ am selben Ort, getrennt von deinen Dokumenten.
 - PDF läuft über den Druckdialog des Systems, das Layout folgt also der Druckausgabe
 - Die Drei-Wege-Zusammenführung führt automatisch zusammen und listet Konflikte; keinen vierspaltigen visuellen Merger (nutze den Textvergleich Block für Block)
 - Formeln werden nur in der Vorschau gesetzt und im WYSIWYG als Quelle gezeigt; Mermaid wird nicht unterstützt
-- Ersetzen über Dateien hinweg verarbeitet nur UTF-8 — GBK-Dateien werden übersprungen statt still umkodiert
 - Der Dateibaum selbst wird nicht überwacht; **Aktualisieren** im Kontextmenü nach externen Änderungen
 - Installer müssen auf dem jeweiligen System gebaut werden (siehe `docs/构建说明.md`); Architektur- und Portierungsnotizen liegen in `docs/`
 

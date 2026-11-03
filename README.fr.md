@@ -94,11 +94,11 @@ Elle reste un onglet Markdown ordinaire (modes, export, recherche) : simplement,
 
 ## Comparaison
 
-`Ctrl+D` (ou `Ctrl+Shift+N`) ouvre la fenêtre de comparaison. Elle démarre vide, exprès :
+`Ctrl+D` (ou `Ctrl+Shift+N`) ouvre la fenêtre de comparaison avec **deux volets vides et modifiables**, le curseur déjà à gauche — il suffit de coller :
 
-- **Deux fichiers** — sélectionnez-les avec `Ctrl` / `Shift` dans la page « Fichiers » de la barre latérale, puis clic droit → **Comparer ces deux fichiers** (celui du clic droit reste à gauche)
-- **Deux textes** — cliquez **Coller deux textes**, collez de chaque côté, c'est tout (aucun fichier requis)
-- **Éditer les deux côtés** — **Édition** rend les deux volets modifiables ; **Enregistrer** n'écrit que là où un fichier existe vraiment
+- **Deux fichiers** — cliquez sur l'icône de dossier à gauche d'un nom de fichier en haut ; ou sélectionnez-les avec `Ctrl` / `Shift` dans la page « Fichiers » de la barre latérale, puis clic droit → **Comparer ces deux fichiers** (celui du clic droit reste à gauche)
+- **Deux textes** — collez-en un de chaque côté, aucun fichier requis
+- **Éditer les deux côtés** — les deux volets sont modifiables dès l'ouverture ; **Enregistrer** n'écrit que là où un fichier existe vraiment
 
 Les marques par ligne montrent ce qui a changé, celles par caractère montrent quels caractères. `F7` / `F8` parcourent
 les différences et **Exporter le rapport** produit un diff HTML autonome.
@@ -124,14 +124,13 @@ La barre latérale a deux pages : **Plan** (souligne la section en cours de lect
 - Arborescence chargée à la demande ; clic droit pour créer, renommer, supprimer — la suppression va à la **corbeille**, et un dossier ne se supprime que vide
 - La recherche tourne en Rust, ignore les binaires et les fichiers de plus de 4 Mo, renvoie au plus 200 résultats groupés par fichier avec les numéros de ligne
 - `.*` active la regex, `Aa` la casse
-- **Tout remplacer** traverse les fichiers : une confirmation d'abord, et un instantané de chaque fichier avant modification
 - Les documents ouverts sont surveillés en temps réel (`ReadDirectoryChangesW`) : l'onglet courant se recharge en silence, un onglet en arrière-plan reçoit un point ambre et demande à être affiché
 
 ## Le reste
 
 | | |
 |---|---|
-| **Formatage** | `Ctrl+Shift+F` — JSON validé et réindenté (le fichier reste intact et l'erreur est signalée ligne / colonne), Markdown : lignes vides et puces harmonisées, le reste : espaces de fin supprimés. Un `Ctrl+Z` annule tout |
+| **Formatage** | `Ctrl+Alt+L` — JSON validé et réindenté (le fichier reste intact et l'erreur est signalée ligne / colonne), Markdown : lignes vides et puces harmonisées, le reste : espaces de fin supprimés. Un `Ctrl+Z` annule tout |
 | **Historique** | Chaque enregistrement conserve le contenu précédent (60 par fichier, 20 Mo au total). **Voir** l'ouvre en lecture seule, **Restaurer** le renvoie dans l'éditeur — le disque ne change qu'au `Ctrl+S` |
 | **Export** | HTML en un seul fichier, styles intégrés et images en data URI ; PDF via la boîte d'impression du système |
 | **Raccourcis** | Paramètres → Raccourcis permet tout changer ; le personnalisé gagne, **Réinitialiser** en restaure un, **Rétablir les valeurs** efface tout |
@@ -148,7 +147,7 @@ La barre latérale a deux pages : **Plan** (souligne la section en cours de lect
 | Ouvrir la note rapide | `Ctrl+Shift+M` |
 | Rechercher / Remplacer / Aller à la ligne | `Ctrl+F` / `Ctrl+H` / `Ctrl+G` |
 | Palette de commandes / Paramètres | `Ctrl+Shift+P` / `Ctrl+,` |
-| Formater / Comparer | `Ctrl+Shift+F` / `Ctrl+D` |
+| Formater / Comparer | `Ctrl+Alt+L` / `Ctrl+D` |
 | Différence suivante / précédente | `F8` / `F7` |
 | Copier cette différence de l'autre côté (+`Ctrl` pour enchaîner) | `Alt+←` / `Alt+→` |
 | Rechercher dans les deux volets (fenêtre de comparaison) | `Ctrl+F` |

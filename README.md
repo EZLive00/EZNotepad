@@ -94,11 +94,11 @@ It is still an ordinary Markdown tab (modes, export, search) — it just stays o
 
 ## Compare
 
-`Ctrl+D` (or `Ctrl+Shift+N`) opens the compare window. It starts empty on purpose:
+`Ctrl+D` (or `Ctrl+Shift+N`) opens the compare window with **two blank editable panes** and the caret already on the left — just `Ctrl+V`:
 
-- **Two files from the tree** — select them with `Ctrl` / `Shift` in the sidebar Files page, then right-click → **Compare These Two Files** (the one you right-clicked stays on the left)
-- **Two texts** — click **Paste Two Texts**, paste into both sides, done (no file needed)
-- **Edit both sides** — **Edit** unlocks both panes; **Save** writes back only where there is a real file
+- **Two files** — click the folder icon left of a file name at the top; or select them with `Ctrl` / `Shift` in the sidebar Files page, then right-click → **Compare These Two Files** (the one you right-clicked stays on the left)
+- **Two texts** — paste one into each side; no file needed
+- **Edit both sides** — both panes are writable from the start; **Save** writes back only where there is a real file
 
 Line-level marks show what changed, character-level marks show which characters. `F7` / `F8` walk the differences, and **Export Report** writes a standalone HTML diff.
 The ruler on the right maps the whole file — hover for line numbers, click or drag to jump; **Differences**
@@ -122,14 +122,13 @@ The sidebar has two pages: **Outline** (highlights the section you are reading) 
 - Lazy directory tree; right-click to create, rename or delete — deletions go to the **Recycle Bin**, and folders can only be deleted when empty
 - Searching runs in Rust, skips binaries and files over 4 MB, returns at most 200 hits grouped by file with line numbers
 - `.*` toggles regex, `Aa` toggles case sensitivity
-- **Replace All** across files asks once first and snapshots every file before touching it
 - Open documents are watched in real time (`ReadDirectoryChangesW`): the current tab reloads silently, a background tab gets an amber dot and asks when you switch to it
 
 ## Everything Else
 
 | | |
 |---|---|
-| **One-click format** | `Ctrl+Shift+F` — JSON validate + reindent (leaves the file untouched and reports line / column on error), Markdown blank lines and list markers, trailing whitespace for everything. One `Ctrl+Z` undoes it |
+| **One-click format** | `Ctrl+Alt+L` — JSON validate + reindent (leaves the file untouched and reports line / column on error), Markdown blank lines and list markers, trailing whitespace for everything. One `Ctrl+Z` undoes it |
 | **History** | Every save snapshots the previous content (60 per file, 20 MB total). **View** opens it read-only, **Restore** writes it back to the editor — disk changes only when you press `Ctrl+S` |
 | **Export** | Single-file HTML with inlined styles and data-URI images; PDF through the system print dialog |
 | **Shortcuts** | Settings → Shortcuts remaps anything; custom bindings win, **Reset** puts one back, **Restore Defaults** clears all |
@@ -146,7 +145,7 @@ The sidebar has two pages: **Outline** (highlights the section you are reading) 
 | Open quick note | `Ctrl+Shift+M` |
 | Find / Replace / Go to line | `Ctrl+F` / `Ctrl+H` / `Ctrl+G` |
 | Command palette / Settings | `Ctrl+Shift+P` / `Ctrl+,` |
-| Format / Compare | `Ctrl+Shift+F` / `Ctrl+D` |
+| Format / Compare | `Ctrl+Alt+L` / `Ctrl+D` |
 | Next / previous difference | `F8` / `F7` |
 | Copy this difference to the other side (add `Ctrl` to keep going) | `Alt+←` / `Alt+→` |
 | Find in both panes (compare window) | `Ctrl+F` |
@@ -186,7 +185,6 @@ folder, separate from your documents.
 - PDF goes through the system print dialog, so the layout follows print output
 - Three-way merge auto-merges and lists conflicts; there is no four-pane visual merger (use Text Compare block by block)
 - Math renders in preview only and shows as source in WYSIWYG; Mermaid is not supported
-- Cross-file replace handles UTF-8 only — GBK files are skipped rather than silently re-encoded
 - The file tree is not watched; **Refresh** from the context menu after changes made elsewhere
 - Installers must be built on their own OS (see `docs/构建说明.md`); architecture and porting notes live in `docs/`
 

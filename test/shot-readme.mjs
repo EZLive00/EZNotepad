@@ -1,8 +1,9 @@
 // ============================================================
-// test/shot-readme.mjs —— README 用截图（英文界面，需要应用带 --remote-debugging-port=9333 启动）
+// test/shot-readme.mjs —— README 用截图（英文界面；应用由 appctl 自己起，带调试端口）
 //
 //   node test/shot-readme.mjs
 //     → SHOT_DIR/readme-{light,dark,split,compare}.png
+//   跑完把四张图拷进 docs/screenshots（light.png / dark.png / split.png / compare.png）。
 //
 // 覆盖 docs/screenshots 里 README 引用的四张图：
 //   light.png / dark.png      主界面（所见即所得 + 大纲）
@@ -12,10 +13,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { SHOT_DIR } from './harness.mjs';
+import { ensureApp } from './lib/appctl.mjs';
 
 const OUT = SHOT_DIR;
 fs.mkdirSync(OUT, { recursive: true });
-const PORT = process.env.CDP_PORT || 9333;
+const PORT = Number(process.env.CDP_PORT || 9333);
+
+// 端口上已经有应用就直接用；没有就自己起一个，退出时由 appctl 收干（含对比窗口）
+await ensureApp(PORT);
 
 /** 连一个 CDP target，返回 { call, ev, shot, close } */
 async function attach(target) {
@@ -94,7 +99,7 @@ const leftDoc = [
   '### Compare',
   '',
   '- Select two files in the tree, then right-click to diff them',
-  '- Paste two texts straight into an empty compare window',
+  '- Paste one text into each side of the blank compare window',
   '- F7 / F8 jump between differences',
   '',
   '### Editor',
@@ -232,5 +237,7 @@ await C.shot('readme-compare.png');
 C.close();
 M.close();
 
-// 临时样例文件留在 node_modules/.tmp 下，不删（本机删除会进回收站）
+// 临时样例文件留在 SHOT_DIR 下，不删（本机删除会进回收站）
 console.log('done');
+// 子进程（如果本轮是 appctl 起的）会撑住事件循环；显式退出触发 exit 钩子里的收尾
+process.exit(0);
