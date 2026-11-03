@@ -340,6 +340,51 @@ function refreshDirty() {
   }
 }
 
+/** 撤销 / 重做按钮的可用性：跟着**真实的历史栈**走，不跟「有没有加载文件」走。
+ *  排序是整侧替换、只存一个 S.lastSort 快照，它也算一步可撤销的改动。
+ *  只读态一律禁用 —— 键盘在只读态也不吃 Ctrl+Z，按钮亮着却点不动是更糟的谎话。 */
+function syncHist() {
+  const undoable = !!S.lastSort || S.sides.l.undo.length > 0 || S.sides.r.undo.length > 0;
+  const redoable = S.sides.l.redo.length > 0 || S.sides.r.redo.length > 0;
+  $('undoBtn').disabled = !S.edit || !undoable;
+  $('redoBtn').disabled = !S.edit || !redoable;
+}
+
+/** 工具栏按钮的撤销 / 重做：落哪一侧跟 Ctrl+Z 用同一套判断
+ *  （光标所在侧 → 最近改动侧 → 左边）。点了按钮焦点就在按钮上，
+ *  `activeElement` 里找不到 .cmp-tx，正好落到后两级。 */
+function doUndo(redo) {
+  if (!S.edit) return;
+  flush();                 // 还没落库的那一行先落，否则会说「没有可撤销的」
+  const side = undoTarget({ target: document.activeElement });
+  if (!side) return;
+  if (!redo && undoSort()) return;   // 排序是整侧替换，先按整体撤
+  undo(side, redo);
+  /* undo() 在栈空时会提前 return，不经过 updateMeta —— 这里兜一次，
+     让「撤到底」的瞬间按钮就变灰，而不是等下一次无关的重绘 */
+  syncHist();
+}
+
+/** 工具栏按**真实溢出量**降级，不按窗口宽度猜阈值：同一份布局在九种语言下宽度
+ *  差 100px 以上，猜出来的阈值必然在某种语言下把最右边的按钮裁掉。
+ *  读 scrollWidth 会强制同步布局，所以只在 resize / 字体就绪 / 打完文字之后跑。 */
+function fitTools() {
+  const bar = $('tools');
+  if (!bar) return;
+  bar.classList.remove('tight', 'tighter');
+  if (bar.scrollWidth <= bar.clientWidth + 1) return;
+  bar.classList.add('tight');            // 一级：按钮只留图标
+  if (bar.scrollWidth <= bar.clientWidth + 1) return;
+  bar.classList.add('tighter');          // 二级：连勾选项的文字也收起来
+}
+
+let fitQueued = false;
+function queueFit() {
+  if (fitQueued) return;
+  fitQueued = true;
+  requestAnimationFrame(() => { fitQueued = false; fitTools(); });
+}
+
 function updateMeta() {
   refreshDirty();
   for (const side of ['l', 'r']) {
@@ -366,6 +411,10 @@ function updateMeta() {
   }
   updateDots();
   $('save').disabled = !(S.sides.l.dirty || S.sides.r.dirty);
+  syncHist();
+  /* 统计文字的长度会随内容变（「12 处差异」比「完全一致」长得多），
+     折叠档位要跟着重算，否则统计一变长就又把右边挤出去了 */
+  queueFit();
 }
 
 function updateDots() {
@@ -808,6 +857,9 @@ function setEdit(on) {
   if (S.pending) { flush(); S.ver++; recompute(); }
   S.edit = !!on;
   $('toggleEdit').classList.toggle('on', S.edit);
+  /* 只读态撤销/重做按钮跟着灰掉：键盘在只读态也不吃 Ctrl+Z，
+     按钮亮着却点不动，比直接灰着更让人困惑 */
+  syncHist();
   $('paneL').classList.toggle('editing', S.edit);
   $('paneR').classList.toggle('editing', S.edit);
   S.ver++;
@@ -1351,6 +1403,9 @@ function bind() {
   };
   $('pastePair').onclick = startPairText;
   $('sortBtn').onclick = () => sortSides();
+  /* 工具栏上的后悔药：跟 Ctrl+Z / Ctrl+Y 走同一套逻辑，不是第二套实现 */
+  $('undoBtn').onclick = () => doUndo(false);
+  $('redoBtn').onclick = () => doUndo(true);
 
   for (const side of ['l', 'r']) {
     bindScroll(side);
@@ -1426,6 +1481,7 @@ function bind() {
 
   window.addEventListener('resize', () => {
     render(true);
+    queueFit();          // 工具栏要么展开回文字，要么再降一级
   });
 
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
@@ -1460,6 +1516,10 @@ function pickSide(side) {
   updateMeta();
   recompute();
   render(true);
+  /* 字体没就绪时量出来的宽度偏窄，会把工具栏误判成「放得下」——
+     等一次 fonts.ready 再量，之后只在 resize / 统计文字变化时重算 */
+  queueFit();
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(queueFit);
 
   listen('compare:load', (ev) => {
     const p = ev && ev.payload ? ev.payload : {};

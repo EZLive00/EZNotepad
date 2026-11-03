@@ -170,6 +170,12 @@ body[data-theme="dark"] {
   font-size: 12px;
   color: var(--fg-soft);
   white-space: nowrap;
+  /* 窄窗口下先让统计文字让位（可收缩 + 省略号），别去挤按钮：
+     overflow:hidden 的容器里，不让位的 nowrap 文字会静默裁掉右边的按钮 */
+  flex: 0 1 auto;
+  min-width: 6em;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .cmp-cur {
@@ -177,6 +183,10 @@ body[data-theme="dark"] {
   color: var(--fg-faint);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .cmp-tools-gap { flex: 1; }
@@ -232,6 +242,16 @@ body[data-theme="dark"] {
   color: var(--accent);
   box-shadow: inset 0 0 0 1px var(--accent);
 }
+
+/* ---------- 窄窗口：工具栏降级 ----------
+   工具栏是 overflow:hidden 的单行 flex，窗口一窄，最右边的按钮被**静默裁掉** ——
+   用户看到的是「导出报告不见了」，没有任何提示（760px 窗口下实测被裁）。
+   降级由 fitTools() 按真实溢出量决定，不按窗口宽度猜阈值：同一份布局在九种语言下
+   宽度差 100px 以上，猜出来的阈值必然在某种语言下裁掉东西。
+   两级：先收按钮文字（图标有 title 兜底），还不够就把勾选项也收成方框。 */
+.cmp-tools.tight .cmp-btn > span { display: none; }
+.cmp-tools.tighter .cmp-chk > span { display: none; }
+.cmp-tools.tighter .cmp-chk { gap: 0; }
 
 /* ---------- 正文 ---------- */
 .cmp-main {
