@@ -49,6 +49,8 @@ export const readTextAs = (path, encoding) => invoke('read_text_file', { path, e
 export const fileSize = (path) => invoke('file_size', { path });
 export const saveText = (opts) => invoke('save_text_file', { opts });
 export const listDir = (path) => invoke('list_dir_recursive', { path, maxFiles: 20000 });
+/** 整批比对文件内容：pairs 是 [[左, 右], …]，回一组布尔（逐字节是否相同） */
+export const compareFilePairs = (pairs) => invoke('compare_file_pairs', { pairs });
 /** 只列一层：侧栏文件树按需展开用 */
 export const readDirShallow = (path) => invoke('read_dir_shallow', { path });
 
@@ -59,8 +61,15 @@ export const readDirShallow = (path) => invoke('read_dir_shallow', { path });
 export const openCompareWindow = (left, right) =>
   invoke('open_compare_window', { left: left || null, right: right || null });
 export const takeCompareRequest = () => invoke('take_compare_request');
-/** 对比窗口的「最大化 / 还原」：无边框窗口没有系统最大化状态，改成两个矩形 */
-export const setCompareFill = (fill) => invoke('compare_set_fullscreen', { fill: !!fill });
+/* 文件夹对比：独立窗口。两边可以都不带（打开后自己选目录） */
+export const openFolderCompareWindow = (left, right) =>
+  invoke('open_folder_compare_window', { left: left || null, right: right || null });
+export const takeFolderCompareRequest = () => invoke('take_folder_compare_request');
+/** 工具窗口 → 主窗口：在编辑器里打开这个文件 */
+export const openInMain = (path) => invoke('open_in_main', { path });
+/** 工具窗口（文本对比 / 文件夹对比）的「最大化 / 还原」：无边框窗口没有系统
+    最大化状态，改成两个矩形。label 是窗口标识（"compare" / "foldercmp"） */
+export const setToolFill = (label, fill) => invoke('tool_set_fullscreen', { label, fill: !!fill });
 /** 全目录搜文本（在 Rust 里扫，别把每个文件都搬到前端）。regex=true 按正则匹配 */
 export const searchInFolder = (root, query, maxResults = 300, regex = false, caseSensitive = false) =>
   invoke('search_in_folder', { root, query, maxResults, regex, caseSensitive });

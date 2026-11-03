@@ -1928,7 +1928,7 @@ function bind() {
       const was = filled;
       filled = !filled;
       syncFillBtn();
-      be.setCompareFill(filled).catch(() => { filled = was; syncFillBtn(); });
+      be.setToolFill('compare', filled).catch(() => { filled = was; syncFillBtn(); });
     };
     /* 关闭统一走 close()，由 onCloseRequested 判一次脏 —— 右上角 ×、Alt+F4、
        任务栏关闭都从同一个口过，不靠「点按钮时才检查」。 */

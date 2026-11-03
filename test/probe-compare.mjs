@@ -90,7 +90,7 @@ async function compareTarget() {
   return t;
 }
 
-const main = await connect((await targets()).find((t) => t.type === 'page' && !/compare\.html/.test(t.url)).webSocketDebuggerUrl);
+const main = await connect((await targets()).find((t) => t.type === 'page' && !/(?:compare|foldercmp)\.html/.test(t.url)).webSocketDebuggerUrl);
 
 try {
   /* ---------- 1. 大文件对比：预览条几何 ---------- */

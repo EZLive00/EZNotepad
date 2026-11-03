@@ -289,6 +289,61 @@ fn initial_files() -> Vec<String> {
     file_args(&std::env::args().collect::<Vec<_>>())
 }
 
+/// 两两比对文件内容，返回同长度的「是否逐字节相同」。
+///
+/// 为什么必须读内容：文件夹对比原先只看「大小 + 修改时间」。大小一样、时间
+/// 又挨着的一对文件，改过也会被判成「相同」—— 而界面上「只看差异」默认是勾着
+/// 的，等于把改动藏起来。常见得离谱：把「一」改成「二」、把 3 改成 5，字节数
+/// 一模一样。
+///
+/// 一次 IPC 拿走整批，逐块读、一旦不同立刻返回：内容真一样时是唯一要把两个
+/// 文件都读完的情况，其余绝大多数在第一个不同的块就停了。
+#[tauri::command]
+fn compare_file_pairs(pairs: Vec<(String, String)>) -> Vec<bool> {
+    pairs
+        .into_iter()
+        .map(|(a, b)| files_equal(Path::new(&a), Path::new(&b)).unwrap_or(false))
+        .collect()
+}
+
+fn files_equal(a: &Path, b: &Path) -> std::io::Result<bool> {
+    let mut fa = fs::File::open(a)?;
+    let mut fb = fs::File::open(b)?;
+    if fa.metadata()?.len() != fb.metadata()?.len() {
+        return Ok(false);
+    }
+    let mut ba = vec![0u8; 256 * 1024];
+    let mut bb = vec![0u8; 256 * 1024];
+    loop {
+        let na = read_full(&mut fa, &mut ba)?;
+        let nb = read_full(&mut fb, &mut bb)?;
+        if na != nb {
+            return Ok(false);
+        }
+        if na == 0 {
+            return Ok(true);
+        }
+        if ba[..na] != bb[..nb] {
+            return Ok(false);
+        }
+    }
+}
+
+/// 一次 read 可能只回来几个字节（网络盘、被别的进程写着的文件），读到满或 EOF
+fn read_full(f: &mut fs::File, buf: &mut [u8]) -> std::io::Result<usize> {
+    use std::io::Read;
+    let mut n = 0;
+    while n < buf.len() {
+        match f.read(&mut buf[n..]) {
+            Ok(0) => break,
+            Ok(k) => n += k,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(n)
+}
+
 #[derive(Serialize)]
 struct DirEntryInfo {
     name: String,
@@ -945,6 +1000,21 @@ fn spawn_compare_window(
     let state = app.state::<CompareRequest>();
     *state.0.lock().map_err(|_| AppError::new("state.lock"))? = Some((left, right));
 
+    create_tool_window(app, "compare", "compare.html", "文本对比", 760.0, 460.0)
+}
+
+/* 工具窗口（文本对比 / 文件夹对比）共用同一套建窗：无边框、铺满工作区、
+   同一组浏览器参数、同一个收尾流程。两处各抄一遍的话，改一个忘一个。 */
+fn create_tool_window(
+    app: &tauri::AppHandle,
+    label: &'static str,
+    page: &str,
+    title: &str,
+    min_w: f64,
+    min_h: f64,
+) -> Result<(), AppError> {
+    use tauri::Manager;
+
     // 出生尺寸就按工作区给：后面的 SetWindowPos 只是把「DWM 隐形边框」那几像素
     // 也吃掉，不能指望它单独完成铺满（见 fill_work_area 的注释）
     //
@@ -961,25 +1031,22 @@ fn spawn_compare_window(
     #[cfg(not(target_os = "windows"))]
     let (bx, by, bw, bh) = (0f64, 0f64, 1280f64, 860f64);
 
-    let mut builder = tauri::WebviewWindowBuilder::new(
-        app,
-        "compare",
-        tauri::WebviewUrl::App("compare.html".into()),
-    )
-    .title("文本对比")
-    .inner_size(bw, bh)
-    .position(bx, by)
-    .min_inner_size(760.0, 460.0)
-    .decorations(false)
-    .shadow(true)
-    .visible(true);
+    let mut builder =
+        tauri::WebviewWindowBuilder::new(app, label, tauri::WebviewUrl::App(page.into()))
+            .title(title)
+            .inner_size(bw, bh)
+            .position(bx, by)
+            .min_inner_size(min_w, min_h)
+            .decorations(false)
+            .shadow(true)
+            .visible(true);
 
     // 页面加载完再补一次：tao 应用 inner_size 比我们晚，第一次铺满可能被顶回来
     let app_load = app.clone();
     builder = builder.on_page_load(move |_w, payload| {
         if payload.event() == tauri::webview::PageLoadEvent::Finished {
             #[cfg(target_os = "windows")]
-            fill_work_area_when_ready(app_load.clone(), "compare");
+            fill_work_area_when_ready(app_load.clone(), label);
         }
     });
 
@@ -996,9 +1063,77 @@ fn spawn_compare_window(
     {
         apply_rounded_corners(&win);
         // 先把矩形摆好（此时还不可见），页面加载完那一轮再收个尾
-        fill_work_area_when_ready(app.clone(), "compare");
+        fill_work_area_when_ready(app.clone(), label);
     }
     Ok(())
+}
+
+/* ---------------- 文件夹对比窗口 ----------------
+   以前它挤在主窗口的浮层里，只列一栏「状态 / 路径 / 大小」—— 看不出左右两侧
+   各自是什么，也点不进两侧目录。改成独立窗口后左右各列自己那一侧的文件。 */
+#[derive(Default)]
+struct FolderCompareRequest(std::sync::Mutex<Option<(Option<String>, Option<String>)>>);
+
+#[derive(Serialize, Clone)]
+struct FolderComparePayload {
+    left: Option<String>,
+    right: Option<String>,
+}
+
+#[tauri::command]
+async fn open_folder_compare_window(
+    app: tauri::AppHandle,
+    left: Option<String>,
+    right: Option<String>,
+) -> Result<(), AppError> {
+    // 同 open_compare_window：必须 async，否则主线程被自己占住，页面永远不加载
+    spawn_folder_compare_window(&app, left, right)
+}
+
+fn spawn_folder_compare_window(
+    app: &tauri::AppHandle,
+    left: Option<String>,
+    right: Option<String>,
+) -> Result<(), AppError> {
+    use tauri::{Emitter, Manager};
+
+    if let Some(w) = app.get_webview_window("foldercmp") {
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_focus();
+        let _ = w.emit("foldercmp:load", FolderComparePayload { left, right });
+        return Ok(());
+    }
+
+    let state = app.state::<FolderCompareRequest>();
+    *state.0.lock().map_err(|_| AppError::new("state.lock"))? = Some((left, right));
+
+    create_tool_window(app, "foldercmp", "foldercmp.html", "文件夹对比", 720.0, 420.0)
+}
+
+/// 从工具窗口把文件交回主窗口打开。走的是主窗口已有的 `open-files` 事件
+/// （单实例那条路也是它），不另开一条通道。
+#[tauri::command]
+fn open_in_main(app: tauri::AppHandle, path: String) -> Result<(), AppError> {
+    use tauri::{Emitter, Manager};
+    let Some(w) = app.get_webview_window("main") else {
+        return Err(AppError::new("win.main_missing"));
+    };
+    let _ = w.unminimize();
+    let _ = w.set_focus();
+    w.emit("open-files", vec![path]).map_err(|e| AppError::detail("app.emit", e))
+}
+
+/// 新窗口加载完取走待处理的文件夹对比请求（取一次就清空）
+#[tauri::command]
+fn take_folder_compare_request(app: tauri::AppHandle) -> FolderComparePayload {
+    use tauri::Manager;
+    let state = app.state::<FolderCompareRequest>();
+    let taken = state.0.lock().ok().and_then(|mut g| g.take());
+    match taken {
+        Some((left, right)) => FolderComparePayload { left, right },
+        None => FolderComparePayload { left: None, right: None },
+    }
 }
 
 /// 新窗口加载完取走待处理的对比请求（取一次就清空）
@@ -1282,9 +1417,9 @@ fn fill_work_area_when_ready(app: tauri::AppHandle, label: &'static str) {
 /// 就是两个矩形：铺满工作区，或者居中一个 1280x860 的常规尺寸。
 /// 「工作区」取窗口当时所在的那块屏 —— 拖到副屏后最大化，就该铺满副屏。
 #[tauri::command]
-fn compare_set_fullscreen(app: tauri::AppHandle, fill: bool) -> Result<(), AppError> {
+fn tool_set_fullscreen(app: tauri::AppHandle, label: String, fill: bool) -> Result<(), AppError> {
     use tauri::Manager;
-    let Some(w) = app.get_webview_window("compare") else {
+    let Some(w) = app.get_webview_window(&label) else {
         return Err(AppError::new("win.compare_missing"));
     };
     #[cfg(target_os = "windows")]
@@ -1341,12 +1476,14 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(WatchState(std::sync::Mutex::new(None)))
         .manage(CompareRequest::default())
+        .manage(FolderCompareRequest::default())
         .invoke_handler(tauri::generate_handler![
             read_text_file,
             file_size,
             save_text_file,
             file_stat,
             list_dir_recursive,
+            compare_file_pairs,
             read_dir_shallow,
             search_in_folder,
             write_binary_file,
@@ -1366,7 +1503,10 @@ pub fn run() {
             quick_note_path,
             open_compare_window,
             take_compare_request,
-            compare_set_fullscreen
+            open_folder_compare_window,
+            take_folder_compare_request,
+            open_in_main,
+            tool_set_fullscreen
         ])
         .setup(|app| {
             #[cfg(target_os = "windows")]

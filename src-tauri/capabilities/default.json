@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "EZNotepad 默认权限",
-  "windows": ["main", "compare"],
+  "windows": ["main", "compare", "foldercmp"],
   "permissions": [
     "core:default",
     "core:window:allow-set-title",

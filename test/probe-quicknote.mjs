@@ -27,7 +27,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 await ensureApp(PORT);
 const list = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json();
-const page = list.find((t) => t.type === 'page' && !/compare\.html/.test(t.url));
+const page = list.find((t) => t.type === 'page' && !/(?:compare|foldercmp)\.html/.test(t.url));
 if (!page) throw new Error('找不到主窗口');
 
 function connect(url) {

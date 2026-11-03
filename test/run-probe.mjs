@@ -1,11 +1,14 @@
 // ============================================================
-// test/run-probe.mjs —— 五个真机探针，只起一次应用
+// test/run-probe.mjs —— 七个真机探针，只起一次应用
 //
 // 每个探针单独跑都要「起应用 → 收应用」，而应用的 WebView2 每次会话都会
 // 写/删一批日志与锁文件（本机删除全部进回收站）。探针的数据目录已经挪到
 // %TEMP%（SGuard 不备份那里的删除），但一次会话仍然是几十次文件操作，
-// 能少开就少开。这里先起一次、五个探针共用（NO_LAUNCH=1 让它们别自己起），
-// runner 退出时统一收，也省掉四次冷启动。
+// 能少开就少开。这里先起一次、七个探针共用（NO_LAUNCH=1 让它们别自己起），
+// runner 退出时统一收，也省掉六次冷启动。
+//
+// probe-fcmp 排在最后：它会开一扇文件夹对比窗、还会开一次文本对比，
+// 万一中途失败留下窗口，也不会把后面的探针带偏。
 //
 //   node test/run-probe.mjs
 //   CDP_PORT=9344 node test/run-probe.mjs
@@ -14,7 +17,7 @@ import { spawnSync } from 'node:child_process';
 import { ensureApp } from './lib/appctl.mjs';
 
 const PORT = Number(process.env.CDP_PORT || 9333);
-const PROBES = ['probe-app', 'probe-bmenu', 'probe-ctx', 'probe-compare', 'probe-undo', 'probe-quicknote'];
+const PROBES = ['probe-app', 'probe-bmenu', 'probe-ctx', 'probe-compare', 'probe-undo', 'probe-quicknote', 'probe-fcmp'];
 
 const app = await ensureApp(PORT);
 console.log(app.reused ? `复用已在端口 ${PORT} 的应用` : `已启动应用（pid ${app.pid}）`);

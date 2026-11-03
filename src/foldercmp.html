@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>EZNotepad</title>
+<link rel="stylesheet" href="styles.css" />
+<link rel="stylesheet" href="css/compare.css" />
+<link rel="stylesheet" href="css/foldercmp.css" />
+</head>
+<body data-theme="light">
+
+<!-- 复用文本对比窗口的外壳（.cmp / .cmp-top / .cmp-tools / .cmp-btn）：
+     两个工具窗口长得像一对，用户不用再学第二套 -->
+<div class="cmp fcmp">
+  <header class="cmp-top" data-tauri-drag-region>
+    <div class="cmp-brand" data-tauri-drag-region>
+      <svg class="cmp-ico" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M3 7a1 1 0 0 1 1-1h5l2 2h8a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1Z" />
+      </svg>
+      <span data-i18n="文件夹对比">文件夹对比</span>
+    </div>
+
+    <div class="cmp-slots" data-tauri-drag-region>
+      <button class="cmp-slot" id="slotL" title="选择左侧文件夹" data-i18n-title="选择左侧文件夹">
+        <svg class="cmp-ico cmp-slot-ico" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M3 7a1 1 0 0 1 1-1h5l2 2h8a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1Z" />
+        </svg>
+        <span class="cmp-slot-name" id="nameL">左侧未选择</span>
+      </button>
+      <button class="cmp-swap" id="swap" title="交换左右" data-i18n-title="交换左右">
+        <svg class="cmp-ico" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M8 3 4 7l4 4M4 7h16m-4 14 4-4-4-4M20 17H4" />
+        </svg>
+      </button>
+      <button class="cmp-slot" id="slotR" title="选择右侧文件夹" data-i18n-title="选择右侧文件夹">
+        <svg class="cmp-ico cmp-slot-ico" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M3 7a1 1 0 0 1 1-1h5l2 2h8a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1Z" />
+        </svg>
+        <span class="cmp-slot-name" id="nameR">右侧未选择</span>
+      </button>
+    </div>
+
+    <div class="cmp-wbtns">
+      <button class="cmp-wbtn" id="wmin" title="最小化" data-i18n-title="最小化">
+        <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 6h7" /></svg>
+      </button>
+      <button class="cmp-wbtn" id="wmax" title="还原" data-i18n-title="还原">
+        <svg class="i-max" viewBox="0 0 12 12" aria-hidden="true"><rect x="2.5" y="2.5" width="7" height="7" /></svg>
+        <svg class="i-restore" viewBox="0 0 12 12" aria-hidden="true"><rect x="2.5" y="4.5" width="5" height="5" /><path d="M4.5 4.5v-2h5v5h-2" /></svg>
+      </button>
+      <button class="cmp-wbtn danger" id="wclose" title="关闭" data-i18n-title="关闭">
+        <svg viewBox="0 0 12 12" aria-hidden="true"><path d="m3 3 6 6M9 3 3 9" /></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="cmp-tools" id="tools">
+    <span class="cmp-stat" id="stat" data-i18n="选左右两个文件夹开始对比">选左右两个文件夹开始对比</span>
+    <span class="cmp-cur" id="scanInfo"></span>
+    <div class="cmp-tools-gap"></div>
+
+    <label class="cmp-chk" title="只列出有差异的条目" data-i18n-title="只列出有差异的条目">
+      <input type="checkbox" id="optDiff" checked /><span data-i18n="只看差异">只看差异</span>
+    </label>
+    <div class="cmp-sep"></div>
+    <button class="cmp-btn" id="rescan" title="重新扫描两个文件夹" data-i18n-title="重新扫描两个文件夹">
+      <svg class="cmp-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.6-6.4" /><path d="M21 3v6h-6" /></svg><span data-i18n="重新扫描">重新扫描</span>
+    </button>
+  </div>
+
+  <div class="fcmp-body" id="body">
+    <div class="fcmp-head">
+      <div class="fcmp-c" id="headL" data-i18n="左侧">左侧</div>
+      <div class="fcmp-c" id="headR" data-i18n="右侧">右侧</div>
+    </div>
+    <div class="fcmp-rows" id="rows"></div>
+    <div class="fcmp-empty" id="empty" data-i18n="选左右两个文件夹开始对比">选左右两个文件夹开始对比</div>
+  </div>
+</div>
+
+<div id="toasts"></div>
+<script type="module" src="js/foldercmp.js"></script>
+</body>
+</html>

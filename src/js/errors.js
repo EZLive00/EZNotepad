@@ -81,6 +81,8 @@ export const ERR_TEXT = {
   'win.create': '无法打开对比窗口：{detail}',
   'win.state': '无法切换窗口状态：{detail}',
   'win.compare_missing': '对比窗口不在',
+  'win.main_missing': '主窗口不在',
+  'app.emit': '无法把文件交给主窗口：{detail}',
   'state.lock': '内部状态异常，请重试',
 };
 

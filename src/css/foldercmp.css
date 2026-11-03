@@ -1,0 +1,103 @@
+/* ============================================================
+   foldercmp.css —— 文件夹对比独立窗口（foldercmp.html）
+
+   外壳（标题栏 / 工具行 / 窗口按钮）全部复用 compare.css 的 .cmp-*，
+   这里只补「左右两栏、行行对齐」的那部分。
+
+   布局是**一个滚动区里两列**，不是两个各自滚动的列表：对齐是这个窗口存在
+   的唯一理由（同一行就是同一对文件），两边各自滚一下就全错位了。
+   ============================================================ */
+
+.fcmp-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  /* 中缝一直画到底：只有几行时，行自己的左右边框会断在半空，两栏看着像
+     「各写各的」。这条背景线按可视区高度铺，不跟着内容滚 */
+  background-image: linear-gradient(var(--line), var(--line));
+  background-repeat: no-repeat;
+  background-size: 1px 100%;
+  background-position: 50% 0;
+}
+
+/* 表头：两列的文件夹名 + 文件数，滚动时钉在顶上 */
+.fcmp-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--line-strong);
+}
+.fcmp-head .fcmp-c {
+  padding: 6px 12px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--fg-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fcmp-head .fcmp-c + .fcmp-c { border-left: 1px solid var(--line); }
+
+.fcmp-rows { display: block; }
+
+/* 一行 = 左右各一格。中间那道 1px 竖线一直画到底，眼睛才不会串行 */
+.fcmp-row { display: grid; grid-template-columns: 1fr 1fr; box-shadow: inset 0 -1px 0 var(--line); }
+.fcmp-row:hover { background: var(--bg-hover); }
+.fcmp-row.sel { background: var(--accent-soft); }
+
+.fcmp-c {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 3px 12px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.fcmp-c + .fcmp-c { border-left: 1px solid var(--line); }
+
+.fcmp-nm {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg);
+}
+.fcmp-dir { color: var(--fg-faint); }
+.fcmp-sz {
+  flex: none;
+  font-size: 11px;
+  color: var(--fg-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 只在一侧存在的格子：斜纹占位，和文本对比窗口里「这一侧没有内容」是同一套
+   语言（.cmp-row.void 的 -45° 淡斜纹），不用再看图例 */
+.fcmp-c.void {
+  background-image: repeating-linear-gradient(-45deg,
+    var(--cmp-void-band) 0 1px, transparent 1px 10px);
+}
+
+/* 差异只标红字，不铺底色 —— 与文本对比窗口保持一致 */
+.fcmp-row.k-mod .fcmp-nm,
+.fcmp-row.k-left .fcmp-c:first-child .fcmp-nm,
+.fcmp-row.k-right .fcmp-c:last-child .fcmp-nm { color: var(--cmp-red); }
+.fcmp-row.k-left .fcmp-c:first-child .fcmp-sz,
+.fcmp-row.k-right .fcmp-c:last-child .fcmp-sz { color: var(--cmp-red); }
+
+.fcmp-row.clickable { cursor: pointer; }
+
+.fcmp-empty {
+  padding: 40px 16px;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--fg-faint);
+}
+.fcmp-empty.hidden { display: none; }

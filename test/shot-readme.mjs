@@ -142,7 +142,7 @@ const rightDoc = [
 // 主窗口
 // ---------------------------------------------------------------
 let pages = await targets();
-let page = pages.find((t) => !/compare\.html/.test(t.url));
+let page = pages.find((t) => !/(?:compare|foldercmp)\.html/.test(t.url));
 if (!page) throw new Error('找不到主窗口 target');
 let M = await attach(page);
 

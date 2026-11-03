@@ -17,7 +17,7 @@ await ensureApp(PORT);
 
 async function connect() {
   const list = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json();
-  const page = list.find((t) => t.type === 'page' && !/compare\.html/.test(t.url));
+  const page = list.find((t) => t.type === 'page' && !/(?:compare|foldercmp)\.html/.test(t.url));
   if (!page) throw new Error('没有找到页面目标');
   const ws = new WebSocket(page.webSocketDebuggerUrl);
   let seq = 0;

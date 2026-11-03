@@ -100,7 +100,7 @@ export async function waitForMainPage(port, { timeout = 25000 } = {}) {
   while (Date.now() < deadline) {
     try {
       const list = await (await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(1500) })).json();
-      const page = list.find((t) => t.type === 'page' && !/compare\.html/.test(t.url));
+      const page = list.find((t) => t.type === 'page' && !/(?:compare|foldercmp)\.html/.test(t.url));
       if (page) {
         const ready = await evalIn(page.webSocketDebuggerUrl, "document.readyState === 'complete' && !!window.__snp");
         if (ready) { await sleep(250); return page; }
