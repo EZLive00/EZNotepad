@@ -1055,10 +1055,19 @@ fn spawn_compare_window(
 
     // 出生尺寸就按工作区给：后面的 SetWindowPos 只是把「DWM 隐形边框」那几像素
     // 也吃掉，不能指望它单独完成铺满（见 fill_work_area 的注释）
+    //
+    // 屏幕取**主窗口所在的那块**：用户在副屏上点「对比」，窗口跑到主屏去，
+    // 等于让他自己再把窗口拖回来。注意 builder 收的是逻辑像素。
     #[cfg(target_os = "windows")]
-    let (bx, by, bw, bh) = work_area();
+    let screen = app
+        .get_webview_window("main")
+        .and_then(|w| raw_hwnd(&w))
+        .and_then(screen_of)
+        .unwrap_or_else(primary_screen);
+    #[cfg(target_os = "windows")]
+    let (bx, by, bw, bh) = screen.logical();
     #[cfg(not(target_os = "windows"))]
-    let (bx, by, bw, bh) = (0i32, 0i32, 1280i32, 860i32);
+    let (bx, by, bw, bh) = (0f64, 0f64, 1280f64, 860f64);
 
     let mut builder = tauri::WebviewWindowBuilder::new(
         app,
@@ -1066,8 +1075,8 @@ fn spawn_compare_window(
         tauri::WebviewUrl::App("compare.html".into()),
     )
     .title("文本对比")
-    .inner_size(bw as f64, bh as f64)
-    .position(bx as f64, by as f64)
+    .inner_size(bw, bh)
+    .position(bx, by)
     .min_inner_size(760.0, 460.0)
     .decorations(false)
     .shadow(true)
@@ -1137,9 +1146,68 @@ fn set_window_rect(window: &tauri::WebviewWindow, x: i32, y: i32, w: i32, h: i32
     true
 }
 
-/// 屏幕工作区（已去掉任务栏）。取不到时回落到 1920x1080。
+/// 一块屏幕的可用区域（物理像素，已减掉任务栏）以及这块屏的 DPI 缩放。
+///
+/// 为什么不再用 `SystemParametersInfoW(SPI_GETWORKAREA)`：那个 API 只认**主屏**。
+/// 多屏机器上主程序在副屏时，对比窗口依然出生在主屏；拖到副屏再点最大化，
+/// 又被一把拽回主屏 —— 用户看到的就是「窗口总在别的屏幕上，放大也不对」。
 #[cfg(target_os = "windows")]
-fn work_area() -> (i32, i32, i32, i32) {
+#[derive(Clone, Copy)]
+struct Screen {
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    scale: f64,
+}
+
+#[cfg(target_os = "windows")]
+impl Screen {
+    /// 窗口构建用的是逻辑像素（Tauri 的 `position` / `inner_size` 都是逻辑单位），
+    /// 这里换算一次。不换算的话，150% 缩放的屏幕上窗口会生出来就有 1.5 倍大。
+    fn logical(&self) -> (f64, f64, f64, f64) {
+        let s = if self.scale > 0.1 { self.scale } else { 1.0 };
+        (self.x as f64 / s, self.y as f64 / s, self.w as f64 / s, self.h as f64 / s)
+    }
+}
+
+/// 窗口所在显示器的工作区。`MONITOR_DEFAULTTONEAREST`：窗口跨两块屏时取
+/// 交叠面积更大的那块 —— 正是用户心理上「这个窗口在哪块屏上」的判断。
+#[cfg(target_os = "windows")]
+fn screen_of(hwnd: *mut core::ffi::c_void) -> Option<Screen> {
+    use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    };
+
+    if hwnd.is_null() {
+        return None;
+    }
+    let mon = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
+    if mon.is_null() {
+        return None;
+    }
+    let mut info: MONITORINFO = unsafe { std::mem::zeroed() };
+    info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+    if unsafe { GetMonitorInfoW(mon, &mut info) } == 0 {
+        return None;
+    }
+    let RECT { left, top, right, bottom } = info.rcWork;
+    if right <= left || bottom <= top {
+        return None;
+    }
+    Some(Screen {
+        x: left,
+        y: top,
+        w: right - left,
+        h: bottom - top,
+        scale: dpi_scale(hwnd),
+    })
+}
+
+/// 主屏工作区，只在拿不到窗口句柄时兜底（正常路径一定先问窗口自己）。
+#[cfg(target_os = "windows")]
+fn primary_screen() -> Screen {
     use windows_sys::Win32::Foundation::RECT;
     use windows_sys::Win32::UI::WindowsAndMessaging::{SystemParametersInfoW, SPI_GETWORKAREA};
 
@@ -1148,12 +1216,42 @@ fn work_area() -> (i32, i32, i32, i32) {
         SystemParametersInfoW(SPI_GETWORKAREA, 0, &mut r as *mut RECT as *mut core::ffi::c_void, 0)
     };
     if ok == 0 || r.right <= r.left || r.bottom <= r.top {
-        return (0, 0, 1920, 1080);
+        return Screen { x: 0, y: 0, w: 1920, h: 1080, scale: 1.0 };
     }
-    (r.left, r.top, r.right - r.left, r.bottom - r.top)
+    Screen {
+        x: r.left,
+        y: r.top,
+        w: r.right - r.left,
+        h: r.bottom - r.top,
+        scale: dpi_scale(std::ptr::null_mut()),
+    }
 }
 
-/// 把窗口铺满「工作区」（屏幕减去任务栏）。
+#[cfg(target_os = "windows")]
+fn dpi_scale(hwnd: *mut core::ffi::c_void) -> f64 {
+    use windows_sys::Win32::UI::HiDpi::{GetDpiForSystem, GetDpiForWindow};
+
+    let mut dpi = 0u32;
+    if !hwnd.is_null() {
+        dpi = unsafe { GetDpiForWindow(hwnd) };
+    }
+    if dpi == 0 {
+        dpi = unsafe { GetDpiForSystem() };
+    }
+    if dpi == 0 {
+        1.0
+    } else {
+        dpi as f64 / 96.0
+    }
+}
+
+/// 某个窗口所在屏幕的工作区。取不到就退回主屏。
+#[cfg(target_os = "windows")]
+fn work_area_of(window: &tauri::WebviewWindow) -> Screen {
+    raw_hwnd(window).and_then(screen_of).unwrap_or_else(primary_screen)
+}
+
+/// 把窗口铺满「它自己所在那块屏」的工作区（屏幕减去任务栏）。
 ///
 /// 为什么不用 maximize()：tao 的 `WindowState` 在窗口还没 VISIBLE 时会把
 /// MAXIMIZED 标志位写成 true，却跳过 `ShowWindow(SW_MAXIMIZE)`，之后任何
@@ -1165,9 +1263,9 @@ fn work_area() -> (i32, i32, i32, i32) {
 /// 外的。所以这里把窗口矩形按隐形边扩出去，让内容正好贴住工作区。
 #[cfg(target_os = "windows")]
 fn fill_work_area(window: &tauri::WebviewWindow) -> bool {
-    let (wx, wy, ww, wh) = work_area();
+    let screen = work_area_of(window);
     let (l, t, r, b) = frame_insets(window);
-    set_window_rect(window, wx - l, wy - t, ww + l + r, wh + t + b)
+    set_window_rect(window, screen.x - l, screen.y - t, screen.w + l + r, screen.h + t + b)
 }
 
 /// 隐形边框厚度：(左, 上, 右, 下)。量不出来就当 0。
@@ -1243,13 +1341,16 @@ fn raw_hwnd(window: &tauri::WebviewWindow) -> Option<*mut core::ffi::c_void> {
 /// SetWindowPos 明明已经改成 1860x973，稍后又被 inner_size 顶回 1876x982。
 /// 所以这里不认「一次成功」，要看到连续几次观测都是工作区尺寸才收工；
 /// 每次真正动手都丢回主线程执行，跨线程改别人的窗口容易碰上消息泵的时序问题。
+///
+/// 「工作区尺寸」每轮都按窗口**当时所在那块屏**重新算：拿主屏尺寸去比副屏上的
+/// 窗口永远对不上，于是这轮循环会把窗口反复拽回主屏尺寸 —— 也就是拖到副屏后
+/// 一按最大化就出错的那个现象。
 #[cfg(target_os = "windows")]
 fn fill_work_area_when_ready(app: tauri::AppHandle, label: &'static str) {
     use std::sync::mpsc;
     use std::time::Duration;
 
     std::thread::spawn(move || {
-        let (_, _, ww, wh) = work_area();
         let mut streak = 0;
         for _ in 0..40u32 {
             let (tx, rx) = mpsc::channel();
@@ -1257,8 +1358,12 @@ fn fill_work_area_when_ready(app: tauri::AppHandle, label: &'static str) {
             let queued = app.run_on_main_thread(move || {
                 use tauri::Manager;
                 let out = match a.get_webview_window(label) {
-                    Some(w) => (fill_work_area(&w), visible_rect(&w)),
-                    None => (false, None),
+                    Some(w) => {
+                        let filled = fill_work_area(&w);
+                        let want = work_area_of(&w);
+                        (filled, (want.w, want.h), visible_rect(&w))
+                    }
+                    None => (false, (0, 0), None),
                 };
                 let _ = tx.send(out);
             });
@@ -1266,7 +1371,7 @@ fn fill_work_area_when_ready(app: tauri::AppHandle, label: &'static str) {
                 return;
             }
             match rx.recv_timeout(Duration::from_millis(700)) {
-                Ok((true, Some(r))) if (r.2 - ww).abs() <= 2 && (r.3 - wh).abs() <= 2 => {
+                Ok((true, want, Some(r))) if (r.2 - want.0).abs() <= 2 && (r.3 - want.1).abs() <= 2 => {
                     streak += 1;
                     if streak >= 3 {
                         return;
@@ -1283,6 +1388,7 @@ fn fill_work_area_when_ready(app: tauri::AppHandle, label: &'static str) {
 ///
 /// 无边框窗口没有系统标题栏，也没有真正的最大化状态可切，所以这一对动作
 /// 就是两个矩形：铺满工作区，或者居中一个 1280x860 的常规尺寸。
+/// 「工作区」取窗口当时所在的那块屏 —— 拖到副屏后最大化，就该铺满副屏。
 #[tauri::command]
 fn compare_set_fullscreen(app: tauri::AppHandle, fill: bool) -> Result<(), AppError> {
     use tauri::Manager;
@@ -1291,15 +1397,22 @@ fn compare_set_fullscreen(app: tauri::AppHandle, fill: bool) -> Result<(), AppEr
     };
     #[cfg(target_os = "windows")]
     {
-        let (wx, wy, ww, wh) = work_area();
         if fill {
             fill_work_area(&w);
         } else {
             // 还原：工作区正中一个 1280x860（换到小屏时按工作区收一收）
+            let screen = work_area_of(&w);
             let (l, t, r, b) = frame_insets(&w);
-            let cw = 1280.min(ww - 80) + l + r;
-            let ch = 860.min(wh - 80) + t + b;
-            set_window_rect(&w, wx + (ww - cw) / 2, wy + (wh - ch) / 2, cw, ch);
+            let s = if screen.scale > 0.1 { screen.scale } else { 1.0 };
+            let cw = ((1280.0 * s) as i32).min(screen.w - 80) + l + r;
+            let ch = ((860.0 * s) as i32).min(screen.h - 80) + t + b;
+            set_window_rect(
+                &w,
+                screen.x + (screen.w - cw) / 2,
+                screen.y + (screen.h - ch) / 2,
+                cw,
+                ch,
+            );
         }
         Ok(())
     }
