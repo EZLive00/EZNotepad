@@ -57,6 +57,7 @@
 
     <label class="cmp-chk" title="比较时忽略行首行尾空白与连续空格" data-i18n-title="比较时忽略行首行尾空白与连续空格"><input type="checkbox" id="optWS" checked /><span data-i18n="忽略空白">忽略空白</span></label>
     <label class="cmp-chk" title="比较时忽略大小写" data-i18n-title="比较时忽略大小写"><input type="checkbox" id="optCase" /><span data-i18n="忽略大小写">忽略大小写</span></label>
+    <label class="cmp-chk" title="相同行收起来，只留差异和前后 3 行；编辑时自动展开" data-i18n-title="相同行收起来，只留差异和前后 3 行；编辑时自动展开"><input type="checkbox" id="optFold" checked /><span data-i18n="只看差异">只看差异</span></label>
 
     <div class="cmp-sep"></div>
 
@@ -64,6 +65,7 @@
     <button class="cmp-btn" id="next" title="下一处差异 (F8)" data-i18n-title="下一处差异 (F8)"><svg class="cmp-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg><span data-i18n="下一处">下一处</span></button>
     <button class="cmp-btn" id="pushBtn" title="把这一处差异整段同步到右侧 (Alt+→)" disabled><svg class="cmp-ico" id="pushIco" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h15M13 6l6 6-6 6" /></svg><span id="pushLabel" data-i18n="复制到右侧">复制到右侧</span></button>
     <button class="cmp-btn" id="listBtn" title="差异清单：按位置 / 类型 / 行数排序，可筛选" data-i18n-title="差异清单：按位置 / 类型 / 行数排序，可筛选" aria-expanded="false" aria-controls="listPanel"><svg class="cmp-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01" /></svg><span data-i18n="差异清单">差异清单</span></button>
+    <button class="cmp-btn" id="findBtn" title="在两侧查找 (Ctrl+F)" data-i18n-title="在两侧查找 (Ctrl+F)" data-i18n-aria="查找"><svg class="cmp-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg><span data-i18n="查找">查找</span></button>
 
     <div class="cmp-sep"></div>
 
@@ -121,6 +123,21 @@
       <canvas id="rulerC"></canvas>
       <div class="cmp-rtip" id="rulerTip" hidden></div>
     </aside>
+
+    <!-- 查找条：浮在正文右上角，像编辑器那样 Ctrl+F 唤出。 -->
+    <div class="cmp-find" id="findBar" hidden>
+      <input type="search" id="findInput" placeholder="查找" data-i18n-placeholder="查找" spellcheck="false" autocomplete="off" />
+      <span class="cmp-find-n" id="findN"></span>
+      <button class="cmp-find-b" id="findPrev" title="上一个匹配 (Shift+Enter)" data-i18n-title="上一个匹配 (Shift+Enter)">
+        <svg class="cmp-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="m18 15-6-6-6 6" /></svg>
+      </button>
+      <button class="cmp-find-b" id="findNext" title="下一个匹配 (Enter)" data-i18n-title="下一个匹配 (Enter)">
+        <svg class="cmp-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+      </button>
+      <button class="cmp-find-x" id="findClose" title="关闭 (Esc)" data-i18n-title="关闭 (Esc)">
+        <svg viewBox="0 0 12 12" aria-hidden="true"><path d="m3 3 6 6M9 3 3 9" /></svg>
+      </button>
+    </div>
   </div>
 
   <!-- 差异清单：从工具栏展开，排序 / 筛选 / 跳转 -->

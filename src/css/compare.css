@@ -17,10 +17,14 @@ body {
   --cmp-mark-2: rgba(217, 43, 43, .32);
   --cmp-ln-w: 54px;
   --cmp-cur-bg: rgba(51, 102, 240, .045);
+  --cmp-hit: rgba(51, 102, 240, .14);
+  --cmp-hit-2: rgba(51, 102, 240, .24);
   --cmp-void-band: rgba(0, 0, 0, .075);
-  /* 预览条宽度。16px 时差异段只有 5px 宽，一眼看不出有没有差异；
-     22px 能把轨道做到 12px，段还能留出圆角 */
-  --cmp-ruler-w: 22px;
+  /* 预览条宽度。这条竖槽是「一眼看出全文哪里有差异」的唯一入口，
+     却挤着三样东西：差异段、当前段、视口框。16px 时差异段只有 5px 宽，
+     22px 也只到「能看见」的程度 —— 点起来还像瞄靶。34px 给轨道留 22px，
+     三段各有位置，点击也稳。丢给正文的 12px 换这些是值得的。 */
+  --cmp-ruler-w: 34px;
 }
 
 body[data-theme="dark"] {
@@ -31,6 +35,8 @@ body[data-theme="dark"] {
   --cmp-mark: rgba(255, 107, 107, .26);
   --cmp-mark-2: rgba(255, 107, 107, .38);
   --cmp-cur-bg: rgba(109, 141, 255, .08);
+  --cmp-hit: rgba(109, 141, 255, .17);
+  --cmp-hit-2: rgba(109, 141, 255, .30);
   --cmp-void-band: rgba(255, 255, 255, .07);
 }
 
@@ -379,6 +385,115 @@ body[data-theme="dark"] {
 .cmp-row.b-end { box-shadow: inset 0 -1px 0 var(--cmp-line); }
 .cmp-row.b-start.b-end {
   box-shadow: inset 0 1px 0 var(--cmp-line), inset 0 -1px 0 var(--cmp-line);
+}
+
+/* 折叠缝：只显示差异时，相同行被收起来了，行号会在这里跳一段。
+   不标出来，读的人会以为内容丢了。虚线只占行顶 1px，不挤内容。 */
+.cmp-row.gap::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 1px;
+  background: repeating-linear-gradient(90deg, var(--line-strong) 0 4px, transparent 4px 8px);
+  pointer-events: none;
+}
+
+/* 行号列左上角一个「⋮」：告诉读者上面被折掉了一段，而不是行号算错了 */
+.cmp-row.gap .cmp-ln { position: relative; }
+.cmp-row.gap .cmp-ln::before {
+  content: '⋮';
+  position: absolute;
+  left: 5px;
+  top: -3px;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--fg-faint);
+}
+
+/* 查找命中：整行淡蓝，当前这一条再压一条左侧竖线。
+   刻意和差异红分开 —— 「哪里不一样」和「你找的那个词在哪」是两件事，
+   同一行可以既是差异又是命中。 */
+.cmp-row.hit { background: var(--cmp-hit); }
+.cmp-row.hit-cur { background: var(--cmp-hit-2); box-shadow: inset 2px 0 0 var(--accent); }
+
+/* ---------- 查找条 ----------
+   浮在正文右上角、避开预览条。用浮层而不是占一行：查找是「临时用一下」，
+   占掉一行会让正文在开合之间跳一下。
+   top 压在文件名条那一行上而不是正文里 —— 那条右边本来就是空白，
+   盖住它不遮任何内容，盖正文第一行则是实打实地挡住要读的东西。 */
+.cmp-find {
+  position: absolute;
+  top: 1px;
+  right: calc(var(--cmp-ruler-w) + 14px);
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  /* 整条压到文件名条的 26px 以内，正文一行都不遮 */
+  padding: 1px 6px;
+  height: 25px;
+  box-sizing: border-box;
+  background: var(--bg-float);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow);
+}
+
+.cmp-find[hidden] { display: none; }
+
+.cmp-find input {
+  width: 168px;
+  height: 21px;
+  padding: 0 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 12.5px;
+  outline: none;
+}
+
+.cmp-find input:focus { border-color: var(--accent); }
+.cmp-find input::-webkit-search-cancel-button { display: none; }
+
+.cmp-find-n {
+  min-width: 44px;
+  text-align: center;
+  font-size: 11.5px;
+  color: var(--fg-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.cmp-find-n.none { color: var(--cmp-red); }
+
+.cmp-find-b,
+.cmp-find-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 21px;
+  height: 21px;
+  flex: none;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--fg-soft);
+  cursor: pointer;
+}
+
+.cmp-find-b:hover,
+.cmp-find-x:hover { background: var(--bg-hover); color: var(--fg); }
+
+.cmp-find-x svg {
+  width: 10px;
+  height: 10px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
 }
 
 /* 行内改动：左栏被替换/删掉的字加删除线，右栏新写的字只有红底 */

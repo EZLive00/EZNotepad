@@ -103,7 +103,7 @@ try {
     const sc = document.getElementById('scrollL').getBoundingClientRect();
     return { w: Math.round(r.width), h: Math.round(r.height), top: Math.round(r.top), scTop: Math.round(sc.top), scH: Math.round(sc.height) };
   })()`);
-  ok('预览条宽 22px', geo.w === 22, JSON.stringify(geo));
+  ok('预览条宽 34px（轨道 22px，三段各有位置）', geo.w === 34, JSON.stringify(geo));
   ok('预览条与正文区顶部对齐', Math.abs(geo.top - geo.scTop) <= 1, `rulerTop=${geo.top} scTop=${geo.scTop}`);
   ok('预览条不超出正文可视高度', geo.h <= geo.scH + 1, `${geo.h} <= ${geo.scH}`);
 
@@ -176,6 +176,165 @@ try {
 
   await cmp.ev(`document.getElementById('listBtn').click()`);
   ok('再点一次收起清单', await cmp.ev(`document.getElementById('listPanel').hidden`) === true);
+
+  /* ---------- 3b. 只看差异：相同行收起来 ----------
+     「20 处改动散在 2000 行之间」是这类工具最贵的成本，折叠是唯一能一次
+     解决的。验四件事：默认开着、真的缩短、折叠处看得出来、关掉能复原，
+     以及「把差异改成相同」那一刻光标所在的行不会被当场收走。 */
+  const foldGeo = () => cmp.ev(`(() => {
+    const row = parseFloat(getComputedStyle(document.body).getPropertyValue('--cmp-row'));
+    const h = parseFloat(document.getElementById('canvasL').style.height) || 0;
+    return {
+      checked: document.getElementById('optFold').checked,
+      viewRows: Math.round(h / row),
+      gaps: document.querySelectorAll('#rowsL .cmp-row.gap').length,
+      inView: document.querySelectorAll('#rowsL .cmp-row.diff').length,
+    };
+  })()`);
+
+  ok('打开时「只看差异」默认开着',
+    (await cmp.ev(`document.getElementById('optFold').checked`)) === true);
+  /* 先量一遍全文行数当基准：折叠之后「缩短了多少」是相对它说的，
+     写死 2000 会被「对齐全行数」坑到（两侧行数本来就不相等） */
+  await cmp.ev(`document.getElementById('optFold').click()`);
+  await sleep(450);
+  const fullRows = (await foldGeo()).viewRows;
+  await cmp.ev(`document.getElementById('optFold').click()`);
+  await sleep(450);
+
+  const fold1 = await foldGeo();
+  ok('折叠后整篇只剩一小截', fold1.viewRows > 0 && fold1.viewRows < fullRows / 3,
+    `${fold1.viewRows} / 全文 ${fullRows}，${JSON.stringify(fold1)}`);
+  ok('折叠处在行号栏画出接缝', fold1.gaps > 0, `gaps=${fold1.gaps}`);
+
+  /* 折叠状态下导航仍要停在真差异上 —— 行位换算是这里最容易错的地方 */
+  let f8ok = true;
+  const f8note = [];
+  for (let k = 0; k < 3; k++) {
+    await cmp.ev(`document.getElementById('next').click()`);
+    await sleep(400);
+    const v = await cmp.ev(`(() => {
+      const sc = document.getElementById('scrollL').getBoundingClientRect();
+      const hit = [...document.querySelectorAll('#rowsL .cmp-row.diff')].some((r) => {
+        const b = r.getBoundingClientRect();
+        return b.bottom > sc.top && b.top < sc.bottom;
+      });
+      return { hit, cur: document.getElementById('curInfo').textContent };
+    })()`);
+    if (!v.hit) f8ok = false;
+    f8note.push(v.cur);
+  }
+  ok('折叠状态下「下一处」每次都停在真差异上', f8ok, f8note.join(' → '));
+
+  /* 手动滚动之后，「第几处」必须跟着视口 —— 否则按 F8 是从一个用户
+     根本没在看的序号继续走，看起来就像导航乱跳 */
+  await cmp.ev(`document.getElementById('scrollL').scrollTop = 0`);
+  await sleep(480);
+  const atTop = await cmp.ev(`document.getElementById('curInfo').textContent`);
+  await cmp.ev(`document.getElementById('scrollL').scrollTop = 999999`);
+  await sleep(480);
+  const atBottom = await cmp.ev(`document.getElementById('curInfo').textContent`);
+  /* 滚到底时视口中心不一定正好压在最后一处（最后几处可能在中心线以下），
+     所以断言「跟到了后段」而不是「正好是最后一处」 */
+  const mB = /第 (\d+) \/ (\d+) 处/.exec(atBottom);
+  ok('手动滚动时「第几处」跟着视口走',
+    atTop !== atBottom && !!mB && +mB[1] > +mB[2] * 0.7, `${atTop} → ${atBottom}`);
+
+  /* 把这一处改成和对面一样：从「修改」变成「相同」，随即会被折叠掉。
+     光标所在的行必须钉住，否则用户打完字光标当场消失。 */
+  const pair = await cmp.ev(`(() => {
+    const r = [...document.querySelectorAll('#rowsL .cmp-row.diff')].find((x) => x.querySelector('.cmp-tx'));
+    if (!r) return null;
+    const tx = r.querySelector('.cmp-tx');
+    const rx = document.querySelector('#rowsR .cmp-tx[data-i="' + tx.dataset.i + '"]');
+    const b = tx.getBoundingClientRect();
+    return { i: +tx.dataset.i, right: rx ? rx.textContent : '', x: Math.round(b.left + 30), y: Math.round(b.top + b.height / 2) };
+  })()`);
+  if (pair && pair.right) {
+    for (const n of [1, 2, 3]) {
+      await cmp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: pair.x, y: pair.y, button: 'left', clickCount: n });
+      await cmp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: pair.x, y: pair.y, button: 'left', clickCount: n });
+      await sleep(50);
+    }
+    await sleep(200);
+    await cmp.send('Input.insertText', { text: pair.right });
+    await sleep(900);
+    const still = await cmp.ev(`!!document.querySelector('#rowsL .cmp-tx[data-i="${pair.i}"]')`);
+    ok('把这一行改成和对面一样，光标所在的行不会被折走', still === true, `data-i=${pair.i}`);
+  } else {
+    ok('把这一行改成和对面一样，光标所在的行不会被折走', false, '没找到可改的差异行');
+  }
+
+  await cmp.ev(`document.getElementById('optFold').click()`);
+  await sleep(450);
+  const fold2 = await foldGeo();
+  ok('关掉「只看差异」后回到全文', fold2.viewRows === fullRows, `${fold2.viewRows} vs ${fullRows}`);
+  ok('关掉后不再画接缝', fold2.gaps === 0, `gaps=${fold2.gaps}`);
+  await cmp.ev(`document.getElementById('optFold').click()`);      // 复原成默认开着
+  await sleep(400);
+
+  /* ---------- 3c. 查找 ----------
+     两千行里找一个词，以前只能滚。这里验「唤出、计数、跳转、无匹配、关掉」，
+     以及折叠态下命中行落在「相同行」里时也跳得到（那一行本来根本不在屏幕上）。 */
+  const hotkey = async (vk, k, code, modifiers = 0) => {
+    const base = { windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk, key: k, code, modifiers };
+    await cmp.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...base });
+    await cmp.send('Input.dispatchKeyEvent', { type: 'keyUp', ...base });
+  };
+  const typeFind = async (text) => {
+    await cmp.ev(`(() => { const i = document.getElementById('findInput'); i.focus(); i.select(); })()`);
+    await cmp.send('Input.insertText', { text });
+    await sleep(430);
+  };
+
+  await hotkey(70, 'f', 'KeyF', 2);
+  await sleep(320);
+  const findOpen = await cmp.ev(`({ hidden: document.getElementById('findBar').hidden, focus: document.activeElement.id })`);
+  ok('Ctrl+F 打开查找条，光标直接进输入框',
+    findOpen.hidden === false && findOpen.focus === 'findInput', JSON.stringify(findOpen));
+
+  await typeFind('第 900 行');
+  const f1 = await cmp.ev(`(() => {
+    const r = document.querySelector('#rowsL .cmp-row.hit-cur');
+    const sc = document.getElementById('scrollL').getBoundingClientRect();
+    const b = r && r.getBoundingClientRect();
+    return {
+      n: document.getElementById('findN').textContent,
+      hasCur: !!r,
+      inView: !!b && b.bottom > sc.top && b.top < sc.bottom,
+      line: r ? r.querySelector('.cmp-ln').textContent : '',
+    };
+  })()`);
+  ok('命中有计数', /^1 \/ 1$/.test(f1.n), JSON.stringify(f1));
+  ok('折叠时命中行在「相同行」里也跳得到', f1.hasCur && f1.inView, JSON.stringify(f1));
+  ok('跳到的是那一行本身', f1.line.trim() === '900', `行号=${JSON.stringify(f1.line)}`);
+
+  await typeFind('zzz-找不到的词');
+  const f2 = await cmp.ev(`document.getElementById('findN').textContent`);
+  ok('没有匹配时直接说没有匹配', f2 === '没有匹配', f2);
+
+  await typeFind('content-');
+  const f3 = await cmp.ev(`document.getElementById('findN').textContent`);
+  await hotkey(13, 'Enter', 'Enter');
+  await sleep(420);
+  const f4 = await cmp.ev(`document.getElementById('findN').textContent`);
+  ok('Enter 走到下一个匹配', /^\d+ \/ \d+$/.test(f3) && f4 !== f3, `${f3} → ${f4}`);
+
+  /* 查找框里的按键不能再被正文快捷键接走 */
+  const beforeF8 = await cmp.ev(`document.getElementById('scrollL').scrollTop`);
+  await hotkey(119, 'F8', 'F8');
+  await sleep(380);
+  const afterF8 = await cmp.ev(`document.getElementById('scrollL').scrollTop`);
+  ok('在查找框里按 F8 不会让正文乱跳', beforeF8 === afterF8, `${beforeF8} → ${afterF8}`);
+
+  await hotkey(27, 'Escape', 'Escape');
+  await sleep(420);
+  const f5 = await cmp.ev(`({
+    hidden: document.getElementById('findBar').hidden,
+    hits: document.querySelectorAll('.cmp-row.hit, .cmp-row.hit-cur').length,
+  })`);
+  ok('Esc 关掉查找并清掉全部高亮', f5.hidden === true && f5.hits === 0, JSON.stringify(f5));
+
   cmp.close();
 
   /* ---------- 4. 短文档：预览条只占内容高度 ---------- */
@@ -233,11 +392,20 @@ try {
     const r = e.getBoundingClientRect();
     return { x: Math.round(r.left + r.width * 0.45), y: Math.round(r.top + r.height / 2) };
   })()`);
-  const openPair = async (a, b) => {
+  /* 后面这些编辑/排序用例是按「模型行」写断言的（第 N 行、共几行），
+     折叠会把这些数字改掉。默认把它们跑在「全文」上，折叠本身单独验。 */
+  const setFold = async (on) => {
+    const cur = await cmp.ev(`document.getElementById('optFold').checked`);
+    if (cur === on) return;
+    await cmp.ev(`document.getElementById('optFold').click()`);
+    await sleep(350);
+  };
+  const openPair = async (a, b, fold = false) => {
     await main.ev(`window.__snp.openCompare(${JSON.stringify(a)}, ${JSON.stringify(b)})`);
     await sleep(1600);
     if (cmp) cmp.close();
     cmp = await connect((await compareTarget()).webSocketDebuggerUrl);
+    await setFold(fold);
   };
 
   await openPair(p('edit-a.txt'), p('edit-a2.txt'));

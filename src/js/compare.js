@@ -52,10 +52,20 @@ const S = {
     l: { path: '', name: '', loaded: false, lines: [''], enc: 'UTF-8', bom: false, eol: '\n', dirty: false, base: [''], undo: [], redo: [], undoAt: 0 },
     r: { path: '', name: '', loaded: false, lines: [''], enc: 'UTF-8', bom: false, eol: '\n', dirty: false, base: [''], undo: [], redo: [], undoAt: 0 },
   },
-  opt: { ignoreWS: true, ignoreCase: false },
+  opt: { ignoreWS: true, ignoreCase: false, collapse: true },
   rows: [],
   blocks: [],
   items: [],           // 差异清单的数据（recompute 时折好）
+  /* 屏幕上真正摆出来的行（值是 S.rows 的下标）。
+     不折叠时它就是 0..n-1；折叠时只留差异行和它前后各 CTX 行。
+     所有「哪一行有多高」的地方都必须走 S.view，不能再拿 S.rows 的下标当
+     行位 —— 折叠之后两者不是一回事。 */
+  view: [],
+  foldCtx: 3,
+  /* 光标所在的那条对齐行（模型下标）。折叠时它一定要留着：
+     把左边改成和右边一样，这一行就从「修改」变成「相同」，随即被折叠掉 ——
+     光标当场消失，给人「键盘不管用了」的感觉。钉住它就不动。 */
+  pin: -1,
   lineRow: { l: new Map(), r: new Map() },
   inline: new Map(),   // 行内字符级 diff 缓存，滚动时不重算
   cur: 0,
@@ -67,6 +77,9 @@ const S = {
   lastSort: null,      // 上一次「按字典排序」前的快照（两侧一起，Ctrl+Z 一次还原）
   lastSide: '',        // 最近一次改动落在哪一侧：光标不在行里时 Ctrl+Z 按它来
   list: { open: false, sort: 'pos', dir: 1, filter: 'all', sig: '' },
+  /* 查找：hits 是全文扫描的结果，map 只用来给已渲染的行上色 ——
+     虚拟滚动下不可能给全部命中挂 DOM，所以「行级高亮」是唯一可靠的画法。 */
+  find: { on: false, q: '', hits: [], cur: -1, map: new Set() },
   warn: '',            // 上限提示文案，空串表示没有
 };
 
@@ -144,6 +157,7 @@ function recompute() {
   if (!hasL && !hasR) {
     S.rows = [];
     S.blocks = [];
+    S.view = [];
     S.cur = 0;
     S.units = { l: 0, r: 0 };
     return;
@@ -192,6 +206,55 @@ function recompute() {
      把几万行重扫一遍。rev 变化时清单才重建 DOM。 */
   S.items = blockItems(S.rows, S.blocks);
   S.list.rev = (S.list.rev || 0) + 1;
+  /* 内容变了，命中位置要跟着重算 —— 但不能在这里跳转或重画（recompute
+     的调用方自己会 render），否则改一个字就把视口甩到别处 */
+  rescanFindQuiet();
+  buildView();
+}
+
+/** 折叠时要不要留这一行：差异行本身，以及它前后各 `S.foldCtx` 行。
+ *  上下文是必须的 —— 只留差异行等于把「改了哪一句」从「改在什么上下文里」
+ *  里剥出来，读的人反而要去猜。 */
+function buildView() {
+  const total = S.rows.length;
+  /* 没有差异可比、或者用户关掉了开关：全部展开。
+     编辑态也照样折叠 —— 「看一眼差异然后改」是主要用法，收起来才有用。
+     想改相同行的人把开关关掉即可，那比拖着一屏相同行翻找要快。 */
+  if (!S.opt.collapse || !S.blocks.length) {
+    S.view = new Array(total);
+    for (let i = 0; i < total; i++) S.view[i] = i;
+    return;
+  }
+  const keep = new Uint8Array(total);
+  const ctx = S.foldCtx;
+  for (let i = 0; i < total; i++) {
+    if (S.rows[i].kind === 'same') continue;
+    const a = Math.max(0, i - ctx), b = Math.min(total - 1, i + ctx);
+    for (let j = a; j <= b; j++) keep[j] = 1;
+  }
+  if (S.edit && S.pin >= 0 && S.pin < total) keep[S.pin] = 1;
+  /* 查找跳到的那一行即使在「相同行」里也要露出来：否则按了「下一个」，
+     屏幕只滚到一片接缝，命中行本身还藏着 */
+  const c = S.find.hits[S.find.cur];
+  if (S.find.on && c && c.mi >= 0 && c.mi < total) keep[c.mi] = 1;
+  const out = [];
+  for (let i = 0; i < total; i++) if (keep[i]) out.push(i);
+  S.view = out;
+}
+
+/** 模型行下标 → 屏幕行位；找不到（被折叠掉了）返回 -1。
+ *  不折叠时是恒等映射，直接返回，省掉每次点击一次二分。 */
+function vposOf(i) {
+  const v = S.view;
+  if (!v.length || i < 0) return -1;
+  if (v.length === S.rows.length) return i;
+  let lo = 0, hi = v.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (v[mid] === i) return mid;
+    if (v[mid] < i) lo = mid + 1; else hi = mid - 1;
+  }
+  return -1;
 }
 
 /* ---------------- 渲染 ---------------- */
@@ -222,7 +285,7 @@ function rowClass(row, i, side) {
   return cls.join(' ');
 }
 
-function rowHtml(row, i, side) {
+function rowHtml(row, i, side, vi) {
   const cell = side === 'l' ? row.l : row.r;
   let inner = '';
   if (cell) {
@@ -239,7 +302,19 @@ function rowHtml(row, i, side) {
      空行、点上去毫无反应」的死行 —— 而那正是「粘贴两段文本」的必经之路。 */
   const editable = S.edit ? ' contenteditable="plaintext-only" spellcheck="false"' : '';
   const fill = S.edit && !cell ? ' data-fill="1"' : '';
-  return `<div class="${rowClass(row, i, side)}" style="top:${i * ROW_H}px">`
+  /* 折叠掉的那些行在视觉上没有任何位置，只能在上方画一条缝告诉读者
+     「行号在这里跳过了一段」—— 不然行号从 12 直接跳到 47，看着像丢内容 */
+  const gap = vi > 0 && S.view[vi - 1] !== i - 1 ? ' gap' : '';
+  /* 查找命中的行：整行淡蓝，当前这一条再压一条左侧竖线。
+     不做字符级 mark —— 差异行的 inner 是 inlineDiff 生成的高亮 HTML，
+     再往里插 <mark> 会把两边的高亮互相踩掉。 */
+  let hit = '';
+  if (S.find.on) {
+    if (S.find.map.has(side + ':' + i)) hit += ' hit';
+    const c = S.find.hits[S.find.cur];
+    if (c && c.side === side && c.mi === i) hit += ' hit-cur';
+  }
+  return `<div class="${rowClass(row, i, side)}${gap}${hit}" style="top:${vi * ROW_H}px">`
     + `<span class="cmp-ln">${cell ? cell.no : ''}</span>`
     + `<span class="cmp-tx" data-i="${i}" data-side="${side}" data-n="1"${fill}${editable}>${inner}</span>`
     + '</div>';
@@ -248,7 +323,7 @@ function rowHtml(row, i, side) {
 function renderRows(side, force = false) {
   const sc = el(side, 'scroll');
   const cv = el(side, 'canvas');
-  const total = S.rows.length;
+  const total = S.view.length;
   const vh = sc.clientHeight || 400;
 
   const first = Math.max(0, Math.floor(sc.scrollTop / ROW_H) - 6);
@@ -260,18 +335,21 @@ function renderRows(side, force = false) {
   // 但滚动到光标行之外还是要重建，否则会看着一屏旧内容。
   const active = document.activeElement;
   if (S.edit && !force && active && cv.contains(active)) {
-    const ai = +active.dataset.i;
+    const ai = vposOf(+active.dataset.i);
     if (ai >= first && ai <= last) return;
   }
 
   S.sig[side] = sig;
   const out = [];
-  for (let i = first; i <= last; i++) out.push(rowHtml(S.rows[i], i, side));
+  for (let vi = first; vi <= last; vi++) {
+    const i = S.view[vi];
+    out.push(rowHtml(S.rows[i], i, side, vi));
+  }
   el(side, 'rows').innerHTML = out.join('');
 }
 
 function render(force = false) {
-  const total = S.rows.length;
+  const total = S.view.length;
   const h = total * ROW_H;
   for (const side of ['l', 'r']) {
     const cv = el(side, 'canvas');
@@ -301,13 +379,17 @@ function render(force = false) {
 // 逐行画会把整块切成表格格子，看着像坏了
 function updateCurBox() {
   const [cs, ce] = blockRange(S.cur);
+  /* blockRange 给的是模型下标，覆盖层的 top 用的是屏幕行位。
+     折叠时两者差得远（差的就是被折掉的那些行）。 */
+  const vs = cs < 0 ? -1 : vposOf(cs);
+  const ve = cs < 0 ? -1 : vposOf(ce);
   for (const side of ['l', 'r']) {
     const box = el(side, 'cur');
     if (!box) continue;
-    if (cs < 0) { box.hidden = true; continue; }
+    if (cs < 0 || vs < 0) { box.hidden = true; continue; }
     box.hidden = false;
-    box.style.top = cs * ROW_H + 'px';
-    box.style.height = (ce - cs + 1) * ROW_H + 'px';
+    box.style.top = vs * ROW_H + 'px';
+    box.style.height = (Math.max(vs, ve) - vs + 1) * ROW_H + 'px';
   }
 }
 
@@ -444,6 +526,28 @@ function updateMeta() {
   /* 统计文字的长度会随内容变（「12 处差异」比「完全一致」长得多），
      折叠档位要跟着重算，否则统计一变长就又把右边挤出去了 */
   queueFit();
+  syncTitle();
+}
+
+/* 任务栏上只写「文本对比」，同时开两个就分不清谁是谁了。
+   标题带上两侧的文件名，是最省事也最有用的一处提示。 */
+let titleWin = null;
+let lastTitle = '';
+function syncTitle() {
+  if (!titleWin) {
+    try { titleWin = getCurrentWindow(); } catch { return; }
+  }
+  const one = (k) => {
+    const st = S.sides[k];
+    if (!st.loaded) return '';
+    return st.path ? st.name : tt(k === 'l' ? '左侧文本' : '右侧文本');
+  };
+  const l = one('l'), r = one('r');
+  const pair = l && r ? `${l} ⇄ ${r}` : (l || r);
+  const title = pair ? `${pair} · ${tt('文本对比')}` : tt('文本对比');
+  if (title === lastTitle) return;
+  lastTitle = title;
+  titleWin.setTitle(title).catch(() => {});
 }
 
 function updateDots() {
@@ -598,7 +702,7 @@ function rulerGeom(force = false) {
   const sc = el('l', 'scroll');
   const rb = box.getBoundingClientRect();
   const sb = sc.getBoundingClientRect();
-  const total = S.rows.length;
+  const total = S.view.length;
   const contentH = total * ROW_H;
   const viewH = sc.clientHeight || box.clientHeight || 1;
   const top = Math.max(0, Math.round(sb.top - rb.top));
@@ -621,11 +725,14 @@ function drawRuler() {
   g.clearRect(0, 0, w, totalH);
   if (!total) return;
 
-  // 轨道：整条竖槽，告诉用户「这块区域代表整个文件」
-  const tw = 10;
+  /* 轨道。宽度是这条预览条好用与否的第一件事：原先 22px 的栏里塞一条
+     10px 的槽，还要在上面同时画差异段、当前段和视口框 —— 三样东西抢
+     十来个像素，点起来也像是瞄准游戏。现在栏 34px、槽 22px，三段各有
+     自己的位置。 */
+  const tw = Math.max(10, Math.min(22, w - 12));
   const tx = Math.round((w - tw) / 2);
-  g.fillStyle = 'rgba(127,127,127,.11)';
-  roundRect(g, tx, top, tw, h, 3);
+  g.fillStyle = 'rgba(127,127,127,.12)';
+  roundRect(g, tx, top, tw, h, 4);
   g.fill();
 
   const per = h / total;
@@ -637,8 +744,12 @@ function drawRuler() {
      但逐块 fill 太碎，先把间距不足 1px 的合并成一段，再统一上色。 */
   const segs = [];
   for (const it of S.items) {
-    const y = top + it.start * per;
-    const hh = Math.max(3, (it.end - it.start + 1) * per);
+    /* it.start / it.end 是模型下标，画在屏幕上要换成行位 */
+    const vs = vposOf(it.start);
+    const ve = vposOf(it.end);
+    if (vs < 0 || ve < 0) continue;
+    const y = top + vs * per;
+    const hh = Math.max(4, (ve - vs + 1) * per);
     const last = segs[segs.length - 1];
     if (last && y <= last.y + last.h + .75) {
       last.h = Math.max(last.h, y + hh - last.y);
@@ -648,30 +759,36 @@ function drawRuler() {
     }
   }
   for (const s of segs) {
-    /* 当前这处差异压得宽一点（左右各多 2px），像夹子夹住它。
+    /* 当前这处差异压得宽一点（左右各多 3px），像夹子夹住它。
        只靠蓝色不够：色弱、或者屏上只有一条窄缝时，宽度差比色相差更靠得住。 */
     g.fillStyle = s.cur ? ACCENT : RED;
-    const w2 = s.cur ? tw + 4 : tw;
-    const x2 = s.cur ? tx - 2 : tx;
-    roundRect(g, x2, s.y, w2, s.h, Math.min(2, s.h / 2));
+    const w2 = s.cur ? tw + 6 : tw;
+    const x2 = s.cur ? tx - 3 : tx;
+    roundRect(g, x2, s.y, w2, s.h, Math.min(3, s.h / 2));
     g.fill();
   }
 
   /* 视口框：内容装得下一屏时不画 —— 那时整条轨道就是视口，
      画一个比容器还高的框既不准确也没有信息量（原先短文档就是这样）。
+     装下九成以上也不画：框几乎顶满整条槽，剩下的只是把轨道整条染灰。
      用中性灰：它回答「我在文件的哪一段」，跟「哪里不一样」不是一件事。 */
-  if (contentH <= viewH + 1) return;
+  if (contentH <= viewH * 1.12) return;
   const y = top + (sc.scrollTop / contentH) * h;
-  const vh = clamp((viewH / contentH) * h, 12, h);
+  const vh = clamp((viewH / contentH) * h, 14, h);
   g.fillStyle = SOFT;
-  g.globalAlpha = .15;
-  roundRect(g, tx - 1, y, tw + 2, vh, 3);
+  g.globalAlpha = .12;
+  roundRect(g, tx - 2, y, tw + 4, vh, 4);
   g.fill();
-  g.globalAlpha = .55;
+  g.globalAlpha = .5;
   g.strokeStyle = SOFT;
   g.lineWidth = 1;
-  roundRect(g, tx - .5, Math.round(y) + .5, tw + 1, Math.max(11, vh - 1), 3);
+  roundRect(g, tx - 1.5, Math.round(y) + .5, tw + 3, Math.max(12, vh - 1), 4);
   g.stroke();
+  g.globalAlpha = 1;
+  /* 视口上沿一条实线：滚动时它比半透明框本身更容易被眼睛抓住 */
+  g.fillStyle = SOFT;
+  g.globalAlpha = .75;
+  g.fillRect(tx - 2, Math.round(y), tw + 4, 1);
   g.globalAlpha = 1;
 }
 
@@ -684,7 +801,7 @@ function rulerRatio(e) {
 }
 
 function jumpToRatio(ratio) {
-  const total = S.rows.length;
+  const total = S.view.length;
   if (!total || ratio === null) return;
   const sc = el('l', 'scroll');
   const y = ratio * total * ROW_H;
@@ -704,7 +821,7 @@ function rulerHover(e) {
   const y = e.clientY - gg.rb.top - gg.top;
   if (y < 0 || y > gg.h) { tip.hidden = true; return; }
   const rowIdx = Math.min(total - 1, Math.floor((y / gg.h) * total));
-  const r = S.rows[rowIdx];
+  const r = S.rows[S.view[rowIdx]];
   if (!r) { tip.hidden = true; return; }
   /* 并排行号对用户没意义，显示的是两侧文件里的真实行号 */
   const pos = r.l && r.r
@@ -720,6 +837,29 @@ let rulerDrag = false;
 
 /* ---------------- 滚动同步 ---------------- */
 let syncing = false;
+
+/** 手动滚动时「当前是第几处」要跟着走。
+ *  不然滚到第 5 处，状态栏还写着「第 1 / 22 处」，按 F8 又跳回第 2 处 ——
+ *  用户看到的就是「导航不认我滚到哪」。只改 curInfo 和那个框，不走
+ *  updateStats：后者要重扫全篇统计行数，每帧跑一次 5 万行就卡了。 */
+function followScroll() {
+  const n = S.blocks.length;
+  if (!n || !S.view.length) return;
+  const sc = el('l', 'scroll');
+  const center = (sc.scrollTop + sc.clientHeight / 2) / ROW_H;
+  const vi = clamp(Math.floor(center), 0, S.view.length - 1);
+  const mi = S.view[vi];
+  let lo = 0, hi = n - 1, best = 0;
+  while (lo <= hi) {
+    const m = (lo + hi) >> 1;
+    if (S.blocks[m] <= mi) { best = m; lo = m + 1; } else hi = m - 1;
+  }
+  if (best === S.cur) return;
+  S.cur = best;
+  updateCurBox();
+  $('curInfo').textContent = tt('第 {i} / {n} 处', { i: S.cur + 1, n });
+  renderList();
+}
 
 function syncFrom(side, top, left) {
   const other = el(side === 'l' ? 'r' : 'l', 'scroll');
@@ -739,6 +879,7 @@ function bindScroll(side) {
     renderRows(side);
     const other = side === 'l' ? 'r' : 'l';
     renderRows(other);
+    followScroll();          // 先定「当前是第几处」，预览条上的蓝段才不会落后一帧
     drawRuler();
   }, { passive: true });
 }
@@ -747,11 +888,119 @@ function bindScroll(side) {
 function gotoBlock(i) {
   if (!S.blocks.length) { toast(tt('两侧没有差异')); return; }
   S.cur = ((i % S.blocks.length) + S.blocks.length) % S.blocks.length;
-  const row = S.blocks[S.cur];
+  /* 块的位置是模型下标，滚动要按屏幕行位算（折叠时两者差着被折掉的行数） */
+  const vi = Math.max(0, vposOf(S.blocks[S.cur]));
   const sc = el('l', 'scroll');
-  sc.scrollTop = clamp(row * ROW_H - sc.clientHeight / 2 + ROW_H, 0, Math.max(0, S.rows.length * ROW_H - sc.clientHeight));
+  sc.scrollTop = clamp(vi * ROW_H - sc.clientHeight / 2 + ROW_H, 0, Math.max(0, S.view.length * ROW_H - sc.clientHeight));
   syncFrom('l', sc.scrollTop, sc.scrollLeft);
   S.ver++;
+  render(true);
+}
+
+/* ---------------- 查找 ----------------
+ * 对比工具里「在这两份文件里找 me 这个词」是最常用的动作之一，而它和普通
+ * 编辑器的查找有一处不同：命中的是**两栏**，同一条对齐行可能两边都有。
+ * 所以 hits 按对齐行去重 —— 否则「下一个」会在左右两栏之间原地打转。
+ */
+function scanHits() {
+  const q = S.find.q;
+  S.find.hits = [];
+  S.find.map.clear();
+  if (!q) return;
+  const needle = S.opt.ignoreCase ? q.toLowerCase() : q;
+  const seen = new Set();
+  for (const side of ['l', 'r']) {
+    const st = S.sides[side];
+    if (!st.loaded) continue;
+    for (let i = 0; i < st.lines.length; i++) {
+      const raw = st.lines[i];
+      const hay = S.opt.ignoreCase ? raw.toLowerCase() : raw;
+      let at = hay.indexOf(needle);
+      while (at >= 0) {
+        const mi = S.lineRow[side].get(i + 1);
+        if (mi != null) {
+          S.find.map.add(side + ':' + mi);
+          if (!seen.has(mi)) { seen.add(mi); S.find.hits.push({ side, mi }); }
+        }
+        at = hay.indexOf(needle, at + Math.max(1, needle.length));
+      }
+    }
+  }
+}
+
+function syncFindN() {
+  const n = S.find.hits.length;
+  const box = $('findN');
+  if (!S.find.q) { box.textContent = ''; box.classList.remove('none'); return; }
+  box.textContent = n ? `${S.find.cur + 1} / ${n}` : tt('没有匹配');
+  box.classList.toggle('none', !n);
+}
+
+/** 只填数据，不重画：recompute 在内容变化后要静默地更新命中，不能再触发一轮渲染 */
+function rescanFindQuiet() {
+  if (!S.find.on || !S.find.q) return;
+  scanHits();
+  if (S.find.cur >= S.find.hits.length) S.find.cur = S.find.hits.length - 1;
+}
+
+function findJump() {
+  const h = S.find.hits[S.find.cur];
+  if (!h) { syncFindN(); return; }
+  /* 命中行可能刚被折叠掉（相同行），buildView 会把「当前命中」留出来 */
+  buildView();
+  S.ver++;
+  const vi = vposOf(h.mi);
+  if (vi >= 0) {
+    const sc = el('l', 'scroll');
+    const y = vi * ROW_H;
+    if (y < sc.scrollTop || y + ROW_H > sc.scrollTop + sc.clientHeight) {
+      sc.scrollTop = clamp(y - sc.clientHeight / 2, 0, Math.max(0, S.view.length * ROW_H - sc.clientHeight));
+      syncFrom('l', sc.scrollTop, sc.scrollLeft);
+    }
+  }
+  render(true);
+  syncFindN();
+}
+
+function findGo(dir) {
+  const n = S.find.hits.length;
+  if (!n) return;
+  if (S.find.cur < 0) S.find.cur = 0;
+  else S.find.cur = ((S.find.cur + dir) % n + n) % n;
+  findJump();
+}
+
+function applyFind() {
+  S.find.q = $('findInput').value;
+  scanHits();
+  S.find.cur = S.find.hits.length ? 0 : -1;
+  S.ver++;
+  findJump();
+}
+
+function openFind() {
+  $('findBar').hidden = false;
+  S.find.on = true;
+  const inp = $('findInput');
+  inp.focus();
+  inp.select();
+  S.ver++;
+  render(true);
+}
+
+function closeFind() {
+  const was = S.find.on;
+  $('findBar').hidden = true;
+  S.find.on = false;
+  S.find.q = '';
+  S.find.hits = [];
+  S.find.map.clear();
+  S.find.cur = -1;
+  $('findInput').value = '';
+  syncFindN();
+  if (!was) return;
+  S.ver++;
+  buildView();
   render(true);
 }
 
@@ -911,6 +1160,8 @@ function setEdit(on) {
   $('paneL').classList.toggle('editing', S.edit);
   $('paneR').classList.toggle('editing', S.edit);
   S.ver++;
+  /* 进出编辑态都要重算可见行：只读态下光标钉住的那一行不该继续占位 */
+  buildView();
   render(true);
 }
 
@@ -1024,6 +1275,18 @@ function nodeAt(host, col) {
   return { node: host, off: host.childNodes.length };
 }
 
+/** 离 `i` 最近的一条可见行：优先往前找（行被折叠掉时，上方那条还在屏幕上） */
+function nearestVisible(i) {
+  const v = S.view;
+  if (!v.length) return -1;
+  let lo = 0, hi = v.length - 1, best = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (v[mid] <= i) { best = v[mid]; lo = mid + 1; } else hi = mid - 1;
+  }
+  return best >= 0 ? best : v[0];
+}
+
 function focusAt(side, line, col) {
   /* 行号列号一律夹到当前内容里：撤销之后文档可能变短，调用方给的
      「原来那一行」就不存在了。不夹的话 lineRow.get() 返回 undefined，
@@ -1032,14 +1295,23 @@ function focusAt(side, line, col) {
   const lines = S.sides[side].lines;
   line = Math.min(Math.max(1, line | 0), Math.max(1, lines.length));
   col = Math.min(Math.max(0, col | 0), (lines[line - 1] || '').length);
-  focusRowIdx(side, S.lineRow[side].get(line), col);
+  let i = S.lineRow[side].get(line);
+  if (i == null) return;
+  /* 折叠时这一行可能刚好不在屏幕上（撤销把内容还原成和对面一样，它就从
+     「修改」变成了「相同」，随即被收起）。退到最近的一条可见行 —— 宁可
+     光标差一行，也不能让它掉到 body 上：那样键盘就彻底没反应了。 */
+  if (vposOf(i) < 0) i = nearestVisible(i);
+  focusRowIdx(side, i, col);
 }
 
 /** 按「对齐行索引」聚焦。占位行没有本侧行号，只有索引 —— 点它时只能走这条 */
 function focusRowIdx(side, i, col) {
   if (i == null || i < 0 || i >= S.rows.length) return;
+  const vi = vposOf(i);
+  if (vi < 0) return;         // 这一行被折叠掉了，没有位置可放
+  S.pin = i;                  // 光标落在这里，折叠时别把它收走
   const sc = el(side, 'scroll');
-  const y = i * ROW_H;
+  const y = vi * ROW_H;
   if (y < sc.scrollTop || y + ROW_H > sc.scrollTop + sc.clientHeight) {
     sc.scrollTop = Math.max(0, y - sc.clientHeight / 2);
     syncFrom(side, sc.scrollTop, sc.scrollLeft);
@@ -1170,6 +1442,7 @@ function onInput(e) {
   if (!cell && !fill) return;
 
   S.lastSide = side;
+  S.pin = i;                 // 正在写的这一行，折叠时留着
   pushUndo(side);
   const pos = caretPos();
   const col = pos ? pos.col : 0;
@@ -1633,6 +1906,13 @@ function bind() {
 
   $('optWS').onchange = (e) => { S.opt.ignoreWS = e.target.checked; S.ver++; recompute(); render(true); };
   $('optCase').onchange = (e) => { S.opt.ignoreCase = e.target.checked; S.ver++; recompute(); render(true); };
+  /* 折叠不改变 diff 结果，不需要重算差异 —— 只要重排可见行 */
+  $('optFold').onchange = (e) => {
+    S.opt.collapse = e.target.checked;
+    buildView();
+    S.ver++;
+    render(true);
+  };
 
   $('prev').onclick = () => gotoBlock(S.cur - 1);
   $('next').onclick = () => gotoBlock(S.cur + 1);
@@ -1681,6 +1961,21 @@ function bind() {
   $('undoBtn').onclick = () => doUndo(false);
   $('redoBtn').onclick = () => doUndo(true);
 
+  /* 查找：输入即定位，Enter / Shift+Enter 前后走 */
+  let scanTimer = 0;
+  $('findBtn').onclick = openFind;
+  $('findInput').addEventListener('input', () => {
+    clearTimeout(scanTimer);
+    scanTimer = setTimeout(applyFind, 140);
+  });
+  $('findInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); findGo(e.shiftKey ? -1 : 1); }
+    else if (e.key === 'Escape') { e.preventDefault(); closeFind(); }
+  });
+  $('findPrev').onclick = () => findGo(-1);
+  $('findNext').onclick = () => findGo(1);
+  $('findClose').onclick = closeFind;
+
   for (const side of ['l', 'r']) {
     bindScroll(side);
     const cv = el(side, 'canvas');
@@ -1710,8 +2005,10 @@ function bind() {
       const inner = row && row.querySelector('.cmp-tx');
       let i = inner ? +inner.dataset.i : NaN;
       if (!Number.isFinite(i)) {
-        // 行下方的空白：按坐标算离得最近的那一行
-        i = Math.max(0, Math.min(S.rows.length - 1, Math.floor((e.clientY - box.top) / ROW_H)));
+        // 行下方的空白：按坐标算离得最近的那一行（坐标是行位，换回模型下标）
+        const vi = Math.max(0, Math.min(S.view.length - 1, Math.floor((e.clientY - box.top) / ROW_H)));
+        i = S.view[vi];
+        if (i == null) return;
       }
       const tx = cv.querySelector(`.cmp-tx[data-i="${i}"]`);
       if (!tx) return;
@@ -1757,11 +2054,17 @@ function bind() {
   }, { passive: false });
 
   document.addEventListener('keydown', (e) => {
+    /* 输入框里的按键归它自己管。这个监听挂在 document 上（为了点过工具栏
+       之后 Ctrl+Z 还能用），不挡一下的话，在查找框里敲 F8、Alt+← 都会
+       被当成正文快捷键，窗口跟着乱跳。 */
+    const tag = e.target && e.target.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return;
     /* 撤销/重做放在 document 上，比「挂在两个画布上」宽一层：
        点过排序、编辑开关之后焦点就在按钮上，挂在画布上的监听收不到，
        用户看到的现象就是「Ctrl+Z 没反应」。*/
     const mod = e.ctrlKey || e.metaKey;
     const lk = (e.key || '').toLowerCase();
+    if (mod && lk === 'f') { e.preventDefault(); openFind(); return; }
     if (mod && (lk === 'z' || lk === 'y') && S.edit) {
       e.preventDefault();
       flush();
@@ -1787,6 +2090,7 @@ function bind() {
       gotoBlock(S.cur + (k === 'ArrowDown' ? 1 : -1));
       return;
     }
+    if (k === 'Escape' && S.find.on) { e.preventDefault(); closeFind(); return; }
     if (k === 'Escape' && S.list.open) { e.preventDefault(); toggleList(false); return; }
     if (k === 'F8') { e.preventDefault(); gotoBlock(S.cur + 1); return; }
     if (k === 'F7') { e.preventDefault(); gotoBlock(S.cur - 1); return; }
