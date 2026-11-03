@@ -241,6 +241,10 @@ try {
   };
 
   await openPair(p('edit-a.txt'), p('edit-a2.txt'));
+  /* 默认就该是可写的：打开两份文件却不让人改，用户的第一反应是「坏了」。
+     只读是用户主动切过去的状态，不是打开时的默认值。 */
+  ok('打开一对文件就已经是可写状态',
+    (await cmp.ev(`document.getElementById('toggleEdit').classList.contains('on')`)) === true);
   if (!(await cmp.ev(`document.getElementById('toggleEdit').classList.contains('on')`))) {
     await cmp.ev(`document.getElementById('toggleEdit').click()`);
     await sleep(500);

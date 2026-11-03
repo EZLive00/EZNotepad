@@ -846,6 +846,11 @@ async function loadPair(left, right) {
     el('r', 'scroll').scrollTop = 0;
     render(true);
     updateMeta();
+    /* 打开一对文件就直接可写。用户已经在看这两份东西了，想改一个字却要先
+       去工具栏找「编辑」按钮 —— 那个按钮的默认值一直是错的来源：点一下正文
+       没反应，人会以为窗口坏了。只读仍然保留，作为用户主动选择的状态。
+       误改有三层兜底：行上的脏标记、「Ctrl+Z」、关窗前确认。 */
+    if (got && !S.edit) setEdit(true);
   }
   updateEmpty();
 }
