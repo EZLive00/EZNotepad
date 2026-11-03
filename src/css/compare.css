@@ -308,7 +308,10 @@ body[data-theme="dark"] {
   user-select: text;
 }
 
-.cmp-cv { position: relative; min-height: 100%; }
+/* position:relative 给绝对定位的行做基准；min-width:100% 保证短文本时也铺满整栏 ——
+   canvas 若只有内容那么宽，行右边那片空白点上去不属于任何行（点了没反应）。
+   JS 里还会按内容宽设一次 width，长行时以内容为准。 */
+.cmp-cv { position: relative; min-height: 100%; min-width: 100%; }
 
 /* 和主窗口一致：文本区用自绘工字光标（--cur-text 在 styles.css 里按明暗各定义一份） */
 .cmp-rows, .cmp-tx { cursor: var(--cur-text), text; }

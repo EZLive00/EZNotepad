@@ -626,6 +626,100 @@ try {
   const back = await barFit();
   ok('窗口变宽后按钮文字回来（折叠不粘住）',
     !back.tight && !back.tighter && back.over <= 1 && !back.clipped.length, JSON.stringify(back));
+
+  /* ---------- 13. 粘贴两段文本后，点哪儿都能落光标 ----------
+     用户：「鼠标必须点击第一行旁边才能插入，其他地方点击没反应」。
+     两处根因：① canvas 只按内容宽度算，行右侧那片「看着还是正文」的空白
+     不属于任何行；② blur 时同步重建 DOM，把「正要被点中的那一行」从文档里
+     摘掉（只有先打过字、有 pending 时才复现）。 */
+  const openBlank = async () => {
+    /* 对比窗口是复用的：上一次打开的文件还挂在里面，而「直接粘贴两段文本」
+       只负责进编辑态、不清内容。所以先关窗再开，拿一个真正空白的窗口，
+       否则粘贴会接在上一轮的正文后面，断言就全错了。 */
+    const old = (await targets()).find((t) => /compare\.html/.test(t.url));
+    if (old) {
+      const prev = await connect(old.webSocketDebuggerUrl);
+      await prev.send('Runtime.evaluate', {
+        expression: `window.__TAURI_INTERNALS__.invoke('plugin:window|close', { label: 'compare' })`,
+      }).catch(() => {});
+      prev.close();
+      await sleep(800);
+    }
+    await main.ev(`window.__snp.openCompare(null, null)`);
+    await sleep(1600);
+    if (cmp) cmp.close();
+    cmp = await connect((await compareTarget()).webSocketDebuggerUrl);
+    await cmp.ev(`document.getElementById('pastePair').click()`);
+    await sleep(350);
+  };
+  const clickXY = async (x, y) => {
+    await cmp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+    await cmp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
+    await cmp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
+    await sleep(200);
+  };
+  const viewL = () => cmp.ev(`(() => {
+    const sc = document.getElementById('scrollL');
+    const b = sc.getBoundingClientRect();
+    const cv = document.getElementById('canvasL').getBoundingClientRect();
+    return {
+      left: Math.round(b.left), right: Math.round(b.right), bottom: Math.round(b.bottom),
+      viewW: sc.clientWidth, cvW: Math.round(cv.width),
+      rows: [...document.querySelectorAll('#rowsL .cmp-row')].map((r) => {
+        const rb = r.getBoundingClientRect();
+        const tx = r.querySelector('.cmp-tx');
+        return { ln: +r.querySelector('.cmp-ln').textContent, top: Math.round(rb.top), txLeft: Math.round(tx.getBoundingClientRect().left) };
+      }),
+    };
+  })()`);
+
+  await openBlank();
+  await cmp.send('Input.insertText', { text: 'aaa\nbbb\nccc\nddd\neee\n' });
+  await sleep(800);
+  const v13 = await viewL();
+  ok('短文本时行也铺满整栏（不是只有内容那么宽）',
+    v13.cvW >= v13.viewW - 1, `canvas=${v13.cvW} 可视=${v13.viewW}`);
+  const rowOf = (v, n) => v.rows.find((r) => r.ln === n);
+
+  await clickXY(v13.right - 30, rowOf(v13, 3).top + 10);
+  const atFar = await caretNow();
+  ok('点正文行右侧的空白也能落光标', atFar.inCell && atFar.line === 3, JSON.stringify(atFar));
+
+  await clickXY(rowOf(v13, 4).txLeft - 20, rowOf(v13, 4).top + 10);
+  const atNo = await caretNow();
+  ok('点行号把光标放到这一行', atNo.inCell && atNo.line === 4, JSON.stringify(atNo));
+
+  await clickXY(v13.left + 200, v13.bottom - 24);
+  const atBlank = await caretNow();
+  ok('点正文下方的大片空白，光标落到最后一行',
+    atBlank.inCell && atBlank.line >= 4, JSON.stringify(atBlank));
+
+  /* 有未落库的输入时再点另一行：以前光标不动，字继续进原来那一行 */
+  await clickXY(rowOf(v13, 1).txLeft + 4, rowOf(v13, 1).top + 10);
+  await cmp.send('Input.insertText', { text: 'X' });
+  await sleep(100);
+  await clickXY(rowOf(v13, 3).txLeft + 4, rowOf(v13, 3).top + 10);
+  await cmp.send('Input.insertText', { text: 'Y' });
+  await sleep(700);
+  const moved = await rowText('l');
+  ok('打了字再点别的行，新字进点的那一行',
+    moved[2].includes('Y') && !moved[0].includes('Y'), JSON.stringify(moved));
+
+  /* 粘贴后立刻点别的行（不等 300ms 防抖）也算一次「有 pending 时换行」 */
+  await openBlank();
+  await cmp.send('Input.insertText', { text: 'p1\np2\np3\np4\n' });
+  await sleep(80);
+  const v14 = await viewL();
+  const r2 = rowOf(v14, 2);
+  ok('粘贴的多行立刻拆成行（不用等防抖）', !!r2 && v14.rows.length >= 4, JSON.stringify(v14.rows.map((r) => r.ln)));
+  if (r2) {
+    await clickXY(r2.txLeft + 4, r2.top + 10);
+    await sleep(350);
+    const atPaste = await caretNow();
+    ok('粘贴后立刻点别的行也能落进去', atPaste.inCell && atPaste.line === 2, JSON.stringify(atPaste));
+  } else {
+    ok('粘贴后立刻点别的行也能落进去', false, '第 2 行还没渲染出来');
+  }
 } finally {
   main.close();
   // 夹具留在 node_modules/.tmp/probe-cmp 下不复用删除：每轮 writeFileSync 直接覆盖。

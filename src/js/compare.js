@@ -261,7 +261,12 @@ function render(force = false) {
   for (const side of ['l', 'r']) {
     const cv = el(side, 'canvas');
     cv.style.height = Math.max(h, 1) + 'px';
-    cv.style.width = Math.round(S.units[side] * CHAR_W + 54 + 40) + 'px';
+    /* 宽度 **至少** 铺满可视区。只按内容算的话，贴上两段短文本时 canvas
+       只有内容那么宽，行右侧那一大片「看起来还是正文」的空白其实不属于任何行；
+       点上去落在 .cmp-sc 上，光标不动 —— 用户看到的就是「点了没反应」。
+       内容更宽时仍然按内容算，横向滚动照旧。 */
+    const viewW = el(side, 'scroll').clientWidth || 0;
+    cv.style.width = Math.max(Math.round(S.units[side] * CHAR_W + 54 + 40), viewW) + 'px';
     renderRows(side, force);
   }
   /* 预览条本身只占内容那么高：短文档时它就是一小截，不会拉满整列 */
@@ -1005,6 +1010,11 @@ function focusAt(side, line, col) {
 function flush() {
   const p = S.pending;
   S.pending = null;
+  /* 排着队的那次「300ms 后再 flush + 把光标放回去」必须一起取消。
+     否则：打完字马上点别处 → blur 在这里已经 flush 完、光标也挪到了新行，
+     300ms 一到定时器照样 applyEdit(旧行号和旧列号)，把光标硬拽回原来那一行 ——
+     表现就是「点了别处没反应，字还进原来那行」。 */
+  clearTimeout(onInput.timer);
   if (!p || !p.host || !p.host.isConnected) return null;
   const text = readRow(p.host);
   const parts = text.split('\n');
@@ -1099,6 +1109,16 @@ function onInput(e) {
   S.sides[side].dirty = true;
   updateDots();
   $('save').disabled = false;
+
+  /* 粘贴一整段（含换行）不排队等防抖：300ms 是给逐字打字用的，而多行粘贴会
+     改变行数 —— 拖到 blur 再拆，这期间行号、差异标记、行映射都和屏幕上对不上，
+     点别的行还会点到旧索引上。 */
+  if (text.includes('\n')) {
+    clearTimeout(onInput.timer);
+    flush();
+    applyEdit(side, targetLine, targetCol);
+    return;
+  }
 
   clearTimeout(onInput.timer);
   onInput.timer = setTimeout(() => {
@@ -1414,12 +1434,39 @@ function bind() {
     cv.addEventListener('keydown', onKey);
     cv.addEventListener('blur', () => {
       if (!S.pending) return;
-      const info = flush();
+      /* 只把内容并回模型，**不重画**。
+         这行代码以前是 flush() 之后紧跟 render(true)：blur 发生在浏览器「即将把
+         焦点交给被点的那一行」之前，此刻同步重建 DOM 会把那一行从文档里摘掉，
+         浏览器随后的聚焦就落空了 —— 表现是「点别处光标不动，接着打的字还进原来
+         那一行」，而且只有先打过字（有 pending）才复现。
+         视图与模型的对齐交给下一次 render：那一定发生在这次点击/拖选结束之后，
+         既不会吃掉点击，也不会打断拖选。 */
+      flush();
       S.ver++;
       recompute();
-      render(true);
-      void info;
     }, true);
+    /* 行号与行尾空白也要能把光标放进去。
+       行号列不是可编辑单元，点它以前什么都不会发生；写上字之后的空白同理。
+       规矩跟代码编辑器一致：点行号 = 行首，点行尾/下方空白 = 那一行的末尾。 */
+    cv.addEventListener('mousedown', (e) => {
+      if (!S.edit) return;
+      if (e.target.closest && e.target.closest('.cmp-tx')) return;   // 行内交给浏览器
+      const box = cv.getBoundingClientRect();
+      const row = e.target.closest && e.target.closest('.cmp-row');
+      const inner = row && row.querySelector('.cmp-tx');
+      let i = inner ? +inner.dataset.i : NaN;
+      if (!Number.isFinite(i)) {
+        // 行下方的空白：按坐标算离得最近的那一行
+        i = Math.max(0, Math.min(S.rows.length - 1, Math.floor((e.clientY - box.top) / ROW_H)));
+      }
+      const tx = cv.querySelector(`.cmp-tx[data-i="${i}"]`);
+      if (!tx) return;
+      e.preventDefault();
+      const onNo = !!(e.target.closest && e.target.closest('.cmp-ln'));
+      const line = +tx.closest('.cmp-row').querySelector('.cmp-ln').textContent;
+      const col = onNo ? 0 : (S.sides[side].lines[line - 1] || '').length;
+      focusAt(side, line, col);
+    });
     // 只读态下不允许输入，避免 caret 跑进去
     cv.addEventListener('beforeinput', (e) => { if (!S.edit) e.preventDefault(); });
   }
