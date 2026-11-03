@@ -81,6 +81,17 @@ A busca funciona **dentro do WYSIWYG** sem trocar de modo — os realces são pi
 o chinês não tem limites de palavra) · só na seleção · `↵` insere quebra de linha na busca. Um resultado dentro do mesmo
 trecho é substituído no lugar; só ao cruzar negrito ou link o app oferece o modo Edição.
 
+## Nota rápida
+
+`Ctrl+Shift+M` (ou **Nota rápida → Abrir a nota rápida**) abre uma nota temporária num local fixo:
+
+- **Sem salvar** — as alterações vão para o disco cerca de 0,35 s depois de parar de digitar, e são gravadas antes de fechar uma aba ou a janela; sem ponto de «não salvo» e sem perguntar «salvar?»
+- **Local fixo** — `<pasta de dados>/quicknote.md`; o menu mostra onde ela está e abre no explorador
+- **Continue de onde parou** — o cursor fica no fim; **Inserir a hora atual** acrescenta `2026-11-03 09:20`
+- **Limpar é reversível** — **Limpar a nota rápida** guarda antes uma cópia no histórico de versões
+
+Continua a ser uma aba Markdown normal (modos, exportar, pesquisar): só não entra nos recentes nem na sessão restaurada.
+
 ## Comparação
 
 `Ctrl+D` (ou `Ctrl+Shift+N`) abre a janela de comparação. Ela começa vazia de propósito:
@@ -131,6 +142,7 @@ A barra lateral tem duas páginas: **Estrutura** (realça a seção que você es
 |---|---|
 | Novo / Abrir / Salvar / Salvar como | `Ctrl+N` / `Ctrl+O` / `Ctrl+S` / `Ctrl+Shift+S` |
 | Fechar aba / Próxima aba | `Ctrl+W` / `Ctrl+Tab` |
+| Abrir a nota rápida | `Ctrl+Shift+M` |
 | Localizar / Substituir / Ir para linha | `Ctrl+F` / `Ctrl+H` / `Ctrl+G` |
 | Paleta de comandos / Configurações | `Ctrl+Shift+P` / `Ctrl+,` |
 | Formatar / Comparar | `Ctrl+Shift+F` / `Ctrl+D` |

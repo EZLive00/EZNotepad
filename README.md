@@ -81,6 +81,17 @@ switching modes — highlights are painted, never injected into the text.
 has none) · selection only · `↵` inserts a newline in the query. A match inside one run of text is replaced in place;
 only a match crossing bold or a link asks to switch to Edit mode.
 
+## Quick Note
+
+`Ctrl+Shift+M` (or **Quick Note → Open Quick Note**) opens one fixed scratch file:
+
+- **No saving** — edits reach the disk about 0.35s after you stop typing, and are flushed before a tab or the window closes; no unsaved dot, no "save?" prompt
+- **Fixed location** — `<app data dir>/quicknote.md`; the menu shows where it lives and can reveal it in Explorer
+- **Pick up where you left off** — the caret lands at the end; **Insert Current Time** adds `2026-11-03 09:20`
+- **Clearing is reversible** — **Clear Quick Note** keeps a copy in Version History first
+
+It is still an ordinary Markdown tab (modes, export, search) — it just stays out of Recent and out of the restored session.
+
 ## Compare
 
 `Ctrl+D` (or `Ctrl+Shift+N`) opens the compare window. It starts empty on purpose:
@@ -129,6 +140,7 @@ The sidebar has two pages: **Outline** (highlights the section you are reading) 
 |---|---|
 | New / Open / Save / Save As | `Ctrl+N` / `Ctrl+O` / `Ctrl+S` / `Ctrl+Shift+S` |
 | Close tab / Next tab | `Ctrl+W` / `Ctrl+Tab` |
+| Open quick note | `Ctrl+Shift+M` |
 | Find / Replace / Go to line | `Ctrl+F` / `Ctrl+H` / `Ctrl+G` |
 | Command palette / Settings | `Ctrl+Shift+P` / `Ctrl+,` |
 | Format / Compare | `Ctrl+Shift+F` / `Ctrl+D` |

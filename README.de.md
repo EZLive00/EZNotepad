@@ -81,6 +81,17 @@ Die Suche läuft **im WYSIWYG** ohne Moduswechsel — Treffer werden gezeichnet,
 kennt keine Wortgrenzen) · nur in der Auswahl · `↵` fügt einen Zeilenumbruch in die Suche ein. Ein Treffer innerhalb eines
 Textlaufs wird direkt ersetzt; nur bei Fett oder Links wird der Wechsel in den Bearbeiten-Modus angeboten.
 
+## Notiz
+
+`Ctrl+Shift+M` (oder **Notiz → Notiz öffnen**) öffnet eine Notiz an einem festen Ort:
+
+- **Kein Speichern** — Änderungen gehen etwa 0,35 s nach dem letzten Tastendruck auf die Platte und werden vor dem Schließen eines Tabs oder des Fensters nachgeschrieben; kein „ungespeichert"-Punkt, keine Rückfrage
+- **Fester Ort** — `<App-Datenordner>/quicknote.md`; das Menü zeigt, wo sie liegt, und öffnet sie im Explorer
+- **Weiterschreiben, wo man aufgehört hat** — der Cursor steht am Ende; **Aktuelle Uhrzeit einfügen** setzt `2026-11-03 09:20`
+- **Leeren bleibt umkehrbar** — **Notiz leeren** legt vorher eine Kopie im Versionsverlauf ab
+
+Sie bleibt ein gewöhnlicher Markdown-Tab (Modi, Export, Suche) – erscheint aber weder unter „Zuletzt geöffnet" noch in der wiederhergestellten Sitzung.
+
 ## Vergleichen
 
 `Ctrl+D` (oder `Ctrl+Shift+N`) öffnet das Vergleichsfenster. Es startet absichtlich leer:
@@ -129,6 +140,7 @@ Die Seitenleiste hat zwei Reiter: **Gliederung** (hebt beim Scrollen den aktuell
 |---|---|
 | Neu / Öffnen / Speichern / Speichern unter | `Ctrl+N` / `Ctrl+O` / `Ctrl+S` / `Ctrl+Shift+S` |
 | Tab schließen / nächster Tab | `Ctrl+W` / `Ctrl+Tab` |
+| Notiz öffnen | `Ctrl+Shift+M` |
 | Suchen / Ersetzen / Gehe zu Zeile | `Ctrl+F` / `Ctrl+H` / `Ctrl+G` |
 | Befehlspalette / Einstellungen | `Ctrl+Shift+P` / `Ctrl+,` |
 | Formatieren / Vergleichen | `Ctrl+Shift+F` / `Ctrl+D` |

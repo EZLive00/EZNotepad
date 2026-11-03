@@ -81,6 +81,17 @@ La recherche fonctionne **en WYSIWYG** sans changer de mode — les surlignages 
 n'a pas de limites de mots) · dans la sélection · `↵` insère un saut de ligne dans la requête. Une correspondance dans un même
 morceau de texte est remplacée sur place ; seule une correspondance traversant du gras ou un lien propose le mode Édition.
 
+## Note rapide
+
+`Ctrl+Shift+M` (ou **Note rapide → Ouvrir la note rapide**) ouvre une note brouillon à emplacement fixe :
+
+- **Aucun enregistrement** — les modifications vont sur le disque environ 0,35 s après la dernière frappe, et sont écrites avant la fermeture d'un onglet ou de la fenêtre ; pas de point « non enregistré », pas de question « enregistrer ? »
+- **Emplacement fixe** — `<dossier de données>/quicknote.md` ; le menu indique où elle se trouve et permet de l'ouvrir dans l'explorateur
+- **Reprise là où vous en étiez** — le curseur se place à la fin ; **Insérer l'heure actuelle** ajoute `2026-11-03 09:20`
+- **Effacer reste réversible** — **Vider la note rapide** en garde d'abord une copie dans l'historique des versions
+
+Elle reste un onglet Markdown ordinaire (modes, export, recherche) : simplement, elle n'apparaît ni dans les fichiers récents ni dans la session restaurée.
+
 ## Comparaison
 
 `Ctrl+D` (ou `Ctrl+Shift+N`) ouvre la fenêtre de comparaison. Elle démarre vide, exprès :
@@ -131,6 +142,7 @@ La barre latérale a deux pages : **Plan** (souligne la section en cours de lect
 |---|---|
 | Nouveau / Ouvrir / Enregistrer / Enregistrer sous | `Ctrl+N` / `Ctrl+O` / `Ctrl+S` / `Ctrl+Shift+S` |
 | Fermer l'onglet / onglet suivant | `Ctrl+W` / `Ctrl+Tab` |
+| Ouvrir la note rapide | `Ctrl+Shift+M` |
 | Rechercher / Remplacer / Aller à la ligne | `Ctrl+F` / `Ctrl+H` / `Ctrl+G` |
 | Palette de commandes / Paramètres | `Ctrl+Shift+P` / `Ctrl+,` |
 | Formater / Comparer | `Ctrl+Shift+F` / `Ctrl+D` |

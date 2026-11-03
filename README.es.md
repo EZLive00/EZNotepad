@@ -81,6 +81,17 @@ La búsqueda funciona **dentro de WYSIWYG** sin cambiar de modo: los resaltados 
 el chino no tiene límites de palabra) · solo en la selección · `↵` inserta un salto de línea en la consulta. Un resultado dentro
 de un mismo tramo se reemplaza en el sitio; solo al cruzar negrita o un enlace se ofrece cambiar a Edición.
 
+## Nota rápida
+
+`Ctrl+Shift+M` (o **Nota rápida → Abrir la nota rápida**) abre una nota temporal en una ubicación fija:
+
+- **Sin guardar** — los cambios llegan al disco unos 0,35 s después de dejar de escribir, y se escriben antes de cerrar una pestaña o la ventana; sin punto de «sin guardar» y sin preguntar «¿guardar?»
+- **Ubicación fija** — `<carpeta de datos>/quicknote.md`; el menú muestra dónde está y permite abrirla en el explorador
+- **Sigue donde lo dejaste** — el cursor queda al final; **Insertar la hora actual** añade `2026-11-03 09:20`
+- **Vaciar es reversible** — **Vaciar la nota rápida** guarda antes una copia en el historial de versiones
+
+Sigue siendo una pestaña Markdown normal (modos, exportar, buscar): solo que no aparece en recientes ni en la sesión restaurada.
+
 ## Comparación
 
 `Ctrl+D` (o `Ctrl+Shift+N`) abre la ventana de comparación. Empieza vacía a propósito:
@@ -131,6 +142,7 @@ La barra lateral tiene dos páginas: **Esquema** (resalta la sección que estás
 |---|---|
 | Nuevo / Abrir / Guardar / Guardar como | `Ctrl+N` / `Ctrl+O` / `Ctrl+S` / `Ctrl+Shift+S` |
 | Cerrar pestaña / Siguiente pestaña | `Ctrl+W` / `Ctrl+Tab` |
+| Abrir la nota rápida | `Ctrl+Shift+M` |
 | Buscar / Reemplazar / Ir a línea | `Ctrl+F` / `Ctrl+H` / `Ctrl+G` |
 | Paleta de comandos / Ajustes | `Ctrl+Shift+P` / `Ctrl+,` |
 | Formatear / Comparar | `Ctrl+Shift+F` / `Ctrl+D` |
