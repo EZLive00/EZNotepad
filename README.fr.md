@@ -83,10 +83,10 @@ morceau de texte est remplacée sur place ; seule une correspondance traversant 
 
 ## Note rapide
 
-`Ctrl+Shift+M` (ou **Note rapide → Ouvrir la note rapide**) ouvre une note brouillon à emplacement fixe :
+`Ctrl+Shift+M` (ou **Note rapide** dans la barre de menus) ouvre une note brouillon à emplacement fixe :
 
 - **Aucun enregistrement** — les modifications vont sur le disque environ 0,35 s après la dernière frappe, et sont écrites avant la fermeture d'un onglet ou de la fenêtre ; pas de point « non enregistré », pas de question « enregistrer ? »
-- **Emplacement fixe** — `<dossier de données>/quicknote.md` ; le menu indique où elle se trouve et permet de l'ouvrir dans l'explorateur
+- **Emplacement fixe** — `<dossier de données>/quicknote.md` ; **Fichier → Note rapide** indique où elle se trouve et permet de l'ouvrir dans l'explorateur
 - **Reprise là où vous en étiez** — le curseur se place à la fin ; **Insérer l'heure actuelle** ajoute `2026-11-03 09:20`
 - **Effacer reste réversible** — **Vider la note rapide** en garde d'abord une copie dans l'historique des versions
 

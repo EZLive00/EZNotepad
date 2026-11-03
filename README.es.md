@@ -83,10 +83,10 @@ de un mismo tramo se reemplaza en el sitio; solo al cruzar negrita o un enlace s
 
 ## Nota rápida
 
-`Ctrl+Shift+M` (o **Nota rápida → Abrir la nota rápida**) abre una nota temporal en una ubicación fija:
+`Ctrl+Shift+M` (o **Nota rápida** en la barra de menús) abre una nota temporal en una ubicación fija:
 
 - **Sin guardar** — los cambios llegan al disco unos 0,35 s después de dejar de escribir, y se escriben antes de cerrar una pestaña o la ventana; sin punto de «sin guardar» y sin preguntar «¿guardar?»
-- **Ubicación fija** — `<carpeta de datos>/quicknote.md`; el menú muestra dónde está y permite abrirla en el explorador
+- **Ubicación fija** — `<carpeta de datos>/quicknote.md`; **Archivo → Nota rápida** muestra dónde está y permite abrirla en el explorador
 - **Sigue donde lo dejaste** — el cursor queda al final; **Insertar la hora actual** añade `2026-11-03 09:20`
 - **Vaciar es reversible** — **Vaciar la nota rápida** guarda antes una copia en el historial de versiones
 

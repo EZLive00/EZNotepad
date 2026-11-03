@@ -83,10 +83,10 @@ Textlaufs wird direkt ersetzt; nur bei Fett oder Links wird der Wechsel in den B
 
 ## Notiz
 
-`Ctrl+Shift+M` (oder **Notiz → Notiz öffnen**) öffnet eine Notiz an einem festen Ort:
+`Ctrl+Shift+M` (oder **Notiz** in der Menüleiste) öffnet eine Notiz an einem festen Ort:
 
 - **Kein Speichern** — Änderungen gehen etwa 0,35 s nach dem letzten Tastendruck auf die Platte und werden vor dem Schließen eines Tabs oder des Fensters nachgeschrieben; kein „ungespeichert"-Punkt, keine Rückfrage
-- **Fester Ort** — `<App-Datenordner>/quicknote.md`; das Menü zeigt, wo sie liegt, und öffnet sie im Explorer
+- **Fester Ort** — `<App-Datenordner>/quicknote.md`; unter **Datei → Notiz** steht, wo sie liegt, und lässt sie im Explorer öffnen
 - **Weiterschreiben, wo man aufgehört hat** — der Cursor steht am Ende; **Aktuelle Uhrzeit einfügen** setzt `2026-11-03 09:20`
 - **Leeren bleibt umkehrbar** — **Notiz leeren** legt vorher eine Kopie im Versionsverlauf ab
 

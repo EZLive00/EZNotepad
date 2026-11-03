@@ -83,10 +83,10 @@ trecho é substituído no lugar; só ao cruzar negrito ou link o app oferece o m
 
 ## Nota rápida
 
-`Ctrl+Shift+M` (ou **Nota rápida → Abrir a nota rápida**) abre uma nota temporária num local fixo:
+`Ctrl+Shift+M` (ou **Nota rápida** na barra de menus) abre uma nota temporária num local fixo:
 
 - **Sem salvar** — as alterações vão para o disco cerca de 0,35 s depois de parar de digitar, e são gravadas antes de fechar uma aba ou a janela; sem ponto de «não salvo» e sem perguntar «salvar?»
-- **Local fixo** — `<pasta de dados>/quicknote.md`; o menu mostra onde ela está e abre no explorador
+- **Local fixo** — `<pasta de dados>/quicknote.md`; **Arquivo → Nota rápida** mostra onde ela está e abre no explorador
 - **Continue de onde parou** — o cursor fica no fim; **Inserir a hora atual** acrescenta `2026-11-03 09:20`
 - **Limpar é reversível** — **Limpar a nota rápida** guarda antes uma cópia no histórico de versões
 
