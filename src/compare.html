@@ -22,6 +22,9 @@
 
     <div class="cmp-slots" data-tauri-drag-region>
       <button class="cmp-slot" id="slotL" title="选择左侧文件" data-i18n-title="选择左侧文件">
+        <svg class="cmp-ico cmp-slot-ico" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 6a1 1 0 0 1 1-1h4.6l2 2H19a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1Z" />
+        </svg>
         <span class="cmp-dot" id="dotL"></span>
         <span class="cmp-slot-name" id="nameL">左侧未选择</span>
       </button>
@@ -31,6 +34,9 @@
         </svg>
       </button>
       <button class="cmp-slot" id="slotR" title="选择右侧文件" data-i18n-title="选择右侧文件">
+        <svg class="cmp-ico cmp-slot-ico" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 6a1 1 0 0 1 1-1h4.6l2 2H19a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1Z" />
+        </svg>
         <span class="cmp-dot" id="dotR"></span>
         <span class="cmp-slot-name" id="nameR">右侧未选择</span>
       </button>
@@ -40,8 +46,9 @@
       <button class="cmp-wbtn" id="wmin" title="最小化" data-i18n-title="最小化">
         <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 6h7" /></svg>
       </button>
-      <button class="cmp-wbtn" id="wmax" title="最大化 / 还原" data-i18n-title="最大化 / 还原">
-        <svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2.5" y="2.5" width="7" height="7" /></svg>
+      <button class="cmp-wbtn" id="wmax" title="还原" data-i18n-title="还原">
+        <svg class="i-max" viewBox="0 0 12 12" aria-hidden="true"><rect x="2.5" y="2.5" width="7" height="7" /></svg>
+        <svg class="i-restore" viewBox="0 0 12 12" aria-hidden="true"><rect x="2.5" y="4.5" width="5" height="5" /><path d="M4.5 4.5v-2h5v5h-2" /></svg>
       </button>
       <button class="cmp-wbtn danger" id="wclose" title="关闭" data-i18n-title="关闭">
         <svg viewBox="0 0 12 12" aria-hidden="true"><path d="m3 3 6 6M9 3 3 9" /></svg>
@@ -51,7 +58,7 @@
 
   <!-- 第二行：统计 + 选项 + 导航 + 动作 -->
   <div class="cmp-tools" id="tools">
-    <span class="cmp-stat" id="stat">选两个文件，或者直接粘贴两段文本</span>
+    <span class="cmp-stat" id="stat">把两段文本分别粘到左右两侧，或者点上面的文件名打开文件</span>
     <span class="cmp-cur" id="curInfo"></span>
     <div class="cmp-tools-gap"></div>
 
@@ -63,7 +70,6 @@
 
     <button class="cmp-btn" id="prev" title="上一处差异 (Shift+F7)" data-i18n-title="上一处差异 (Shift+F7)"><svg class="cmp-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="m18 15-6-6-6 6" /></svg><span data-i18n="上一处">上一处</span></button>
     <button class="cmp-btn" id="next" title="下一处差异 (F8)" data-i18n-title="下一处差异 (F8)"><svg class="cmp-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg><span data-i18n="下一处">下一处</span></button>
-    <button class="cmp-btn" id="pushBtn" title="把这一处差异整段同步到右侧 (Alt+→)" disabled><svg class="cmp-ico" id="pushIco" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h15M13 6l6 6-6 6" /></svg><span id="pushLabel" data-i18n="复制到右侧">复制到右侧</span></button>
     <button class="cmp-btn" id="listBtn" title="差异清单：按位置 / 类型 / 行数排序，可筛选" data-i18n-title="差异清单：按位置 / 类型 / 行数排序，可筛选" aria-expanded="false" aria-controls="listPanel"><svg class="cmp-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01" /></svg><span data-i18n="差异清单">差异清单</span></button>
     <button class="cmp-btn" id="findBtn" title="在两侧查找 (Ctrl+F)" data-i18n-title="在两侧查找 (Ctrl+F)" data-i18n-aria="查找"><svg class="cmp-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg><span data-i18n="查找">查找</span></button>
 
@@ -107,7 +113,19 @@
       </div>
     </section>
 
-    <div class="cmp-div"></div>
+    <!-- 中间那道缝：「把这一处推到另一侧」的箭头常驻在这里，跟着当前差异块
+         上下走。以前它在工具栏上，鼠标得从正文跑回顶上再跑回来 —— 而这是
+         对比窗口里用得最多的动作。箭头指向哪一侧就推到哪一侧。 -->
+    <div class="cmp-div" id="gutter">
+      <div class="cmp-gut" id="gutPair" hidden>
+        <button class="cmp-arrow" id="pushLeft" title="把这一处复制到左侧 (Alt+←)" data-i18n-title="把这一处复制到左侧 (Alt+←)" aria-label="复制到左侧">
+          <svg class="cmp-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12H5M11 6l-6 6 6 6" /></svg>
+        </button>
+        <button class="cmp-arrow" id="pushRight" title="把这一处复制到右侧 (Alt+→)" data-i18n-title="把这一处复制到右侧 (Alt+→)" aria-label="复制到右侧">
+          <svg class="cmp-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h15M13 6l6 6-6 6" /></svg>
+        </button>
+      </div>
+    </div>
 
     <section class="cmp-pane" id="paneR">
       <div class="cmp-ph">
@@ -164,17 +182,6 @@
     <div class="cmp-list-bd" id="listBody"></div>
   </div>
 
-  <div class="cmp-empty" id="empty">
-    <div class="cmp-empty-box">
-      <div class="cmp-empty-t" data-i18n="没有可对比的内容">没有可对比的内容</div>
-      <div class="cmp-empty-s" data-i18n="选两个文件，或者直接粘贴两段文本">选两个文件，或者直接粘贴两段文本</div>
-      <div class="cmp-empty-btns">
-        <button class="cmp-btn primary" id="pickL" data-i18n="选择左侧文件">选择左侧文件</button>
-        <button class="cmp-btn primary" id="pickR" data-i18n="选择右侧文件">选择右侧文件</button>
-        <button class="cmp-btn" id="pastePair" title="两侧都开成空白文本，直接 Ctrl+V 粘进来对比" data-i18n-title="两侧都开成空白文本，直接 Ctrl+V 粘进来对比" data-i18n="粘贴两段文本">粘贴两段文本</button>
-      </div>
-    </div>
-  </div>
 </div>
 
 <div id="toasts"></div>

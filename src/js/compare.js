@@ -278,10 +278,9 @@ function rowClass(row, i, side) {
   const cls = ['cmp-row'];
   if (isDiff) cls.push('diff');
   if (!cell) cls.push('void');
-  if (isDiff) {
-    if (i === 0 || S.rows[i - 1].kind === 'same') cls.push('b-start');
-    if (i === S.rows.length - 1 || S.rows[i + 1].kind === 'same') cls.push('b-end');
-  }
+  /* 类型要单独一个类：只改字的话，红字范围得区分「整行都是新增/删除」
+     和「这一行只有几个字不一样」，光一个 .diff 分不出来 */
+  if (row.kind !== 'same') cls.push('k-' + row.kind);
   return cls.join(' ');
 }
 
@@ -369,9 +368,8 @@ function render(force = false) {
   updateCurBox();
   updateStats();
   updateMeta();
-  syncPush();
+  syncGutter();
   drawRuler();
-  updateEmpty();
   renderList();
 }
 
@@ -394,17 +392,14 @@ function updateCurBox() {
 }
 
 function updateStats() {
-  const hasL = S.sides.l.loaded, hasR = S.sides.r.loaded;
-  if (!hasL && !hasR) {
-    $('stat').textContent = tt('选两个文件，或者直接粘贴两段文本');
+  /* 两侧都还是空的：说清楚下一步做什么，别报「完全一致」——
+     那是「比过了，一样」，而这里根本还没有内容可比 */
+  if (isBlankSide('l') && isBlankSide('r')) {
+    $('stat').textContent = tt('把两段文本分别粘到左右两侧，或者点上面的文件名打开文件');
     $('curInfo').textContent = '';
-    $('listBtn').disabled = true;
-    if (S.list.open) toggleList(false);
-    return;
-  }
-  if (!hasL || !hasR) {
-    $('stat').textContent = tt('只打开了一侧：可以当并排阅读器用，选另一侧即开始对比');
-    $('curInfo').textContent = '';
+    $('prev').disabled = true;
+    $('next').disabled = true;
+    $('report').disabled = true;
     $('listBtn').disabled = true;
     if (S.list.open) toggleList(false);
     return;
@@ -436,6 +431,12 @@ function updateStats() {
  * 逐行比字符串引用就够 —— slice() 只复制数组，没改过的行还是同一批字符串对象，
  * 8MB / 5 万行的文件也不会为此多存一份拼好的长字符串。
  */
+/** 这一侧是不是「空白文本」：没有对应文件，也没写过内容 */
+const isBlankSide = (k) => {
+  const st = S.sides[k];
+  return !st.path && st.lines.length === 1 && st.lines[0] === '';
+};
+
 function sameAsBase(st) {
   const a = st.base;
   const b = st.lines;
@@ -509,10 +510,16 @@ function updateMeta() {
       nameEl.textContent = st.path ? st.name : (side === 'l' ? tt('左侧文本') : tt('右侧文本'));
       nameEl.title = st.path || '';
       phEl.textContent = nameEl.textContent;
+      /* 空白的一侧不报「1 行 · 未保存」：一个字都没写，「未保存」既不是事实
+         也没有下一步可做，只是噪声 */
+      if (isBlankSide(side)) {
+        metaEl.textContent = '';
+        continue;
+      }
       const n = st.lines.length;
       metaEl.textContent = tt('{n} 行', { n }) + (st.path ? ' · ' + st.enc + (st.eol === '\r\n' ? ' · CRLF' : '') : '');
       /* 文本侧（无文件）永远存不进磁盘，标脏时也只是提醒「还没落盘过」 */
-      if (!st.path || st.dirty) metaEl.textContent += ' · ' + tt('未保存');
+      if (st.dirty) metaEl.textContent += ' · ' + tt('未保存');
     } else {
       nameEl.textContent = (side === 'l' ? tt('左侧') : tt('右侧')) + tt('未选择');
       nameEl.title = '';
@@ -553,11 +560,6 @@ function syncTitle() {
 function updateDots() {
   $('dotL').classList.toggle('on', S.sides.l.dirty);
   $('dotR').classList.toggle('on', S.sides.r.dirty);
-}
-
-function updateEmpty() {
-  const empty = !S.sides.l.loaded && !S.sides.r.loaded;
-  $('empty').hidden = !empty;
 }
 
 /* ---------------- 差异清单 ----------------
@@ -644,13 +646,8 @@ function showWarn(text) {
   S.warn = text || '';
   $('warnText').textContent = S.warn;
   $('warn').hidden = !S.warn;
-  /* 提示条会挤占正文：空状态整体下移，预览条高度也要重算。
-     高度取实测值 —— 文案长短不同会换行，写死一个数会差几像素。 */
-  requestAnimationFrame(() => {
-    const h = $('warn').hidden ? 0 : Math.round($('warn').getBoundingClientRect().height) + 8;
-    document.body.style.setProperty('--cmp-warn-h', h + 'px');
-    if (was !== !!S.warn) render(true);
-  });
+  /* 提示条会挤占正文（它在 flex 列里占一行），预览条高度要跟着重算 */
+  if (was !== !!S.warn) requestAnimationFrame(() => render(true));
 }
 
 /* ---------------- 预览条 ----------------
@@ -711,6 +708,41 @@ function rulerGeom(force = false) {
   return rulerCache;
 }
 
+/* 预览条上的差异标记。每一行一条：轨道是 1:1 时逐行 1px；文档长到一行
+   分不到 2.5px 时，行与行之间已经挤不下缝，只能按段并成一条（仍然是细的）。
+   结果按「版本 / 总行数 / 轨道高 / 当前块」缓存 —— 滚动时几何不变，
+   每帧重算几万条会让滚动发黏。 */
+let markCache = null;
+
+function diffMarks(total, per, h) {
+  const key = `${S.ver}:${total}:${h}:${S.cur}`;
+  if (markCache && markCache.key === key) return markCache.marks;
+
+  /* 整份文件都不一样时逐行画既没意义也画不动：>4000 条就退回按块 */
+  let lines = 0;
+  for (const it of S.items) {
+    const a = vposOf(it.start), b = vposOf(it.end);
+    if (a >= 0 && b >= 0) lines += b - a + 1;
+    if (lines > 4000) break;
+  }
+  const perLine = per >= 2.5 && lines <= 4000;
+
+  const marks = [];
+  for (const it of S.items) {
+    const vs = vposOf(it.start);
+    const ve = vposOf(it.end);
+    if (vs < 0 || ve < 0) continue;
+    const cur = it.index === S.cur;
+    if (perLine) {
+      for (let v = vs; v <= ve; v++) marks.push({ y: Math.round(v * per), h: 1, cur });
+    } else {
+      marks.push({ y: vs * per, h: Math.max(1, (ve - vs + 1) * per), cur });
+    }
+  }
+  markCache = { key, marks };
+  return marks;
+}
+
 function drawRuler() {
   const { box, cv, top, h, contentH, viewH, total } = rulerGeom();
   const w = Math.max(1, Math.round(box.clientWidth));
@@ -738,34 +770,13 @@ function drawRuler() {
   const per = h / total;
   const sc = el('l', 'scroll');
 
-  /* 差异段。直接用 recompute 折好的 S.items：每帧扫 5 万行去拼段，
-     光这一步就能吃掉十几毫秒，滚动会明显发黏。
-     密集处（每两行一处）几千个 3px 方块会叠成一整条红 —— 那本来就是实话，
-     但逐块 fill 太碎，先把间距不足 1px 的合并成一段，再统一上色。 */
-  const segs = [];
-  for (const it of S.items) {
-    /* it.start / it.end 是模型下标，画在屏幕上要换成行位 */
-    const vs = vposOf(it.start);
-    const ve = vposOf(it.end);
-    if (vs < 0 || ve < 0) continue;
-    const y = top + vs * per;
-    const hh = Math.max(4, (ve - vs + 1) * per);
-    const last = segs[segs.length - 1];
-    if (last && y <= last.y + last.h + .75) {
-      last.h = Math.max(last.h, y + hh - last.y);
-      last.cur = last.cur || it.index === S.cur;
-    } else {
-      segs.push({ y, h: hh, cur: it.index === S.cur });
-    }
-  }
-  for (const s of segs) {
-    /* 当前这处差异压得宽一点（左右各多 3px），像夹子夹住它。
-       只靠蓝色不够：色弱、或者屏上只有一条窄缝时，宽度差比色相差更靠得住。 */
-    g.fillStyle = s.cur ? ACCENT : RED;
-    const w2 = s.cur ? tw + 6 : tw;
-    const x2 = s.cur ? tx - 3 : tx;
-    roundRect(g, x2, s.y, w2, s.h, Math.min(3, s.h / 2));
-    g.fill();
+  /* 差异：一行一条细线。
+     原先按「差异块」画粗红段 —— 一段 20 行就是一根 20px 高的柱子，看着像
+     滚动条的影子，也分不清是哪几行。改成逐行 1px 之后，「有多少行不一样、
+     密不密」能直接数出来，色块感没了。 */
+  for (const mk of diffMarks(total, per, h)) {
+    g.fillStyle = mk.cur ? ACCENT : RED;
+    g.fillRect(tx, top + mk.y, tw, mk.h);
   }
 
   /* 视口框：内容装得下一屏时不画 —— 那时整条轨道就是视口，
@@ -881,6 +892,7 @@ function bindScroll(side) {
     renderRows(other);
     followScroll();          // 先定「当前是第几处」，预览条上的蓝段才不会落后一帧
     drawRuler();
+    syncGutter();            // 箭头跟着当前这一处走，滚动时也要跟
   }, { passive: true });
 }
 
@@ -1028,28 +1040,38 @@ async function loadSide(side, path, opts = {}) {
     st.undoAt = 0;
   }
 
+  /* 读不进来时这一侧留成**空白的可写区**，不留上一轮的内容、也不留一块
+     点不动的死区：原因已经在提示条里说了，能继续写才有下一步可做 */
+  const failed = (msg) => {
+    showWarn(msg);
+    toast(msg);
+    if (opts.reset) blankSide(side);
+    if (!opts.defer) {
+      S.pending = null;
+      S.ver++;
+      recompute();
+      render(true);
+      updateMeta();
+    }
+    return false;
+  };
+
   /* 先问大小再读：几百 MB 的文件读进内存再放弃，代价比一次 metadata 大得多 */
   let size = 0;
   try { size = await be.fileSize(path); } catch { size = 0; }
   if (size > MAX_BYTES) {
-    const msg = tt('{name} 太大：{size}，上限 {limit}。请拆分后再比较。', {
+    return failed(tt('{name} 太大：{size}，上限 {limit}。请拆分后再比较。', {
       name, size: fmtSize(size), limit: fmtSize(MAX_BYTES),
-    });
-    showWarn(msg);
-    toast(msg);
-    return false;
+    }));
   }
 
   try {
     const r = await be.readText(path);
     const lines = String(r.content).replace(/\r\n?/g, '\n').split('\n');
     if (lines.length > MAX_LINES) {
-      const msg = tt('{name} 行数太多：{n} 行，上限 {max} 行。请拆分后再比较。', {
+      return failed(tt('{name} 行数太多：{n} 行，上限 {max} 行。请拆分后再比较。', {
         name, n: lines.length, max: MAX_LINES,
-      });
-      showWarn(msg);
-      toast(msg);
-      return false;
+      }));
     }
     st.path = r.path;
     st.name = r.name;
@@ -1064,8 +1086,7 @@ async function loadSide(side, path, opts = {}) {
     st.redo.length = 0;
     st.undoAt = 0;
   } catch (e) {
-    toast(tt('读取失败：') + e);
-    return false;
+    return failed(tt('读取失败：') + e);
   }
   if (opts.defer) return true;    // 成对打开时交给 loadPair 统一算一次
 
@@ -1089,6 +1110,12 @@ async function loadPair(left, right) {
   if (left) got = (await loadSide('l', left, { defer: true, reset: true })) || got;
   if (right) got = (await loadSide('r', right, { defer: true, reset: true })) || got;
   if (asked) {
+    /* 只给了一个文件时，另一侧补成空白文本：两侧永远都是可写的编辑区，
+       想拿另一份文件比就点槽位、想贴一段就 Ctrl+V。留一半「未选择」的话，
+       用户还得先找到入口才能开始 —— 那正是要消掉的二次选择。
+       读失败时也一样：把那一侧留成空白的可写区，比留一句错误、一块
+       点不动的死区更有用（原因已经在提示条里说过了）。 */
+    for (const side of ['l', 'r']) if (!S.sides[side].loaded) blankSide(side);
     /* 上万行时先让「正在比较」这一帧画出来再算：同步计算会把整段
        绘制一起挡住，看上去就是点了没反应 */
     const n = Math.max(S.sides.l.lines.length, S.sides.r.lines.length);
@@ -1110,17 +1137,12 @@ async function loadPair(left, right) {
        误改有三层兜底：行上的脏标记、「Ctrl+Z」、关窗前确认。 */
     if (got && !S.edit) setEdit(true);
   }
-  updateEmpty();
 }
 
-/**
- * 没有文件也能比：把一侧开成空白文本，进编辑模式并把光标落进去，
- * 用户随后 Ctrl+V 粘进来就行（多行粘贴由 onInput 按行拆开并进模型）。
- * 这一侧已经有文件时只切编辑，不冲掉内容。
- */
-function startText(side) {
+/** 把一侧设成「空白文本」：loaded 但不属于任何文件，也永远存不进磁盘 */
+function blankSide(side) {
   const st = S.sides[side];
-  if (st.path) { setEdit(true); focusAt(side, 1, 0); return; }
+  st.path = '';
   st.name = '';
   st.loaded = true;
   st.lines = [''];
@@ -1132,20 +1154,35 @@ function startText(side) {
   st.undo.length = 0;
   st.redo.length = 0;
   st.undoAt = 0;
+}
+
+/**
+ * 没有文件也能比：把一侧开成空白文本，进编辑模式并把光标落进去，
+ * 用户随后 Ctrl+V 粘进来就行（多行粘贴由 onInput 按行拆开并进模型）。
+ * 这一侧已经有文件时只切编辑，不冲掉内容。
+ */
+function startText(side) {
+  if (S.sides[side].path) { setEdit(true); focusAt(side, 1, 0); return; }
+  blankSide(side);
   S.pending = null;
   S.ver++;
   recompute();
   render(true);
   updateMeta();
-  updateEmpty();
   setEdit(true);
   focusAt(side, 1, 0);
 }
 
-/** 空状态里的「直接粘贴两段文本」：两侧都开白，最后把光标落在左侧 */
+/** 打开窗口的默认状态：两侧都是空白编辑区，光标落在左侧，直接粘就行 */
 function startPairText() {
-  startText('l');
-  startText('r');
+  blankSide('l');
+  blankSide('r');
+  S.pending = null;
+  S.ver++;
+  recompute();
+  render(true);
+  updateMeta();
+  setEdit(true);
   focusAt('l', 1, 0);
 }
 
@@ -1675,17 +1712,34 @@ function pushBlock(dst, advance = false) {
   if (advance) gotoBlock(Math.min(S.cur, S.blocks.length - 1));
 }
 
-/** 按钮的方向：光标在哪一侧，就推向另一侧 */
-function syncPush() {
-  const btn = $('pushBtn');
-  if (!btn) return;
-  const src = activeSide(null);
-  const toLeft = src === 'r';
-  const side = toLeft ? tt('左侧') : tt('右侧');
-  $('pushLabel').textContent = toLeft ? tt('复制到左侧') : tt('复制到右侧');
-  btn.title = tt('把这一处差异整段同步到{side} (Alt+{key})', { side, key: toLeft ? '←' : '→' });
-  $('pushIco').classList.toggle('flip', toLeft);
-  btn.disabled = !S.edit || !(S.sides.l.loaded && S.sides.r.loaded) || !S.blocks.length;
+/**
+ * 中间那对箭头：只在「两侧都有内容、开着编辑、且确实有差异」时出现。
+ * 纵向跟着**当前这一处**差异走 —— 它就在读者眼睛附近，不用把鼠标从正文
+ * 拖回工具栏。当前块滚出视口时夹在可见范围里，仍然能点。
+ * （原来它是工具栏上的一个按钮，文字还得随光标所在侧在「复制到左/右」之间
+ * 翻转，一个按钮说两件事，两边都不清楚。）
+ */
+function syncGutter() {
+  const pair = $('gutPair');
+  if (!pair) return;
+  const show = S.edit && S.sides.l.loaded && S.sides.r.loaded && S.blocks.length > 0;
+  pair.hidden = !show;
+  if (!show) return;
+
+  const main = $('main');
+  const sc = el('l', 'scroll');
+  const headTop = Math.max(0, Math.round(sc.getBoundingClientRect().top - main.getBoundingClientRect().top));
+  const boxH = pair.offsetHeight || 38;
+  const [cs, ce] = blockRange(S.cur);
+  const vs = cs < 0 ? -1 : vposOf(cs);
+  const ve = cs < 0 ? -1 : vposOf(ce);
+  let center = headTop + sc.clientHeight / 2;       // 当前块看不见时落在正中
+  if (vs >= 0 && ve >= 0) {
+    center = headTop + vs * ROW_H + ((Math.max(vs, ve) - vs + 1) * ROW_H) / 2 - sc.scrollTop;
+  }
+  const top = clamp(center - boxH / 2, headTop + 2,
+    Math.max(headTop + 2, headTop + sc.clientHeight - boxH - 2));
+  pair.style.top = Math.round(top) + 'px';
 }
 
 function onKey(e) {
@@ -1857,11 +1911,24 @@ function bind() {
   // （tao 的 MAXIMIZED 标志位在窗口可见前就被写脏了），改成 Rust 侧切两个矩形。
   const w = (() => { try { return getCurrentWindow(); } catch { return null; } })();
   if (w) {
-    let filled = true;               // 打开时就是铺满的，见 lib.rs
+    /* 打开时就是铺满的（见 lib.rs），所以按钮初始显示「还原」。
+       图标和 title 一起切：光换图标不换提示，悬停时说的还是上一步的话。 */
+    let filled = true;
+    const syncFillBtn = () => {
+      const b = $('wmax');
+      b.classList.toggle('restored', filled);
+      const label = filled ? tt('还原') : tt('最大化');
+      b.title = label;
+      b.setAttribute('data-i18n-title', label);
+      b.setAttribute('aria-label', label);
+    };
+    syncFillBtn();
     $('wmin').onclick = () => w.minimize();
     $('wmax').onclick = () => {
+      const was = filled;
       filled = !filled;
-      be.setCompareFill(filled).catch(() => { filled = !filled; });
+      syncFillBtn();
+      be.setCompareFill(filled).catch(() => { filled = was; syncFillBtn(); });
     };
     /* 关闭统一走 close()，由 onCloseRequested 判一次脏 —— 右上角 ×、Alt+F4、
        任务栏关闭都从同一个口过，不靠「点按钮时才检查」。 */
@@ -1889,8 +1956,6 @@ function bind() {
 
   $('slotL').onclick = pickSide('l');
   $('slotR').onclick = pickSide('r');
-  $('pickL').onclick = pickSide('l');
-  $('pickR').onclick = pickSide('r');
 
   $('swap').onclick = () => {
     if (!S.sides.l.loaded && !S.sides.r.loaded) return;
@@ -1916,12 +1981,14 @@ function bind() {
 
   $('prev').onclick = () => gotoBlock(S.cur - 1);
   $('next').onclick = () => gotoBlock(S.cur + 1);
-  $('pushBtn').onclick = () => pushBlock(activeSide(null) === 'r' ? 'l' : 'r');
-  /* 点进哪一栏，就把「当前侧」记成哪一栏，顺便把同步按钮的方向翻过来 */
+  /* 缝里的两个箭头：箭头指向哪一侧，就把这一处推到哪一侧。
+     不做「跟光标方向」那套 —— 箭头本身已经把方向说清楚了。 */
+  $('pushLeft').onclick = () => pushBlock('l');
+  $('pushRight').onclick = () => pushBlock('r');
+  /* 点进哪一栏，就把「当前侧」记成哪一栏：撤销要按它找历史 */
   document.addEventListener('focusin', (e) => {
     const host = e.target && e.target.closest && e.target.closest('.cmp-tx');
     if (host) S.lastSide = sideOf(host);
-    syncPush();
   });
   $('save').onclick = save;
   $('report').onclick = saveReport;
@@ -1947,15 +2014,11 @@ function bind() {
     if (it) gotoBlock(+it.dataset.i);
   });
 
-  /* 编辑开关抽成函数：空状态「直接粘贴文本」也要进同一个状态机。
-     两侧都空时点「编辑」，直接当成「我要粘两段文本」处理 —— 比弹一句
-     「先选文件」有用得多 */
+  /* 编辑开关抽成函数，别处也要进同一个状态机 */
   $('toggleEdit').onclick = () => {
-    if (!S.sides.l.loaded && !S.sides.r.loaded) { startPairText(); return; }
     setEdit(!S.edit);
     toast(S.edit ? tt('编辑已打开：直接改字，Ctrl+S 写回磁盘') : tt('编辑已关闭'));
   };
-  $('pastePair').onclick = startPairText;
   $('sortBtn').onclick = () => sortSides();
   /* 工具栏上的后悔药：跟 Ctrl+Z / Ctrl+Y 走同一套逻辑，不是第二套实现 */
   $('undoBtn').onclick = () => doUndo(false);
@@ -2116,7 +2179,9 @@ function bind() {
 function pickSide(side) {
   return async () => {
     const p = await be.pickFile(side === 'l' ? tt('选择左侧文件') : tt('选择右侧文件'));
-    if (p) { showWarn(''); await loadSide(side, p); }
+    /* reset：选中的文件读不进来时，这一侧要清空成空白，不能留着上一个文件
+       继续和新文件比 —— 那种「看起来正常」的结论比报错危险得多 */
+    if (p) { showWarn(''); await loadSide(side, p, { reset: true }); }
   };
 }
 
@@ -2150,6 +2215,9 @@ function pickSide(side) {
 
   let req = null;
   try { req = await invoke('take_compare_request'); } catch { req = null; }
+  /* 没带文件打开时直接给两个空白编辑区：对比窗口最常用的用法是「贴两段文本
+     比一比」，先摆一屏「选择左侧文件 / 选择右侧文件」等于让人先点两次才开始。
+     带了文件（工具栏 / 右键 / --compare）才展示文件内容。 */
   if (req && (req.left || req.right)) await loadPair(req.left, req.right);
-  else updateEmpty();
+  else startPairText();
 })();

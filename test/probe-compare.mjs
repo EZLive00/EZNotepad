@@ -365,7 +365,10 @@ try {
   ok('超限时显示警示条', !over.warnHidden, JSON.stringify(over.warn));
   ok('警示条写明行列数与上限', /60001/.test(over.warn) && /50000/.test(over.warn), over.warn);
   ok('超限的一侧没有被加载', over.nameL !== 'over.txt', `nameL=${over.nameL}`);
-  ok('失败侧不会留着上一轮的旧文件', /只打开了一侧/.test(over.stat), over.stat);
+  /* 失败的一侧清成空白可写区：既不留上一轮的旧文件（那会给出一个看似正常的
+     结论），也不留一块点不动的死区 —— 原因已经在警示条里说清楚了 */
+  const overLeft = await cmp.ev(`[...document.querySelectorAll('#rowsL .cmp-tx')].map((e) => e.textContent).join('').trim()`);
+  ok('失败侧清成空白，不留上一轮的旧文件', overLeft === '' && /仅右/.test(over.stat), `${over.stat} left=${JSON.stringify(overLeft)}`);
   cmp.close();
 
   /* ---------- 6. 编辑：三击选中一行，按 Backspace / Delete ----------
@@ -805,9 +808,9 @@ try {
      不属于任何行；② blur 时同步重建 DOM，把「正要被点中的那一行」从文档里
      摘掉（只有先打过字、有 pending 时才复现）。 */
   const openBlank = async () => {
-    /* 对比窗口是复用的：上一次打开的文件还挂在里面，而「直接粘贴两段文本」
-       只负责进编辑态、不清内容。所以先关窗再开，拿一个真正空白的窗口，
-       否则粘贴会接在上一轮的正文后面，断言就全错了。 */
+    /* 对比窗口是复用的：上一次打开的文件还挂在里面。先关窗再开，拿一个
+       真正空白的窗口 —— 默认状态本身就是「两侧空白 + 可写 + 光标在左侧」，
+       不用再点任何按钮。 */
     const old = (await targets()).find((t) => /compare\.html/.test(t.url));
     if (old) {
       const prev = await connect(old.webSocketDebuggerUrl);
@@ -821,7 +824,6 @@ try {
     await sleep(1600);
     if (cmp) cmp.close();
     cmp = await connect((await compareTarget()).webSocketDebuggerUrl);
-    await cmp.ev(`document.getElementById('pastePair').click()`);
     await sleep(350);
   };
   const clickXY = async (x, y) => {
@@ -846,6 +848,20 @@ try {
   })()`);
 
   await openBlank();
+  /* 打开就是两个空白编辑区：不再有「选择左侧文件 / 选择右侧文件 / 粘贴两段
+     文本」那一步 —— 用户点「对比」就是想贴两段东西比一比，让他先做两次选择
+     才给一块能写的区域，等于把入口藏起来了。 */
+  const blank0 = await cmp.ev(`({
+    editable: document.querySelectorAll('#rowsL .cmp-tx[contenteditable]').length,
+    noEmpty: !document.getElementById('empty'),
+    focusInCell: !!(document.activeElement && document.activeElement.closest && document.activeElement.closest('.cmp-tx')),
+    stat: document.getElementById('stat').textContent,
+  })`);
+  ok('打开对比窗口就是两侧空白、直接可写', blank0.editable >= 1 && blank0.noEmpty, JSON.stringify(blank0));
+  ok('光标已经在左侧正文里（可以直接粘）', blank0.focusInCell === true, JSON.stringify(blank0));
+  ok('两侧都空时不报「完全一致」，而是说下一步做什么',
+    /粘|打开文件/.test(blank0.stat) && !/一致/.test(blank0.stat), blank0.stat);
+
   await cmp.send('Input.insertText', { text: 'aaa\nbbb\nccc\nddd\neee\n' });
   await sleep(800);
   const v13 = await viewL();
@@ -990,6 +1006,66 @@ try {
   ok('预览条把三种颜色各自代表什么写清楚',
     /灰/.test(rulerTitle) && /红/.test(rulerTitle) && /蓝/.test(rulerTitle), rulerTitle);
 
+  /* 差异在预览条上是「一行一条细线」，不是粗红块：一段 20 行的差异画成一根
+     20px 高的柱子，看着像滚动条的影子，也分不清是哪几行。
+     用 10 行、改 3 行的小文件量：每一行分到 20px，正好能逐行画。 */
+  fs.writeFileSync(p('thin-a.txt'), Array.from({ length: 10 }, (_, i) => `行 ${i + 1}`).join('\n') + '\n', 'utf8');
+  fs.writeFileSync(p('thin-b.txt'),
+    ['行 1', '行 2改', '行 3', '行 4', '行 5改', '行 6', '行 7', '行 8', '行 9', '行 10改'].join('\n') + '\n', 'utf8');
+  await openPair(p('thin-a.txt'), p('thin-b.txt'));
+  const thin = await cmp.ev(`(() => {
+    const cv = document.getElementById('rulerC');
+    const g = cv.getContext('2d');
+    const x = Math.floor(cv.width / 2);
+    const d = g.getImageData(x, 0, 1, cv.height).data;
+    const runs = []; let run = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      const [r, gg, b, a] = [d[i], d[i + 1], d[i + 2], d[i + 3]];
+      const colored = a > 200 && Math.max(r, gg, b) - Math.min(r, gg, b) > 30;
+      if (colored) run++;
+      else if (run) { runs.push(run); run = 0; }
+    }
+    if (run) runs.push(run);
+    return { runs, dpr: window.devicePixelRatio || 1 };
+  })()`);
+  ok('预览条上的差异是一行一条细线（3 处差异 = 3 条）',
+    thin.runs.length === 3, JSON.stringify(thin));
+  ok('每条都是 1px 级，不是粗色块',
+    thin.runs.every((n) => n <= Math.ceil(thin.dpr) + 1), JSON.stringify(thin));
+
+  /* 差异的写法：只把字标红，不铺底色、不画色块。
+     改行只红差异片段，新增/删除的整行都红 —— 一屏几十处差异时，
+     铺底色会让整页发红，反而看不出是哪几个字变了。 */
+  fs.writeFileSync(p('paint-a.txt'), '甲\n乙\n丙\n', 'utf8');
+  fs.writeFileSync(p('paint-b.txt'), '甲\n乙改\n丙\n丁\n', 'utf8');
+  await openPair(p('paint-a.txt'), p('paint-b.txt'));
+  const paint = await cmp.ev(`(() => {
+    /* 右侧那行的「改」才是新增的字，左侧整行没有差异片段 —— 取有 mark 的那侧 */
+    const rowChg = [...document.querySelectorAll('#rowsR .cmp-row')].find((r) => r.classList.contains('k-chg'));
+    const rowAdd = [...document.querySelectorAll('#rowsR .cmp-row')].find((r) => r.classList.contains('k-add'));
+    const mark = rowChg && rowChg.querySelector('mark');
+    return {
+      rowBg: rowChg && getComputedStyle(rowChg).backgroundColor,
+      markColor: mark && getComputedStyle(mark).color,
+      markBg: mark && getComputedStyle(mark).backgroundColor,
+      addColor: rowAdd && getComputedStyle(rowAdd.querySelector('.cmp-tx')).color,
+      addBg: rowAdd && getComputedStyle(rowAdd).backgroundColor,
+    };
+  })()`);
+  /* 红不红按「红明显高于绿蓝」判，不写死色值：明暗两套主题的红不一样 */
+  const isRed = (c) => {
+    const m = String(c).match(/rgba?\((\d+), (\d+), (\d+)/);
+    if (!m) return false;
+    const [r, g, b] = [+m[1], +m[2], +m[3]];
+    return r - g > 100 && r - b > 100;
+  };
+  ok('差异行不铺底色', /rgba\(0, 0, 0, 0\)|transparent/.test(String(paint.rowBg)), String(paint.rowBg));
+  ok('改行只把差异片段标红，片段本身也没有底色',
+    isRed(paint.markColor) && /rgba\(0, 0, 0, 0\)|transparent/.test(String(paint.markBg)),
+    `${paint.markColor} / ${paint.markBg}`);
+  ok('新增的整行都标红', isRed(paint.addColor) && /rgba\(0, 0, 0, 0\)|transparent/.test(String(paint.addBg)),
+    `${paint.addColor} / ${paint.addBg}`);
+
   /* ---------- 16. 只读态：能选中、能复制，只是不能改 ----------
      「没法选中」有两种含义：占位行那种是真不能点，另一种是只读态下拖选不出选区。
      后者是看差异最常用的动作（选一段去搜、去复制），必须一直成立。 */
@@ -1012,18 +1088,46 @@ try {
      光标在哪一侧。以前没有这个动作 —— 改完左边，右边只能手抄。 */
   fs.writeFileSync(p('push-a.txt'), '甲\n乙\n丙\n丁\n戊\n', 'utf8');
   fs.writeFileSync(p('push-b.txt'), '甲\n乙改\n丙\n丁改\n戊\n', 'utf8');
-  const label = () => cmp.ev(`document.getElementById('pushLabel').textContent`);
   const cur = () => cmp.ev(`document.getElementById('curInfo').textContent`);
+  /* 箭头在中间那道缝里，纵向跟着当前这一处差异走 */
+  const gut = () => cmp.ev(`(() => {
+    const pair = document.getElementById('gutPair');
+    const b = pair.getBoundingClientRect();
+    return {
+      shown: !pair.hidden,
+      left: !document.getElementById('pushLeft').disabled,
+      right: !document.getElementById('pushRight').disabled,
+      top: Math.round(b.top),
+      cx: Math.round(b.left + b.width / 2),
+    };
+  })()`);
+  const midX = () => cmp.ev(`(() => {
+    const m = document.getElementById('main').getBoundingClientRect();
+    const r = document.getElementById('ruler').getBoundingClientRect();
+    return Math.round((m.left + (r.left - m.left) / 2));
+  })()`);
+
   await openPair(p('push-a.txt'), p('push-b.txt'));
   await enterEdit();
   await clickRow('l', 1);
   const blk0 = await cur();
-  ok('工具栏有「同步到另一边」，光标在左侧时指向右侧', (await label()).includes('右'), await label());
+  const g0 = await gut();
+  ok('中间缝里有推送箭头（编辑态 + 有差异才出现）', g0.shown && g0.left && g0.right, JSON.stringify(g0));
+  ok('箭头落在两栏中间的分割缝上', Math.abs(g0.cx - (await midX())) <= 2, `${g0.cx} vs ${await midX()}`);
 
-  await cmp.ev(`document.getElementById('pushBtn').click()`);
+  const blkTop = g0.top;
+  await cmp.ev(`document.getElementById('next').click()`);
+  await sleep(500);
+  const g1 = await gut();
+  ok('箭头跟着当前这一处差异上下走', g1.top > blkTop + 10, `${blkTop} → ${g1.top}`);
+  await cmp.ev(`document.getElementById('prev').click()`);
+  await sleep(500);
+
+  /* 方向就是箭头指向：右箭头 = 把左边这一处推到右边 */
+  await cmp.ev(`document.getElementById('pushRight').click()`);
   await sleep(700);
   const rt1 = await rowText('r');
-  ok('点一次就把这一处整段复制到右侧', rt1[1] === '乙', JSON.stringify(rt1));
+  ok('点右箭头把这一处整段复制到右侧', rt1[1] === '乙', JSON.stringify(rt1));
   const blk1 = await cur();
   ok('复制完这一处不再是差异（2 处 → 1 处）',
     blk0.includes('/ 2 处') && blk1.includes('/ 1 处'), `${blk0} → ${blk1}`);
@@ -1034,11 +1138,10 @@ try {
   ok('Ctrl+Z 把整段同步撤得回来', rt2[1] === '乙改', JSON.stringify(rt2));
 
   await clickRow('r', 1);
-  ok('光标换到右侧，按钮方向自己翻过来', (await label()).includes('左'), await label());
-  await cmp.ev(`document.getElementById('pushBtn').click()`);
+  await cmp.ev(`document.getElementById('pushLeft').click()`);
   await sleep(700);
   const lt1 = await rowText('l');
-  ok('反向也能整段推过去', lt1[1] === '乙改', JSON.stringify(lt1));
+  ok('左箭头反向也能整段推过去（方向固定，不跟光标）', lt1[1] === '乙改', JSON.stringify(lt1));
 
   /* 键盘与连续合并：Alt+→ 推一次仍停在原处，Ctrl+Alt+→ 推完并接着处理下一处 */
   await openPair(p('push-a.txt'), p('push-b.txt'));
@@ -1055,7 +1158,7 @@ try {
   const statSel = await cmp.ev(`document.getElementById('stat').textContent`);
   ok('Ctrl+Alt+→ 连着推，推完两侧完全一致',
     kp2[1] === '乙' && kp2[3] === '丁' && /一致/.test(statSel), `${JSON.stringify(kp2)} ${statSel}`);
-  ok('没有差异时「同步」按钮变灰', (await cmp.ev(`document.getElementById('pushBtn').disabled`)) === true);
+  ok('没有差异时中间的箭头整组隐藏', (await gut()).shown === false);
 
   /* ---------- 18. 改完不保存关窗，要拦一下 ----------
      对比窗口是独立窗口：Alt+F4 或点 × 直接关，改动静默消失，没有任何提示。
@@ -1115,6 +1218,17 @@ try {
     Math.abs(cs.x - cs.left) <= 2 && Math.abs(cs.y - cs.top) <= 2 && Math.abs(cs.ow - cs.w) <= 16,
     JSON.stringify(cs));
 
+  const ico = () => cmp.ev(`({
+    restored: document.getElementById('wmax').classList.contains('restored'),
+    maxShown: getComputedStyle(document.querySelector('#wmax .i-max')).display !== 'none',
+    resShown: getComputedStyle(document.querySelector('#wmax .i-restore')).display !== 'none',
+    title: document.getElementById('wmax').title,
+  })`);
+  const icoFull = await ico();
+  ok('铺满时最大化按钮显示「还原」图标，而不是一直挂最大化的方框',
+    icoFull.restored && icoFull.resShown && !icoFull.maxShown && /还原/.test(icoFull.title),
+    JSON.stringify(icoFull));
+
   await cmp.ev(`document.getElementById('wmax').click()`);   // 还原
   await sleep(800);
   const rs = await scr(cmp);
@@ -1123,11 +1237,17 @@ try {
       && rs.x >= rs.left - 2 && rs.x + rs.ow <= rs.left + rs.w + 16,
     JSON.stringify(rs));
 
+  const icoSmall = await ico();
+  ok('还原后图标和提示都切成「最大化」',
+    !icoSmall.restored && icoSmall.maxShown && !icoSmall.resShown && /最大化/.test(icoSmall.title),
+    JSON.stringify(icoSmall));
+
   await cmp.ev(`document.getElementById('wmax').click()`);   // 再铺满
   await sleep(800);
   const fs2 = await scr(cmp);
   ok('再点一次又铺满这块屏，没有跑到别处',
     Math.abs(fs2.x - fs2.left) <= 2 && Math.abs(fs2.ow - fs2.w) <= 16, JSON.stringify(fs2));
+  ok('再铺满后图标又回到「还原」', (await ico()).restored === true);
 
   /* ---------- 20. 「忽略空白」不能把「按口径一致」说成「逐字一致」 ---------- */
   fs.writeFileSync(p('ws-a.txt'), '一\n二\n', 'utf8');

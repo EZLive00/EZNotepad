@@ -10,16 +10,15 @@ body {
   --cmp-row: 20px;
   --cmp-fs: 12.5px;
   --cmp-red: #d92b2b;
-  --cmp-line: rgba(217, 43, 43, .5);
-  --cmp-wash: rgba(217, 43, 43, .065);
   --cmp-wash-2: rgba(217, 43, 43, .12);
-  --cmp-mark: rgba(217, 43, 43, .2);
-  --cmp-mark-2: rgba(217, 43, 43, .32);
   --cmp-ln-w: 54px;
   --cmp-cur-bg: rgba(51, 102, 240, .045);
   --cmp-hit: rgba(51, 102, 240, .14);
   --cmp-hit-2: rgba(51, 102, 240, .24);
   --cmp-void-band: rgba(0, 0, 0, .075);
+  /* 中间那道缝的宽度。箭头要在这里常驻，1px 的缝放不下可点的东西，
+     所以给它一条 26px 的车道 —— 两侧正文各让 13px */
+  --cmp-gut: 26px;
   /* 预览条宽度。这条竖槽是「一眼看出全文哪里有差异」的唯一入口，
      却挤着三样东西：差异段、当前段、视口框。16px 时差异段只有 5px 宽，
      22px 也只到「能看见」的程度 —— 点起来还像瞄靶。34px 给轨道留 22px，
@@ -29,11 +28,7 @@ body {
 
 body[data-theme="dark"] {
   --cmp-red: #ff6b6b;
-  --cmp-line: rgba(255, 107, 107, .42);
-  --cmp-wash: rgba(255, 107, 107, .09);
   --cmp-wash-2: rgba(255, 107, 107, .16);
-  --cmp-mark: rgba(255, 107, 107, .26);
-  --cmp-mark-2: rgba(255, 107, 107, .38);
   --cmp-cur-bg: rgba(109, 141, 255, .08);
   --cmp-hit: rgba(109, 141, 255, .17);
   --cmp-hit-2: rgba(109, 141, 255, .30);
@@ -115,6 +110,11 @@ body[data-theme="dark"] {
 .cmp-slot:hover { background: var(--bg-hover); color: var(--fg); }
 .cmp-slot-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 
+/* 槽位最左边那个文件夹：点它 = 打开文件。没有这个图标时，槽位看着只是
+   一行只读的文件名，用户不会想到能点 —— 空窗口里更是无处下手 */
+.cmp-slot-ico { width: 13px; height: 13px; color: var(--fg-faint); }
+.cmp-slot:hover .cmp-slot-ico { color: var(--fg); }
+
 /* 有未保存改动时点亮的小圆点 */
 .cmp-dot {
   width: 5px;
@@ -165,6 +165,13 @@ body[data-theme="dark"] {
 
 .cmp-wbtn:hover { background: var(--bg-hover); color: var(--fg); }
 .cmp-wbtn.danger:hover { background: #e03b3b; color: #fff; }
+
+/* 最大化按钮的两张脸：铺满时显示「还原」（两个叠起来的方框），
+   还原后显示「最大化」（一个方框）。不放两张脸的话，点了没有任何反馈 ——
+   无边框窗口没有系统标题栏可以做参照，图标是唯一的线索。 */
+#wmax .i-restore { display: none; }
+#wmax.restored .i-max { display: none; }
+#wmax.restored .i-restore { display: block; }
 
 /* ---------- 第二行：统计 / 选项 / 导航 ---------- */
 .cmp-tools {
@@ -272,7 +279,7 @@ body[data-theme="dark"] {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 1fr 1px 1fr var(--cmp-ruler-w);
+  grid-template-columns: 1fr var(--cmp-gut) 1fr var(--cmp-ruler-w);
   background: var(--bg-panel);
   position: relative;
 }
@@ -285,7 +292,55 @@ body[data-theme="dark"] {
   overflow: hidden;
 }
 
-.cmp-div { background: var(--line-strong); }
+/* 中间那道缝：一条竖线 + 一对推送箭头。
+   箭头绝对定位在缝里，纵向位置由 JS 跟着当前差异块给（见 syncGutter）。 */
+.cmp-div {
+  position: relative;
+  background: var(--bg-panel);
+}
+
+.cmp-div::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  margin-left: -.5px;
+  background: var(--line-strong);
+}
+
+.cmp-gut {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 4;
+}
+
+.cmp-gut[hidden] { display: none; }
+
+/* 箭头：两个方钮上下摞着，中间不留缝。底色用浮层色，压在竖线上时
+   竖线从中穿过会让箭头看着像被切成两半 */
+.cmp-arrow {
+  width: 20px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: var(--bg-float);
+  color: var(--fg-soft);
+  box-shadow: 0 0 0 1px var(--line-strong);
+  cursor: pointer;
+}
+
+.cmp-arrow:hover { background: var(--accent-soft); color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.cmp-arrow:disabled { opacity: .45; cursor: default; background: var(--bg-float); color: var(--fg-soft); box-shadow: 0 0 0 1px var(--line-strong); }
+.cmp-arrow .cmp-ico { width: 12px; height: 12px; stroke-width: 2; }
 
 /* 每栏顶部的文件名条：滚动时钉住，长文件翻到下面也知道自己在看谁 */
 .cmp-ph {
@@ -377,15 +432,14 @@ body[data-theme="dark"] {
   font-weight: 400;
 }
 
-/* ---- 差异：一律红 ---- */
-.cmp-row.diff { background: var(--cmp-wash); }
-.cmp-row.diff .cmp-ln { color: var(--cmp-red); box-shadow: inset -2px 0 0 var(--cmp-red); }
-.cmp-row.diff .cmp-ln { font-weight: 600; }
-.cmp-row.b-start { box-shadow: inset 0 1px 0 var(--cmp-line); }
-.cmp-row.b-end { box-shadow: inset 0 -1px 0 var(--cmp-line); }
-.cmp-row.b-start.b-end {
-  box-shadow: inset 0 1px 0 var(--cmp-line), inset 0 -1px 0 var(--cmp-line);
-}
+/* ---- 差异：只把字标红 ----
+   底色、边框、行内色块全部去掉。一屏几十处差异时，铺底色会让整页发红，
+   反而看不出到底是哪几个字变了 —— 而这正是对比窗口唯一要说的事。
+   改行（chg）只红差异片段，增删行（add / del）整行都算差异，所以整行红。 */
+.cmp-row.k-add .cmp-tx,
+.cmp-row.k-del .cmp-tx { color: var(--cmp-red); }
+
+.cmp-row.diff .cmp-ln { color: var(--cmp-red); }
 
 /* 折叠缝：只显示差异时，相同行被收起来了，行号会在这里跳一段。
    不标出来，读的人会以为内容丢了。虚线只占行顶 1px，不挤内容。 */
@@ -496,20 +550,18 @@ body[data-theme="dark"] {
   stroke-linecap: round;
 }
 
-/* 行内改动：左栏被替换/删掉的字加删除线，右栏新写的字只有红底 */
+/* 行内改动：左栏被替换/删掉的字加删除线，两边都只靠红字，
+   不再垫底色 —— 底色叠在淡红底行上会有三层深淡，反而认不出边界 */
 .cmp-tx mark {
-  background: var(--cmp-mark);
-  color: inherit;
-  border-radius: 1px;
-  padding: 0 1px;
-  box-decoration-break: clone;
+  background: none;
+  color: var(--cmp-red);
+  padding: 0;
 }
 
 .cmp-tx mark.rem {
-  background: var(--cmp-mark-2);
+  background: none;
   text-decoration: line-through;
   text-decoration-color: var(--cmp-red);
-  opacity: .82;
 }
 
 /* 当前定位到的那一处：整块一个框，压在行上面（逐行画会变成表格格子） */
@@ -526,7 +578,6 @@ body[data-theme="dark"] {
 
 .cmp-pane.editing .cmp-tx { caret-color: var(--fg); }
 .cmp-pane.editing .cmp-row:hover { background: var(--bg-soft); }
-.cmp-pane.editing .cmp-row.diff:hover { background: var(--cmp-wash-2); }
 
 /* ---------- 预览条 ----------
    高度由 JS 设成「内容高度」（不超过可视高度），并向下让开每栏 26px 的
@@ -768,36 +819,6 @@ body[data-theme="dark"] {
   border-radius: 6px;
 }
 .cmp-list-bd::-webkit-scrollbar-track { background: transparent; }
-
-/* ---------- 空状态 ---------- */
-.cmp-empty {
-  /* 上限提示条出现时整体下移，别把提示盖住 */
-  position: absolute;
-  inset: calc(72px + var(--cmp-warn-h, 0px)) 0 0 0;
-  display: grid;
-  place-items: center;
-  background: var(--bg-panel);
-  z-index: 3;
-}
-
-.cmp-empty[hidden] { display: none; }
-
-.cmp-empty-box { text-align: center; }
-
-.cmp-empty-t {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--fg);
-  margin-bottom: 6px;
-}
-
-.cmp-empty-s {
-  font-size: 12.5px;
-  color: var(--fg-faint);
-  margin-bottom: 18px;
-}
-
-.cmp-empty-btns { display: flex; gap: 8px; justify-content: center; }
 
 /* ---------- 横向滚动条：细一点，跟主窗口一致 ---------- */
 .cmp-sc::-webkit-scrollbar { width: 11px; height: 11px; }
