@@ -173,13 +173,11 @@
     <symbol id="i-moon" viewBox="0 0 24 24">
       <path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401" />
     </symbol>
-    <symbol id="i-notebook-pen" viewBox="0 0 24 24">
-      <path d="M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4" />
-      <path d="M2 6h4" />
-      <path d="M2 10h4" />
-      <path d="M2 14h4" />
-      <path d="M2 18h4" />
-      <path d="M21.378 5.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z" />
+    <!-- 品牌标：和应用图标同一套形状（一张折角纸），但只留剪影 —— 13px 下
+         画正文条会糊成一片白。折角用半透明同色叠在 accent 底上，不用 mask。 -->
+    <symbol id="i-brand" viewBox="0 0 24 24">
+      <path d="M5 2h9l7 7v11.4a1.6 1.6 0 0 1-1.6 1.6H5a1.6 1.6 0 0 1-1.6-1.6V3.6A1.6 1.6 0 0 1 5 2z" />
+      <path d="M14 2l7 7h-5.4A1.6 1.6 0 0 1 14 7.4z" fill-opacity=".5" />
     </symbol>
     <symbol id="i-octagon-alert" viewBox="0 0 24 24">
       <path d="M12 16h.01" />
@@ -297,7 +295,7 @@
   <header class="appbar">
     <div class="titlebar" data-tauri-drag-region>
       <div class="brand" title="EZNotepad">
-        <span class="brand-mark"><svg class="ico" aria-hidden="true"><use href="#i-notebook-pen" /></svg></span>
+        <span class="brand-mark"><svg class="ico" aria-hidden="true"><use href="#i-brand" /></svg></span>
       </div>
       <nav class="menubar" id="menubar" aria-label="主菜单" data-i18n-aria="主菜单"></nav>
       <div class="titlebar-fill" data-tauri-drag-region></div>
@@ -312,6 +310,9 @@
     <div class="tabbar">
       <div class="tabs" id="tabs"></div>
       <button class="tab-add" id="tabAdd" title="新建标签 (Ctrl+T)" data-i18n-title="新建标签 (Ctrl+T)"><svg class="ico" aria-hidden="true"><use href="#i-plus" /></svg></button>
+      <!-- 标签条溢出时才出现（syncTabOverflow）：隐藏滚动条之后，这是唯一能
+           「看见全部标签」的入口。点开的是一份可滚动的清单，不是又一条标签条 -->
+      <button class="tab-add tab-more hidden" id="tabMore" title="全部标签" data-i18n-title="全部标签"><svg class="ico" aria-hidden="true"><use href="#i-chevron-down" /></svg></button>
       <div class="tabbar-fill" data-tauri-drag-region></div>
 
       <!-- 工具行只留高频动作（撤销/重做/查找/保存），其余（新建/打开/单栏双栏/大纲/
@@ -441,34 +442,6 @@
     <button class="st-btn" id="stEncoding" title="更改编码" data-i18n-title="更改编码">UTF-8</button>
     <span class="st-item" id="stDraft">草稿已同步</span>
   </footer>
-
-  <!-- ============ 独立面板：文本对比 / 文件夹对比 ============ -->
-  <div class="overlay hidden" id="overlay">
-    <div class="sheet" id="sheet">
-      <!-- 文件夹对比（文本对比已搬到独立窗口 compare.html） -->
-      <div class="sheet-page" id="pageFolder">
-        <div class="sheet-head">
-          <div class="sheet-title" data-i18n="文件夹对比">文件夹对比</div>
-          <div class="diff-src">
-            <div class="src-slot">
-              <button class="mini" id="pickFolderLeft" data-i18n="选择文件夹">选择文件夹</button>
-              <span class="src-name" id="nameFolderLeft">未选择</span>
-            </div>
-            <div class="src-slot">
-              <button class="mini" id="pickFolderRight" data-i18n="选择文件夹">选择文件夹</button>
-              <span class="src-name" id="nameFolderRight">未选择</span>
-            </div>
-          </div>
-          <div class="sheet-actions">
-            <label class="chk"><input type="checkbox" id="folderOnlyDiff" checked /> <span data-i18n="只显示差异">只显示差异</span></label>
-            <span class="diff-stat" id="folderStat"></span>
-            <button class="mini ghost close-sheet" data-i18n="关闭">关闭</button>
-          </div>
-        </div>
-        <div class="folder-body" id="folderBody"></div>
-      </div>
-    </div>
-  </div>
 
   <!-- ============ 三向合并向导 ============ -->
   <div class="overlay hidden" id="mergeOverlay">

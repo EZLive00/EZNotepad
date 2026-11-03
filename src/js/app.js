@@ -10,7 +10,6 @@ import { outlineFromMarkdown, headingSlugs } from './markdown.js';
 import { WysiwygEditor } from './wysiwyg.js';
 import { PlainEditor } from './editor/plain-editor.js';
 import { toast, dialog, confirmBox, contextMenu } from './ui.js';
-import { DiffPanel } from './diffpanel.js';
 import { MergeWizard } from './mergewizard.js';
 import { showShortcuts } from './shortcuts.js';
 import { exportPdf, printTab } from './pdf.js';
@@ -29,8 +28,9 @@ import { welcomeDoc } from './welcome.js';
 
 const $ = (id) => document.getElementById(id);
 
-/* ---------------- 子面板（对比中心 / 三向合并） ---------------- */
-const diff = new DiffPanel({ openTab: (name, content, opts) => newTab(name, content, null, opts) });
+/* ---------------- 子面板（三向合并） ---------------- */
+/* 文本对比与文件夹对比都是独立窗口（compare.html / foldercmp.html），
+   这里只留还留在主窗口里的三向合并向导 */
 const merge = new MergeWizard({ openTab: (name, content, opts) => newTab(name, content, null, opts) });
 const el = {
   tabs: $('tabs'),
@@ -288,6 +288,91 @@ function renderTabs() {
     el.tabs.appendChild(b);
   }
   refreshTitle();
+  scheduleTabOverflow();
+}
+
+/* ---------------- 标签条溢出 ----------------
+   标签开到十几个之后，标签条本身能横向滚动，但滚动条是隐藏的：用户既看不出
+   「后面还有」，也没有可抓的东西。补三个入口，都很轻：
+     1) 滚轮横滚（垂直滚轮直接当横向用，标签条没有纵向可滚的东西）
+     2) 拖标签换位时贴着左右边自动滚（否则拖到看不见的地方就停住了）
+     3) 右侧「全部标签」下拉，列一份带滚动条的清单，点一下就切过去 */
+let tabOverflowRaf = 0;
+function scheduleTabOverflow() {
+  if (tabOverflowRaf) return;
+  tabOverflowRaf = requestAnimationFrame(() => {
+    tabOverflowRaf = 0;
+    syncTabOverflow();
+  });
+}
+
+function syncTabOverflow() {
+  const strip = el.tabs;
+  if (!strip) return;
+  const over = strip.scrollWidth - strip.clientWidth > 1;
+  const more = $('tabMore');
+  if (more) more.classList.toggle('hidden', !over);
+  /* 当前标签必须留在视野里：新建的排在最后，切换到的可能在第 20 个 ——
+     不滚过去，界面上就是「点了没反应」 */
+  const act = strip.querySelector('.tab.active');
+  if (act) {
+    const ar = act.getBoundingClientRect();
+    const sr = strip.getBoundingClientRect();
+    if (ar.left < sr.left) strip.scrollLeft -= sr.left - ar.left;
+    else if (ar.right > sr.right) strip.scrollLeft += ar.right - sr.right;
+  }
+}
+
+/** 「全部标签」清单：一条一个标签，当前那颗打勾，未保存的带点 */
+function showTabList() {
+  const btn = $('tabMore');
+  const r = btn ? btn.getBoundingClientRect() : { left: 120, bottom: 60 };
+  const cur = activeTab();
+  const items = [{ head: `${tt('全部标签')} · ${tabs.length}` }];
+  for (const t of tabs) {
+    items.push({
+      label: (cur && t.id === cur.id ? '✓ ' : '   ') + tabLabel(t) + (isDirty(t) ? ' ●' : ''),
+      hint: t.path || t.name,
+      action: () => activate(t.id),
+    });
+  }
+  contextMenu(r.left, r.bottom + 2, items, { stayOnScroll: true });
+}
+
+/** 滚轮当横向滚动条用。deltaMode 为「行」时一格只有 3，要放大到看得动 */
+function tabWheel(e) {
+  const strip = el.tabs;
+  if (!strip || strip.scrollWidth - strip.clientWidth <= 1) return;
+  const unit = e.deltaMode === 1 ? 16 : 1;      // 1 = 按行
+  const d = Math.abs(e.deltaY) > Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+  if (!d) return;
+  e.preventDefault();
+  strip.scrollLeft += d * unit;
+}
+
+/** 拖标签换位时贴边自动滚：指针停在带子左右 28px 内就持续滚。
+    要靠 rAF 自己循环 —— dragover 在指针不动时不会再来第二次 */
+const tabEdge = { x: 0, raf: 0 };
+function tabEdgeScroll(clientX) {
+  tabEdge.x = clientX;
+  if (tabEdge.raf) return;
+  const step = () => {
+    const strip = el.tabs;
+    if (!strip) { tabEdge.raf = 0; return; }
+    const sr = strip.getBoundingClientRect();
+    const zone = 28;
+    let v = 0;
+    if (tabEdge.x < sr.left + zone) v = -Math.ceil((sr.left + zone - tabEdge.x) / 3);
+    else if (tabEdge.x > sr.right - zone) v = Math.ceil((tabEdge.x - (sr.right - zone)) / 3);
+    if (!v || strip.scrollWidth - strip.clientWidth <= 1) { tabEdge.raf = 0; return; }
+    strip.scrollLeft += v;
+    tabEdge.raf = requestAnimationFrame(step);
+  };
+  tabEdge.raf = requestAnimationFrame(step);
+}
+function stopTabEdgeScroll() {
+  if (tabEdge.raf) cancelAnimationFrame(tabEdge.raf);
+  tabEdge.raf = 0;
 }
 
 /** 把 fromId 这个标签挪到 toId 之前/之后（DOM 拖拽只改变顺序，不影响内容） */
@@ -923,67 +1008,99 @@ function showSettings() {
   }).join('');
 
   box.innerHTML = `
-    <div class="set-group">
-      <div class="set-label" data-i18n="语言">语言</div>
-      <select class="set-select" id="setLang">${langOpts}</select>
-      <div class="set-hint" data-i18n="「跟随系统」按系统语言自动选择，切换后立即生效。">「跟随系统」按系统语言自动选择，切换后立即生效。</div>
-    </div>
-
-    <div class="set-group">
-      <div class="set-label" data-i18n="主题">主题</div>
-      ${seg('theme', [['auto', '跟随系统'], ['light', '浅色'], ['dark', '深色']], settings.theme)}
-    </div>
-
-    <div class="set-group">
-      <div class="set-label" data-i18n="字号">字号</div>
-      <div class="set-zoom">
-        <button type="button" class="set-step" data-zoom="-1" title="缩小" data-i18n-title="缩小">−</button>
-        <span class="set-value" id="setFontSize">${settings.fontSize} px</span>
-        <button type="button" class="set-step" data-zoom="1" title="放大" data-i18n-title="放大">+</button>
-        <button type="button" class="set-link" id="setFontReset" data-i18n="实际大小">实际大小</button>
-      </div>
-    </div>
-
-    <div class="set-group">
-      <div class="set-label" data-i18n="正文宽度">正文宽度</div>
-      <div class="set-zoom">
-        <button type="button" class="set-step" data-rw="-1" title="窄一点" data-i18n-title="窄一点">−</button>
-        <span class="set-value" id="setReadWidth">${settings.readWidth} px</span>
-        <button type="button" class="set-step" data-rw="1" title="宽一点" data-i18n-title="宽一点">+</button>
-        <button type="button" class="set-link" id="setReadReset" data-i18n="默认">默认</button>
-      </div>
-      <div class="set-hint" data-i18n="Markdown 正文在宽窗口下居中的最大宽度（编辑与预览都按这个来）。窗口或分栏不够宽时自动收回到两侧留白，专注模式在此基础上再收 8%。">Markdown 正文在宽窗口下居中的最大宽度（编辑与预览都按这个来）。窗口或分栏不够宽时自动收回到两侧留白，专注模式在此基础上再收 8%。</div>
-    </div>
-
-    <div class="set-group">
-      <div class="set-label" data-i18n="界面">界面</div>
-      <label class="set-row"><input type="checkbox" id="setOutline" ${settings.outlineVisible ? 'checked' : ''} /> <span data-i18n="显示大纲 / 文件栏">显示大纲 / 文件栏</span></label>
-      <label class="set-row"><input type="checkbox" id="setSplit" ${settings.layout === 'split' ? 'checked' : ''} /> <span data-i18n="双栏（编辑 + 预览）">双栏（编辑 + 预览）</span></label>
-    </div>
-
-    <div class="set-group">
-      <div class="set-label" data-i18n="文件">文件</div>
-      <label class="set-row"><input type="checkbox" id="setAutoSave" ${settings.autoSave ? 'checked' : ''} /> <span data-i18n="自动保存（停手约 1 秒写盘）">自动保存（停手约 1 秒写盘）</span></label>
-      <label class="set-row"><input type="checkbox" id="setWatch" ${settings.watchFiles !== false ? 'checked' : ''} /> <span data-i18n="监听磁盘改动（别的程序改了文件时提示）">监听磁盘改动（别的程序改了文件时提示）</span></label>
-      <div class="set-row folder">
-        <span class="set-folder" id="setFolder"></span>
-        <button type="button" class="mini" id="setPickFolder" data-i18n="选择…">选择…</button>
-        <button type="button" class="mini ghost" id="setClearFolder" data-i18n="清除">清除</button>
-      </div>
-      <div class="set-hint" data-i18n="当前打开的文件夹，用于左侧「文件」页浏览与搜索。">当前打开的文件夹，用于左侧「文件」页浏览与搜索。</div>
-    </div>
-
-    <div class="set-group">
-      <div class="set-label" data-i18n="快捷键">快捷键</div>
-      <div class="keys-list" id="setKeysList"></div>
-      <div class="set-hint" data-i18n="点「改」后直接按新的组合键（要带 Ctrl / Alt，或单用 F1–F12），Esc 取消。自定义优先于默认键位。">点「改」后直接按新的组合键（要带 Ctrl / Alt，或单用 F1–F12），Esc 取消。自定义优先于默认键位。</div>
-    </div>
-
-    <div class="set-foot">
+    <nav class="set-nav" role="tablist">
+      <button type="button" class="set-tab on" data-page="look" data-i18n="外观">外观</button>
+      <button type="button" class="set-tab" data-page="ui" data-i18n="界面">界面</button>
+      <button type="button" class="set-tab" data-page="file" data-i18n="文件">文件</button>
+      <button type="button" class="set-tab" data-page="keys" data-i18n="快捷键">快捷键</button>
+      <div class="set-nav-fill"></div>
       <button type="button" class="mini ghost" id="setReset" data-i18n="恢复默认设置">恢复默认设置</button>
+    </nav>
+
+    <div class="set-body">
+      <section class="set-page" data-page="look">
+        <div class="set-group">
+          <div class="set-label" data-i18n="主题">主题</div>
+          ${seg('theme', [['auto', '跟随系统'], ['light', '浅色'], ['dark', '深色']], settings.theme)}
+        </div>
+
+        <div class="set-group">
+          <div class="set-label" data-i18n="字号">字号</div>
+          <div class="set-zoom">
+            <button type="button" class="set-step" data-zoom="-1" title="缩小" data-i18n-title="缩小">−</button>
+            <span class="set-value" id="setFontSize">${settings.fontSize} px</span>
+            <button type="button" class="set-step" data-zoom="1" title="放大" data-i18n-title="放大">+</button>
+            <button type="button" class="set-link" id="setFontReset" data-i18n="实际大小">实际大小</button>
+          </div>
+        </div>
+
+        <div class="set-group">
+          <div class="set-label" data-i18n="正文宽度">正文宽度</div>
+          <div class="set-zoom">
+            <button type="button" class="set-step" data-rw="-1" title="窄一点" data-i18n-title="窄一点">−</button>
+            <span class="set-value" id="setReadWidth">${settings.readWidth} px</span>
+            <button type="button" class="set-step" data-rw="1" title="宽一点" data-i18n-title="宽一点">+</button>
+            <button type="button" class="set-link" id="setReadReset" data-i18n="默认">默认</button>
+          </div>
+          <div class="set-hint" data-i18n="Markdown 正文在宽窗口下居中的最大宽度（编辑与预览都按这个来）。窗口或分栏不够宽时自动收回到两侧留白，专注模式在此基础上再收 8%。">Markdown 正文在宽窗口下居中的最大宽度（编辑与预览都按这个来）。窗口或分栏不够宽时自动收回到两侧留白，专注模式在此基础上再收 8%。</div>
+        </div>
+      </section>
+
+      <section class="set-page hidden" data-page="ui">
+        <div class="set-group">
+          <div class="set-label" data-i18n="语言">语言</div>
+          <select class="set-select" id="setLang">${langOpts}</select>
+          <div class="set-hint" data-i18n="「跟随系统」按系统语言自动选择，切换后立即生效。">「跟随系统」按系统语言自动选择，切换后立即生效。</div>
+        </div>
+
+        <div class="set-group">
+          <div class="set-label" data-i18n="布局">布局</div>
+          <label class="set-row"><input type="checkbox" id="setOutline" ${settings.outlineVisible ? 'checked' : ''} /> <span data-i18n="显示大纲 / 文件栏">显示大纲 / 文件栏</span></label>
+          <label class="set-row"><input type="checkbox" id="setSplit" ${settings.layout === 'split' ? 'checked' : ''} /> <span data-i18n="双栏（编辑 + 预览）">双栏（编辑 + 预览）</span></label>
+        </div>
+      </section>
+
+      <section class="set-page hidden" data-page="file">
+        <div class="set-group">
+          <div class="set-label" data-i18n="写入">写入</div>
+          <label class="set-row"><input type="checkbox" id="setAutoSave" ${settings.autoSave ? 'checked' : ''} /> <span data-i18n="自动保存（停手约 1 秒写盘）">自动保存（停手约 1 秒写盘）</span></label>
+          <label class="set-row"><input type="checkbox" id="setWatch" ${settings.watchFiles !== false ? 'checked' : ''} /> <span data-i18n="监听磁盘改动（别的程序改了文件时提示）">监听磁盘改动（别的程序改了文件时提示）</span></label>
+        </div>
+
+        <div class="set-group">
+          <div class="set-label" data-i18n="工作文件夹">工作文件夹</div>
+          <div class="set-row folder">
+            <span class="set-folder" id="setFolder"></span>
+            <button type="button" class="mini" id="setPickFolder" data-i18n="选择…">选择…</button>
+            <button type="button" class="mini ghost" id="setClearFolder" data-i18n="清除">清除</button>
+          </div>
+          <div class="set-hint" data-i18n="当前打开的文件夹，用于左侧「文件」页浏览与搜索。">当前打开的文件夹，用于左侧「文件」页浏览与搜索。</div>
+        </div>
+      </section>
+
+      <section class="set-page hidden" data-page="keys">
+        <div class="set-group">
+          <div class="set-label" data-i18n="快捷键">快捷键</div>
+          <div class="keys-list" id="setKeysList"></div>
+          <div class="set-hint" data-i18n="点「改」后直接按新的组合键（要带 Ctrl / Alt，或单用 F1–F12），Esc 取消。自定义优先于默认键位。">点「改」后直接按新组合键（要带 Ctrl / Alt，或单用 F1–F12），Esc 取消。自定义优先于默认键位。</div>
+        </div>
+      </section>
     </div>
   `;
   applyDom(box);
+
+  /* 左分类 + 右内容：切换只是隐藏/显示整段 DOM —— 所有 input 都还在原处，
+     改哪一项都即时生效（这个面板本来就没有「确定」按钮）。 */
+  const showPage = (id) => {
+    box.querySelectorAll('.set-nav [data-page]').forEach((b) => b.classList.toggle('on', b.dataset.page === id));
+    box.querySelectorAll('.set-page').forEach((p) => p.classList.toggle('hidden', p.dataset.page !== id));
+    const body = box.querySelector('.set-body');
+    if (body) body.scrollTop = 0;
+  };
+  box.querySelector('.set-nav').onclick = (e) => {
+    const b = e.target.closest('[data-page]');
+    if (b) showPage(b.dataset.page);
+  };
 
   const paintFolder = () => {
     const n = box.querySelector('#setFolder');
@@ -1096,7 +1213,7 @@ function showSettings() {
     toast(tt('已恢复默认设置'));
   };
 
-  dialog({ title: tt('设置'), body: box, buttons: [{ id: 'ok', label: tt('完成'), primary: true }] });
+  dialog({ title: tt('设置'), body: box, buttons: [{ id: 'ok', label: tt('完成'), primary: true }], wide: true });
 }
 
 /* ---------------- 状态栏 ---------------- */
@@ -2936,7 +3053,7 @@ const commands = {
   modeEdit: () => setMode('edit', { fromActivate: true }),
   modePreview: () => setMode('preview', { fromActivate: true }),
   textCompare: () => openCompareWindow(),
-  folderCompare: () => diff.openFolder(),
+  folderCompare: () => be.openFolderCompareWindow(null, null).catch((e) => toast(tt('打不开对比窗口：') + errText(e))),
   merge: () => merge.open(),
   wordCount: showWordCount,
   reload: reloadCurrent,
@@ -3537,6 +3654,14 @@ function bindEvents() {
   on('btnFind', () => openFind());
   on('btnSave', commands.save);
   on('tabAdd', commands.new);
+  /* 标签条溢出：滚轮横滚 + 「全部标签」下拉 + 拖标签时贴边自动滚 */
+  $('tabMore').onclick = showTabList;
+  el.tabs.addEventListener('wheel', tabWheel, { passive: false });
+  el.tabs.addEventListener('dragover', (e) => { if (dragTabId != null) tabEdgeScroll(e.clientX); });
+  el.tabs.addEventListener('drop', stopTabEdgeScroll);
+  el.tabs.addEventListener('dragleave', (e) => { if (!el.tabs.contains(e.relatedTarget)) stopTabEdgeScroll(); });
+  el.tabs.addEventListener('dragend', stopTabEdgeScroll);
+  window.addEventListener('resize', scheduleTabOverflow);
 
   $('btnMode').onclick = (e) => { e.stopPropagation(); el.modeMenu.classList.toggle('open'); };
   el.modeMenu.querySelectorAll('button[data-mode]').forEach((b) => {
@@ -4164,11 +4289,10 @@ window.__snp = {
   openQuickNote,
   quickNoteFile: () => quickFile(),
   isBusy: () => wys.loading,
-  editor: wys,          // 编辑器实例（与 __diff / __merge 同类调试面：真机 CDP 探针要用）
+  editor: wys,          // 编辑器实例（与 __merge 同类调试面：真机 CDP 探针要用）
   capture: persistCurrentView,
   openCompare: (l, r) => be.openCompareWindow(l, r),
 };
-window.__diff = diff;
 window.__merge = merge;
 
 boot().catch((err) => {

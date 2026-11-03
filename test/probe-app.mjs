@@ -15,7 +15,7 @@ await ensureApp(PORT);
 const list = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json();
 /* 比较窗口是独立页面，也会出现在目标列表里（而且常常排在最前面）。
    只按 type === 'page' 抓会把比较窗口当成主窗口，断言全落在错误的页面上 */
-const page = list.find((t) => t.type === 'page' && !/compare\.html/.test(t.url));
+const page = list.find((t) => t.type === 'page' && !/(?:compare|foldercmp)\.html/.test(t.url));
 if (!page) { console.error('没有找到页面目标'); process.exit(2); }
 
 const ws = new WebSocket(page.webSocketDebuggerUrl);
@@ -100,11 +100,28 @@ try {
   await sleep(120);
   ok('设置面板打开', (await ev(`!!document.querySelector('.set-panel')`)) === true);
   ok('主题是三选一', (await ev(`document.querySelectorAll('.set-seg[data-name="theme"] button').length`)) === 3);
+
+  /* 设置面板是「左分类 + 右内容」。原先一路竖排下来，窗口矮一点就要滚三屏，
+     找「快捷键」得先盲滚。这里守三件事：分类齐全、一次只露一页、切换不丢值 */
+  ok('设置面板是左分类右内容',
+    (await ev(`!!document.querySelector('.modal.wide') && !!document.querySelector('.set-panel .set-nav') && !!document.querySelector('.set-panel .set-body')`)) === true);
+  const navPages = await ev(`[...document.querySelectorAll('.set-nav [data-page]')].map(b => b.dataset.page).join(',')`);
+  ok('左侧四个分类', navPages === 'look,ui,file,keys', navPages);
+  const shownPages = () => ev(`[...document.querySelectorAll('.set-page')].filter(p => !p.classList.contains('hidden')).map(p => p.dataset.page).join(',')`);
+  ok('一次只显示一页', (await shownPages()) === 'look', await shownPages());
+
   const beforeFont = await ev(`document.getElementById('setFontSize').textContent`);
   await ev(`document.querySelector('.set-step[data-zoom="1"]').click()`);
   const afterFont = await ev(`document.getElementById('setFontSize').textContent`);
   ok('调字号立刻反映在面板上', beforeFont !== afterFont, `${beforeFont} → ${afterFont}`);
   await ev(`document.querySelector('.set-step[data-zoom="-1"]').click()`);
+
+  await ev(`document.querySelector('.set-nav [data-page="file"]').click()`);
+  ok('点分类切到对应页', (await shownPages()) === 'file', await shownPages());
+  ok('当前分类高亮', (await ev(`document.querySelector('.set-tab.on')?.dataset.page`)) === 'file');
+  await ev(`document.querySelector('.set-nav [data-page="look"]').click()`);
+  ok('切回来页面还在、值没丢',
+    (await shownPages()) === 'look' && (await ev(`document.getElementById('setFontSize').textContent`)) === beforeFont);
   // 关掉：点底部「完成」
   await ev(`document.querySelector('#dlgFoot button')?.click()`);
   await sleep(120);
@@ -280,6 +297,67 @@ try {
     return !document.dispatchEvent(e);
   })()`);
   ok('无文件的内部拖放（标签换位）不被拦截', internalDrop === false, String(internalDrop));
+
+  /* ---- F. 标签条溢出 ----
+     标签开到十几个之后，标签条本身能横滚，但滚动条是隐藏的：既看不出
+     「后面还有」，也没有可抓的东西。三个入口各验一次。 */
+  {
+    const strip = async () => JSON.parse(await ev(`(() => {
+      const s = document.getElementById('tabs');
+      const a = s.querySelector('.tab.active');
+      const sr = s.getBoundingClientRect();
+      const ar = a ? a.getBoundingClientRect() : null;
+      return JSON.stringify({
+        n: s.querySelectorAll('.tab').length,
+        scrollW: s.scrollWidth, clientW: s.clientWidth, left: Math.round(s.scrollLeft),
+        more: !document.getElementById('tabMore').classList.contains('hidden'),
+        actIn: !!(ar && ar.left >= sr.left - 1 && ar.right <= sr.right + 1),
+      });
+    })()`));
+
+    await ev(`(() => { for (let i = 0; i < 14; i++) window.__snp.newTab('ov' + i + '.md', '# ' + i, null); })()`);
+    await sleep(400);                 // 等一帧 rAF
+    const st = await strip();
+    ok('标签开满后确实溢出', st.scrollW > st.clientW + 1, `${st.scrollW} / ${st.clientW}`);
+    ok('溢出时才出现「全部标签」按钮', st.more === true, JSON.stringify(st));
+    /* 新建的标签排在最后一个。不把它滚进视野，界面上就是「点了新建没反应」 */
+    ok('当前标签自动滚进视野', st.actIn === true, JSON.stringify(st));
+
+    // 滚轮：标签条没有纵向可滚的东西，垂直滚轮直接当横向用
+    await ev(`document.getElementById('tabs').scrollLeft = 0`);
+    await ev(`document.getElementById('tabs').dispatchEvent(new WheelEvent('wheel', { deltaY: 120, bubbles: true, cancelable: true }))`);
+    const wh = await strip();
+    ok('滚轮能横着滚标签条', wh.left > 0, `0 → ${wh.left}`);
+
+    // 「全部标签」下拉
+    /* 刚刚滚过标签条就点按钮：scroll 事件是排队派发的，菜单会被那条迟到的
+       scroll 顺手收掉（修之前一半概率「点了没反应」）。这条守的就是这个时序 */
+    await ev(`document.getElementById('tabMore').click()`);
+    await sleep(250);
+    const menu = await ev(`(() => {
+      const m = document.querySelector('.ctx-menu');
+      if (!m) return null;
+      const it = [...m.querySelectorAll('.ctx-item')];
+      return JSON.stringify({
+        head: (m.querySelector('.am-head') || {}).textContent || '',
+        n: it.length,
+        ticked: it.filter((b) => (b.textContent || '').trim().startsWith('✓')).length,
+        titles: it.map((b) => b.title),
+      });
+    })()`);
+    const m = menu ? JSON.parse(menu) : null;
+    ok('「全部标签」下拉列出全部标签', !!m && m.n === st.n, m ? `${m.n} 条 / 标签 ${st.n} 个` : '没弹出菜单');
+    ok('下拉里只有当前标签打勾', !!m && m.ticked === 1, m ? `${m.ticked} 个勾` : '');
+    ok('下拉抬头写明总数', !!m && m.head.includes(String(st.n)), m && m.head);
+    /* 点第 3 条：下拉顺序与标签条一致，切过去的必须就是那条。
+       顺带验「当前标签滚进视野」在切到远处标签时也生效 */
+    const wantTitle = m && m.titles[2];
+    await ev(`document.querySelectorAll('.ctx-menu .ctx-item')[2].click()`);
+    await sleep(200);
+    ok('点下拉条目能切过去',
+      (await ev(`document.querySelector('.tab.active')?.title`)) === wantTitle, wantTitle);
+    ok('切换后当前标签也在视野内', (await strip()).actIn === true);
+  }
 } catch (e) {
   ok('探针执行完成', false, e.message);
 } finally {

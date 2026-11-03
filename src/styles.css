@@ -213,7 +213,7 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
   color: #fff;
   transition: filter .15s var(--ease);
 }
-.brand-mark .ico { width: 13px; height: 13px; stroke-width: 2.1; }
+.brand-mark .ico { width: 15px; height: 15px; fill: currentColor; stroke: none; }
 
 .menubar { display: flex; align-items: center; gap: 1px; }
 .am-btn {
@@ -353,6 +353,9 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
 }
 .tab-add .ico { width: 15px; height: 15px; }
 .tab-add:hover { background: var(--bg-hover); color: var(--fg); }
+/* 「全部标签」：贴着新建键，只在标签条溢出时显示。往下的小箭头 = 一份清单，
+   不是「展开成两行」—— 两行标签会把标题栏挤高，文档区跟着跳 */
+.tab-more { margin-left: 0; }
 
 /* 工具组：贴在标签行右侧，只有三个高频动作用，其余都在菜单里 */
 .toolbar {
@@ -631,8 +634,28 @@ body[data-theme="dark"] .am-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 25
 .ft-empty { padding: 18px 14px; font-size: 12px; line-height: 1.7; color: var(--fg-faint); }
 .ft-empty.small { padding: 4px 0 4px 0; font-size: 11.5px; }
 
-/* ---- 设置面板 ---- */
-.set-panel { display: flex; flex-direction: column; gap: 18px; min-width: 380px; }
+/* ---- 设置面板 ----
+   左分类 + 右内容。原来八组竖着一列排下来，面板比一屏还长，「快捷键」这种
+   低频项要滚三屏才看得见，也没人知道底下还有多少。分类拆开之后每页三组，
+   面板高度稳定，切换时不会跳。 */
+.set-panel { display: grid; grid-template-columns: 156px 1fr; min-height: 320px; }
+.set-nav {
+  display: flex; flex-direction: column; gap: 2px;
+  padding-right: 12px; border-right: 1px solid var(--line);
+}
+.set-tab {
+  height: 30px; padding: 0 10px; border: none; border-radius: var(--r-sm);
+  background: transparent; text-align: left; font-size: 12.5px; color: var(--fg-soft);
+  cursor: pointer; transition: background .12s var(--ease), color .12s var(--ease);
+}
+.set-tab:hover { background: var(--bg-hover); color: var(--fg); }
+.set-tab.on { background: var(--bg-soft); color: var(--fg); font-weight: 600; }
+.set-nav-fill { flex: 1; min-height: 16px; }
+.set-body {
+  display: flex; flex-direction: column; gap: 18px;
+  padding-left: 20px; max-height: 58vh; overflow-y: auto;
+}
+.set-page { display: flex; flex-direction: column; gap: 18px; }
 .set-group { display: flex; flex-direction: column; gap: 8px; }
 .set-label { font-size: 11px; font-weight: 600; letter-spacing: .04em; color: var(--fg-faint); }
 .set-seg { display: flex; gap: 4px; background: var(--bg-soft); padding: 3px; border-radius: var(--r-sm); }
@@ -651,7 +674,7 @@ body[data-theme="dark"] .am-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 25
 .set-step:hover { background: var(--bg-hover); }
 .set-value { min-width: 62px; text-align: center; font-size: 12.5px; font-variant-numeric: tabular-nums; }
 .set-link {
-  margin-left: auto; border: none; background: transparent; cursor: pointer;
+  margin-left: 10px; border: none; background: transparent; cursor: pointer;
   font-size: 11.5px; color: var(--accent); padding: 0;
 }
 .set-row { display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--fg); cursor: pointer; }
@@ -673,7 +696,6 @@ body[data-theme="dark"] .am-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 25
 }
 .set-select:hover { background: var(--bg-hover); }
 .set-select:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
-.set-foot { display: flex; justify-content: flex-end; border-top: 1px solid var(--line); padding-top: 12px; }
 /* min-height:0 是关键：列表靠上下 padding 顶出未铺出的条目（窗口化），
    而 flex 项的 min-height:auto 会按「内边距 + 内容」算最小值 ——
    少了这一行，几万条的 padding 会把列表盒子自己撑到几十万像素高 */
@@ -1007,23 +1029,7 @@ body[data-zen="1"] .win-title { color: var(--fg-faint); }
   animation: fade .16s var(--ease);
 }
 @keyframes fade { from { opacity: 0; } }
-.sheet {
-  margin: 26px; flex: 1; max-width: 1600px;
-  background: var(--bg-float); border-radius: var(--r-lg); box-shadow: var(--shadow);
-  display: flex; flex-direction: column; overflow: hidden;
-}
-.sheet-page { display: flex; flex-direction: column; flex: 1; min-height: 0; }
-.sheet-head {
-  flex: none; padding: 12px 16px; border-bottom: 1px solid var(--line);
-  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
-}
-.sheet-title { font-size: 14px; font-weight: 650; letter-spacing: .01em; }
-.diff-src { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 300px; }
-.src-slot { display: flex; align-items: center; gap: 7px; flex: 1; min-width: 0; }
-.src-name { font-size: 11.5px; color: var(--fg-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sheet-actions { display: flex; align-items: center; gap: 7px; margin-left: auto; flex-wrap: wrap; }
 .chk { font-size: 11.5px; color: var(--fg-soft); display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
-.diff-stat { font-size: 11.5px; color: var(--fg-faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .mini {
   height: 26px; padding: 0 10px; border-radius: var(--r-sm);
   border: 1px solid var(--line-strong); background: var(--bg-soft); color: var(--fg-soft);
@@ -1038,24 +1044,8 @@ body[data-zen="1"] .win-title { color: var(--fg-faint); }
 .mini.ghost { background: transparent; border-color: transparent; }
 .mini.ghost:hover { background: var(--bg-hover); }
 
-/* 文件夹对比 */
+/* 预览区的空态（没打开文件 / 启动失败） */
 .diff-empty { padding: 60px; text-align: center; color: var(--fg-faint); font-family: var(--font-ui); font-size: 13px; }
-.folder-body { flex: 1; overflow: auto; }
-.f-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-.f-table th {
-  position: sticky; top: 0; background: var(--bg-soft); text-align: left; padding: 8px 12px;
-  font-size: 11px; letter-spacing: .06em; color: var(--fg-faint); font-weight: 600; z-index: 2;
-  border-bottom: 1px solid var(--line);
-}
-.f-table td { padding: 5px 12px; border-bottom: 1px solid var(--line); }
-.f-path { font-family: var(--font-mono); font-size: 12px; }
-.f-badge { font-size: 10.5px; padding: 1px 7px; border-radius: var(--r-sm); font-weight: 600; white-space: nowrap; }
-.f-badge.same { background: var(--bg-soft); color: var(--fg-faint); }
-.f-badge.mod { background: var(--chg-bg); color: var(--chg-fg); }
-.f-badge.left { background: var(--del-bg); color: var(--del-fg); }
-.f-badge.right { background: var(--add-bg); color: var(--add-fg); }
-.f-row-click { cursor: pointer; }
-.f-row-click:hover td { background: var(--bg-hover); }
 
 /* ================= 模态框 ================= */
 .modal {
@@ -1064,6 +1054,8 @@ body[data-zen="1"] .win-title { color: var(--fg-faint); }
   display: flex; flex-direction: column; animation: pop .16s var(--ease);
 }
 .modal.small { width: 460px; }
+/* 宽版对话框：设置这类「左分类 + 右内容」的版面，620px 会把两边都挤窄 */
+.modal.wide { width: 760px; }
 .modal-head {
   padding: 14px 18px; border-bottom: 1px solid var(--line);
   display: flex; align-items: center; justify-content: space-between;
@@ -1122,10 +1114,9 @@ body[data-zen="1"] .win-title { color: var(--fg-faint); }
 
 /* 设置面板里的快捷键表：一屏能看十几条，超了在框里滚，
    别把整个设置面板顶出去 */
-.keys-list {
-  max-height: 232px; overflow-y: auto;
-  border-radius: var(--r-md); background: var(--bg-soft);
-}
+/* 快捷键列表不再自己滚：面板里有了一整块 .set-body 可滚，两层滚动条只会
+   让人不知道在滚哪一个，而且内层贴着边界时会切出半行。 */
+.keys-list { border-radius: var(--r-md); background: var(--bg-soft); }
 .key-row { display: flex; align-items: center; gap: 8px; padding: 5px 9px; font-size: 12.5px; }
 .key-row + .key-row { box-shadow: inset 0 1px 0 var(--line); }
 .key-name {

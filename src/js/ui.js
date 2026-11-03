@@ -19,12 +19,15 @@ export function toast(msg, ms = 2200) {
 }
 
 /** 通用对话框：返回 Promise<{ok:boolean}> */
-export function dialog({ title = tt('提示'), body = '', buttons = [{ id: 'ok', label: tt('确定'), primary: true }] } = {}) {
+export function dialog({ title = tt('提示'), body = '', buttons = [{ id: 'ok', label: tt('确定'), primary: true }], wide = false } = {}) {
   return new Promise((resolve) => {
     const overlay = document.getElementById('dlgOverlay');
     const titleEl = document.getElementById('dlgTitle');
     const bodyEl = document.getElementById('dlgBody');
     const footEl = document.getElementById('dlgFoot');
+    /* 宽版：设置这种「左分类 + 右内容」的面板需要横向空间，
+       默认 620px 会被挤成两条窄柱子 */
+    overlay.querySelector('.modal').classList.toggle('wide', !!wide);
     titleEl.textContent = title;
     if (typeof body === 'string') bodyEl.innerHTML = `<div class="dlg-text">${body}</div>`;
     else { bodyEl.innerHTML = ''; bodyEl.appendChild(body); }
@@ -73,8 +76,11 @@ export const confirmBox = (title, text, okLabel = tt('确定'), cancelLabel = tt
  *     药丸项在普通项基础上多两个字段：checked?（点亮当前项）、iconOnly（只画图标）
  *
  * 定位一律以实测尺寸为准，四边都夹在窗口内；菜单比窗口还高时限高并允许滚动。
+ *
+ * 第四个参数 `{ stayOnScroll }`：锚点是固定控件（不随内容滚动而移动）时传 true，
+ * 否则页面里任何一处滚动都会把菜单收掉。
  */
-export function contextMenu(x, y, items) {
+export function contextMenu(x, y, items, { stayOnScroll = false } = {}) {
   document.querySelectorAll('.ctx-menu').forEach((m) => m.remove());
   const menu = document.createElement('div');
   menu.className = 'ctx-menu';
@@ -199,9 +205,15 @@ export function contextMenu(x, y, items) {
   setTimeout(() => {
     document.addEventListener('mousedown', off, true);
     document.addEventListener('keydown', onKey, true);
-    // 滚动 / 缩放窗口都会让菜单和它指向的那个格子错位，直接收掉
-    window.addEventListener('scroll', close, true);
-    window.addEventListener('resize', close);
+    /* 滚动会让菜单和它指向的那个格子错位，直接收掉。
+       但锚在**固定控件**上的菜单（标签条右侧那颗「全部标签」）不跟内容走：
+       滚动事件是排队派发的 —— 标签条刚被滚过（切换标签时 syncTabOverflow
+       也会滚），紧接着点按钮，菜单会在一帧后被那条迟到的 scroll 收掉，
+       表现成「点了没反应」。这种菜单传 stayOnScroll。 */
+    if (!stayOnScroll) {
+      window.addEventListener('scroll', close, true);
+      window.addEventListener('resize', close);
+    }
     window.addEventListener('blur', close);
   }, 0);
 }
