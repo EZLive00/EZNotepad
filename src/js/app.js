@@ -3076,24 +3076,26 @@ const menuTree = () => [
       { sep: true },
       { id: 'closeTab', label: tt('关闭标签'), kbd: 'Ctrl+W', disabled: () => !hasTab() },
       { sep: true },
+      /* 速记的辅助动作在这儿：打开速记本身是菜单栏上的一个动作项（点一次即开），
+         这几项频率低得多，放在「文件」里跟其它「这份内容存在哪」的操作作邻 */
+      { head: tt('速记') },
+      { id: 'quickStamp', label: tt('插入当前时间'), disabled: () => !hasTab() },
+      { id: 'quickReveal', label: tt('在文件夹中显示') },
+      { id: 'quickCopyPath', label: tt('复制文件路径') },
+      { id: 'quickClear', label: tt('清空速记…') },
+      { note: quickHint() },
+      { sep: true },
       { id: 'quit', label: tt('退出') },
     ],
   },
   {
-    /* 速记自成一个菜单，因为它不是「打开一个文件」：位置固定、随时可用、
-       不需要保存。塞进「文件」里，它就会被当成第 N 个文档操作，而它其实
-       是「随手写两句」这个动作本身。 */
+    /* 速记是**一个动作**，不是一叠文件操作 —— 所以它跟「设置」一样不带下拉，
+       点一下就打开。以前这里是下拉：点标题展开、再点「打开速记」，两次点击，
+       而用户的第一反应是「我明明已经点了速记」。
+       其余四项（插入时间 / 显示 / 复制路径 / 清空）频率低得多，
+       挪进「文件」菜单的速记小节，不再借着「打开」占用户第二次点击。 */
     label: tt('速记'),
-    items: () => [
-      { id: 'quickNote', label: tt('打开速记'), kbd: 'Ctrl+Shift+M' },
-      { id: 'quickStamp', label: tt('插入当前时间'), disabled: () => !hasTab() },
-      { sep: true },
-      { id: 'quickReveal', label: tt('在文件夹中显示') },
-      { id: 'quickCopyPath', label: tt('复制文件路径') },
-      { sep: true },
-      { id: 'quickClear', label: tt('清空速记…') },
-      { note: quickHint() },
-    ],
+    action: () => { commands.quickNote(); },
   },
   {
     label: tt('编辑'),

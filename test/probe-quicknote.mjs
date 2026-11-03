@@ -188,25 +188,47 @@ const stamp = disk().match(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}/);
 ok('插入当前时间，格式是 年-月-日 时:分', !!stamp, stamp && stamp[0]);
 ok('时间戳也落到了磁盘', !!stamp && disk().includes(stamp[0]));
 
-/* ---------- 7. 菜单 ---------- */
+/* ---------- 7. 菜单 ----------
+   用户：「速记要点两次，不合理」—— 一级项展开是下拉，里面再点「打开速记」。
+   现在它是一个动作项：点一下按钮速记就开，不弹下拉。辅助动作挪进「文件」，
+   不是删掉。 */
 const menu = await c.ev(`(async () => {
   const bar = [...document.querySelectorAll('.am-btn')];
   const btn = bar.find((b) => b.textContent === '速记');
   if (!btn) return { found: false, labels: bar.map((b) => b.textContent) };
   btn.click();
-  await new Promise((r) => setTimeout(r, 120));
+  await new Promise((r) => setTimeout(r, 600));
   const panel = document.querySelector('.appmenu');
+  const t = window.__snp.getActiveTab();
   return {
     found: true,
-    open: !!panel && !panel.hidden,
-    items: [...panel.querySelectorAll('.am-item .am-label')].map((n) => n.textContent),
-    notes: [...panel.querySelectorAll('.am-note')].map((n) => n.textContent),
+    panelOpen: !!panel && !panel.hidden,
+    quick: !!(t && t.quickNote),
+    labels: bar.map((b) => b.textContent),
   };
 })()`);
 ok('菜单栏里有独立的「速记」一级项', menu.found === true, JSON.stringify(menu.labels || ''));
-ok('菜单项就是那几个动作',
-  ['打开速记', '插入当前时间', '清空速记…'].every((s) => (menu.items || []).includes(s)), JSON.stringify(menu.items));
-ok('菜单里写明它存在哪', (menu.notes || []).some((s) => s.includes('quicknote.md')), JSON.stringify(menu.notes));
+ok('点一次「速记」就打开速记（不再弹二级菜单）',
+  menu.panelOpen === false && menu.quick === true, JSON.stringify(menu));
+
+/* 辅助动作不能被顺手删掉：它们只是搬了家 */
+const fileMenu = await c.ev(`(async () => {
+  const bar = [...document.querySelectorAll('.am-btn')];
+  const btn = bar.find((b) => b.textContent === '文件');
+  btn.click();
+  await new Promise((r) => setTimeout(r, 150));
+  const panel = document.querySelector('.appmenu');
+  const out = {
+    items: [...panel.querySelectorAll('.am-item .am-label')].map((n) => n.textContent),
+    notes: [...panel.querySelectorAll('.am-note')].map((n) => n.textContent),
+  };
+  btn.click();
+  return out;
+})()`);
+ok('速记的辅助动作在「文件」菜单里',
+  ['插入当前时间', '清空速记…'].every((s) => (fileMenu.items || []).includes(s)), JSON.stringify(fileMenu.items));
+ok('「文件」里写明速记存在哪',
+  (fileMenu.notes || []).some((s) => s.includes('quicknote.md')), JSON.stringify(fileMenu.notes));
 /* 按 Esc 收菜单（点第一个顶级项只会换成「文件」那个下拉） */
 for (const t of ['keyDown', 'keyUp']) {
   await c.send('Input.dispatchKeyEvent', { type: t, key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 });
