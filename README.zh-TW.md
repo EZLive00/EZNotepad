@@ -142,6 +142,7 @@
 | 命令面板 / 設定 | `Ctrl+Shift+P` / `Ctrl+,` |
 | 格式化 / 對比 | `Ctrl+Shift+F` / `Ctrl+D` |
 | 下一處 / 上一處差異 | `F8` / `F7` |
+| 把這一處差異整段推到另一側（加 `Ctrl` 連推） | `Alt+←` / `Alt+→` |
 | 單欄 ⇄ 雙欄 / 大綱 | `Ctrl+Shift+L` / `Ctrl+Shift+O` |
 | 專注模式 / 全屏 | `F9` / `F11` |
 | 粗體 / 斜體 / 刪除線 / 行內程式碼 | `Ctrl+B` / `Ctrl+I` / `Ctrl+Shift+X` / `Ctrl+Shift+K` |

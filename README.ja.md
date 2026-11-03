@@ -142,6 +142,7 @@
 | コマンドパレット / 設定 | `Ctrl+Shift+P` / `Ctrl+,` |
 | 整形 / 比較 | `Ctrl+Shift+F` / `Ctrl+D` |
 | 次の差分 / 前の差分 | `F8` / `F7` |
+| この差分を丸ごと反対側へコピー（`Ctrl` 併用で連続） | `Alt+←` / `Alt+→` |
 | 1 ペイン ⇄ 2 ペイン / アウトライン | `Ctrl+Shift+L` / `Ctrl+Shift+O` |
 | 集中モード / 全画面 | `F9` / `F11` |
 | 太字 / 斜体 / 打ち消し / インラインコード | `Ctrl+B` / `Ctrl+I` / `Ctrl+Shift+X` / `Ctrl+Shift+K` |

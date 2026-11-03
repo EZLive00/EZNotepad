@@ -142,6 +142,7 @@
 | 명령 팔레트 / 설정 | `Ctrl+Shift+P` / `Ctrl+,` |
 | 정리 / 비교 | `Ctrl+Shift+F` / `Ctrl+D` |
 | 다음 차이 / 이전 차이 | `F8` / `F7` |
+| 이 차이를 통째로 반대쪽에 복사(`Ctrl` 함께 누르면 연속) | `Alt+←` / `Alt+→` |
 | 1단 ⇄ 2단 / 개요 | `Ctrl+Shift+L` / `Ctrl+Shift+O` |
 | 집중 모드 / 전체 화면 | `F9` / `F11` |
 | 굵게 / 기울임 / 취소선 / 인라인 코드 | `Ctrl+B` / `Ctrl+I` / `Ctrl+Shift+X` / `Ctrl+Shift+K` |

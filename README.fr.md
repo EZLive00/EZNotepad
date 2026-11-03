@@ -147,6 +147,7 @@ La barre latérale a deux pages : **Plan** (souligne la section en cours de lect
 | Palette de commandes / Paramètres | `Ctrl+Shift+P` / `Ctrl+,` |
 | Formater / Comparer | `Ctrl+Shift+F` / `Ctrl+D` |
 | Différence suivante / précédente | `F8` / `F7` |
+| Copier cette différence de l'autre côté (+`Ctrl` pour enchaîner) | `Alt+←` / `Alt+→` |
 | Un volet ⇄ deux volets / Plan | `Ctrl+Shift+L` / `Ctrl+Shift+O` |
 | Mode concentration / Plein écran | `F9` / `F11` |
 | Gras / Italique / Barré / Code en ligne | `Ctrl+B` / `Ctrl+I` / `Ctrl+Shift+X` / `Ctrl+Shift+K` |

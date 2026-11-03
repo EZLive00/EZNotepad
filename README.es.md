@@ -147,6 +147,7 @@ La barra lateral tiene dos páginas: **Esquema** (resalta la sección que estás
 | Paleta de comandos / Ajustes | `Ctrl+Shift+P` / `Ctrl+,` |
 | Formatear / Comparar | `Ctrl+Shift+F` / `Ctrl+D` |
 | Siguiente / anterior diferencia | `F8` / `F7` |
+| Copiar esta diferencia al otro lado (con `Ctrl` para seguir) | `Alt+←` / `Alt+→` |
 | Un panel ⇄ dos paneles / Esquema | `Ctrl+Shift+L` / `Ctrl+Shift+O` |
 | Modo concentración / Pantalla completa | `F9` / `F11` |
 | Negrita / Cursiva / Tachado / Código | `Ctrl+B` / `Ctrl+I` / `Ctrl+Shift+X` / `Ctrl+Shift+K` |

@@ -145,6 +145,7 @@ The sidebar has two pages: **Outline** (highlights the section you are reading) 
 | Command palette / Settings | `Ctrl+Shift+P` / `Ctrl+,` |
 | Format / Compare | `Ctrl+Shift+F` / `Ctrl+D` |
 | Next / previous difference | `F8` / `F7` |
+| Copy this difference to the other side (add `Ctrl` to keep going) | `Alt+←` / `Alt+→` |
 | Single ⇄ dual pane / Outline | `Ctrl+Shift+L` / `Ctrl+Shift+O` |
 | Focus mode / Fullscreen | `F9` / `F11` |
 | Bold / Italic / Strike / Code | `Ctrl+B` / `Ctrl+I` / `Ctrl+Shift+X` / `Ctrl+Shift+K` |

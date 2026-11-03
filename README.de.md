@@ -145,6 +145,7 @@ Die Seitenleiste hat zwei Reiter: **Gliederung** (hebt beim Scrollen den aktuell
 | Befehlspalette / Einstellungen | `Ctrl+Shift+P` / `Ctrl+,` |
 | Formatieren / Vergleichen | `Ctrl+Shift+F` / `Ctrl+D` |
 | Nächster / vorheriger Unterschied | `F8` / `F7` |
+| Diesen Unterschied ganz auf die andere Seite übernehmen (mit `Ctrl` weiter) | `Alt+←` / `Alt+→` |
 | Eine ⇄ zwei Spalten / Gliederung | `Ctrl+Shift+L` / `Ctrl+Shift+O` |
 | Fokusmodus / Vollbild | `F9` / `F11` |
 | Fett / Kursiv / Durchgestrichen / Code | `Ctrl+B` / `Ctrl+I` / `Ctrl+Shift+X` / `Ctrl+Shift+K` |
