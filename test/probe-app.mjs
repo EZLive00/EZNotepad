@@ -69,6 +69,13 @@ try {
   await ev(`document.querySelector('[data-side="files"]').click()`);
   ok('切到文件页后大纲隐藏', await ev(`document.getElementById('sideOutline').classList.contains('hidden')`));
   ok('没打开文件夹时给引导', (await ev(`document.getElementById('ftBody').textContent`)).includes('还没打开文件夹'));
+  /* 文件搜索只负责「找」，不负责「改」：跨文件批量替换会把磁盘上几十个文件
+     一次改掉，误点一次要按文件翻历史快照才救得回来，而真实需求几乎没有。
+     改内容交给编辑区的查找替换（Ctrl+H），那里只改当前这一份。 */
+  ok('文件搜索里没有替换行',
+    (await ev(`!!document.getElementById('ftReplaceRow') || !!document.getElementById('ftReplaceAll')`)) === false);
+  ok('区分大小写并进搜索行，不再挂在替换行上',
+    (await ev(`!!document.querySelector('#sideFiles .ft-search #ftCase')`)) === true);
 
   // ---- B. 后端命令：列目录 / 全目录搜索 ----
   const invoke = (cmd, args) =>
@@ -84,6 +91,9 @@ try {
   const hits = await invoke('search_in_folder', { root: '.', query: 'EZNotepad', maxResults: 20 }).catch(() => null);
   ok('search_in_folder 能搜到内容', Array.isArray(hits) && hits.length > 0, hits ? hits.length + ' 条' : 'null');
   ok('搜索结果带行号和片段', !!(hits && hits[0] && hits[0].line > 0 && hits[0].text));
+  const noRep = await invoke('replace_in_folder', { root: '.', query: 'a', replacement: 'b' })
+    .then(() => false).catch(() => true);
+  ok('后端不再暴露跨文件替换命令', noRep);
 
   // ---- C. 设置面板 ----
   await ev(`window.__snp.commands.settings()`);

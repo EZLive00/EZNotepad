@@ -65,9 +65,6 @@ export const setCompareFill = (fill) => invoke('compare_set_fullscreen', { fill:
 export const searchInFolder = (root, query, maxResults = 300, regex = false, caseSensitive = false) =>
   invoke('search_in_folder', { root, query, maxResults, regex, caseSensitive });
 
-/** 全目录替换。只在用户明确确认后调用；每个文件改之前后端会先留历史快照 */
-export const replaceInFolder = (root, query, replacement, regex = false, caseSensitive = false) =>
-  invoke('replace_in_folder', { root, query, replacement, regex, caseSensitive });
 export const writeBinary = (path, bytes) => invoke('write_binary_file', { path, bytes: Array.from(bytes) });
 /** 读文件转 base64（导出 HTML 时把图片内嵌成 data URI 用） */
 export const readFileBase64 = (path, maxBytes = 4 * 1024 * 1024) =>

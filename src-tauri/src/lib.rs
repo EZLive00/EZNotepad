@@ -480,114 +480,6 @@ fn search_in_folder(
     Ok(hits)
 }
 
-#[derive(Serialize)]
-struct ReplaceResult {
-    files: usize,
-    hits: usize,
-    skipped: usize,
-    paths: Vec<String>,
-}
-
-/// 跨文件替换。默认字面匹配、不区分大小写（和搜索一致）；regex=true 才走正则，
-/// 正则写错直接返回错误，不会改到一半停下。
-/// 只处理能按 UTF-8 读通的文件——GBK 那些硬转会在用户不知情时换掉整个文件的编码，
-/// 宁可不改，也不悄悄改错。每个文件落盘前先留一份历史快照。
-#[tauri::command]
-fn replace_in_folder(
-    app: tauri::AppHandle,
-    root: String,
-    query: String,
-    replacement: String,
-    regex: Option<bool>,
-    case_sensitive: Option<bool>,
-) -> Result<ReplaceResult, AppError> {
-    if query.is_empty() {
-        return Err(AppError::new("search.empty"));
-    }
-    let root_path = PathBuf::from(&root);
-    if !root_path.is_dir() {
-        return Err(AppError::new("dir.not_folder"));
-    }
-    let use_regex = regex.unwrap_or(false);
-    let pat = if use_regex {
-        regex::Regex::new(&query).map_err(|e| AppError::detail("regex.invalid", e))?
-    } else {
-        let src = if case_sensitive.unwrap_or(false) {
-            regex::escape(&query)
-        } else {
-            format!("(?i){}", regex::escape(&query))
-        };
-        regex::Regex::new(&src).map_err(|e| AppError::detail("regex.bad_pattern", e))?
-    };
-    /* 字面替换里用户输的 $ 是普通字符，不该被当成捕获组引用 */
-    let rep = if use_regex {
-        replacement.clone()
-    } else {
-        replacement.replace('$', "$$")
-    };
-
-    let mut files = Vec::new();
-    walk(&root_path, &mut files, 4000, 0)?;
-
-    let mut out = ReplaceResult { files: 0, hits: 0, skipped: 0, paths: Vec::new() };
-    for f in files {
-        match plan_replace(&f, &pat, &rep, f.size) {
-            Planned::Skip => {
-                out.skipped += 1;
-                continue;
-            }
-            Planned::Keep => continue,
-            Planned::Write { prev, next, hits } => {
-                let _ = write_history_snapshot(&app, &f.path, &prev);
-                match fs::write(&f.path, next.as_bytes()) {
-                    Ok(_) => {
-                        out.files += 1;
-                        out.hits += hits;
-                        out.paths.push(f.path.clone());
-                    }
-                    Err(_) => out.skipped += 1,
-                }
-            }
-        }
-    }
-    Ok(out)
-}
-
-/// 一个文件的替换结论：跳过（二进制/太大/非 UTF-8）、没命中、或者要写成什么
-enum Planned {
-    Skip,
-    Keep,
-    Write { prev: String, next: String, hits: usize },
-}
-
-/// 纯逻辑：读一个文件、判断能不能改、算出改完的内容。
-/// 抽出来是为了能单测 —— 命令那层要 app handle，测不了。
-fn plan_replace(f: &DirEntryInfo, pat: &regex::Regex, rep: &str, size: u64) -> Planned {
-    if size > 4 * 1024 * 1024 {
-        return Planned::Skip;
-    }
-    let bytes = match fs::read(&f.path) {
-        Ok(b) => b,
-        Err(_) => return Planned::Skip,
-    };
-    if bytes.iter().take(8000).any(|b| *b == 0) {
-        return Planned::Skip;
-    }
-    let text = match String::from_utf8(bytes) {
-        Ok(t) => t,
-        Err(_) => return Planned::Skip,   // GBK 之类：宁可不动，也不悄悄改编码
-    };
-    let hits = pat.find_iter(&text).count();
-    if hits == 0 {
-        return Planned::Keep;
-    }
-    Planned::Write {
-        prev: text.clone(),
-        next: pat.replace_all(&text, rep).to_string(),
-        hits,
-    }
-}
-
 #[tauri::command]
 fn write_binary_file(path: String, bytes: Vec<u8>) -> Result<String, AppError> {
     fs::write(&path, &bytes).map_err(|e| AppError::detail("io.write", e))?;
@@ -1457,7 +1349,6 @@ pub fn run() {
             list_dir_recursive,
             read_dir_shallow,
             search_in_folder,
-            replace_in_folder,
             write_binary_file,
             read_file_base64,
             copy_image_to_assets,
@@ -1502,21 +1393,6 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn tmp_file(name: &str, content: &[u8]) -> DirEntryInfo {
-        let dir = std::env::temp_dir().join("ez-snp-test");
-        fs::create_dir_all(&dir).unwrap();
-        let p = dir.join(name);
-        fs::write(&p, content).unwrap();
-        DirEntryInfo {
-            name: name.into(),
-            path: p.to_string_lossy().to_string(),
-            is_dir: false,
-            ext: "md".into(),
-            size: content.len() as u64,
-            mtime: 0,
-        }
-    }
 
     #[test]
     fn simple_names_reject_paths() {
@@ -1571,59 +1447,6 @@ mod tests {
         assert!(r.is_none());
         // 没有 --compare 就不是对比启动
         assert!(compare_args(&["app.exe".to_string()]).is_none());
-    }
-
-    #[test]
-    fn regex_replace_expands_groups() {
-        let f = tmp_file("re.md", "v1\nv2\n".as_bytes());
-        let pat = regex::Regex::new("v(\\d)").unwrap();
-        match plan_replace(&f, &pat, "V$1", f.size) {
-            Planned::Write { next, hits, .. } => {
-                assert_eq!(hits, 2);
-                assert_eq!(next, "V1\nV2\n");
-            }
-            _ => panic!("应该要写回"),
-        }
-    }
-
-    #[test]
-    fn literal_replacement_keeps_dollar() {
-        let f = tmp_file("dollar.md", "cost: 5\n".as_bytes());
-        let pat = regex::Regex::new(&format!("(?i){}", regex::escape("cost"))).unwrap();
-        // 字面替换时必须把 $ 转义，否则会被当成组引用
-        let rep = "price $9".replace('$', "$$");
-        match plan_replace(&f, &pat, &rep, f.size) {
-            Planned::Write { next, hits, .. } => {
-                assert_eq!(hits, 1);
-                assert_eq!(next, "price $9: 5\n");
-            }
-            _ => panic!("应该要写回"),
-        }
-    }
-
-    #[test]
-    fn binary_and_oversize_are_skipped() {
-        let f = tmp_file("bin.md", &[0u8, 1, 2, 3]);
-        let pat = regex::Regex::new("a").unwrap();
-        assert!(matches!(plan_replace(&f, &pat, "", f.size), Planned::Skip));
-
-        let big = tmp_file("big.md", b"abc");
-        assert!(matches!(plan_replace(&big, &pat, "", 5 * 1024 * 1024), Planned::Skip));
-    }
-
-    #[test]
-    fn non_utf8_is_left_alone() {
-        // GB18030 的「中文」：改成 UTF-8 会悄悄换掉整个文件的编码
-        let f = tmp_file("gbk.md", &[0xD6, 0xD0, 0xCE, 0xC4]);
-        let pat = regex::Regex::new("中").unwrap();
-        assert!(matches!(plan_replace(&f, &pat, "", f.size), Planned::Skip));
-    }
-
-    #[test]
-    fn no_hit_keeps_file() {
-        let f = tmp_file("none.md", "zzz\n".as_bytes());
-        let pat = regex::Regex::new("abc").unwrap();
-        assert!(matches!(plan_replace(&f, &pat, "", f.size), Planned::Keep));
     }
 
     #[test]
