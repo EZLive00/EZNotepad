@@ -113,8 +113,7 @@ A janela de comparação tem esses mesmos dois botões na barra (acinzentados no
 
 Cada lado tem limite de 8 MB / 50 000 linhas; acima disso, a janela explica o motivo.
 
-**Comparar pastas** lista recursivamente *só à esquerda / só à direita / modificado / idêntico*; clique numa linha para abrir
-a comparação daquele arquivo. **Mesclagem de três vias** pega base + A + B, mescla e lista os conflitos — o resultado abre em
+**Comparar pastas** abre a própria janela: cada lado lista seus arquivos e uma linha é um par, então *só à esquerda / só à direita / modificado* se lê de relance. Clique num par para comparar, ou num arquivo de um só lado para abri-lo na janela principal. **Mesclagem de três vias** pega base + A + B, mescla e lista os conflitos — o resultado abre em
 outra aba e nunca sobrescreve o original.
 
 ## Arquivos e busca
@@ -130,6 +129,7 @@ A barra lateral tem duas páginas: **Estrutura** (realça a seção que você es
 
 | | |
 |---|---|
+| **Muitas abas** | Arrastar reordena, o botão do meio fecha; a roda rola a barra na horizontal e arrastar uma aba até a borda continua rolando — quando não cabem mais, aparece o menu "Todas as abas" à direita |
 | **Formatar** | `Ctrl+Alt+L` — JSON validado e reindentado (em caso de erro o arquivo não é tocado e a linha / coluna é informada), Markdown: linhas em branco e marcadores unificados, o resto: espaços finais removidos. Um `Ctrl+Z` desfaz tudo |
 | **Histórico** | Cada salvamento guarda o conteúdo anterior (60 por arquivo, 20 MB no total). **Ver** abre em somente leitura, **Restaurar** devolve ao editor — o disco só muda com `Ctrl+S` |
 | **Exportar** | HTML de arquivo único, estilos embutidos e imagens em data URI; PDF pelo diálogo de impressão do sistema |

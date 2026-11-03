@@ -113,8 +113,7 @@ La ventana de comparación tiene esos mismos dos botones en su barra (en gris al
 
 Cada lado tiene un límite de 8 MB / 50 000 líneas; al superarlo, la ventana explica el motivo.
 
-**Comparar carpetas** lista de forma recursiva *solo izquierda / solo derecha / modificado / idéntico*; al pulsar una fila
-se abre esa comparación. **Fusión de tres vías** toma base + A + B, fusiona y lista los conflictos: el resultado se abre en una
+**Comparar carpetas** abre su propia ventana: cada lado lista sus archivos y una fila es una pareja, así que *solo izquierda / solo derecha / modificado* se lee de un vistazo. Al pulsar una pareja se abre la comparación; un archivo de un solo lado se abre en la ventana principal. **Fusión de tres vías** toma base + A + B, fusiona y lista los conflictos: el resultado se abre en una
 pestaña nueva y nunca sobrescribe el original.
 
 ## Archivos y búsqueda
@@ -130,6 +129,7 @@ La barra lateral tiene dos páginas: **Esquema** (resalta la sección que estás
 
 | | |
 |---|---|
+| **Muchas pestañas** | Arrastrar reordena, el botón central cierra; la rueda desplaza la barra en horizontal y arrastrar una pestaña al borde sigue desplazando — cuando ya no caben, a la derecha aparece el menú «Todas las pestañas» |
 | **Formatear** | `Ctrl+Alt+L` — JSON validado y reindentado (si hay error no toca el archivo e indica línea / columna), Markdown: líneas en blanco y viñetas unificadas, el resto: espacios finales fuera. Un `Ctrl+Z` lo deshace todo |
 | **Historial** | Cada guardado conserva el contenido anterior (60 por archivo, 20 MB en total). **Ver** lo abre en solo lectura, **Restaurar** lo devuelve al editor — el disco solo cambia al pulsar `Ctrl+S` |
 | **Exportar** | HTML de un solo archivo, estilos incrustados e imágenes en data URI; PDF mediante el diálogo de impresión del sistema |

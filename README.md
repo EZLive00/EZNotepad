@@ -111,8 +111,7 @@ The toolbar carries the same two buttons, greyed out at the ends of the stack; w
 
 A single side is capped at 8 MB / 50,000 lines; past that the window says why instead of failing quietly.
 
-**Compare Folders** lists *left only / right only / modified / identical* recursively; click a row to open that file
-in the compare window. **Three-way Merge** takes base + A + B, auto-merges and lists conflicts — the result opens in a
+**Compare Folders** opens its own window: each side lists its own files and one row is one pair, so *left only / right only / modified* reads at a glance. Click a pair to diff it, or a one-sided file to open it in the main window. **Three-way Merge** takes base + A + B, auto-merges and lists conflicts — the result opens in a
 new tab and never overwrites an original.
 
 ## Files and Search
@@ -128,6 +127,7 @@ The sidebar has two pages: **Outline** (highlights the section you are reading) 
 
 | | |
 |---|---|
+| **Many tabs** | Drag to reorder, middle-click to close; the wheel scrolls the strip sideways, and dragging a tab to an edge keeps it scrolling — once they stop fitting, an "All tabs" menu appears on the right |
 | **One-click format** | `Ctrl+Alt+L` — JSON validate + reindent (leaves the file untouched and reports line / column on error), Markdown blank lines and list markers, trailing whitespace for everything. One `Ctrl+Z` undoes it |
 | **History** | Every save snapshots the previous content (60 per file, 20 MB total). **View** opens it read-only, **Restore** writes it back to the editor — disk changes only when you press `Ctrl+S` |
 | **Export** | Single-file HTML with inlined styles and data-URI images; PDF through the system print dialog |

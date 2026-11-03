@@ -111,8 +111,7 @@ Das Vergleichsfenster hat dieselben zwei Schaltflächen in seiner Werkzeugleiste
 
 Pro Seite gilt ein Limit von 8 MB / 50.000 Zeilen; darüber nennt das Fenster den Grund, statt still zu scheitern.
 
-**Ordner vergleichen** listet rekursiv *nur links / nur rechts / geändert / gleich*; ein Klick auf die Zeile öffnet diesen
-Dateivergleich. **Drei-Wege-Zusammenführung** nimmt Basis + A + B, führt zusammen und listet Konflikte — das Ergebnis öffnet
+**Ordner vergleichen** öffnet ein eigenes Fenster: links und rechts steht die eigene Liste, eine Zeile ist ein Paar — *nur links / nur rechts / geändert* liest man auf einen Blick. Ein Klick auf ein Paar öffnet den Dateivergleich, eine einseitige Datei landet direkt im Hauptfenster. **Drei-Wege-Zusammenführung** nimmt Basis + A + B, führt zusammen und listet Konflikte — das Ergebnis öffnet
 sich in einem neuen Tab und überschreibt nie ein Original.
 
 ## Dateien und Suche
@@ -128,6 +127,7 @@ Die Seitenleiste hat zwei Reiter: **Gliederung** (hebt beim Scrollen den aktuell
 
 | | |
 |---|---|
+| **Viele Tabs** | Ziehen ordnet um, Mittelklick schließt; das Mausrad scrollt die Leiste seitwärts, ein Tab am Rand zieht sie mit — passen sie nicht mehr, erscheint rechts das Menü „Alle Tabs“ |
 | **Formatieren** | `Ctrl+Alt+L` — JSON prüfen und neu einrücken (bei Fehler bleibt die Datei unberührt, Zeile / Spalte werden gemeldet), Markdown: Leerzeilen und Aufzählungszeichen vereinheitlicht, Rest: Leerzeichen am Zeilenende weg. Ein `Ctrl+Z` macht alles rückgängig |
 | **Versionsverlauf** | Jedes Speichern sichert den vorherigen Stand (60 pro Datei, 20 MB gesamt). **Ansehen** öffnet schreibgeschützt, **Wiederherstellen** schreibt in den Editor — auf die Platte geht es erst mit `Ctrl+S` |
 | **Export** | Einzelne HTML-Datei mit eingebetteten Stilen und Bildern als data URI; PDF über den Druckdialog des Systems |

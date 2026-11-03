@@ -113,8 +113,7 @@ La fenêtre de comparaison propose les deux mêmes boutons dans sa barre (grisé
 
 Chaque côté est limité à 8 Mo / 50 000 lignes ; au-delà, la fenêtre explique pourquoi au lieu d'échouer en silence.
 
-**Comparer des dossiers** liste récursivement *gauche seule / droite seule / modifié / identique* ; cliquez une ligne pour
-ouvrir la comparaison de ce fichier. **Fusion à trois** prend base + A + B, fusionne et liste les conflits — le résultat
+**Comparer des dossiers** ouvre sa propre fenêtre : chaque côté liste ses fichiers et une ligne = une paire, donc *gauche seule / droite seule / modifié* se lit d'un coup d'œil. Cliquez une paire pour la comparer, ou un fichier d'un seul côté pour l'ouvrir dans la fenêtre principale. **Fusion à trois** prend base + A + B, fusionne et liste les conflits — le résultat
 s'ouvre dans un nouvel onglet et n'écrase jamais l'original.
 
 ## Fichiers et recherche
@@ -130,6 +129,7 @@ La barre latérale a deux pages : **Plan** (souligne la section en cours de lect
 
 | | |
 |---|---|
+| **Beaucoup d'onglets** | Glisser réordonne, clic du milieu ferme ; la molette fait défiler la barre horizontalement et glisser un onglet sur le bord continue le défilement — quand ils ne tiennent plus, un menu « Tous les onglets » apparaît à droite |
 | **Formatage** | `Ctrl+Alt+L` — JSON validé et réindenté (le fichier reste intact et l'erreur est signalée ligne / colonne), Markdown : lignes vides et puces harmonisées, le reste : espaces de fin supprimés. Un `Ctrl+Z` annule tout |
 | **Historique** | Chaque enregistrement conserve le contenu précédent (60 par fichier, 20 Mo au total). **Voir** l'ouvre en lecture seule, **Restaurer** le renvoie dans l'éditeur — le disque ne change qu'au `Ctrl+S` |
 | **Export** | HTML en un seul fichier, styles intégrés et images en data URI ; PDF via la boîte d'impression du système |
