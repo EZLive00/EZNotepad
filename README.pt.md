@@ -96,6 +96,7 @@ clique ou arraste para saltar. **Diferenças** lista cada mudança numa tabela o
 (posição, tipo, linhas).
 **Ordenar** reordena os dois lados alfabeticamente (linhas vazias no fim) para que a desordem não esconda as diferenças reais; `Ctrl+Z` desfaz.
 No modo de edição, `Ctrl+Z` / `Ctrl+Y` desfazem e refazem o que foi digitado, quebras de linha, indentação, exclusão de seleções e a ordenação — mesmo com o foco na barra de ferramentas.
+A janela de comparação tem esses mesmos dois botões na barra (acinzentados nos extremos); quando a janela fica estreita, a linha se reduz a ícones em vez de cortar um botão.
 Cada lado tem limite de 8 MB / 50 000 linhas; acima disso, a janela explica o motivo.
 
 **Comparar pastas** lista recursivamente *só à esquerda / só à direita / modificado / idêntico*; clique numa linha para abrir

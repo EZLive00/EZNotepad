@@ -96,6 +96,7 @@ y haz clic o arrastra para saltar. **Diferencias** lista cada cambio en una tabl
 (posición, tipo, líneas).
 **Ordenar** reordena ambos lados alfabéticamente (las líneas vacías al final) para que el desorden no oculte las diferencias reales; `Ctrl+Z` lo deshace.
 En modo edición, `Ctrl+Z` / `Ctrl+Y` deshacen y rehacen lo escrito, los saltos de línea, la sangría, el borrado de selecciones y la ordenación — incluso con el foco en la barra de herramientas.
+La ventana de comparación tiene esos mismos dos botones en su barra (en gris al llegar a los extremos); si la ventana se estrecha, la fila se reduce a iconos en vez de recortar un botón.
 Cada lado tiene un límite de 8 MB / 50 000 líneas; al superarlo, la ventana explica el motivo.
 
 **Comparar carpetas** lista de forma recursiva *solo izquierda / solo derecha / modificado / idéntico*; al pulsar una fila

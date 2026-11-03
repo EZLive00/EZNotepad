@@ -96,6 +96,7 @@ cliquez ou faites glisser pour vous déplacer. **Différences** liste chaque cha
 et filtrable (position, type, nombre de lignes).
 **Trier** réordonne les deux côtés par ordre alphabétique (lignes vides à la fin) : le bruit d'ordre ne masque plus les vraies différences ; `Ctrl+Z` annule.
 En mode édition, `Ctrl+Z` / `Ctrl+Y` annulent et rétablissent la saisie, les sauts de ligne, l'indentation, la suppression de sélections et le tri — même quand le focus est sur la barre d'outils.
+La fenêtre de comparaison propose les deux mêmes boutons dans sa barre (grisés aux extrémités de l'historique) ; quand la fenêtre se rétrécit, la rangée se replie en icônes au lieu de tronquer un bouton.
 Chaque côté est limité à 8 Mo / 50 000 lignes ; au-delà, la fenêtre explique pourquoi au lieu d'échouer en silence.
 
 **Comparer des dossiers** liste récursivement *gauche seule / droite seule / modifié / identique* ; cliquez une ligne pour
