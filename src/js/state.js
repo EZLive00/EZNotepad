@@ -68,6 +68,7 @@ export function createTab(name = tt('未命名.md'), content = '', path = null) 
     caret: 0,
     readonly: false,
     external: false,            // 是否为外部生成（对比结果 / 合并结果）
+    quickNote: false,           // 是不是那份固定位置的速记（见 app.js openQuickNote）
     mtime: null,                // 上次读/写这个文件时的修改时间（毫秒），用于发现外部改动
   };
 }
@@ -84,4 +85,11 @@ export function removeTab(id) {
   if (activeId === id) activeId = tabs[Math.min(i, tabs.length - 1)] ? tabs[Math.min(i, tabs.length - 1)].id : null;
 }
 
-export function isDirty(tab) { return tab && tab.content !== tab.savedContent; }
+/* 脏标记 = 「内存里的内容和磁盘上的不一样」。
+   速记是唯一例外：它没有「保存」这个动作，改动随时写盘，所以对它永远是干净的 ——
+   否则每敲一个字标签上就闪一下小圆点、关窗时还弹「要保存吗」，等于把「不用保存」
+   这件事又还给用户（见 app.js 的 flushQuickNote）。 */
+export function isDirty(tab) {
+  if (!tab || tab.quickNote) return false;
+  return tab.content !== tab.savedContent;
+}

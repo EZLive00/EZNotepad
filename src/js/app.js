@@ -161,6 +161,7 @@ const wys = new WysiwygEditor(el.wysiwyg, {
       scheduleOutline();
       scheduleDraft();
       scheduleAutoSave();
+      scheduleQuickSave(t);
       updateStatus();
       scheduleFindRefresh();
     }
@@ -177,12 +178,16 @@ function renderWys(content, caret) {
 }
 
 /* ---------------- 标签 ---------------- */
+/** 标签上显示的名字。速记的磁盘文件名是 quicknote.md（跟着数据目录走、不随界面语言变），
+ *  但标签上应该写「速记」——用户认的是这个功能，不是文件名 */
+const tabLabel = (t) => (!t ? '' : t.quickNote ? tt('速记') : t.name);
+
 /** 标题栏中间那行文字 + 系统窗口标题（任务栏 / Alt+Tab 用） */
 let titleTimer = 0;
 function refreshTitle() {
   const t = activeTab();
   const dirty = t ? isDirty(t) : false;
-  const name = t ? t.name : '';
+  const name = tabLabel(t);
   const shown = settings.showWinTitle === false
     ? ''
     : (t ? (dirty ? '• ' + name : name) : 'EZNotepad');
@@ -204,7 +209,7 @@ let tabsSig = '';
 
 function renderTabs() {
   const act = activeTab();
-  const sig = tabs.map((t) => `${t.id}|${t.name}|${t.path || ''}|${isDirty(t) ? 1 : 0}|${t.extChanged ? 1 : 0}`).join('~')
+  const sig = tabs.map((t) => `${t.id}|${tabLabel(t)}|${t.path || ''}|${isDirty(t) ? 1 : 0}|${t.extChanged ? 1 : 0}`).join('~')
     + '#' + (act ? act.id : '');
   if (sig === tabsSig && el.tabs.children.length) return;
   tabsSig = sig;
@@ -218,9 +223,9 @@ function renderTabs() {
     b.dataset.id = String(t.id);
     const name = document.createElement('span');
     name.className = 'tab-name';
-    name.textContent = t.name;
-    // data-bold 供 CSS 伪元素预留加粗宽度，渲染签名已含 t.name，名字变了会跟着重建
-    name.dataset.bold = t.name;
+    name.textContent = tabLabel(t);
+    // data-bold 供 CSS 伪元素预留加粗宽度，渲染签名已含标签文字，名字变了会跟着重建
+    name.dataset.bold = tabLabel(t);
     b.appendChild(name);
     if (isDirty(t)) {
       const d = document.createElement('span');
@@ -1222,7 +1227,9 @@ function scheduleDraft() {
 const DRAFT_MAX_BYTES = 4 * 1024 * 1024;   // localStorage 一般 5MB，给设置和会话留余量
 
 function saveDraft() {
-  const session = tabs.map((t) => ({
+  /* 速记不进会话：它不是「上次打开的文档」，而是一个随时能一键回到的地方。
+     混进去还会连带把它的路径塞进「最近打开」，那两份列表就都不干净了。 */
+  const session = tabs.filter((t) => !t.quickNote).map((t) => ({
     path: t.path, name: t.name, mode: t.mode,
     scrollTop: t.scrollTop || 0, previewScroll: t.previewScroll || 0, caret: t.caret ?? null,
   }));
@@ -1379,7 +1386,8 @@ let watchTimer = 0;
 function syncWatches() {
   clearTimeout(watchTimer);
   watchTimer = setTimeout(() => {
-    const paths = settings.watchFiles === false ? [] : tabs.filter((t) => t.path).map((t) => t.path);
+    /* 速记不监听：它由我们自己写，监听自己只会把每次自动保存当成「外部改动」 */
+    const paths = settings.watchFiles === false ? [] : tabs.filter((t) => t.path && !t.quickNote).map((t) => t.path);
     be.watchFiles(paths).catch(() => { /* 监听不上不影响任何编辑功能 */ });
   }, 300);
 }
@@ -1419,6 +1427,11 @@ async function reloadTab(t, mtime) {
 
 /* ---------------- 文件操作 ---------------- */
 export async function openPath(path) {
+  /* 从文件树 / 拖放 / 最近打开里点到速记本身：走同一个入口，别开出第二个标签。
+     两个标签写同一个文件，后保存的会把先保存的盖掉。 */
+  const qp = quickPath || await quickFile().catch(() => null);
+  if (qp && path === qp) return openQuickNote();
+
   const existing = tabs.find((t) => t.path === path);
   if (existing) {
     /* 已是当前标签就别再 activate —— activate 会整篇重渲染，
@@ -1447,6 +1460,8 @@ async function openFileDialog() {
 
 async function saveTab(t = activeTab(), saveAs = false, opts = {}) {
   if (!t) return false;
+  /* 速记没有保存对话框这条路：它的位置是固定的，写就是了 */
+  if (t.quickNote) return quickNoteSaveNow(t, saveAs);
   const silent = !!opts.silent;
   if (!t.path || saveAs) {
     const p = await be.pickSavePath(t.path || t.name);
@@ -1495,6 +1510,199 @@ async function saveTab(t = activeTab(), saveAs = false, opts = {}) {
 
 const saveTabAs = (t) => saveTab(t, true);
 
+/* ---------------- 速记 ----------------
+   一份固定位置的临时笔记：写了就是写了，没有「保存」这个动作。
+
+   它本身仍是普通的 Markdown 标签（能切模式、能导出、能搜索），只有三处不同，
+   而这三处正是「速记」与「文档」的分界线：
+   · 不进「最近打开」、不进会话恢复 —— 那两处是用户自己管理的文档的地盘；
+   · 永远不显示脏标记、关窗不追问 —— 内容随时都在磁盘上（state.js 的 isDirty）；
+   · 路径固定、由后端给（应用数据目录下一份），前端不拼、也不要用户选。 */
+let quickPath = null;      // 固定路径：问一次后端就记住
+let quickTimer = 0;        // 打字 → 落盘的防抖
+let quickWarned = false;   // 写失败只弹一次，别让每个字都弹一窗
+
+async function quickFile() {
+  if (!quickPath) quickPath = await be.quickNotePath();
+  return quickPath;
+}
+
+/** 路径太长会把菜单撑爆：只留末两级 */
+const shortPath = (p) => {
+  const parts = String(p || '').split(/[\\/]/).filter(Boolean);
+  return parts.length > 2 ? '…\\' + parts.slice(-2).join('\\') : String(p || '');
+};
+
+/** 速记菜单底部那句「它在哪」。还没有路径时说实话，不要留一个空行 */
+const quickHint = () => (quickPath
+  ? tt('保存在 {path}，改动会自动写入', { path: shortPath(quickPath) })
+  : tt('改动会自动写入，不用保存'));
+
+/** 光标放到速记末尾：临时记录永远是「接着上次往下写」 */
+function focusQuickEnd(t) {
+  if (!t || activeTab() !== t) return;
+  if (t.mode === 'wysiwyg') {
+    const last = wys.root.lastElementChild;
+    if (last) wys.focusBlock(last, true);
+    else wys.root.focus();
+  } else if (t.mode === 'edit') {
+    plain.setSelection(plain.value.length);
+    plain.revealOffset(plain.value.length);
+    plain.focus();
+  }
+}
+
+export async function openQuickNote() {
+  /* 已经开着就切过去 —— 再开一个同路径的标签，两个编辑器会互相覆盖 */
+  const open = tabs.find((t) => t.quickNote);
+  if (open) {
+    if (!activeTab() || activeTab().id !== open.id) activate(open.id);
+    focusQuickEnd(open);
+    return open;
+  }
+
+  let path;
+  try {
+    path = await quickFile();
+  } catch (e) {
+    dialog({ title: tt('速记打不开'), body: errText(e) });
+    return null;
+  }
+
+  /* 第一次用的时候文件还不存在，那不是错误，是「还没写过」 —— 空着开即可。
+     但「文件在、读不出来」（二进制 / 没权限）要明说：那种情况下继续写下去，
+     等于把用户原来的笔记盖掉。 */
+  let text = '';
+  let meta = { encoding: 'UTF-8', bom: false, eol: 'LF' };
+  try {
+    const r = await be.readText(path);
+    text = toLF(r.content);
+    meta = { encoding: r.encoding, bom: r.bom, eol: r.eol };
+  } catch (e) {
+    const exists = await be.fileMtime(path).catch(() => null);
+    if (exists != null) {
+      dialog({ title: tt('速记打不开'), body: errText(e) });
+      return null;
+    }
+  }
+
+  const t = newTab(be.baseName(path), text, path, { ...meta, quickNote: true });
+  t.savedContent = text;      // 刚从磁盘读的，就是「磁盘上的那份」
+  renderTabs();
+  focusQuickEnd(t);
+  return t;
+}
+
+function scheduleQuickSave(t) {
+  if (!t || !t.quickNote) return;
+  clearTimeout(quickTimer);
+  quickTimer = setTimeout(() => { flushQuickNote(t); }, 350);
+}
+
+/** 立刻落盘。返回 false 表示这次没写成功（调用方决定要不要拦住关闭/退出） */
+async function flushQuickNote(t = tabs.find((x) => x.quickNote)) {
+  if (!t || !t.quickNote) return true;
+  clearTimeout(quickTimer);
+  /* 屏幕上那个标签的内容要先从编辑器读回来：编辑器的 flush 是防抖的，
+     打完最后一个字就关窗的话，t.content 里还差最后几个字 */
+  if (activeTab() === t) t.content = readEditor(t);
+  if (t.content === t.savedContent) return true;
+  try {
+    await be.saveText({ path: t.path, content: t.content, encoding: t.encoding, bom: t.bom });
+    t.savedContent = t.content;
+    quickWarned = false;
+    return true;
+  } catch (e) {
+    /* 磁盘满、目录被删、文件被占用 —— 这时候沉默才是真的伤人。说一次就够 */
+    if (!quickWarned) {
+      quickWarned = true;
+      dialog({ title: tt('速记没有写进磁盘'), body: errText(e) });
+    }
+    return false;
+  }
+}
+
+/** Ctrl+S 落在速记上：不弹保存框（路径是固定的），只把待写的内容落地 */
+async function quickNoteSaveNow(t, copy = false) {
+  t.content = readEditor(t);
+  if (copy) {
+    /* 「另存为」对速记意味着「导出一份副本」：绝不能改 t.path，
+       否则接下来的自动保存会写到那个副本上，速记本身从此不再更新 */
+    const p = await be.pickSavePath(t.name);
+    if (!p) return false;
+    try {
+      await be.saveText({ path: p, content: t.content, encoding: 'UTF-8', bom: false });
+      toast(tt('已保存 {name}', { name: be.baseName(p) }));
+      return true;
+    } catch (e) {
+      dialog({ title: tt('保存失败'), body: errText(e) });
+      return false;
+    }
+  }
+  const ok = await flushQuickNote(t);
+  if (ok) toast(tt('速记已保存'));
+  return ok;
+}
+
+/** 在光标处插入「2026-11-03 09:20」。临时记录里最常想补的就是时间 */
+function insertStamp() {
+  const t = activeTab();
+  if (!t) return;
+  if (t.mode === 'preview') { toast(tt('预览模式下不能编辑')); return; }
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+
+  if (t.mode === 'edit') { plain.insertText(stamp); plain.focus(); return; }
+  /* 所见即所得：光标在正文里就用浏览器的 insertText（它认得跨行选区、会正常触发
+     input 事件，编辑器据此记历史）；光标根本不在编辑区时退回「插入一个块」。
+     这里用 execCommand 只为了写文字，跟撤销栈无关 —— 历史仍然只由编辑器自己记。 */
+  const ae = document.activeElement;
+  const inWys = ae === wys.root || wys.root.contains(ae);
+  let done = false;
+  if (inWys) { try { done = document.execCommand('insertText', false, stamp); } catch {} }
+  if (!done) wys.insertMarkdown(stamp);
+}
+
+/** 清空速记。清掉之前先存一份历史快照：这是唯一能反悔的地方 */
+async function clearQuickNote() {
+  let path;
+  try {
+    path = await quickFile();
+  } catch (e) {
+    dialog({ title: tt('速记打不开'), body: errText(e) });
+    return;
+  }
+  const t = tabs.find((x) => x.quickNote);
+  if (t) await flushQuickNote(t);
+  let old = t ? t.content : '';
+  if (!t) {
+    try { old = toLF((await be.readText(path)).content); } catch { /* 还没写过 */ }
+  }
+  if (!old.trim()) { toast(tt('速记本来就是空的')); return; }
+
+  const ok = await confirmBox(
+    tt('清空速记'),
+    tt('速记里现在的 {n} 个字会被清掉。<br><br>清空之前会留一份到「历史版本」，需要时还能找回。', { n: old.length }),
+    tt('清空'), tt('取消')
+  );
+  if (!ok) return;
+  try {
+    await be.saveHistory(path, old).catch(() => {});
+    await be.saveText({ path, content: '', encoding: 'UTF-8', bom: false });
+  } catch (e) {
+    dialog({ title: tt('清空失败'), body: errText(e) });
+    return;
+  }
+  if (t) {
+    t.content = '';
+    t.savedContent = '';
+    setContent('');
+    focusQuickEnd(t);
+  }
+  toast(tt('速记已清空'));
+}
+
 /* 我们自己已经确认过一次关闭时，让 close-requested 直接放行，避免二次弹窗 */
 let forceClose = false;
 /* 选了「不保存退出」：连草稿兜底也跳过（beforeunload 里的 saveDraft 要看它） */
@@ -1504,6 +1712,9 @@ let discardOnQuit = false;
    退出时只有一个进了草稿，其余静默消失。
    返回：false=取消；'discard'=不保存退出（调用方须跳过 saveDraft）；true=正常放行。 */
 async function confirmQuit() {
+  /* 它不在「未保存」名单里（速记永远算干净），所以必须单独收尾 —— 否则那 350ms
+     防抖窗口里打下的最后几个字会随着窗口一起消失，而且不会有任何提示 */
+  await flushQuickNote();
   const dirty = tabs.filter(isDirty);
   if (!dirty.length) return true;
   const names = dirty.map((t) => `<b>${t.name}</b>`).join('、');
@@ -1557,6 +1768,8 @@ async function saveAllQuiet(list) {
 async function closeTab(id) {
   const t = tabs.find((x) => x.id === id);
   if (!t) return;
+  /* 速记的改动是防抖写盘的，关得比 350ms 快就还没落地 —— 先写完再关 */
+  if (t.quickNote) await flushQuickNote(t);
   if (isDirty(t)) {
     persistCurrentView();
     const r = await dialog({
@@ -1635,6 +1848,7 @@ function onEditorInput() {
   updateOutline();
   scheduleDraft();
   scheduleAutoSave();
+  scheduleQuickSave(t);
   updateStatus();
 }
 
@@ -2646,6 +2860,20 @@ const commands = {
   open: openFileDialog,
   save: () => saveTab(),
   saveAs: () => saveTabAs(activeTab()),
+  /* —— 速记 —— */
+  quickNote: openQuickNote,
+  quickStamp: insertStamp,
+  quickClear: clearQuickNote,
+  quickReveal: async () => {
+    try { await revealInFolder(await quickFile()); }
+    catch (e) { dialog({ title: tt('速记打不开'), body: errText(e) }); }
+  },
+  quickCopyPath: async () => {
+    try {
+      await navigator.clipboard.writeText(await quickFile());
+      toast(tt('路径已复制'));
+    } catch { toast(tt('无法复制路径')); }
+  },
   closeTab: () => activeTab() && closeTab(activeTab().id),
   quit: async () => {
     persistCurrentView();
@@ -2849,6 +3077,22 @@ const menuTree = () => [
       { id: 'closeTab', label: tt('关闭标签'), kbd: 'Ctrl+W', disabled: () => !hasTab() },
       { sep: true },
       { id: 'quit', label: tt('退出') },
+    ],
+  },
+  {
+    /* 速记自成一个菜单，因为它不是「打开一个文件」：位置固定、随时可用、
+       不需要保存。塞进「文件」里，它就会被当成第 N 个文档操作，而它其实
+       是「随手写两句」这个动作本身。 */
+    label: tt('速记'),
+    items: () => [
+      { id: 'quickNote', label: tt('打开速记'), kbd: 'Ctrl+Shift+M' },
+      { id: 'quickStamp', label: tt('插入当前时间'), disabled: () => !hasTab() },
+      { sep: true },
+      { id: 'quickReveal', label: tt('在文件夹中显示') },
+      { id: 'quickCopyPath', label: tt('复制文件路径') },
+      { sep: true },
+      { id: 'quickClear', label: tt('清空速记…') },
+      { note: quickHint() },
     ],
   },
   {
@@ -3822,6 +4066,7 @@ function setupKeys() {
 
     if (k === 'n' && shift) openCompareWindow();
     else if (k === 'n') commands.new();
+    else if (k === 'm' && shift) commands.quickNote();
     else if (k === ',' && !shift) commands.settings();
     else if (k === 'o' && shift) commands.toggleOutline();
     else if (k === 'o') commands.open();
@@ -3905,6 +4150,10 @@ async function boot() {
     if (settings.theme === 'auto') applyTheme();
   });
 
+  /* 速记的真实路径先问一次：菜单底部要显示「它存在哪」，
+     而菜单是展开时才渲染的，预先拿到就不会先闪一行「不用保存」再换成路径 */
+  quickFile().catch(() => {});
+
   /* 先按上次的标签列表开文件，再把没保存的内容捞回来。
      两件事各管一段：会话管「开过哪些文件」，草稿管「哪些还没存」。
      以前这里只恢复最近 5 个文件里的标签，第 6 个开始就静默消失。 */
@@ -3956,6 +4205,8 @@ window.__snp = {
   gotoLine,
   newTab,
   getEditorText: () => activeTab() && activeTab().content,
+  openQuickNote,
+  quickNoteFile: () => quickFile(),
   isBusy: () => wys.loading,
   editor: wys,          // 编辑器实例（与 __diff / __merge 同类调试面：真机 CDP 探针要用）
   capture: persistCurrentView,

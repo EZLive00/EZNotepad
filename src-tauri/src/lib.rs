@@ -866,6 +866,34 @@ fn clear_history(app: tauri::AppHandle, path: String) -> Result<(), AppError> {
     Ok(())
 }
 
+/// 速记文件的位置：固定在应用数据目录里，跟着应用走，不跟着文档走。
+///
+/// 「固定」是功能的一半：速记不需要用户选位置、也不需要保存对话框，
+/// 关掉软件再打开还是同一份内容。
+///
+/// 环境变量 `EZNOTEPAD_QUICKNOTE` 可以把路径整个换掉。真机探针必须用它 ——
+/// 探针会往速记里打字，绝不能碰用户真正的那份笔记（那是用户的私有内容，
+/// 覆盖掉无从恢复）。
+#[tauri::command]
+fn quick_note_path(app: tauri::AppHandle) -> Result<String, AppError> {
+    if let Ok(raw) = std::env::var("EZNOTEPAD_QUICKNOTE") {
+        let p = raw.trim();
+        if !p.is_empty() {
+            if let Some(dir) = Path::new(p).parent() {
+                fs::create_dir_all(dir).map_err(|e| AppError::detail("io.mkdir", e))?;
+            }
+            return Ok(p.to_string());
+        }
+    }
+    use tauri::Manager;
+    let base = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| AppError::detail("appdata.missing", e))?;
+    fs::create_dir_all(&base).map_err(|e| AppError::detail("io.mkdir", e))?;
+    Ok(base.join("quicknote.md").to_string_lossy().to_string())
+}
+
 /* ---------------- 文件变化监听 ----------------
    设计原则是「尽量少看」：只监听已打开文档所在的**那一层目录**（非递归），
    事件到达时先拿文件名去比对，不在名单里的直接丢掉。
@@ -1331,6 +1359,7 @@ pub fn run() {
             list_history,
             read_history,
             clear_history,
+            quick_note_path,
             open_compare_window,
             take_compare_request,
             compare_set_fullscreen

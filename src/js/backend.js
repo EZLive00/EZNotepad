@@ -119,6 +119,11 @@ export const initialFiles = () => invoke('initial_files');
 /** 应用版本：取自 tauri.conf.json（编译期注入），前端不写死，免得跟版本号脱节 */
 export const appVersion = () => getVersion().catch(() => '');
 
+/* ---------------- 速记 ----------------
+   速记的文件位置由后端决定（应用数据目录下固定一份），前端不拼路径：
+   这样「换个平台数据目录该在哪」只有一处答案，也不需要用户选位置。 */
+export const quickNotePath = () => invoke('quick_note_path');
+
 /* ---------------- 本地历史 ----------------
    每次保存前把旧内容留一份，存在应用数据目录（不进文档目录，不污染仓库） */
 export const saveHistory = (path, content) => invoke('save_history', { path, content });

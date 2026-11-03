@@ -6,6 +6,7 @@ import { tt } from './i18n.js';
 
 const list = () => [
   [tt('新建标签'), 'Ctrl / ⌘ + N'],
+  [tt('打开速记'), 'Ctrl / ⌘ + Shift + M'],
   [tt('打开文件'), 'Ctrl / ⌘ + O'],
   [tt('保存'), 'Ctrl / ⌘ + S'],
   [tt('另存为'), 'Ctrl / ⌘ + Shift + S'],
