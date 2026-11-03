@@ -49,8 +49,8 @@ const S = {
   /* loaded = 这一侧有内容可比（来自文件，或用户直接粘进来的文本）。
      只认 path 的话，剪贴板里两段文本就没法对比 —— 而那正是最常用的用法之一。 */
   sides: {
-    l: { path: '', name: '', loaded: false, lines: [''], enc: 'UTF-8', bom: false, eol: '\n', dirty: false, undo: [], redo: [], undoAt: 0 },
-    r: { path: '', name: '', loaded: false, lines: [''], enc: 'UTF-8', bom: false, eol: '\n', dirty: false, undo: [], redo: [], undoAt: 0 },
+    l: { path: '', name: '', loaded: false, lines: [''], enc: 'UTF-8', bom: false, eol: '\n', dirty: false, base: [''], undo: [], redo: [], undoAt: 0 },
+    r: { path: '', name: '', loaded: false, lines: [''], enc: 'UTF-8', bom: false, eol: '\n', dirty: false, base: [''], undo: [], redo: [], undoAt: 0 },
   },
   opt: { ignoreWS: true, ignoreCase: false },
   rows: [],
@@ -319,7 +319,29 @@ function updateStats() {
   if (same && S.list.open) toggleList(false);
 }
 
+/**
+ * 内容和「基线」（磁盘上那份）比：撤销回到原样时，脏标记必须自己消失。
+ *
+ * 逐行比字符串引用就够 —— slice() 只复制数组，没改过的行还是同一批字符串对象，
+ * 8MB / 5 万行的文件也不会为此多存一份拼好的长字符串。
+ */
+function sameAsBase(st) {
+  const a = st.base;
+  const b = st.lines;
+  if (!a || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+function refreshDirty() {
+  for (const k of ['l', 'r']) {
+    const st = S.sides[k];
+    st.dirty = st.loaded && !sameAsBase(st);
+  }
+}
+
 function updateMeta() {
+  refreshDirty();
   for (const side of ['l', 'r']) {
     const st = S.sides[side];
     const k = sideKey(side);
@@ -658,6 +680,7 @@ async function loadSide(side, path, opts = {}) {
     st.name = '';
     st.loaded = false;
     st.lines = [''];
+    st.base = [''];
     st.dirty = false;
     st.undo.length = 0;
     st.redo.length = 0;
@@ -694,6 +717,7 @@ async function loadSide(side, path, opts = {}) {
     st.bom = !!r.bom;
     st.eol = r.eol === 'CRLF' ? '\r\n' : '\n';
     st.lines = lines;
+    st.base = lines.slice();
     st.dirty = false;
     st.undo.length = 0;
     st.redo.length = 0;
@@ -754,6 +778,7 @@ function startText(side) {
   st.name = '';
   st.loaded = true;
   st.lines = [''];
+  st.base = [''];
   st.dirty = false;
   st.enc = 'UTF-8';
   st.bom = false;
@@ -894,6 +919,13 @@ function nodeAt(host, col) {
 }
 
 function focusAt(side, line, col) {
+  /* 行号列号一律夹到当前内容里：撤销之后文档可能变短，调用方给的
+     「原来那一行」就不存在了。不夹的话 lineRow.get() 返回 undefined，
+     这个函数会直接 return —— 重画后 DOM 已换新，焦点就掉到 body 上，
+     界面上表现为「撤完以后键盘没反应了」。 */
+  const lines = S.sides[side].lines;
+  line = Math.min(Math.max(1, line | 0), Math.max(1, lines.length));
+  col = Math.min(Math.max(0, col | 0), (lines[line - 1] || '').length);
   const i = S.lineRow[side].get(line);
   if (i == null) return;
   const sc = el(side, 'scroll');
@@ -1066,15 +1098,25 @@ function moveVert(side, line, dir, col) {
   focusAt(side, target, Math.min(col, len));
 }
 
+/** 撤销前光标在哪：撤销/重做之后要回到原处，而不是跳回第 1 行。
+ *  光标不在这一侧（焦点在工具栏或另一栏）时给第 1 行，由 focusAt 夹一次。 */
+function caretAt(side) {
+  const p = caretPos();
+  if (!p || p.side !== side) return { line: 1, col: 0 };
+  return { line: p.line, col: p.col };
+}
+
 function undo(side, redo) {
   const st = S.sides[side];
   const from = redo ? st.redo : st.undo;
   const to = redo ? st.undo : st.redo;
   if (!from.length) return;
+  /* 先记光标再换内容：长文档里撤一步就跳回顶部，等于让人重新找回位置 */
+  const at = caretAt(side);
   to.push(st.lines.slice());
   st.lines = from.pop();
   st.dirty = true;
-  applyEdit(side, 1, 0);
+  applyEdit(side, at.line, at.col);
 }
 
 /* ---------------- 按字典序排序 ---------------- */
@@ -1122,6 +1164,7 @@ function undoSort() {
   const snap = S.lastSort;
   if (!snap) return false;
   S.lastSort = null;
+  const keep = caretPos();          // 焦点在按钮上时是 null：那就不动焦点
   for (const k of Object.keys(snap)) {
     const st = S.sides[k];
     st.redo.push(st.lines.slice());
@@ -1133,6 +1176,7 @@ function undoSort() {
   render(true);
   updateMeta();
   $('save').disabled = false;
+  if (keep) focusAt(keep.side, keep.line, keep.col);
   return true;
 }
 
@@ -1191,6 +1235,7 @@ async function save() {
     const st = S.sides[k];
     try {
       await be.saveText({ path: st.path, content: st.lines.join(st.eol), encoding: st.enc, bom: st.bom });
+      st.base = st.lines.slice();
       st.dirty = false;
     } catch (e) {
       toast(tt('保存失败：') + e);

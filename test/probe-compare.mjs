@@ -417,6 +417,121 @@ try {
   const ro1 = await rowText('l');
   ok('只读态 Ctrl+Z 不改内容也不报错',
     JSON.stringify(ro0) === JSON.stringify(ro1) && (await cmp.ev(`!!document.getElementById('rowsL')`)) === true);
+
+  /* ---------- 9. 撤销之后光标留在原处 ----------
+     撤销如果一律 focusAt(side, 1, 0)，2000 行的文档里按一次 Ctrl+Z 就跳回顶部，
+     用户得自己把位置找回来 —— 这跟「撤销」两个字给人的承诺正相反。 */
+  const caretNow = () => cmp.ev(`(() => {
+    const sel = getSelection();
+    if (!sel || !sel.rangeCount) return { inCell: false };
+    const n = sel.anchorNode;
+    if (!n) return { inCell: false };
+    const e = n.nodeType === 1 ? n : n.parentElement;
+    const host = e && e.closest ? e.closest('.cmp-tx') : null;
+    if (!host) return { inCell: false, active: (document.activeElement && document.activeElement.className) || '' };
+    const row = host.closest('.cmp-row');
+    return { inCell: true, line: +row.querySelector('.cmp-ln').textContent, side: host.dataset.side };
+  })()`);
+  /* 滚到中段，取一条完整可见的行来点：虚拟滚动下，屏幕外的行根本没有 DOM */
+  const midRow = () => cmp.ev(`(() => {
+    const sc = document.getElementById('scrollL').getBoundingClientRect();
+    const rows = [...document.querySelectorAll('#rowsL .cmp-row')];
+    const hit = rows.find((r) => {
+      const b = r.getBoundingClientRect();
+      return b.top > sc.top + 60 && b.bottom < sc.bottom - 60;
+    });
+    if (!hit) return null;
+    const tx = hit.querySelector('.cmp-tx');
+    const b = tx.getBoundingClientRect();
+    return {
+      line: +hit.querySelector('.cmp-ln').textContent,
+      i: +tx.dataset.i,
+      x: Math.round(b.left + b.width * 0.5),
+      y: Math.round(b.top + b.height / 2),
+    };
+  })()`);
+
+  await openPair(p('big-a.txt'), p('big-b.txt'));
+  await enterEdit();
+  await cmp.ev(`(() => {
+    const sc = document.getElementById('scrollL');
+    const row = parseFloat(getComputedStyle(document.body).getPropertyValue('--cmp-row')) || 20;
+    sc.scrollTop = 1200 * row;
+    return sc.scrollTop;
+  })()`);
+  await sleep(400);
+  const mid = await midRow();
+  ok('滚到中段后能取到一条可见行', !!mid && mid.line > 1000, JSON.stringify(mid));
+
+  const topBefore = await cmp.ev(`document.getElementById('scrollL').scrollTop`);
+  const clickBase = { x: mid.x, y: mid.y, button: 'left', clickCount: 1 };
+  await cmp.send('Input.dispatchMouseEvent', { type: 'mousePressed', ...clickBase });
+  await cmp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...clickBase });
+  await sleep(150);
+  await cmp.send('Input.insertText', { text: 'QQ' });
+  await sleep(900);
+  const caretTyped = await caretNow();
+  ok('打字后光标在刚点的那一行', caretTyped.inCell && Math.abs(caretTyped.line - mid.line) <= 1,
+    `点的是第 ${mid.line} 行，光标在第 ${caretTyped.line} 行`);
+
+  await pressKey(90, 'z', 'KeyZ', 2);
+  await sleep(800);
+  const afterUndoBig = await rowText('l');
+  const caretUndone = await caretNow();
+  const topAfter = await cmp.ev(`document.getElementById('scrollL').scrollTop`);
+  ok('长文档撤销后没有跳回顶部', Math.abs(topAfter - topBefore) < 200,
+    `scrollTop ${topBefore} -> ${topAfter}`);
+  ok('撤销后光标还在原处（不是第 1 行）',
+    caretUndone.inCell && Math.abs(caretUndone.line - mid.line) <= 1,
+    JSON.stringify(caretUndone));
+  ok('撤销后焦点仍在编辑区（键盘还能接着用）', caretUndone.inCell === true && !has(afterUndoBig, 'QQ'),
+    JSON.stringify(caretUndone));
+
+  await pressKey(89, 'y', 'KeyY', 2);
+  await sleep(800);
+  const caretRedone = await caretNow();
+  ok('重做也不跳位置', caretRedone.inCell && Math.abs(caretRedone.line - mid.line) <= 1, JSON.stringify(caretRedone));
+
+  /* 文档变短的撤销（回车断行 → 撤销）也要把光标夹到合法位置，不许掉到 body 上 */
+  await openPair(p('edit-a.txt'), p('edit-a2.txt'));
+  await enterEdit();
+  await clickRow('l', 3);
+  await pressKey(35, 'End', 'End');
+  await pressKey(13, 'Enter', 'Enter');
+  await sleep(700);
+  await pressKey(90, 'z', 'KeyZ', 2);
+  await sleep(800);
+  const caretShort = await caretNow();
+  ok('撤销断行后光标落在合法行上（没掉到 body）',
+    caretShort.inCell === true && caretShort.line >= 2, JSON.stringify(caretShort));
+
+  /* ---------- 10. 撤回原样之后，脏标记要跟着消失 ----------
+     一直拿布尔量记「改过」，撤销回原样也会显示「未保存 · 保存按钮可点」，
+     再按 Ctrl+S 就把一模一样的字节又写一遍 —— 用户会以为文件真变了。 */
+  const dirtyState = () => cmp.ev(`({
+    dot: document.getElementById('dotL').classList.contains('on'),
+    save: document.getElementById('save').disabled === false,
+    meta: document.getElementById('metaL').textContent,
+  })`);
+  await openPair(p('edit-a.txt'), p('edit-a2.txt'));
+  await enterEdit();
+  const clean0 = await dirtyState();
+  ok('刚打开的对比是干净的', !clean0.dot && !clean0.save && !/未保存/.test(clean0.meta), JSON.stringify(clean0));
+
+  await typeIn('l', 0, 'ZZ');
+  const dirty1 = await dirtyState();
+  ok('改过之后标脏、保存可点', dirty1.dot && dirty1.save && /未保存/.test(dirty1.meta), JSON.stringify(dirty1));
+
+  await pressKey(90, 'z', 'KeyZ', 2);
+  await sleep(800);
+  const clean1 = await dirtyState();
+  ok('撤销回原样后标脏消失、保存变灰', !clean1.dot && !clean1.save && !/未保存/.test(clean1.meta),
+    JSON.stringify(clean1));
+
+  await pressKey(89, 'y', 'KeyY', 2);
+  await sleep(800);
+  const dirty2 = await dirtyState();
+  ok('重做之后又重新标脏', dirty2.dot && dirty2.save, JSON.stringify(dirty2));
 } finally {
   main.close();
   // 夹具留在 node_modules/.tmp/probe-cmp 下不复用删除：每轮 writeFileSync 直接覆盖。
