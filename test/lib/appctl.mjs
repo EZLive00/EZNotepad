@@ -32,6 +32,13 @@ const CONF_ARGS = '--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtectio
    别再加回来。 */
 const PROBE_PROFILE = process.env.APP_PROFILE || path.join(os.tmpdir(), 'eznotepad-probe');
 
+/* 速记固定在「应用数据目录」里 —— 那是用户真正的笔记。探针会往速记里打字，
+   所以必须把路径整体指到 %TEMP%：`EZNOTEPAD_QUICKNOTE` 是后端留的那个口子
+   （见 src-tauri/src/lib.rs::quick_note_path）。
+   路径固定、复用，不删除：本机删除全部进回收站。 */
+export const PROBE_QUICKNOTE = process.env.APP_QUICKNOTE
+  || path.join(os.tmpdir(), 'eznotepad-probe-note', 'quicknote.md');
+
 const EXE_CANDIDATES = [
   process.env.APP_EXE,
   'src-tauri/target/debug/EZNotepad.exe',
@@ -124,6 +131,7 @@ export async function ensureApp(port = Number(process.env.CDP_PORT || 9333), { t
       ...process.env,
       WEBVIEW2_USER_DATA_FOLDER: PROBE_PROFILE,
       WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `${CONF_ARGS} --remote-debugging-port=${port}`,
+      EZNOTEPAD_QUICKNOTE: PROBE_QUICKNOTE,
     },
   });
   proc.on('error', () => {});

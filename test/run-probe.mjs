@@ -14,7 +14,7 @@ import { spawnSync } from 'node:child_process';
 import { ensureApp } from './lib/appctl.mjs';
 
 const PORT = Number(process.env.CDP_PORT || 9333);
-const PROBES = ['probe-app', 'probe-bmenu', 'probe-ctx', 'probe-compare', 'probe-undo'];
+const PROBES = ['probe-app', 'probe-bmenu', 'probe-ctx', 'probe-compare', 'probe-undo', 'probe-quicknote'];
 
 const app = await ensureApp(PORT);
 console.log(app.reused ? `复用已在端口 ${PORT} 的应用` : `已启动应用（pid ${app.pid}）`);
