@@ -290,7 +290,9 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
   color: var(--fg-soft);
   font-size: 12.5px;
   white-space: nowrap;
-  max-width: 200px;
+  /* 标签最宽 133px（原来 200px，太占地方：开五六个就顶满栏）
+     —— 文件名超出的部分交给省略号，标题栏 tooltip 里有全名 */
+  max-width: 133px;
   flex: 0 1 auto;
   position: relative;
   transition: background .15s var(--ease), border-color .15s var(--ease);
@@ -329,7 +331,7 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
   display: block; height: 0; overflow: hidden;
   font-weight: 600; visibility: hidden;
 }
-.tab-name { overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
+.tab-name { overflow: hidden; text-overflow: ellipsis; max-width: 100px; }
 .tab-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; }
 /* 后台标签被别的程序改过：琥珀点，和「未保存」的蓝点分开看 */
 .tab.stale .tab-name::after {
@@ -552,7 +554,7 @@ body[data-theme="dark"] .am-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 25
 .ft-x:hover { background: var(--bg-hover); color: var(--fg); }
 .ft-x .ico { width: 12px; height: 12px; }
 
-/* 正则开关：一个字宽的小方块，开着时点亮。
+/* 正则 / 区分大小写开关：一个字宽的小方块，开着时点亮。
    放搜索框里而不是菜单里，是因为它改的是「这一次搜索」的语义 */
 .ft-tog {
   flex: none; height: 19px; padding: 0 4px; font-size: 10.5px; line-height: 1;
@@ -562,15 +564,6 @@ body[data-theme="dark"] .am-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 25
 }
 .ft-tog:hover { color: var(--fg); }
 .ft-tog.on { color: var(--accent); border-color: var(--accent); background: transparent; }
-
-/* 替换行：和搜索行同一套骨架，只是多一颗按钮 */
-.ft-replace { box-shadow: inset 0 0 0 1px var(--line); }
-.ft-rep-all {
-  flex: none; height: 19px; padding: 0 8px; font-size: 11.5px;
-  color: var(--fg-soft); background: transparent;
-  border: 1px solid var(--line-strong); border-radius: var(--r-sm); cursor: pointer;
-}
-.ft-rep-all:hover { color: var(--accent); border-color: var(--accent); }
 
 .ft-path {
   flex: none; display: flex; align-items: center; gap: 6px;

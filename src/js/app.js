@@ -72,9 +72,6 @@ const el = {
   sideFiles: $('sideFiles'),
   sideTabs: [...document.querySelectorAll('.side-tab')],
   ftQuery: $('ftQuery'),
-  ftReplaceRow: $('ftReplaceRow'),
-  ftReplaceInput: $('ftReplaceInput'),
-  ftReplaceAll: $('ftReplaceAll'),
   ftRegex: $('ftRegex'),
   ftCase: $('ftCase'),
   ftBody: $('ftBody'),
@@ -831,50 +828,10 @@ function clearFolder() {
   saveSettings();
   el.ftQuery.value = '';
   el.ftClear.classList.add('hidden');
-  el.ftReplaceRow.classList.add('hidden');
   tree.setRoot('');
 }
 
-/* 全目录批量替换。安全边界：先问一次、说明会直接改磁盘、告诉用户历史快照在哪；
-   后端只碰 UTF-8 文件，改每个文件前都留快照。 */
-async function replaceInFolderNow() {
-  const root = tree.root || settings.folder;
-  const q = el.ftQuery.value;
-  if (!root) { toast(tt('先打开一个文件夹')); return; }
-  if (!q) { toast(tt('先在上面填要搜索的内容')); return; }
-  const rep = el.ftReplaceInput.value;
-  const htmlEsc = (s) => String(s).replace(/[&<>"]/g, (c) =>
-    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const ok = await confirmBox(
-    tt('在整个文件夹里替换'),
-    tt('把 <code>{q}</code> 换成 <code>{rep}</code>。<br><br>', { q: htmlEsc(q), rep: htmlEsc(rep) || tt('（删除）') })
-    + tt('这会<b>直接改动磁盘上的文件</b>，不是只改当前文档。<br>')
-    + tt('每个文件改动前都会留一份历史快照，出问题可以从「文件 → 历史版本」找回。'),
-    tt('开始替换'), tt('取消')
-  );
-  if (!ok) return;
-
-  let r;
-  try {
-    r = await be.replaceInFolder(root, q, rep, tree.regex, tree.caseSensitive);
-  } catch (e) {
-    dialog({ title: tt('替换失败'), body: errText(e) });
-    return;
-  }
-  toast(tt('替换完成：{files} 个文件、{hits} 处', { files: r.files, hits: r.hits }) + (r.skipped ? tt('（跳过 {n} 个）', { n: r.skipped }) : ''));
-
-  await tree.search(q);
-  /* 打开的标签跟着走：不脏就静默重载，脏就打个点等用户切过去再问 */
-  for (const p of r.paths || []) {
-    const t = tabs.find((x) => x.path === p);
-    if (!t) continue;
-    if (isDirty(t)) { t.extChanged = true; continue; }
-    const m = await be.fileMtime(p).catch(() => null);
-    await reloadTab(t, m).catch(() => {});
-  }
-  renderTabs();
-}
-
+/* ---------------- 侧栏：大纲 / 文件 ---------------- */
 function setupSidebar() {
   el.sideTabs.forEach((b) => { b.onclick = () => setSide(b.dataset.side); });
   el.ftPick.onclick = pickFolder;
@@ -884,7 +841,6 @@ function setupSidebar() {
   let ftTimer = 0;
   el.ftQuery.addEventListener('input', () => {
     el.ftClear.classList.toggle('hidden', !el.ftQuery.value);
-    el.ftReplaceRow.classList.toggle('hidden', !el.ftQuery.value);
     clearTimeout(ftTimer);
     ftTimer = setTimeout(() => tree.search(el.ftQuery.value), 320);
   });
@@ -894,16 +850,13 @@ function setupSidebar() {
   el.ftClear.onclick = () => {
     el.ftQuery.value = '';
     el.ftClear.classList.add('hidden');
-    el.ftReplaceRow.classList.add('hidden');
     tree.render();
   };
 
-  /* ---- 跨文件替换 ----
-     搜索一直是「只能看」的：找到 200 处命中，还是得一个一个点开改。
-     这里补上批量替换，改之前先问、每个文件留历史快照、改完把打开的标签刷新。 */
-  const htmlEsc = (s) => String(s).replace(/[&<>"]/g, (c) =>
-    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-
+  /* ---- 搜索选项 ----
+     搜索只有「看」这一件事：命中行点一下就在编辑器里打开那一行，改哪一处、
+     怎么改都交给编辑区的查找替换。跨文件批量替换不再提供 —— 那是个改磁盘的
+     动作，误点一次要按文件去翻历史快照才能救回来，而真实需求几乎不存在。 */
   const syncSearchMode = () => {
     tree.regex = el.ftRegex.classList.contains('on');
     tree.caseSensitive = el.ftCase.classList.contains('on');
@@ -920,12 +873,10 @@ function setupSidebar() {
   };
   el.ftCase.onclick = () => {
     el.ftCase.classList.toggle('on');
+    el.ftCase.title = tree.caseSensitive ? tt('区分大小写（已开启）') : tt('区分大小写');
     syncSearchMode();
+    if (el.ftQuery.value) rerunSearch();
   };
-  el.ftReplaceInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); replaceInFolderNow(); }
-  });
-  el.ftReplaceAll.onclick = () => replaceInFolderNow();
 
   setSide(settings.side || 'outline');
   // 有记住的文件夹就直接画出来；没有也要画一次（显示「还没打开文件夹」的引导）
@@ -1489,7 +1440,7 @@ async function saveTab(t = activeTab(), saveAs = false, opts = {}) {
         if (!overwrite) return false;
       }
     }
-    /* 落盘之前先留一份旧的：一键格式化、排序去重、批量替换之后想反悔，
+    /* 落盘之前先留一份旧的：一键格式化、排序去重之后想反悔，
        撤销栈未必翻得回去（还有 8MB 上限），这是最后一道 */
     if (t.savedContent && t.savedContent !== t.content) {
       await be.saveHistory(t.path, t.savedContent).catch(() => {});
@@ -3198,7 +3149,7 @@ const menuTree = () => [
     items: [
       { id: 'palette', label: tt('命令面板…'), kbd: 'Ctrl+Shift+P' },
       { sep: true },
-      { id: 'format', label: tt('一键格式化'), kbd: 'Ctrl+Shift+F', disabled: () => !hasTab() },
+      { id: 'format', label: tt('一键格式化'), kbd: 'Ctrl+Alt+L', disabled: () => !hasTab() },
       { sep: true },
       { id: 'sortAsc', label: tt('按行升序排序'), disabled: () => !hasTab() },
       { id: 'sortDesc', label: tt('按行降序排序'), disabled: () => !hasTab() },
@@ -3616,7 +3567,7 @@ function bindEvents() {
       { sep: true },
       { label: tt('查找…'), shortcut: 'Ctrl+F', action: () => openFind() },
       { label: tt('替换…'), shortcut: 'Ctrl+H', action: () => openFind(true) },
-      { label: tt('一键格式化'), shortcut: 'Ctrl+Shift+F', action: commands.format },
+      { label: tt('一键格式化'), shortcut: 'Ctrl+Alt+L', action: commands.format },
       { sep: true },
       { label: tt('转大写'), action: commands.upper },
       { label: tt('转小写'), action: commands.lower },
@@ -4061,6 +4012,10 @@ function setupKeys() {
       e.preventDefault();
       return;
     }
+    // 一键格式化：Ctrl+Alt+L（JetBrains 系列的 reformat 惯例）。
+    // 原来是 Ctrl+Shift+F —— 那是 Windows / 输入法的「简体 ⇄ 繁体」默认切换，
+    // 一按先把输入法切成繁体，格式化根本没轮到，属于「注册了但按不出来」。
+    if (e.altKey && k === 'l') { commands.format(); e.preventDefault(); return; }
     // 列表用 e.code 判定：Shift+数字在不同键盘布局下 e.key 不是数字
     if (shift && e.code === 'Digit7') { commands.ol(); e.preventDefault(); return; }
     if (shift && e.code === 'Digit8') { commands.ul(); e.preventDefault(); return; }
@@ -4075,7 +4030,6 @@ function setupKeys() {
     else if (k === 's' && shift) commands.saveAs();
     else if (k === 's') commands.save();
     else if (k === 'w') commands.closeTab();
-    else if (k === 'f' && shift) commands.format();
     else if (k === 'f') openFind();
     else if (k === 'h') openFind(true);
     else if (k === 'd') openCompareWindow();
