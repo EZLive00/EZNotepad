@@ -532,6 +532,100 @@ try {
   await sleep(800);
   const dirty2 = await dirtyState();
   ok('重做之后又重新标脏', dirty2.dot && dirty2.save, JSON.stringify(dirty2));
+
+  /* ---------- 11. 工具栏上的撤销 / 重做按钮 ----------
+     键盘能用不等于看得见：用户不会去猜 Ctrl+Z，尤其在他刚从主窗口过来的时候。
+     按钮还必须**诚实地灰着** —— 历史栈空了却亮着，是比没有按钮更差的体验。 */
+  const btnState = () => cmp.ev(`({
+    u: document.getElementById('undoBtn').disabled,
+    r: document.getElementById('redoBtn').disabled,
+    w: Math.round(document.getElementById('undoBtn').getBoundingClientRect().width),
+  })`);
+
+  await openPair(p('edit-a.txt'), p('edit-a2.txt'));
+  await enterEdit();
+  const st0 = await btnState();
+  ok('刚打开时撤销/重做都是灰的', st0.u && st0.r && st0.w > 20, JSON.stringify(st0));
+
+  await typeIn('l', 0, 'XY');
+  await sleep(400);
+  const st1 = await btnState();
+  ok('打字之后撤销按钮变亮', !st1.u && st1.r, JSON.stringify(st1));
+
+  await cmp.ev(`document.getElementById('undoBtn').click()`);
+  await sleep(700);
+  const afterBtn = await rowText('l');
+  const st2 = await btnState();
+  ok('点撤销按钮把字撤掉', !has(afterBtn, 'XY'), JSON.stringify(afterBtn[0]));
+  ok('撤到底后撤销变灰、重做变亮', st2.u && !st2.r, JSON.stringify(st2));
+
+  await cmp.ev(`document.getElementById('redoBtn').click()`);
+  await sleep(700);
+  const afterRedoBtn = await rowText('l');
+  ok('点重做按钮把字放回来', has(afterRedoBtn, 'XY'), JSON.stringify(afterRedoBtn[0]));
+
+  /* 排序是「整侧替换」，快照存在 S.lastSort 里而不是两侧的栈里：
+     按钮必须认这步，否则排完序按钮是灰的，用户只能去猜快捷键。 */
+  await openPair(p('edit-a.txt'), p('edit-b.txt'));
+  await enterEdit();
+  const sortL0 = await rowText('l');
+  const sortR0 = await rowText('r');
+  await cmp.ev(`document.getElementById('sortBtn').click()`);
+  await sleep(700);
+  const stSorted = await btnState();
+  ok('排序之后撤销按钮可点', !stSorted.u, JSON.stringify(stSorted));
+  await cmp.ev(`document.getElementById('undoBtn').click()`);
+  await sleep(800);
+  const sortL1 = await rowText('l');
+  const sortR1 = await rowText('r');
+  ok('点撤销按钮一次还原两侧排序',
+    JSON.stringify(sortL1) === JSON.stringify(sortL0) && JSON.stringify(sortR1) === JSON.stringify(sortR0),
+    `${JSON.stringify(sortL1)} vs ${JSON.stringify(sortL0)}`);
+
+  /* 只读态：键盘不吃 Ctrl+Z，按钮也必须灰着 —— 亮着却点不动比灰着更困惑 */
+  if (await cmp.ev(`document.getElementById('toggleEdit').classList.contains('on')`)) {
+    await cmp.ev(`document.getElementById('toggleEdit').click()`);
+    await sleep(400);
+  }
+  const stRO = await btnState();
+  ok('只读态撤销/重做按钮都是灰的', stRO.u && stRO.r, JSON.stringify(stRO));
+
+  /* ---------- 12. 工具栏不许静默裁掉右边的按钮 ----------
+     工具栏是 overflow:hidden 的单行 flex：窗口一窄，最右边的「导出报告」直接消失，
+     没有任何提示（加按钮前 880px 就已经裁了）。降级由 fitTools() 按真实溢出量决定。 */
+  const barFit = () => cmp.ev(`(() => {
+    const t = document.getElementById('tools');
+    const box = t.getBoundingClientRect();
+    const btns = [...t.querySelectorAll('.cmp-btn')].map((el) => {
+      const b = el.getBoundingClientRect();
+      return { id: el.id, w: Math.round(b.width), clipped: b.right > box.right + 0.5 };
+    });
+    return {
+      over: t.scrollWidth - t.clientWidth,
+      tight: t.classList.contains('tight'),
+      tighter: t.classList.contains('tighter'),
+      clipped: btns.filter((b) => b.clipped).map((b) => b.id),
+      zero: btns.filter((b) => b.w < 20).map((b) => b.id),
+    };
+  })()`);
+
+  const wide = await barFit();
+  ok('宽窗口下工具栏不溢出、按钮都完整',
+    wide.over <= 1 && !wide.clipped.length && !wide.zero.length && !wide.tight, JSON.stringify(wide));
+
+  /* 620 比 min_inner_size(760) 还窄，用来验证第二级降级（连勾选项文字也收起来）真的存在 */
+  for (const w of [1100, 900, 780, 620]) {
+    await cmp.send('Emulation.setDeviceMetricsOverride', { width: w, height: 900, deviceScaleFactor: 1, mobile: false });
+    await sleep(400);
+    const f = await barFit();
+    ok(`${w}px 宽时没有按钮被裁掉`, f.over <= 1 && !f.clipped.length && !f.zero.length, JSON.stringify(f));
+  }
+
+  await cmp.send('Emulation.clearDeviceMetricsOverride', {});
+  await sleep(500);
+  const back = await barFit();
+  ok('窗口变宽后按钮文字回来（折叠不粘住）',
+    !back.tight && !back.tighter && back.over <= 1 && !back.clipped.length, JSON.stringify(back));
 } finally {
   main.close();
   // 夹具留在 node_modules/.tmp/probe-cmp 下不复用删除：每轮 writeFileSync 直接覆盖。
