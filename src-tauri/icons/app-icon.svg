@@ -1,20 +1,19 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <!-- 应用图标源文件：圆角底板 + Lucide「notebook-pen」字形（path 来自 lucide-static v1.61.0，ISC）
+  <!-- 应用图标源文件（扁平版）。
+       上一版是渐变底 + 1.7 的细线条，缩到 16 / 20 就糊成一片灰；这一版只用两个
+       颜色、大块面：纯色圆角底 + 一张白纸 + 三道正文条。任务栏、任务视图这些小
+       尺寸下仍然能认出是「一份正在写的文档」。
        重新生成：node node_modules/@tauri-apps/cli/tauri.js icon src-tauri/icons/app-icon.svg -->
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#5a86ff" />
-      <stop offset="1" stop-color="#2b52d8" />
-    </linearGradient>
-  </defs>
-  <rect width="1024" height="1024" rx="224" fill="url(#bg)" />
-  <g fill="none" stroke="#ffffff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"
-     transform="translate(152 152) scale(30) translate(-0.8 0.2)">
-    <path d="M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4" />
-    <path d="M2 6h4" />
-    <path d="M2 10h4" />
-    <path d="M2 14h4" />
-    <path d="M2 18h4" />
-    <path d="M21.378 5.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z" />
+  <rect width="1024" height="1024" rx="228" fill="#2a5cf0" />
+  <!-- 纸张：四边留呼吸，右上角折一个角 -->
+  <path d="M316 196h290l170 170v450a60 60 0 0 1-60 60H316a60 60 0 0 1-60-60V256a60 60 0 0 1 60-60z"
+        fill="#ffffff" />
+  <!-- 折角：被折过去的那一小片，用浅蓝一档表示「背面」 -->
+  <path d="M606 196l170 170H666a60 60 0 0 1-60-60z" fill="#b9ccff" />
+  <!-- 正文条：用底色开窗，不做描边 -->
+  <g fill="#2a5cf0">
+    <rect x="396" y="392" width="300" height="66" rx="33" />
+    <rect x="396" y="518" width="300" height="66" rx="33" />
+    <rect x="396" y="644" width="186" height="66" rx="33" />
   </g>
 </svg>
