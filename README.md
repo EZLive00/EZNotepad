@@ -106,6 +106,9 @@ turns every change into a sortable, filterable list (position, type or size).
 **Sort** reorders both sides alphabetically (blank lines stay at the end), so ordering noise stops drowning the real additions and deletions; `Ctrl+Z` undoes it.
 In edit mode `Ctrl+Z` / `Ctrl+Y` undo and redo typing, line breaks, indentation, selection deletes and sorting — even when the focus sits on the toolbar.
 The toolbar carries the same two buttons, greyed out at the ends of the stack; when the window narrows the row folds into icons instead of clipping a button.
+**Differences only** is on by default: identical lines are folded away, keeping three lines of context around every change — 2,000 lines with 20 edits collapse to a few dozen. To edit an identical line further away, untick the box in the toolbar.
+`Ctrl+F` searches both panes at once; matching lines are tinted, and `Enter` / `Shift+Enter` step through them.
+
 A single side is capped at 8 MB / 50,000 lines; past that the window says why instead of failing quietly.
 
 **Compare Folders** lists *left only / right only / modified / identical* recursively; click a row to open that file
@@ -146,6 +149,7 @@ The sidebar has two pages: **Outline** (highlights the section you are reading) 
 | Format / Compare | `Ctrl+Shift+F` / `Ctrl+D` |
 | Next / previous difference | `F8` / `F7` |
 | Copy this difference to the other side (add `Ctrl` to keep going) | `Alt+←` / `Alt+→` |
+| Find in both panes (compare window) | `Ctrl+F` |
 | Single ⇄ dual pane / Outline | `Ctrl+Shift+L` / `Ctrl+Shift+O` |
 | Focus mode / Fullscreen | `F9` / `F11` |
 | Bold / Italic / Strike / Code | `Ctrl+B` / `Ctrl+I` / `Ctrl+Shift+X` / `Ctrl+Shift+K` |

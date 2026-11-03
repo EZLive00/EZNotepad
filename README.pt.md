@@ -108,6 +108,9 @@ clique ou arraste para saltar. **Diferenças** lista cada mudança numa tabela o
 **Ordenar** reordena os dois lados alfabeticamente (linhas vazias no fim) para que a desordem não esconda as diferenças reais; `Ctrl+Z` desfaz.
 No modo de edição, `Ctrl+Z` / `Ctrl+Y` desfazem e refazem o que foi digitado, quebras de linha, indentação, exclusão de seleções e a ordenação — mesmo com o foco na barra de ferramentas.
 A janela de comparação tem esses mesmos dois botões na barra (acinzentados nos extremos); quando a janela fica estreita, a linha se reduz a ícones em vez de cortar um botão.
+**Somente diferenças** vem ligado: as linhas iguais são dobradas e ficam três de contexto em volta de cada mudança — 2000 linhas com 20 alterações caem para algumas dezenas. Para editar uma linha igual mais adiante, desmarque a caixa na barra.
+`Ctrl+F` procura nos dois painéis ao mesmo tempo; as linhas encontradas ficam tingidas e `Enter` / `Shift+Enter` avançam.
+
 Cada lado tem limite de 8 MB / 50 000 linhas; acima disso, a janela explica o motivo.
 
 **Comparar pastas** lista recursivamente *só à esquerda / só à direita / modificado / idêntico*; clique numa linha para abrir
@@ -148,6 +151,7 @@ A barra lateral tem duas páginas: **Estrutura** (realça a seção que você es
 | Formatar / Comparar | `Ctrl+Shift+F` / `Ctrl+D` |
 | Próxima / anterior diferença | `F8` / `F7` |
 | Copiar esta diferença para o outro lado (+`Ctrl` para continuar) | `Alt+←` / `Alt+→` |
+| Localizar nos dois painéis (janela de comparação) | `Ctrl+F` |
 | Um painel ⇄ dois painéis / Estrutura | `Ctrl+Shift+L` / `Ctrl+Shift+O` |
 | Modo concentração / Tela cheia | `F9` / `F11` |
 | Negrito / Itálico / Riscado / Código | `Ctrl+B` / `Ctrl+I` / `Ctrl+Shift+X` / `Ctrl+Shift+K` |

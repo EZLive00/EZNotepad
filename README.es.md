@@ -108,6 +108,9 @@ y haz clic o arrastra para saltar. **Diferencias** lista cada cambio en una tabl
 **Ordenar** reordena ambos lados alfabéticamente (las líneas vacías al final) para que el desorden no oculte las diferencias reales; `Ctrl+Z` lo deshace.
 En modo edición, `Ctrl+Z` / `Ctrl+Y` deshacen y rehacen lo escrito, los saltos de línea, la sangría, el borrado de selecciones y la ordenación — incluso con el foco en la barra de herramientas.
 La ventana de comparación tiene esos mismos dos botones en su barra (en gris al llegar a los extremos); si la ventana se estrecha, la fila se reduce a iconos en vez de recortar un botón.
+**Solo diferencias** viene activado: las líneas iguales se pliegan y quedan tres de contexto alrededor de cada cambio — 2000 líneas con 20 cambios se reducen a unas decenas. Para editar una línea igual que esté lejos, desmarca la casilla de la barra.
+`Ctrl+F` busca en ambos paneles a la vez; las líneas coincidentes se tiñen y `Enter` / `Mayús+Intro` avanzan.
+
 Cada lado tiene un límite de 8 MB / 50 000 líneas; al superarlo, la ventana explica el motivo.
 
 **Comparar carpetas** lista de forma recursiva *solo izquierda / solo derecha / modificado / idéntico*; al pulsar una fila
@@ -148,6 +151,7 @@ La barra lateral tiene dos páginas: **Esquema** (resalta la sección que estás
 | Formatear / Comparar | `Ctrl+Shift+F` / `Ctrl+D` |
 | Siguiente / anterior diferencia | `F8` / `F7` |
 | Copiar esta diferencia al otro lado (con `Ctrl` para seguir) | `Alt+←` / `Alt+→` |
+| Buscar en ambos paneles (ventana de comparación) | `Ctrl+F` |
 | Un panel ⇄ dos paneles / Esquema | `Ctrl+Shift+L` / `Ctrl+Shift+O` |
 | Modo concentración / Pantalla completa | `F9` / `F11` |
 | Negrita / Cursiva / Tachado / Código | `Ctrl+B` / `Ctrl+I` / `Ctrl+Shift+X` / `Ctrl+Shift+K` |

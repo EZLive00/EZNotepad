@@ -108,6 +108,9 @@ et filtrable (position, type, nombre de lignes).
 **Trier** réordonne les deux côtés par ordre alphabétique (lignes vides à la fin) : le bruit d'ordre ne masque plus les vraies différences ; `Ctrl+Z` annule.
 En mode édition, `Ctrl+Z` / `Ctrl+Y` annulent et rétablissent la saisie, les sauts de ligne, l'indentation, la suppression de sélections et le tri — même quand le focus est sur la barre d'outils.
 La fenêtre de comparaison propose les deux mêmes boutons dans sa barre (grisés aux extrémités de l'historique) ; quand la fenêtre se rétrécit, la rangée se replie en icônes au lieu de tronquer un bouton.
+**Différences seules** est actif par défaut : les lignes identiques sont repliées, trois lignes de contexte restent autour de chaque changement — 2 000 lignes avec 20 modifications se réduisent à quelques dizaines. Pour modifier une ligne identique plus loin, décochez la case de la barre d'outils.
+`Ctrl+F` cherche dans les deux volets à la fois ; les lignes trouvées sont teintées et `Entrée` / `Maj+Entrée` passent de l'une à l'autre.
+
 Chaque côté est limité à 8 Mo / 50 000 lignes ; au-delà, la fenêtre explique pourquoi au lieu d'échouer en silence.
 
 **Comparer des dossiers** liste récursivement *gauche seule / droite seule / modifié / identique* ; cliquez une ligne pour
@@ -148,6 +151,7 @@ La barre latérale a deux pages : **Plan** (souligne la section en cours de lect
 | Formater / Comparer | `Ctrl+Shift+F` / `Ctrl+D` |
 | Différence suivante / précédente | `F8` / `F7` |
 | Copier cette différence de l'autre côté (+`Ctrl` pour enchaîner) | `Alt+←` / `Alt+→` |
+| Rechercher dans les deux volets (fenêtre de comparaison) | `Ctrl+F` |
 | Un volet ⇄ deux volets / Plan | `Ctrl+Shift+L` / `Ctrl+Shift+O` |
 | Mode concentration / Plein écran | `F9` / `F11` |
 | Gras / Italique / Barré / Code en ligne | `Ctrl+B` / `Ctrl+I` / `Ctrl+Shift+X` / `Ctrl+Shift+K` |

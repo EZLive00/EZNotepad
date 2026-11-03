@@ -106,6 +106,9 @@ oder Ziehen. **Unterschiede** listet jede Änderung in einer sortier- und filter
 **Sortieren** ordnet beide Seiten alphabetisch (Leerzeilen ans Ende), damit Reihenfolge-Rauschen die echten Unterschiede nicht mehr verdeckt; `Ctrl+Z` macht es rückgängig.
 Im Editiermodus lassen sich Tippen, Zeilenumbrüche, Einrückungen, gelöschte Auswahlen und Sortieren mit `Ctrl+Z` rückgängig machen und mit `Ctrl+Y` wiederherstellen — auch bei Fokus in der Werkzeugleiste.
 Das Vergleichsfenster hat dieselben zwei Schaltflächen in seiner Werkzeugleiste (am Ende des Verlaufs ausgegraut); wird das Fenster schmal, klappt die Leiste auf Symbole um, statt eine Schaltfläche abzuschneiden.
+**Nur Unterschiede** ist standardmäßig an: gleiche Zeilen werden eingeklappt, drei Zeilen Kontext bleiben um jede Änderung — 2.000 Zeilen mit 20 Änderungen schrumpfen auf ein paar Dutzend. Um eine weiter entfernte gleiche Zeile zu bearbeiten, das Häkchen in der Werkzeugleiste entfernen.
+`Strg+F` sucht in beiden Bereichen gleichzeitig; Trefferzeilen werden eingefärbt, `Enter` / `Umschalt+Enter` springen weiter.
+
 Pro Seite gilt ein Limit von 8 MB / 50.000 Zeilen; darüber nennt das Fenster den Grund, statt still zu scheitern.
 
 **Ordner vergleichen** listet rekursiv *nur links / nur rechts / geändert / gleich*; ein Klick auf die Zeile öffnet diesen
@@ -146,6 +149,7 @@ Die Seitenleiste hat zwei Reiter: **Gliederung** (hebt beim Scrollen den aktuell
 | Formatieren / Vergleichen | `Ctrl+Shift+F` / `Ctrl+D` |
 | Nächster / vorheriger Unterschied | `F8` / `F7` |
 | Diesen Unterschied ganz auf die andere Seite übernehmen (mit `Ctrl` weiter) | `Alt+←` / `Alt+→` |
+| In beiden Bereichen suchen (Vergleichsfenster) | `Strg+F` |
 | Eine ⇄ zwei Spalten / Gliederung | `Ctrl+Shift+L` / `Ctrl+Shift+O` |
 | Fokusmodus / Vollbild | `F9` / `F11` |
 | Fett / Kursiv / Durchgestrichen / Code | `Ctrl+B` / `Ctrl+I` / `Ctrl+Shift+X` / `Ctrl+Shift+K` |
