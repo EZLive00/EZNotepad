@@ -17,6 +17,7 @@ body {
   --cmp-mark-2: rgba(217, 43, 43, .32);
   --cmp-ln-w: 54px;
   --cmp-cur-bg: rgba(51, 102, 240, .045);
+  --cmp-void-band: rgba(0, 0, 0, .075);
   /* 预览条宽度。16px 时差异段只有 5px 宽，一眼看不出有没有差异；
      22px 能把轨道做到 12px，段还能留出圆角 */
   --cmp-ruler-w: 22px;
@@ -30,6 +31,7 @@ body[data-theme="dark"] {
   --cmp-mark: rgba(255, 107, 107, .26);
   --cmp-mark-2: rgba(255, 107, 107, .38);
   --cmp-cur-bg: rgba(109, 141, 255, .08);
+  --cmp-void-band: rgba(255, 255, 255, .07);
 }
 
 .cmp {
@@ -230,6 +232,9 @@ body[data-theme="dark"] {
 
 .cmp-btn:hover { background: var(--bg-hover); color: var(--fg); }
 .cmp-btn:disabled { opacity: .45; cursor: default; background: var(--bg-soft); }
+/* `hidden` 属性默认是 display:none，但 .cmp-btn 的 display:inline-flex
+   优先级更高，会把它盖掉 —— 于是「隐藏」的按钮照样显示出来。 */
+.cmp-btn[hidden] { display: none; }
 
 .cmp-btn.primary { background: var(--accent); color: var(--accent-fg); }
 .cmp-btn.primary:hover { filter: brightness(1.07); }
@@ -348,6 +353,21 @@ body[data-theme="dark"] {
   min-width: 0;
 }
 
+/* 占位行：这一侧在这条对齐位置上没有内容（差异对齐补出来的空位）。
+   以前它就是一块白板 —— 一侧刚贴完，另一侧看着一片空白，用户既不知道
+   「这里缺了五行」，也不知道点上去能写。编辑态给一道极淡的斜纹当底：
+   它说的是「位置在这里，内容不在这里」，跟差异红底互不干扰。 */
+.cmp-pane.editing .cmp-row.void {
+  background-image: repeating-linear-gradient(-45deg,
+    var(--cmp-void-band) 0 1px, transparent 1px 10px);
+}
+.cmp-pane.editing .cmp-row.void:hover { background-color: var(--bg-soft); }
+.cmp-pane.editing .cmp-row.void .cmp-ln::after {
+  content: '·';
+  color: var(--fg-faint);
+  font-weight: 400;
+}
+
 /* ---- 差异：一律红 ---- */
 .cmp-row.diff { background: var(--cmp-wash); }
 .cmp-row.diff .cmp-ln { color: var(--cmp-red); box-shadow: inset -2px 0 0 var(--cmp-red); }
@@ -426,6 +446,28 @@ body[data-theme="dark"] {
 }
 
 .cmp-rtip[hidden] { display: none; }
+
+/* ---------- 关窗守卫 ----------
+   改完直接关窗（Alt+F4、点右上角 ×）时改动会静默消失 —— 对比窗口是独立
+   窗口，用户不会想到「还没保存」。这条跟上限提示同一位置、同一语气：先说
+   发生了什么，再给三个出口。 */
+.cmp-confirm {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 12px 8px;
+  padding: 6px 8px 6px 10px;
+  background: var(--cmp-wash-2);
+  color: var(--fg);
+  font-size: 12px;
+  border-radius: var(--r-md);
+}
+
+.cmp-confirm[hidden] { display: none; }
+.cmp-confirm .cmp-ico { width: 14px; height: 14px; color: var(--cmp-red); flex: none; }
+.cmp-confirm-t { flex: 1; min-width: 0; line-height: 1.5; }
+.cmp-confirm .cmp-btn { flex: none; }
 
 /* ---------- 上限提示条 ----------
    文件太大 / 行数太多时停在正文上方说明原因，不静默失败。 */

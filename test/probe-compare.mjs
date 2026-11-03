@@ -720,6 +720,159 @@ try {
   } else {
     ok('粘贴后立刻点别的行也能落进去', false, '第 2 行还没渲染出来');
   }
+
+  /* ---------- 14. 一侧贴完，另一侧的占位行也能改 ----------
+     用户：「一边粘贴后，另一边没法选中修改了」。
+     diff 把短的一侧补成占位行；占位行以前不给 contenteditable ——
+     看着就是空行，点上去什么都不会发生。更糟的是 mousedown 兜底从
+     `.cmp-ln` 的文字拿行号，占位行这里是空串 → 0 → focusAt 夹成第 1 行，
+     于是「点第 3 行，字进第 1 行」。 */
+  await openBlank();
+  await cmp.send('Input.insertText', { text: 'L1\nL2\nL3\nL4\nL5\nL6' });
+  await sleep(800);
+
+  const phState = () => cmp.ev(`(() => {
+    const rowsR = [...document.querySelectorAll('#rowsR .cmp-row')];
+    const isFill = (r) => !r.querySelector('.cmp-ln').textContent.trim();
+    return {
+      rows: rowsR.length,
+      fill: rowsR.filter(isFill).length,
+      editableFill: rowsR.filter((r) => isFill(r) && r.querySelector('.cmp-tx').isContentEditable).length,
+      text: rowsR.map((r) => r.querySelector('.cmp-tx').textContent),
+    };
+  })()`);
+
+  const ph0 = await phState();
+  ok('左侧贴 6 行后右侧补出占位行', ph0.rows >= 6 && ph0.fill >= 4, JSON.stringify(ph0));
+  ok('占位行也能直接写', ph0.fill > 0 && ph0.editableFill === ph0.fill,
+    `可写 ${ph0.editableFill}/${ph0.fill}`);
+
+  const rowBox = (side, idx, col = 4) => cmp.ev(`(() => {
+    const r = document.querySelectorAll('#rows${side} .cmp-row')[${idx}];
+    if (!r) return null;
+    const b = r.getBoundingClientRect();
+    const tx = r.querySelector('.cmp-tx').getBoundingClientRect();
+    return { x: Math.round(tx.left + ${col}), y: Math.round(b.top + b.height / 2) };
+  })()`);
+
+  const ph3 = await rowBox('R', 2);
+  if (ph3) {
+    await clickXY(ph3.x, ph3.y);
+    const phCaret = await cmp.ev(`(() => {
+      const sel = getSelection(); if (!sel.rangeCount) return { ok: false };
+      const n = sel.anchorNode; const e = n && (n.nodeType === 1 ? n : n.parentElement);
+      const host = e && e.closest && e.closest('.cmp-tx');
+      return host ? { ok: true, i: +host.dataset.i, side: host.dataset.side } : { ok: false };
+    })()`);
+    ok('点占位行落在这一行本身（不是第 1 行）',
+      phCaret.ok && phCaret.i === 2 && phCaret.side === 'r', JSON.stringify(phCaret));
+
+    await cmp.send('Input.insertText', { text: 'R3' });
+    await sleep(800);
+    const ph1 = await phState();
+    const leftAfter = await rowText('l');
+    ok('往占位行写的字进右侧，左侧不受影响',
+      ph1.text.some((t) => t.includes('R3')) && !leftAfter.some((t) => t.includes('R3')),
+      JSON.stringify(ph1.text));
+  } else {
+    ok('点占位行落在这一行本身（不是第 1 行）', false, '第 3 行不在 DOM 里');
+    ok('往占位行写的字进右侧，左侧不受影响', false, '第 3 行不在 DOM 里');
+  }
+
+  /* 真正的用法是往占位行粘一整段：多行要展开成多行，不是挤成一行 */
+  const phLast = await rowBox('R', 5);
+  if (phLast) {
+    await clickXY(phLast.x, phLast.y);
+    await cmp.send('Input.insertText', { text: 'P1\nP2\nP3' });
+    await sleep(900);
+    const ph2 = await phState();
+    const got = ['P1', 'P2', 'P3'].filter((k) => ph2.text.some((t) => t.trim() === k)).length;
+    ok('往占位行粘一整段会展开成多行', got === 3, `${got}/3 ${JSON.stringify(ph2.text)}`);
+  } else {
+    ok('往占位行粘一整段会展开成多行', false, '第 6 行不在 DOM 里');
+  }
+
+  /* ---------- 15. 预览条的颜色说人话 ----------
+     蓝色同时拿来画「视口框」和「当前这处差异」—— 用户看到的是一条蓝框加一段
+     蓝点，没有任何办法知道它们不是一回事。视口框改成中性灰，蓝只留给「你正
+     停在哪一处差异」，并把三种颜色的含义写进 title。 */
+  await openPair(p('big-a.txt'), p('big-a.txt'));
+  await sleep(700);
+  const rulerPix = await cmp.ev(`(() => {
+    const cv = document.getElementById('rulerC');
+    const g = cv.getContext('2d');
+    const x = Math.floor(cv.width / 2);
+    const d = g.getImageData(x, 0, 1, cv.height).data;
+    let accent = 0, any = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i + 3] < 8) continue;
+      any++;
+      if (d[i + 2] - d[i] > 40) accent++;      // 明显偏蓝 = 强调色
+    }
+    return { any, accent, w: cv.width, h: cv.height };
+  })()`);
+  ok('两侧内容相同时预览条上没有强调色（视口框不该用蓝）',
+    rulerPix.any > 0 && rulerPix.accent === 0, JSON.stringify(rulerPix));
+
+  const rulerTitle = await cmp.ev(`document.getElementById('ruler').title`);
+  ok('预览条把三种颜色各自代表什么写清楚',
+    /灰/.test(rulerTitle) && /红/.test(rulerTitle) && /蓝/.test(rulerTitle), rulerTitle);
+
+  /* ---------- 16. 只读态：能选中、能复制，只是不能改 ----------
+     「没法选中」有两种含义：占位行那种是真不能点，另一种是只读态下拖选不出选区。
+     后者是看差异最常用的动作（选一段去搜、去复制），必须一直成立。 */
+  await openPair(p('edit-a.txt'), p('edit-a2.txt'));
+  if (await cmp.ev(`document.getElementById('toggleEdit').classList.contains('on')`)) {
+    await cmp.ev(`document.getElementById('toggleEdit').click()`);
+    await sleep(400);
+  }
+  const selAt = await rowBox('L', 0, 10);
+  await cmp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: selAt.x, y: selAt.y, button: 'left', clickCount: 1 });
+  await cmp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: selAt.x + 70, y: selAt.y, button: 'left' });
+  await cmp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: selAt.x + 70, y: selAt.y, button: 'left', clickCount: 1 });
+  await sleep(250);
+  const picked = await cmp.ev(`getSelection().toString()`);
+  ok('只读态下也能拖选文字', typeof picked === 'string' && picked.length > 0, JSON.stringify(picked));
+
+  /* ---------- 17. 改完不保存关窗，要拦一下 ----------
+     对比窗口是独立窗口：Alt+F4 或点 × 直接关，改动静默消失，没有任何提示。
+     拦截点是 onCloseRequested，所以三条关窗路径都从同一个口过。 */
+  const alive = async () => !!(await targets()).find((t) => /compare\.html/.test(t.url));
+  await openPair(p('edit-a.txt'), p('edit-a2.txt'));
+  await enterEdit();
+  await clickRow('l', 0);
+  await cmp.send('Input.insertText', { text: 'Z' });
+  await sleep(500);
+  await cmp.ev(`document.getElementById('wclose').click()`);
+  await sleep(900);
+  const guard = await cmp.ev(`({
+    alive: !!document.getElementById('rowsL'),
+    shown: !document.getElementById('confirm').hidden,
+    text: document.getElementById('confirmText').textContent,
+    canSave: !document.getElementById('confirmSave').hidden,
+  })`).catch(() => ({ alive: false }));
+  ok('有未保存改动时点关闭会被拦下',
+    guard.alive && guard.shown && guard.canSave, JSON.stringify(guard));
+
+  await cmp.ev(`document.getElementById('confirmDrop').click()`);
+  await sleep(900);
+  ok('点「不保存」才真的关掉', !(await alive()));
+
+  /* 保存并关闭：改动要真的落到磁盘上，不是「窗口关了就算存了」 */
+  await openPair(p('edit-a.txt'), p('edit-a2.txt'));
+  await enterEdit();
+  await clickRow('l', 1);
+  await cmp.send('Input.insertText', { text: 'Q' });
+  await sleep(500);
+  await cmp.ev(`document.getElementById('wclose').click()`);
+  await sleep(700);
+  const canSave = await cmp.ev(`!document.getElementById('confirmSave').hidden`).catch(() => false);
+  ok('关窗确认条给出「保存并关闭」', canSave === true);
+  await cmp.ev(`document.getElementById('confirmSave').click()`);
+  await sleep(1400);
+  ok('「保存并关闭」把窗口关掉', !(await alive()));
+  const onDisk = fs.readFileSync(p('edit-a.txt'), 'utf8');
+  ok('「保存并关闭」把改动写回了磁盘', onDisk.includes('Q'), onDisk.split('\n')[1] || '');
 } finally {
   main.close();
   // 夹具留在 node_modules/.tmp/probe-cmp 下不复用删除：每轮 writeFileSync 直接覆盖。

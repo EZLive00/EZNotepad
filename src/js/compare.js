@@ -167,6 +167,17 @@ function recompute() {
     if (row.r) S.lineRow.r.set(row.r.no, i);
   });
 
+  /* 占位行要能写。
+     并排对齐必然让短的一侧补出「这一侧没有对应行」的空位。以前这些空位
+     只是画个空 span：看着像空行，点上去没反应、也不能粘 —— 一侧贴完另一
+     侧就彻底没法动了。现在它们可写，写下去等价于「在这一侧这里插一行」，
+     插入位置 = 前面最后一个本侧行号 + 1。 */
+  let lastL = 0, lastR = 0;
+  for (const row of S.rows) {
+    if (row.l) lastL = row.l.no; else row.fL = lastL + 1;
+    if (row.r) lastR = row.r.no; else row.fR = lastR + 1;
+  }
+
   let ul = 0, ur = 0;
   for (const row of S.rows) {
     if (row.l) ul = Math.max(ul, unitsOf(row.l.text));
@@ -223,10 +234,14 @@ function rowHtml(row, i, side) {
       inner = esc(cell.text);
     }
   }
-  const editable = S.edit && cell ? ' contenteditable="plaintext-only" spellcheck="false"' : '';
+  /* 占位行（这一侧在这条对齐位置上没有行）同样可编辑：编辑即插入一行。
+     不这样的话，一侧贴完内容，另一侧就只剩第 1 行能点，剩下全是「看着像
+     空行、点上去毫无反应」的死行 —— 而那正是「粘贴两段文本」的必经之路。 */
+  const editable = S.edit ? ' contenteditable="plaintext-only" spellcheck="false"' : '';
+  const fill = S.edit && !cell ? ' data-fill="1"' : '';
   return `<div class="${rowClass(row, i, side)}" style="top:${i * ROW_H}px">`
     + `<span class="cmp-ln">${cell ? cell.no : ''}</span>`
-    + `<span class="cmp-tx" data-i="${i}" data-side="${side}" data-n="1"${editable}>${inner}</span>`
+    + `<span class="cmp-tx" data-i="${i}" data-side="${side}" data-n="1"${fill}${editable}>${inner}</span>`
     + '</div>';
 }
 
@@ -525,14 +540,23 @@ function showWarn(text) {
   });
 }
 
-/* ---------------- 预览条 ---------------- */
+/* ---------------- 预览条 ----------------
+ * 三种颜色，各说一件事，不许混用：
+ *   红   = 这里有差异
+ *   蓝   = 你现在停在这一处（只有一处）
+ *   灰框 = 你正看着的这一屏
+ * 以前视口框也用强调色：一条预览条上两处蓝，用户没法知道「蓝框」和「蓝点」
+ * 根本不是一回事。视口是导航，不是内容，所以它该是中性色。
+ */
 let RED = '#d92b2b';
 let ACCENT = '#3366f0';
+let SOFT = '#8a8a8a';          // --fg-soft：视口框的中性色
 
 function cacheColors() {
   const cs = getComputedStyle(document.body);
   RED = (cs.getPropertyValue('--cmp-red') || '#d92b2b').trim();
   ACCENT = (cs.getPropertyValue('--accent') || '#3366f0').trim();
+  SOFT = (cs.getPropertyValue('--fg-soft') || '#8a8a8a').trim();
 }
 
 /** 圆角矩形：canvas 的 roundRect 在旧 WebView2 上不一定有，自己画 */
@@ -591,7 +615,7 @@ function drawRuler() {
   // 轨道：整条竖槽，告诉用户「这块区域代表整个文件」
   const tw = 10;
   const tx = Math.round((w - tw) / 2);
-  g.fillStyle = 'rgba(127,127,127,.15)';
+  g.fillStyle = 'rgba(127,127,127,.11)';
   roundRect(g, tx, top, tw, h, 3);
   g.fill();
 
@@ -615,22 +639,27 @@ function drawRuler() {
     }
   }
   for (const s of segs) {
+    /* 当前这处差异压得宽一点（左右各多 2px），像夹子夹住它。
+       只靠蓝色不够：色弱、或者屏上只有一条窄缝时，宽度差比色相差更靠得住。 */
     g.fillStyle = s.cur ? ACCENT : RED;
-    roundRect(g, tx, s.y, tw, s.h, Math.min(2, s.h / 2));
+    const w2 = s.cur ? tw + 4 : tw;
+    const x2 = s.cur ? tx - 2 : tx;
+    roundRect(g, x2, s.y, w2, s.h, Math.min(2, s.h / 2));
     g.fill();
   }
 
   /* 视口框：内容装得下一屏时不画 —— 那时整条轨道就是视口，
-     画一个比容器还高的框既不准确也没有信息量（原先短文档就是这样） */
+     画一个比容器还高的框既不准确也没有信息量（原先短文档就是这样）。
+     用中性灰：它回答「我在文件的哪一段」，跟「哪里不一样」不是一件事。 */
   if (contentH <= viewH + 1) return;
   const y = top + (sc.scrollTop / contentH) * h;
   const vh = clamp((viewH / contentH) * h, 12, h);
-  g.fillStyle = ACCENT;
-  g.globalAlpha = .14;
+  g.fillStyle = SOFT;
+  g.globalAlpha = .15;
   roundRect(g, tx - 1, y, tw + 2, vh, 3);
   g.fill();
-  g.globalAlpha = .5;
-  g.strokeStyle = ACCENT;
+  g.globalAlpha = .55;
+  g.strokeStyle = SOFT;
   g.lineWidth = 1;
   roundRect(g, tx - .5, Math.round(y) + .5, tw + 1, Math.max(11, vh - 1), 3);
   g.stroke();
@@ -905,9 +934,15 @@ function caretPos() {
   const i = +host.dataset.i;
   const row = S.rows[i];
   if (!row) return null;
+  const col = offsetIn(host, sel.anchorNode, sel.anchorOffset);
   const cell = side === 'l' ? row.l : row.r;
-  if (!cell) return null;
-  return { side, i, line: cell.no, col: offsetIn(host, sel.anchorNode, sel.anchorOffset) };
+  /* 占位行：这一侧还没有这一行，但光标确实停在这里 —— 用户正在往这里写。
+     返回「将来会插到第几行」，后续的 splitLine / mergeUp 才有行号可用。 */
+  if (!cell) {
+    const no = side === 'l' ? row.fL : row.fR;
+    return no ? { side, i, line: no, col, fill: true } : null;
+  }
+  return { side, i, line: cell.no, col };
 }
 
 /**
@@ -983,8 +1018,12 @@ function focusAt(side, line, col) {
   const lines = S.sides[side].lines;
   line = Math.min(Math.max(1, line | 0), Math.max(1, lines.length));
   col = Math.min(Math.max(0, col | 0), (lines[line - 1] || '').length);
-  const i = S.lineRow[side].get(line);
-  if (i == null) return;
+  focusRowIdx(side, S.lineRow[side].get(line), col);
+}
+
+/** 按「对齐行索引」聚焦。占位行没有本侧行号，只有索引 —— 点它时只能走这条 */
+function focusRowIdx(side, i, col) {
+  if (i == null || i < 0 || i >= S.rows.length) return;
   const sc = el(side, 'scroll');
   const y = i * ROW_H;
   if (y < sc.scrollTop || y + ROW_H > sc.scrollTop + sc.clientHeight) {
@@ -1019,6 +1058,16 @@ function flush() {
   const text = readRow(p.host);
   const parts = text.split('\n');
   const st = S.sides[p.side];
+  if (p.fill) {
+    /* 占位行：这一侧还没有这一行，写下去 = 在这里插一行。
+       什么都没写就什么也别插 —— 点一下空位不该给文档凭空添一行。 */
+    if (!text) return null;
+    const at = Math.min(Math.max(0, p.at), st.lines.length);
+    st.lines.splice(at, 0, ...parts);
+    st.dirty = true;
+    updateMeta();
+    return { side: p.side, line: at + 1, parts: parts.length };
+  }
   st.lines.splice(p.at, p.n, ...parts);
   st.dirty = true;
   updateMeta();
@@ -1093,7 +1142,8 @@ function onInput(e) {
   const row = S.rows[i];
   if (!row) return;
   const cell = side === 'l' ? row.l : row.r;
-  if (!cell) return;
+  const fill = host.dataset.fill === '1';
+  if (!cell && !fill) return;
 
   S.lastSide = side;
   pushUndo(side);
@@ -1102,10 +1152,17 @@ function onInput(e) {
   const text = readRow(host);
   const upto = text.slice(0, col);
   const nl = upto.split('\n').length - 1;
-  const targetLine = cell.no + nl;
+  const baseLine = cell ? cell.no : (side === 'l' ? row.fL : row.fR);
+  if (!baseLine) return;
+  const targetLine = baseLine + nl;
   const targetCol = col - (upto.lastIndexOf('\n') + 1);
 
-  S.pending = { host, side, at: cell.no - 1, n: Math.max(1, +host.dataset.n || 1) };
+  S.pending = {
+    host, side,
+    at: baseLine - 1,
+    n: cell ? Math.max(1, +host.dataset.n || 1) : 0,
+    fill: !cell,
+  };
   S.sides[side].dirty = true;
   updateDots();
   $('save').disabled = false;
@@ -1264,7 +1321,14 @@ function onKey(e) {
      事件根本到不了这里。统一交给 document 上的处理（见 init 末尾）。 */
 
   const side = sideOf(host);
-  if (e.key === 'Tab') { e.preventDefault(); const p = caretPos(); flush(); if (p) insertText(side, p.line - 1, p.col, '    '); return; }
+  if (e.key === 'Tab') {
+    e.preventDefault();
+    const p = caretPos();
+    if (p && p.fill) return;        // 占位行还没有这一行，缩进无从谈起
+    flush();
+    if (p) insertText(side, p.line - 1, p.col, '    ');
+    return;
+  }
 
   /* 选了一段内容时，按键的语义是「删掉它」，不是「合并行」。
      必须在行首/行尾的判断之前拦下来 —— 三击一行的锚点就在行首。 */
@@ -1284,6 +1348,32 @@ function onKey(e) {
   if (!pos) return;
   const lineIdx = pos.line - 1;
 
+  /* 占位行：这一侧在这个对齐位置还没有行。结构性按键必须先把已经写下的字
+     落进模型，否则 splitLine / mergeUp 拿到的是一个还不存在的行号。 */
+  if (pos.fill) {
+    const atEnd = pos.col >= host.innerText.replace(/\r|\n/g, '').length;
+    const structural = e.key === 'Enter'
+      || (e.key === 'Backspace' && pos.col === 0)
+      || (e.key === 'Delete' && atEnd)
+      || e.key === 'ArrowUp' || e.key === 'ArrowDown';
+    if (!structural) return;        // 行内删字/打字交给浏览器
+    e.preventDefault();
+    const written = flush();
+    S.ver++;
+    recompute();
+    render(true);
+    if (!written) {                 // 空位没写过东西：按键没有可作用的那一行
+      focusRowIdx(side, pos.i, 0);
+      return;
+    }
+    if (e.key === 'ArrowUp') { moveVert(side, written.line, -1, pos.col); return; }
+    if (e.key === 'ArrowDown') { moveVert(side, written.line, 1, pos.col); return; }
+    if (e.key === 'Enter') { splitLine(side, written.line - 1, pos.col); return; }
+    if (e.key === 'Backspace') { mergeUp(side, written.line - 1); return; }
+    mergeDown(side, written.line - 1);
+    return;
+  }
+
   if (e.key === 'Enter') { e.preventDefault(); flush(); splitLine(side, lineIdx, pos.col); return; }
   if (e.key === 'Backspace' && pos.col === 0) { e.preventDefault(); flush(); mergeUp(side, lineIdx); return; }
   if (e.key === 'Delete' && pos.col === host.innerText.replace(/\r|\n/g, '').length) {
@@ -1291,6 +1381,36 @@ function onKey(e) {
   }
   if (e.key === 'ArrowUp') { e.preventDefault(); flush(); moveVert(side, pos.line, -1, pos.col); return; }
   if (e.key === 'ArrowDown') { e.preventDefault(); flush(); moveVert(side, pos.line, 1, pos.col); return; }
+}
+
+/* ---------------- 关窗守卫 ----------------
+ * 以前改完不保存就直接关窗，改动静默消失：对比窗口是独立窗口，用户按
+ * Alt+F4 时不会想到「这里还有东西没存」。拦截点是 onCloseRequested，
+ * 不是「点 × 的时候」—— 后者只管一个入口。 */
+let forceClosing = false;
+
+function dirtySides() {
+  return ['l', 'r'].filter((k) => S.sides[k].loaded && S.sides[k].dirty);
+}
+
+function showCloseConfirm() {
+  const dirty = dirtySides();
+  const files = dirty.filter((k) => S.sides[k].path).length;
+  $('confirmText').textContent = files
+    ? tt('{n} 个文件有未保存的改动，关闭后会丢失。', { n: files })
+    : tt('粘贴进来的文本改动还没保存，关闭后会丢失。');
+  /* 粘进来的文本没有磁盘目标，没有「保存」这条出路 —— 别给一个按了也没用的按钮 */
+  $('confirmSave').hidden = !files;
+  $('confirm').hidden = false;
+  $('confirmCancel').focus();
+}
+
+async function closeForReal() {
+  forceClosing = true;
+  $('confirm').hidden = true;
+  const w = (() => { try { return getCurrentWindow(); } catch { return null; } })();
+  if (!w) return;
+  try { await w.close(); } catch { forceClosing = false; }
 }
 
 /* ---------------- 保存 ---------------- */
@@ -1364,8 +1484,29 @@ function bind() {
       filled = !filled;
       be.setCompareFill(filled).catch(() => { filled = !filled; });
     };
+    /* 关闭统一走 close()，由 onCloseRequested 判一次脏 —— 右上角 ×、Alt+F4、
+       任务栏关闭都从同一个口过，不靠「点按钮时才检查」。 */
     $('wclose').onclick = () => w.close();
+    if (typeof w.onCloseRequested === 'function') {
+      w.onCloseRequested((e) => {
+        if (forceClosing) return;                    // 已经确认过，放行
+        if (S.pending) { flush(); S.ver++; recompute(); }
+        if (!dirtySides().length) return;            // 没有未保存的东西，直接关
+        e.preventDefault();
+        showCloseConfirm();
+      }).catch(() => {});
+    }
   }
+
+  $('confirmCancel').onclick = () => { $('confirm').hidden = true; };
+  $('confirmDrop').onclick = () => { void closeForReal(); };
+  $('confirmSave').onclick = async () => {
+    await save();
+    /* 还有没落盘的（保存失败、或者粘贴文本本来就没有目标文件）：留在原地，
+       别把确认条也收掉 —— 那条是用户唯一的出口。 */
+    if (dirtySides().length) return;
+    await closeForReal();
+  };
 
   $('slotL').onclick = pickSide('l');
   $('slotR').onclick = pickSide('r');
@@ -1463,7 +1604,11 @@ function bind() {
       if (!tx) return;
       e.preventDefault();
       const onNo = !!(e.target.closest && e.target.closest('.cmp-ln'));
-      const line = +tx.closest('.cmp-row').querySelector('.cmp-ln').textContent;
+      const lnText = tx.closest('.cmp-row').querySelector('.cmp-ln').textContent;
+      /* 占位行没有本侧行号（行号列是空的）。以前这里 `+'' === 0`，focusAt
+         把它夹成第 1 行 —— 点第 3 行、字却进了第 1 行。占位行按对齐索引聚焦。 */
+      if (!lnText.trim()) { focusRowIdx(side, i, 0); return; }
+      const line = +lnText;
       const col = onNo ? 0 : (S.sides[side].lines[line - 1] || '').length;
       focusAt(side, line, col);
     });

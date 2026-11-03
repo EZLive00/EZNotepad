@@ -83,6 +83,15 @@
     </button>
   </div>
 
+  <!-- 关窗守卫：有未保存的改动时挡一下，别让 Alt+F4 静默丢掉改过的内容 -->
+  <div class="cmp-confirm" id="confirm" hidden>
+    <svg class="cmp-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 9v5M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" /></svg>
+    <span class="cmp-confirm-t" id="confirmText"></span>
+    <button class="cmp-btn" id="confirmCancel" data-i18n="取消">取消</button>
+    <button class="cmp-btn" id="confirmDrop" data-i18n="不保存">不保存</button>
+    <button class="cmp-btn primary" id="confirmSave" data-i18n="保存并关闭">保存并关闭</button>
+  </div>
+
   <!-- 正文：左栏 / 右栏 / 预览条 -->
   <div class="cmp-main" id="main">
     <section class="cmp-pane" id="paneL">
@@ -107,7 +116,7 @@
       </div>
     </section>
 
-    <aside class="cmp-ruler" id="ruler" title="点击或拖动可快速定位" data-i18n-title="点击或拖动可快速定位">
+    <aside class="cmp-ruler" id="ruler" title="预览条：红 = 有差异，蓝 = 当前这处，灰框 = 正在看的范围；点击或拖动可快速定位" data-i18n-title="预览条：红 = 有差异，蓝 = 当前这处，灰框 = 正在看的范围；点击或拖动可快速定位">
       <canvas id="rulerC"></canvas>
       <div class="cmp-rtip" id="rulerTip" hidden></div>
     </aside>
