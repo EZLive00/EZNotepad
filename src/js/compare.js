@@ -291,6 +291,7 @@ function render(force = false) {
   updateCurBox();
   updateStats();
   updateMeta();
+  syncPush();
   drawRuler();
   updateEmpty();
   renderList();
@@ -328,8 +329,16 @@ function updateStats() {
   }
   const st = diffStats(S.rows);
   const same = st.add + st.del + st.chg === 0;
+  /* 「按当前口径一致」不等于「逐字一致」：勾了忽略空白/大小写之后，
+     两份文件可能真的每行都有差别。这时还写「完全一致」就是在报告一个
+     比事实更强的结论，用户会拿它当依据。 */
+  let hidden = 0;
+  if (same && (S.opt.ignoreWS || S.opt.ignoreCase)) {
+    const raw = diffStats(buildSideBySide(S.sides.l.lines, S.sides.r.lines, {}).rows);
+    hidden = raw.add + raw.del + raw.chg;
+  }
   $('stat').textContent = same
-    ? tt('两侧内容完全一致')
+    ? (hidden ? tt('忽略空白/大小写后一致，逐字并不相同') : tt('两侧内容完全一致'))
     : tt('修改 {chg} 行 · 仅左 {del} 行 · 仅右 {add} 行 · 差异 {n} 处', { chg: st.chg, del: st.del, add: st.add, n: S.blocks.length });
   $('curInfo').textContent = S.blocks.length ? tt('第 {i} / {n} 处', { i: S.cur + 1, n: S.blocks.length }) : '';
   $('prev').disabled = !S.blocks.length;
@@ -379,7 +388,7 @@ function doUndo(redo) {
   const side = undoTarget({ target: document.activeElement });
   if (!side) return;
   if (!redo && undoSort()) return;   // 排序是整侧替换，先按整体撤
-  undo(side, redo);
+  undoEither(side, redo);
   /* undo() 在栈空时会提前 return，不经过 updateMeta —— 这里兜一次，
      让「撤到底」的瞬间按钮就变灰，而不是等下一次无关的重绘 */
   syncHist();
@@ -1114,17 +1123,27 @@ function pushUndo(side) {
   st.undoAt = now;
 }
 
-/** Ctrl+Z / Ctrl+Y 落在哪一侧：跟光标走；光标不在行里就跟最近动过的那一侧，
- *  再退一步用「左边优先」—— 点过工具栏之后焦点在按钮上，不能因此就什么都不做 */
-function undoTarget(e) {
-  const host = e.target && e.target.closest && e.target.closest('.cmp-tx');
+/** 当前「在哪一侧」：事件目标 → 文档里的选区 → 上一次落过的栏 → 有内容的那一侧。
+ *  选区这一层不能省：点工具栏按钮时事件目标是按钮，但光标还在原来那一行里，
+ *  用户心里的「当前侧」就是那一行（Beyond Compare 的按钮文字也是这么翻的）。 */
+function activeSide(node) {
+  const host = node && node.closest && node.closest('.cmp-tx');
   if (host) return sideOf(host);
+  const sel = window.getSelection();
+  const n = sel && sel.anchorNode;
+  const holder = n && (n.nodeType === 1 ? n : n.parentElement);
+  const tx = holder && holder.closest && holder.closest('.cmp-tx');
+  if (tx) return sideOf(tx);
   if (S.lastSide) return S.lastSide;
   if (S.sides.l.loaded) return 'l';
   if (S.sides.r.loaded) return 'r';
   return '';
 }
 
+/** Ctrl+Z / Ctrl+Y 落在哪一侧：跟光标走，光标不在行里才用兜底 */
+function undoTarget(e) {
+  return activeSide(e && e.target);
+}
 
 /** 结构性编辑（换行 / 并行 / 缩进 / 撤销）之后统一走这里：重算、重画、把光标放回去。
  *  必须顺手标脏 —— 只有打字那条路径会经 flush() 标脏，换行、并行这些不经过它，
@@ -1244,13 +1263,22 @@ function undo(side, redo) {
   const st = S.sides[side];
   const from = redo ? st.redo : st.undo;
   const to = redo ? st.undo : st.redo;
-  if (!from.length) return;
+  if (!from.length) return false;
   /* 先记光标再换内容：长文档里撤一步就跳回顶部，等于让人重新找回位置 */
   const at = caretAt(side);
   to.push(st.lines.slice());
   st.lines = from.pop();
   st.dirty = true;
   applyEdit(side, at.line, at.col);
+  return true;
+}
+
+/** 撤销/重做：先试当前侧，没历史就落到另一侧。
+ *  「同步到另一边」改的是**另一侧**，而光标还留在原处 —— 不兜这一下，
+ *  用户按 Ctrl+Z 会觉得「刚做的事撤不掉」。 */
+function undoEither(side, redo) {
+  if (undo(side, redo)) return true;
+  return undo(side === 'l' ? 'r' : 'l', redo);
 }
 
 /* ---------------- 按字典序排序 ---------------- */
@@ -1312,6 +1340,79 @@ function undoSort() {
   $('save').disabled = false;
   if (keep) focusAt(keep.side, keep.line, keep.col);
   return true;
+}
+
+/* ---------------- 把一处差异整段同步到另一边 ----------------
+ * 这是所有对比工具共有的那个动词，也是以前唯一缺的那个：改完左边，右边只能
+ * 手抄。粒度取「一处差异」—— Beyond Compare 的 Copy to Other Side 复制的是
+ * 选中的行或当前段，WinMerge 的 Alt+←/→ 复制的是 difference，Meld 中栏的箭头
+ * 也是整块 replace。方向跟着光标在哪一侧（BC 的按钮文字就是这么翻的）。
+ */
+
+/** 一处差异两侧各占哪些行：1 基行号、行数、原文 */
+function blockParts(i) {
+  const [s, e] = blockRange(i);
+  if (s < 0) return null;
+  const out = { s, e, l: { first: 0, n: 0, texts: [] }, r: { first: 0, n: 0, texts: [] } };
+  for (let k = s; k <= e; k++) {
+    const row = S.rows[k];
+    for (const side of ['l', 'r']) {
+      const cell = side === 'l' ? row.l : row.r;
+      if (!cell) continue;
+      const b = out[side];
+      if (!b.n) b.first = cell.no;
+      b.n++;
+      b.texts.push(cell.text);
+    }
+  }
+  return out;
+}
+
+/**
+ * 把当前这一处差异整段推到 `dst` 侧（`dst` 是**目标**侧，和快捷键方向一致）。
+ * @param {boolean} advance 推完是否跟到下一处（连续合并的主循环）
+ */
+function pushBlock(dst, advance = false) {
+  if (!S.edit) { toast(tt('先打开「编辑」才能改内容')); return; }
+  if (!(S.sides.l.loaded && S.sides.r.loaded)) return;
+  /* 防抖里那一行还没进模型：不先并回去，取到的「这一处原文」就是旧的 */
+  if (S.pending) { flush(); S.ver++; recompute(); }
+  const parts = blockParts(S.cur);
+  if (!parts) { toast(tt('两侧没有差异')); return; }
+  const src = dst === 'l' ? 'r' : 'l';
+  const from = parts[src];
+  const to = parts[dst];
+  if (!from.n && !to.n) return;
+  /* 目标侧在这一处没有行时，插入位置 = 前面最后一个本侧行号 + 1
+     （recompute 已经把 fL / fR 算好了，和占位行写字的落点同一套） */
+  const anchor = S.rows[parts.s];
+  const at = to.n ? to.first - 1 : (dst === 'l' ? anchor.fL : anchor.fR) - 1;
+  if (!Number.isFinite(at) || at < 0) return;
+
+  recordUndo(dst);                      // 整段替换算一步撤销
+  S.sides[dst].lines.splice(at, to.n, ...from.texts);
+  S.sides[dst].dirty = true;
+  /* 不把 lastSide 改成目标侧：连着推好几处是最常见的用法（一路 Alt+→ 推下去），
+     每推一次就把方向翻过来，用户得反复找按钮 */
+  S.ver++;
+  recompute();
+  render(true);
+  updateMeta();
+  if (!S.blocks.length) { toast(tt('这一处已同步，两侧现在完全一致')); return; }
+  if (advance) gotoBlock(Math.min(S.cur, S.blocks.length - 1));
+}
+
+/** 按钮的方向：光标在哪一侧，就推向另一侧 */
+function syncPush() {
+  const btn = $('pushBtn');
+  if (!btn) return;
+  const src = activeSide(null);
+  const toLeft = src === 'r';
+  const side = toLeft ? tt('左侧') : tt('右侧');
+  $('pushLabel').textContent = toLeft ? tt('复制到左侧') : tt('复制到右侧');
+  btn.title = tt('把这一处差异整段同步到{side} (Alt+{key})', { side, key: toLeft ? '←' : '→' });
+  $('pushIco').classList.toggle('flip', toLeft);
+  btn.disabled = !S.edit || !(S.sides.l.loaded && S.sides.r.loaded) || !S.blocks.length;
 }
 
 function onKey(e) {
@@ -1535,6 +1636,13 @@ function bind() {
 
   $('prev').onclick = () => gotoBlock(S.cur - 1);
   $('next').onclick = () => gotoBlock(S.cur + 1);
+  $('pushBtn').onclick = () => pushBlock(activeSide(null) === 'r' ? 'l' : 'r');
+  /* 点进哪一栏，就把「当前侧」记成哪一栏，顺便把同步按钮的方向翻过来 */
+  document.addEventListener('focusin', (e) => {
+    const host = e.target && e.target.closest && e.target.closest('.cmp-tx');
+    if (host) S.lastSide = sideOf(host);
+    syncPush();
+  });
   $('save').onclick = save;
   $('report').onclick = saveReport;
 
@@ -1659,13 +1767,26 @@ function bind() {
       flush();
       const side = undoTarget(e);
       if (!side) return;
-      if (lk === 'y') { undo(side, true); return; }
+      if (lk === 'y') { undoEither(side, true); return; }
       if (!e.shiftKey && undoSort()) return;   // 排序是整侧替换，先按整体撤
-      undo(side, e.shiftKey);
+      undoEither(side, e.shiftKey);
       return;
     }
     if (e.defaultPrevented) return;
     const k = e.key;
+    /* Alt+← / Alt+→ 把这一处整段推到那一侧（WinMerge 与 Beyond Compare 的默认绑定）；
+       再加 Ctrl 就是「推完接着看下一处」，连续合并靠的就是这一条。 */
+    if (e.altKey && (k === 'ArrowLeft' || k === 'ArrowRight')) {
+      e.preventDefault();
+      if (!S.edit) return;
+      pushBlock(k === 'ArrowRight' ? 'r' : 'l', mod);
+      return;
+    }
+    if (e.altKey && (k === 'ArrowUp' || k === 'ArrowDown')) {
+      e.preventDefault();
+      gotoBlock(S.cur + (k === 'ArrowDown' ? 1 : -1));
+      return;
+    }
     if (k === 'Escape' && S.list.open) { e.preventDefault(); toggleList(false); return; }
     if (k === 'F8') { e.preventDefault(); gotoBlock(S.cur + 1); return; }
     if (k === 'F7') { e.preventDefault(); gotoBlock(S.cur - 1); return; }

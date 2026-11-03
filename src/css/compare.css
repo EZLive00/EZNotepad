@@ -75,6 +75,9 @@ body[data-theme="dark"] {
   stroke-linejoin: round;
 }
 
+/* 同步按钮：方向跟着光标在哪一侧，图标镜像一下就够，不必画两个 */
+.cmp-ico.flip { transform: scaleX(-1); }
+
 /* 两栏等宽，交换按钮永远落在正中：
    槽位宽度只跟窗口走，文件名长短只影响省略号，不会再让按钮左右漂 */
 .cmp-slots {

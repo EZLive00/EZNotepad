@@ -838,7 +838,58 @@ try {
   const picked = await cmp.ev(`getSelection().toString()`);
   ok('只读态下也能拖选文字', typeof picked === 'string' && picked.length > 0, JSON.stringify(picked));
 
-  /* ---------- 17. 改完不保存关窗，要拦一下 ----------
+  /* ---------- 17. 把一处差异整段同步到另一边 ----------
+     Beyond Compare 的 Copy to Other Side、WinMerge 的 Alt+←/→、Meld 中栏的箭头，
+     说的都是同一件事，单位是「一处差异」而不是一行、也不是整个文件，方向跟着
+     光标在哪一侧。以前没有这个动作 —— 改完左边，右边只能手抄。 */
+  fs.writeFileSync(p('push-a.txt'), '甲\n乙\n丙\n丁\n戊\n', 'utf8');
+  fs.writeFileSync(p('push-b.txt'), '甲\n乙改\n丙\n丁改\n戊\n', 'utf8');
+  const label = () => cmp.ev(`document.getElementById('pushLabel').textContent`);
+  const cur = () => cmp.ev(`document.getElementById('curInfo').textContent`);
+  await openPair(p('push-a.txt'), p('push-b.txt'));
+  await enterEdit();
+  await clickRow('l', 1);
+  const blk0 = await cur();
+  ok('工具栏有「同步到另一边」，光标在左侧时指向右侧', (await label()).includes('右'), await label());
+
+  await cmp.ev(`document.getElementById('pushBtn').click()`);
+  await sleep(700);
+  const rt1 = await rowText('r');
+  ok('点一次就把这一处整段复制到右侧', rt1[1] === '乙', JSON.stringify(rt1));
+  const blk1 = await cur();
+  ok('复制完这一处不再是差异（2 处 → 1 处）',
+    blk0.includes('/ 2 处') && blk1.includes('/ 1 处'), `${blk0} → ${blk1}`);
+
+  await pressKey(90, 'z', 'KeyZ', 2);
+  await sleep(700);
+  const rt2 = await rowText('r');
+  ok('Ctrl+Z 把整段同步撤得回来', rt2[1] === '乙改', JSON.stringify(rt2));
+
+  await clickRow('r', 1);
+  ok('光标换到右侧，按钮方向自己翻过来', (await label()).includes('左'), await label());
+  await cmp.ev(`document.getElementById('pushBtn').click()`);
+  await sleep(700);
+  const lt1 = await rowText('l');
+  ok('反向也能整段推过去', lt1[1] === '乙改', JSON.stringify(lt1));
+
+  /* 键盘与连续合并：Alt+→ 推一次仍停在原处，Ctrl+Alt+→ 推完并接着处理下一处 */
+  await openPair(p('push-a.txt'), p('push-b.txt'));
+  await enterEdit();
+  await pressKey(39, 'ArrowRight', 'ArrowRight', 1);
+  await sleep(700);
+  const kp1 = await rowText('r');
+  ok('Alt+→ 等同于「复制到右侧」', kp1[1] === '乙', JSON.stringify(kp1));
+  ok('只推一处时不会跳过下一处', (await cur()).includes('/ 1 处'), await cur());
+
+  await pressKey(39, 'ArrowRight', 'ArrowRight', 3);      // Ctrl+Alt+→
+  await sleep(900);
+  const kp2 = await rowText('r');
+  const statSel = await cmp.ev(`document.getElementById('stat').textContent`);
+  ok('Ctrl+Alt+→ 连着推，推完两侧完全一致',
+    kp2[1] === '乙' && kp2[3] === '丁' && /一致/.test(statSel), `${JSON.stringify(kp2)} ${statSel}`);
+  ok('没有差异时「同步」按钮变灰', (await cmp.ev(`document.getElementById('pushBtn').disabled`)) === true);
+
+  /* ---------- 18. 改完不保存关窗，要拦一下 ----------
      对比窗口是独立窗口：Alt+F4 或点 × 直接关，改动静默消失，没有任何提示。
      拦截点是 onCloseRequested，所以三条关窗路径都从同一个口过。 */
   const alive = async () => !!(await targets()).find((t) => /compare\.html/.test(t.url));
@@ -877,6 +928,50 @@ try {
   ok('「保存并关闭」把窗口关掉', !(await alive()));
   const onDisk = fs.readFileSync(p('edit-a.txt'), 'utf8');
   ok('「保存并关闭」把改动写回了磁盘', onDisk.includes('Q'), onDisk.split('\n')[1] || '');
+  /* ---------- 19. 窗口落在主程序那一块屏上 ----------
+     以前铺满用的是 SPI_GETWORKAREA，那个 API 只认主屏：主程序在副屏时，
+     对比窗口照样开在主屏，拖到副屏再点最大化又被打回主屏。
+     断言用「主窗口所在的屏」当基准，单屏机器上是恒等，多屏机器上才有区分度。 */
+  const scr = (c) => c.ev(`({
+    left: screen.availLeft, top: screen.availTop,
+    w: screen.availWidth, h: screen.availHeight,
+    x: window.screenX, y: window.screenY,
+    ow: window.outerWidth, oh: window.outerHeight,
+  })`);
+  await openPair(p('push-a.txt'), p('push-b.txt'));
+  const ms = await scr(main);
+  const cs = await scr(cmp);
+  ok('对比窗口和主窗口在同一块屏上',
+    cs.left === ms.left && cs.w === ms.w, `${JSON.stringify(ms)} vs ${JSON.stringify(cs)}`);
+  ok('铺满的正是这块屏的工作区（不是主屏的工作区）',
+    Math.abs(cs.x - cs.left) <= 2 && Math.abs(cs.y - cs.top) <= 2 && Math.abs(cs.ow - cs.w) <= 16,
+    JSON.stringify(cs));
+
+  await cmp.ev(`document.getElementById('wmax').click()`);   // 还原
+  await sleep(800);
+  const rs = await scr(cmp);
+  ok('还原后仍在同一块屏里，而且不再是铺满',
+    rs.left === cs.left && rs.ow < rs.w - 100
+      && rs.x >= rs.left - 2 && rs.x + rs.ow <= rs.left + rs.w + 16,
+    JSON.stringify(rs));
+
+  await cmp.ev(`document.getElementById('wmax').click()`);   // 再铺满
+  await sleep(800);
+  const fs2 = await scr(cmp);
+  ok('再点一次又铺满这块屏，没有跑到别处',
+    Math.abs(fs2.x - fs2.left) <= 2 && Math.abs(fs2.ow - fs2.w) <= 16, JSON.stringify(fs2));
+
+  /* ---------- 20. 「忽略空白」不能把「按口径一致」说成「逐字一致」 ---------- */
+  fs.writeFileSync(p('ws-a.txt'), '一\n二\n', 'utf8');
+  fs.writeFileSync(p('ws-b.txt'), '一  \n二\n', 'utf8');    // 行尾多了两个空格
+  await openPair(p('ws-a.txt'), p('ws-b.txt'));
+  const wsStat = await cmp.ev(`document.getElementById('stat').textContent`);
+  ok('忽略空白让两份文件「看着一致」时，状态栏说明这是忽略后的结论',
+    /忽略/.test(wsStat), wsStat);
+  await cmp.ev(`document.getElementById('optWS').click()`);
+  await sleep(600);
+  const wsStat2 = await cmp.ev(`document.getElementById('stat').textContent`);
+  ok('关掉忽略空白，行尾差异就露出来了', /差异/.test(wsStat2), wsStat2);
 } finally {
   main.close();
   // 夹具留在 node_modules/.tmp/probe-cmp 下不复用删除：每轮 writeFileSync 直接覆盖。
