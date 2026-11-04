@@ -4235,6 +4235,21 @@ async function boot() {
      而菜单是展开时才渲染的，预先拿到就不会先闪一行「不用保存」再换成路径 */
   quickFile().catch(() => {});
 
+  /* 文件是外面推进来的：第二个实例双击、工具窗「在主窗口打开」。
+     这件事必须**排在恢复流程前面**挂好 —— 恢复草稿是个模态框，用户不点它，
+     boot 就停在那儿一行都不往下走；监听晚上一步注册，这期间推进来的路径会被
+     直接丢掉，界面上就是「点了没反应」，而且只在真攒着未保存草稿的那次出现。
+     早收到的先攒着，等恢复完再开，标签顺序才和会话一致。 */
+  const earlyOpen = [];
+  let bootDone = false;
+  try {
+    await listen('open-files', (e) => {
+      const list = (e.payload || []).filter(Boolean);
+      if (!bootDone) { earlyOpen.push(...list); return; }
+      for (const p of list) openPath(p);
+    });
+  } catch {}
+
   /* 先按上次的标签列表开文件，再把没保存的内容捞回来。
      两件事各管一段：会话管「开过哪些文件」，草稿管「哪些还没存」。
      以前这里只恢复最近 5 个文件里的标签，第 6 个开始就静默消失。 */
@@ -4269,11 +4284,12 @@ async function boot() {
   /* 文件变化监听：后端推过来的是「命中名单的绝对路径」。
      拿不到事件源也不影响任何编辑功能，所以静默失败即可。 */
   try { await listen('fs-change', (e) => onFsChange(e.payload)); } catch {}
-  /* 第二个实例双击文件时，单实例插件把路径转过来，在这个窗口里打开 */
-  try {
-    await listen('open-files', (e) => { (e.payload || []).forEach((p) => openPath(p)); });
-  } catch {}
   syncWatches();
+
+  /* 恢复流程走完，把之前攒下的文件开出来（空数组是常态，没有额外开销） */
+  bootDone = true;
+  for (const p of earlyOpen) openPath(p);
+  earlyOpen.length = 0;
 }
 
 /* 供子面板回调 */

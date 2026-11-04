@@ -7,6 +7,7 @@
 // 浏览器相关的行为归 run.mjs（md 引擎）、run-editor.mjs（编辑区）、
 // run-menu.mjs（菜单）。
 // ============================================================
+import fs from 'node:fs';
 import { freeUntitledName, moveById } from '../src/js/taborder.js';
 import { slugify, headingSlugs, inline, renderMarkdown } from '../src/js/markdown.js';
 import { extractOutline } from '../src/js/preview.js';
@@ -173,6 +174,24 @@ eq('排序键：去首尾空白', sortKey('  Ab '), 'Ab');
 eq('排序键：去空白并转小写', sortKey('  Ab ', { ignoreCase: true }), 'ab');
 ok('已经是字典序时 isSorted 为真', isSorted(['a', 'b', 'c']));
 ok('乱序时 isSorted 为假', !isSorted(['b', 'a']));
+
+/* ---------- boot 顺序：外面推进来的文件，监听必须比恢复流程先挂 ----------
+   恢复草稿是个模态框（「是否恢复」），用户不点，boot 就停在 await 上。
+   `open-files` 要是注册在这之后，这段时间从第二个实例 / 工具窗推进来的路径
+   就被丢掉，界面表现成「点了没反应」—— 而且只在真攒着未保存内容的那次出现，
+   手工测根本碰不到。这条守的就是那个顺序，改回去就红。 */
+{
+  const APP = fs.readFileSync(new URL('../src/js/app.js', import.meta.url), 'utf8');
+  const at = (needle) => {
+    const i = APP.indexOf(needle);
+    return i < 0 ? Infinity : i;
+  };
+  const iListen = at("listen('open-files'");
+  const iRestore = at('await restoreDrafts()');
+  ok('open-files 的监听注册在恢复草稿之前', iListen < iRestore, { iListen, iRestore });
+  ok('启动期收到的文件先排队，不直接开',
+    at('earlyOpen.push') < iRestore && APP.includes('for (const p of earlyOpen) openPath(p)'));
+}
 
 /* ---------- 汇总 ---------- */
 const fail = out.filter((r) => !r.ok);
