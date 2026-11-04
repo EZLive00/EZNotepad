@@ -980,31 +980,40 @@ try {
     ok('往占位行粘一整段会展开成多行', false, '第 6 行不在 DOM 里');
   }
 
-  /* ---------- 15. 预览条的颜色说人话 ----------
-     蓝色同时拿来画「视口框」和「当前这处差异」—— 用户看到的是一条蓝框加一段
-     蓝点，没有任何办法知道它们不是一回事。视口框改成中性灰，蓝只留给「你正
-     停在哪一处差异」，并把三种颜色的含义写进 title。 */
-  await openPair(p('big-a.txt'), p('big-a.txt'));
-  await sleep(700);
-  const rulerPix = await cmp.ev(`(() => {
+  /* ---------- 15. 预览条只有红和灰 ----------
+     以前「当前这处差异」也画成蓝色，和视口框抢同一条 22px 的槽 —— 用户看到的
+     是一条蓝框加一段蓝点，没有办法知道它们不是一回事。现在差异一律红、视口
+     一律灰，蓝色不再出现在预览条上。 */
+  const pixAt = () => cmp.ev(`(() => {
     const cv = document.getElementById('rulerC');
     const g = cv.getContext('2d');
     const x = Math.floor(cv.width / 2);
     const d = g.getImageData(x, 0, 1, cv.height).data;
-    let accent = 0, any = 0;
+    let red = 0, blue = 0, any = 0;
     for (let i = 0; i < d.length; i += 4) {
       if (d[i + 3] < 8) continue;
       any++;
-      if (d[i + 2] - d[i] > 40) accent++;      // 明显偏蓝 = 强调色
+      const [r, gg, b] = [d[i], d[i + 1], d[i + 2]];
+      if (r - gg > 60 && r - b > 60) red++;
+      else if (b - r > 40) blue++;
     }
-    return { any, accent, w: cv.width, h: cv.height };
+    return { any, red, blue };
   })()`);
-  ok('两侧内容相同时预览条上没有强调色（视口框不该用蓝）',
-    rulerPix.any > 0 && rulerPix.accent === 0, JSON.stringify(rulerPix));
+
+  await openPair(p('big-a.txt'), p('big-b.txt'));
+  await sleep(700);
+  const rulerPix = await pixAt();
+  ok('有差异时预览条上只有红线，没有第二种颜色',
+    rulerPix.red > 0 && rulerPix.blue === 0, JSON.stringify(rulerPix));
+
+  await openPair(p('big-a.txt'), p('big-a.txt'));
+  await sleep(700);
+  const rulerSame = await pixAt();
+  ok('两侧内容相同时预览条上没有红线', rulerSame.red === 0 && rulerSame.any > 0, JSON.stringify(rulerSame));
 
   const rulerTitle = await cmp.ev(`document.getElementById('ruler').title`);
-  ok('预览条把三种颜色各自代表什么写清楚',
-    /灰/.test(rulerTitle) && /红/.test(rulerTitle) && /蓝/.test(rulerTitle), rulerTitle);
+  ok('预览条只解释红与灰两种含义',
+    /灰/.test(rulerTitle) && /红/.test(rulerTitle) && !/蓝/.test(rulerTitle), rulerTitle);
 
   /* 差异在预览条上是「一行一条细线」，不是粗红块：一段 20 行的差异画成一根
      20px 高的柱子，看着像滚动条的影子，也分不清是哪几行。
@@ -1081,6 +1090,116 @@ try {
   await sleep(250);
   const picked = await cmp.ev(`getSelection().toString()`);
   ok('只读态下也能拖选文字', typeof picked === 'string' && picked.length > 0, JSON.stringify(picked));
+
+  /* ---------- 16b. 编辑态的选区：全选是全文，拖出视口也不断 ----------
+     每一行都是一个独立的 contenteditable，浏览器默认的全选只认得当时 DOM 里
+     摆着的那几行；虚拟滚动又只摆一屏。两个限制叠在一起，用户看到的就是
+     「Ctrl+A 只选中一屏」「拖到屏幕边缘选区就停」。 */
+  const selLines = Array.from({ length: 200 }, (_, i) => `第 ${i + 1} 行 selection-${i + 1}`);
+  fs.writeFileSync(p('sel-a.txt'), selLines.join('\n') + '\n', 'utf8');
+  fs.writeFileSync(p('sel-b.txt'), selLines.map((x, i) => (i % 50 === 10 ? x + '（改过）' : x)).join('\n') + '\n', 'utf8');
+  await openPair(p('sel-a.txt'), p('sel-b.txt'), true);      // 折叠打开：先制造「看不全」
+  await enterEdit();
+  const atSel = await rowBox('L', 1);
+  await clickXY(atSel.x, atSel.y);
+  await pressKey(65, 'a', 'KeyA', 2);
+  await sleep(500);
+  const allSel = await cmp.ev(`(() => {
+    const s = window.getSelection();
+    const host = (n) => { const e = n && (n.nodeType === 1 ? n : n.parentElement); const h = e && e.closest && e.closest('.cmp-tx'); return h ? h.dataset.side : '?'; };
+    const txt = s.toString();
+    return {
+      lines: txt.split('\\n').filter((x) => x.length).length,
+      a: host(s.anchorNode), f: host(s.focusNode),
+      fold: document.getElementById('optFold').checked,
+      dom: document.querySelectorAll('#rowsL .cmp-row').length,
+      tail: txt.slice(-14),
+    };
+  })()`);
+  ok('编辑态 Ctrl+A 选中整侧全文（200 行，不是一屏）', allSel.lines === 200, JSON.stringify(allSel));
+  ok('全选只落在光标那一侧，不会把两栏一起框进去',
+    allSel.a === 'l' && allSel.f === 'l', JSON.stringify(allSel));
+  ok('全选会先展开「只看差异」：折起来的行也进选区',
+    allSel.fold === false && allSel.dom >= 200, JSON.stringify(allSel));
+
+  /* 拖到视口下缘：行不够时先补 DOM，指针跨出行之后选区由自己接管
+     （Blink 的选区不许跨出编辑宿主，见 compare.js 的 dragMove） */
+  await openPair(p('sel-a.txt'), p('sel-b.txt'), false);    // 重新打开：DOM 回到一屏
+  await enterEdit();
+  const dragDom0 = await cmp.ev(`document.querySelectorAll('#rowsL .cmp-row').length`);
+  const atDrag = await rowBox('L', 1);
+  /* 落在正文区里、贴着下缘（再往下就是横向滚动条了）：一步跳到窗外浏览器会当成「没动」 */
+  const holdY = await cmp.ev(`Math.round(document.getElementById('scrollL').getBoundingClientRect().bottom) - 20`);
+  const rowsNow = () => cmp.ev(`parseInt(document.getElementById('metaL').textContent, 10)`);
+  const rows0 = await rowsNow();
+  await cmp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: atDrag.x, y: atDrag.y, button: 'left', clickCount: 1 });
+  for (let k = 1; k <= 6; k++) {
+    await cmp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: atDrag.x, y: atDrag.y + (holdY - atDrag.y) * k / 6, button: 'left', buttons: 1 });
+    await sleep(60);
+  }
+  for (let k = 0; k < 10; k++) {
+    await cmp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: atDrag.x, y: holdY, button: 'left', buttons: 1 });
+    await sleep(110);
+  }
+  const dragged = await cmp.ev(`({
+    lines: getSelection().toString().split('\\n').filter(Boolean).length,
+    top: document.getElementById('scrollL').scrollTop,
+    dom: document.querySelectorAll('#rowsL .cmp-row').length,
+  })`);
+  await cmp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: atDrag.x, y: holdY, button: 'left', clickCount: 1 });
+  await sleep(250);
+  ok('拖到视口下缘会继续滚动，选区跟着往下长',
+    dragged.top > 0 && dragged.lines > 40, JSON.stringify({ dragDom0, dragged }));
+  ok('视口外的行会被补进 DOM（否则选区到边缘就断）',
+    dragged.dom > dragDom0, `${dragDom0} → ${dragged.dom}`);
+  ok('松手后拖出来的选区还在（不会一放就散）',
+    (await cmp.ev(`getSelection().toString().split('\\n').filter(Boolean).length`)) === dragged.lines,
+    String(dragged.lines));
+
+  /* 这一段选区跨了好几个编辑宿主：浏览器连删都删不了，得自己落到模型上 */
+  await pressKey(8, 'Backspace', 'Backspace');
+  await sleep(700);
+  const rowsAfterDel = await rowsNow();
+  ok('跨行选区按 Backspace 删掉的是整段，不是一个字',
+    rowsAfterDel < rows0 - 20, `${rows0} → ${rowsAfterDel}`);
+  await pressKey(90, 'z', 'KeyZ', 2);
+  await sleep(700);
+  ok('Ctrl+Z 把整段删掉的撤得回来', (await rowsNow()) === rows0, `${rows0} → ${await rowsNow()}`);
+
+  /* 全选之后打字：没有编辑上下文，浏览器不会替我们插入那个字符 */
+  await clickXY(atDrag.x, atDrag.y);
+  await pressKey(65, 'a', 'KeyA', 2);
+  await sleep(400);
+  await cmp.send('Input.dispatchKeyEvent', {
+    type: 'keyDown', key: 'Q', code: 'KeyQ', text: 'Q', unmodifiedText: 'Q',
+    windowsVirtualKeyCode: 81, nativeVirtualKeyCode: 81,
+  });
+  await cmp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Q', code: 'KeyQ', windowsVirtualKeyCode: 81, nativeVirtualKeyCode: 81 });
+  await sleep(800);
+  const afterQ = await cmp.ev(`(() => {
+    const rows = [...document.querySelectorAll('#rowsL .cmp-row')];
+    const withNo = rows.filter((r) => r.querySelector('.cmp-ln').textContent.trim());
+    return { leftLines: withNo.length, first: (document.querySelector('#rowsL .cmp-tx') || {}).textContent };
+  })()`);
+  ok('全选之后打字会把整侧替换成一个字', afterQ.leftLines === 1 && afterQ.first === 'Q', JSON.stringify(afterQ));
+  await pressKey(90, 'z', 'KeyZ', 2);
+  await sleep(700);
+  ok('撤销把全选被替换掉的正文找回来', (await rowsNow()) === rows0, `${rows0} → ${await rowsNow()}`);
+
+  /* ---------- 16c. 差异只用红字：没有蓝框、没有删除线 ---------- */
+  fs.writeFileSync(p('strike-a.txt'), '甲\n乙一\n丙\n', 'utf8');
+  fs.writeFileSync(p('strike-b.txt'), '甲\n乙二\n丙\n', 'utf8');
+  await openPair(p('strike-a.txt'), p('strike-b.txt'), false);
+  const clean = await cmp.ev(`(() => {
+    const m = document.querySelector('#rowsL mark.rem');
+    return {
+      box: !!document.querySelector('.cmp-curbox'),
+      deco: m ? getComputedStyle(m).textDecorationLine : 'no-mark',
+      markColor: m ? getComputedStyle(m).color : '',
+    };
+  })()`);
+  ok('当前这一处不再套蓝框', clean.box === false, JSON.stringify(clean));
+  ok('行内改动的字不再加删除线', clean.deco === 'none', String(clean.deco));
 
   /* ---------- 17. 把一处差异整段同步到另一边 ----------
      Beyond Compare 的 Copy to Other Side、WinMerge 的 Alt+←/→、Meld 中栏的箭头，

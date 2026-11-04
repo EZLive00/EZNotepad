@@ -73,6 +73,14 @@ const S = {
   ver: 0,
   units: { l: 0, r: 0 },
   sig: { l: '', r: '' },
+  /* 每一栏当前摆在 DOM 里的屏幕行范围，以及「是不是摆了全部行」。
+     虚拟滚动只摆一屏；但拖动选区、Ctrl+A 需要屏幕外的行也存在，
+     否则选区到屏幕边缘就断了（见 ensureAllRows）。 */
+  range: { l: [0, -1], r: [0, -1] },
+  full: { l: false, r: false },
+  /* 正在拖选区/全选：行只往两端补、不重建（重建会把选区摘掉）。
+     与 full 分开：拖一小段时行不必全量，补到够用就行。 */
+  hold: { l: false, r: false },
   pending: null,       // 还没合并进模型的那一行（输入防抖）
   lastSort: null,      // 上一次「按字典排序」前的快照（两侧一起，Ctrl+Z 一次还原）
   lastSide: '',        // 最近一次改动落在哪一侧：光标不在行里时 Ctrl+Z 按它来
@@ -82,6 +90,27 @@ const S = {
   find: { on: false, q: '', hits: [], cur: -1, map: new Set() },
   warn: '',            // 上限提示文案，空串表示没有
 };
+
+/* 全选期间被摘掉 contenteditable 的那些行（见 selectAllSide）。
+   浏览器只要还认着某个「正在编辑的宿主」，跨行选区就会被掐回那一行；把
+   contenteditable 摘掉，文本照样可选，但 Blink 不再拿某一行当 editing host。
+   用户下一次点回正文、或者关掉编辑态时恢复。 */
+let strippedHosts = [];
+
+function restoreEditables() {
+  for (const h of strippedHosts) {
+    if (h.isConnected) h.setAttribute('contenteditable', 'plaintext-only');
+  }
+  strippedHosts = [];
+}
+
+/** 把这一侧临时变成「不可写」。全选和拖选都靠它绕开编辑宿主的边界限制。 */
+function stripSide(side) {
+  for (const h of el(side, 'rows').querySelectorAll('.cmp-tx[contenteditable]')) {
+    strippedHosts.push(h);
+    h.removeAttribute('contenteditable');
+  }
+}
 
 /**
  * 兜底铺满屏幕工作区。
@@ -327,6 +356,17 @@ function renderRows(side, force = false) {
 
   const first = Math.max(0, Math.floor(sc.scrollTop / ROW_H) - 6);
   const last = Math.min(total - 1, Math.ceil((sc.scrollTop + vh) / ROW_H) + 6);
+
+  /* 拖动选区 / 全选期间（S.hold）：只往两端补，绝不重建。
+     重建会把正在进行的那段选区连同选中节点一起摘掉；而屏幕外面还没有的行
+     又必须补进来，否则滚过去是一片空白。下一次强制重画（打字、跳转）才收回。 */
+  if (S.hold[side] && !force) {
+    growRows(side, first, last);
+    S.sig[side] = `${first}:${last}:${S.ver}:${S.cur}`;
+    return;
+  }
+  if (S.hold[side]) { S.hold[side] = false; S.full[side] = false; }
+
   const sig = `${first}:${last}:${S.ver}:${S.cur}`;
   if (!force && S.sig[side] === sig) return;
 
@@ -345,6 +385,269 @@ function renderRows(side, force = false) {
     out.push(rowHtml(S.rows[i], i, side, vi));
   }
   el(side, 'rows').innerHTML = out.join('');
+  strippedHosts = strippedHosts.filter((h) => h.isConnected);
+  S.range[side] = [first, last];
+}
+
+function rowRangeHtml(side, from, to) {
+  const out = [];
+  for (let vi = from; vi <= to; vi++) out.push(rowHtml(S.rows[S.view[vi]], S.view[vi], side, vi));
+  return out.join('');
+}
+
+/** 把屏幕上需要的行补进 DOM，**已有的节点一个都不动**。
+ *  重建（innerHTML）会把正在拖的那段选区摘掉；append 不会。 */
+function growRows(side, first, last) {
+  const rowsEl = el(side, 'rows');
+  const total = S.view.length;
+  const [h0, h1] = S.range[side] || [0, -1];
+  if (h1 < 0) return;
+  if (first < h0) rowsEl.insertAdjacentHTML('afterbegin', rowRangeHtml(side, Math.max(0, first), h0 - 1));
+  if (last > h1) rowsEl.insertAdjacentHTML('beforeend', rowRangeHtml(side, h1 + 1, Math.min(total - 1, last)));
+  S.range[side] = [Math.min(first, h0), Math.max(last, h1)];
+}
+
+/** 把一栏补成「全部行都在 DOM 里」。
+ *
+ *  虚拟滚动只摆一屏的行，于是选区到了屏幕边缘就没有下一行了 —— 鼠标拖到
+ *  底边什么也不会发生（实测：选区停在第 26 行，滚动量 0）。Ctrl+A 更糟：
+ *  浏览器只认得 DOM 里的那些行，选中的是「一屏」而不是「全文」。
+ *
+ *  只在两端追加，**已有节点原地不动** —— 否则正在进行的那次拖选会随着
+ *  innerHTML 一起被拆掉，鼠标还按着，选区已经没了。 */
+function ensureAllRows(side) {
+  if (S.full[side]) return;
+  const total = S.view.length;
+  if (!total) return;
+  S.hold[side] = true;
+  growRows(side, 0, total - 1);
+  const [a, b] = S.range[side] || [0, -1];
+  S.full[side] = a <= 0 && b >= total - 1;
+}
+
+/** 选中这一侧的全文。
+ *
+ *  浏览器默认的「全选」在这里是错的：DOM 里同时摆着左右两栏、行号和悬浮层，
+ *  全选会把两边文字连同界面元素一起框进去，复制出来左右交错。对比窗口的
+ *  一趟复制只可能针对一侧，所以明确只选这一侧。 */
+function selectAllSide(side) {
+  if (!side || !S.view.length) return;
+  /* 「只看差异」把相同行折起来了，那些行根本不在视图里 —— 此时「全选」只能
+     选到露出来的那几十行，复制出去是一份悄悄缺行的文档。全选就是全文：
+     先把折叠关掉（复选框跟着变，用户看得见），再选。 */
+  if (S.opt.collapse && S.blocks.length) {
+    S.opt.collapse = false;
+    $('optFold').checked = false;
+    buildView();
+    S.ver++;
+    render(true);
+  }
+  ensureAllRows(side);
+  const hosts = el(side, 'rows').querySelectorAll('.cmp-tx');
+  if (!hosts.length) return;
+  const a = hosts[0];
+  const b = hosts[hosts.length - 1];
+  const r = document.createRange();
+  r.setStart(a, 0);
+  r.setEnd(b, b.childNodes.length);
+  /* 每一行都是独立的 contenteditable。只要浏览器还认着某个「正在编辑的宿主」，
+     跨行选区就会被掐回那一行（实测：设 201 行，读回来只剩焦点那一行的 17 个字）。
+     全选期间先把 contenteditable 摘掉，Blink 不再拿某一行当 editing host；
+     用户下一次点回正文时恢复（restoreEditables）。 */
+  if (S.edit) stripSide(side);
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(r);
+  S.lastSide = side;
+}
+
+/* ---------------- 拖选：跨出行之后由我们自己接管 ----------------
+ * 同一个编辑宿主限制在拖选上的表现是「选区到行尾就停」：按住从第 2 行拖到
+ * 第 20 行，选区始终只有按下的那一行的几个字。指针一旦离开按下的那一行，
+ * 就把这一侧摘成不可写（跟全选同一招），之后每次移动都按「按下的位置 →
+ * 指针位置」重建选区 —— 跨宿主选区才会真的成立。
+ */
+
+let drag = null;          // { side, rowEl, node, off, x, y, took, raf }
+
+/** 指针下的那个字符位置。落点不在这一侧的正文里时返回 null（行号、空白、
+ *  另一栏都不算），这样拖到窗口边上选区不会突然跳到别处。 */
+function caretNodeAt(x, y, side) {
+  const r = document.caretRangeFromPoint(x, y);
+  if (!r) return null;
+  const e = r.startContainer.nodeType === 1 ? r.startContainer : r.startContainer.parentElement;
+  const host = e && e.closest ? e.closest('.cmp-tx') : null;
+  if (!host || sideOf(host) !== side) return null;
+  return { node: r.startContainer, off: r.startOffset };
+}
+
+/** 从锚点到指针位置建选区。两个方向都要能选：往上拖时起点反而在下面。 */
+function setSelBetween(a, b) {
+  const keep = document.createRange();
+  try {
+    keep.setStart(a.node, a.off);
+    keep.collapse(true);
+  } catch { return; }
+  const r = document.createRange();
+  try {
+    if (keep.comparePoint(b.node, b.off) < 0) { r.setStart(b.node, b.off); r.setEnd(a.node, a.off); }
+    else { r.setStart(a.node, a.off); r.setEnd(b.node, b.off); }
+  } catch { return; }
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(r);
+}
+
+/** 每次指针一动/滚动一格都要重拉选区：内容在脚下动了，落点就变了 */
+function dragExtend() {
+  if (!drag || !drag.took || !drag.node) return;
+  const sc = el(drag.side, 'scroll');
+  const r = sc.getBoundingClientRect();
+  const y = clamp(drag.y, r.top + 1, r.bottom - 1);
+  const p = caretNodeAt(drag.x, y, drag.side);
+  if (p) setSelBetween({ node: drag.node, off: drag.off }, p);
+}
+
+/** 拖动期间的每一帧：把屏幕上的行补够，再按指针重拉一遍选区。
+ *  补行不能等滚动事件 —— 指针停在滚动条上时它就不来了。 */
+function dragTick() {
+  if (!drag || !drag.took) return;
+  const sc = el(drag.side, 'scroll');
+  const r = sc.getBoundingClientRect();
+  const E = 26;
+  let dy = 0;
+  if (drag.y > r.bottom - E) dy = Math.min(20, 3 + Math.round((drag.y - (r.bottom - E)) / 3));
+  else if (drag.y < r.top + E) dy = -Math.min(20, 3 + Math.round(((r.top + E) - drag.y) / 3));
+  /* 指针贴在边上时浏览器自己也会滚（选区拖动自带自动滚动）。它已经在滚就
+     别再叠一份，速度会翻倍。 */
+  if (dy && Math.abs(sc.scrollTop - (drag.top ?? sc.scrollTop)) < 1) sc.scrollTop += dy;
+  drag.top = sc.scrollTop;
+  const vh = sc.clientHeight || 400;
+  const total = S.view.length;
+  const first = Math.max(0, Math.floor(sc.scrollTop / ROW_H) - 8);
+  const last = Math.min(total - 1, Math.ceil((sc.scrollTop + vh) / ROW_H) + 8);
+  growRows(drag.side, first, last);
+  dragExtend();
+  drag.raf = requestAnimationFrame(dragTick);
+}
+
+function dragBegin(e) {
+  drag = { side: sideOf(e.target.closest('.cmp-tx')), rowEl: e.target.closest('.cmp-row'),
+           node: null, off: 0, x: e.clientX, y: e.clientY, took: false, raf: 0 };
+}
+
+function dragMove(e) {
+  if (!drag) return;
+  drag.x = e.clientX;
+  drag.y = e.clientY;
+  if (!drag.took) {
+    /* 还在按下的那一行里：原生选区是好的（同一个宿主内不分叉），不动它 */
+    const rb = drag.rowEl && drag.rowEl.isConnected ? drag.rowEl.getBoundingClientRect() : null;
+    if (rb && e.clientY >= rb.top && e.clientY <= rb.bottom) return;
+    const sel = window.getSelection();
+    if (!sel || !sel.rangeCount) return;
+    /* 锚点就是按下的那一点：拖动之后浏览器把 focus 挪走了，anchor 仍留在原处 */
+    drag.node = sel.anchorNode;
+    drag.off = sel.anchorOffset;
+    if (!drag.node) return;
+    stripSide(drag.side);
+    S.hold[drag.side] = true;      // 拖动期间这一栏只补行、不重建
+    drag.took = true;
+    drag.raf = requestAnimationFrame(dragTick);
+  }
+  dragExtend();
+}
+
+/** 松手。跨了行就保持「不可写」（写回模型的那条路自己算，见 crossSelKey），
+ *  还在同一行里就恢复可写，让浏览器接着管打字。 */
+function dragEnd() {
+  if (!drag) return;
+  const took = drag.took;
+  if (drag.raf) cancelAnimationFrame(drag.raf);
+  drag = null;
+  if (!took) return;
+  const span = selectionSpan();
+  if (!span || span.same) {
+    restoreEditables();
+    S.hold.l = S.hold.r = false;
+  }
+}
+
+/** 选区的某一端落在哪一行哪一列（跨行选区用；`end` 为 true 时取另一端） */
+function spanPos(span, end) {
+  if (!span || !span.side) return null;
+  const i = end ? span.bI : span.aI;
+  const row = S.rows[i];
+  const cell = row && (span.side === 'l' ? row.l : row.r);
+  if (!cell) return null;
+  return { side: span.side, line: cell.no, col: end ? span.bCol : span.aCol };
+}
+
+/** 选中的是一整段、而这一侧此刻不可写时，按键得自己落到模型上。
+ *
+ *  为什么不能交给浏览器：contenteditable 被摘掉之后，页面里没有编辑上下文，
+ *  浏览器既不触发 beforeinput 也不会替我们删掉选中的内容 —— 全选之后打字
+ *  没反应，就是这么来的。返回 true 表示这个按键已经处理完。 */
+function crossSelKey(e) {
+  const mod = e.ctrlKey || e.metaKey;
+  const lk = (e.key || '').toLowerCase();
+  /* 剪贴板两头也得自己接：没有编辑宿主，浏览器的粘贴/剪切无从下手。
+     复制不用管 —— 选区是真的，Ctrl+C 照常进剪贴板。 */
+  if (mod && (lk === 'v' || lk === 'x')) {
+    const span = selectionSpan();
+    if (!span || !span.side || span.same) return false;
+    e.preventDefault();
+    flush();
+    const text = lk === 'x' ? window.getSelection().toString() : '';
+    if (lk === 'x') navigator.clipboard.writeText(text).catch(() => {});
+    if (lk === 'v') {
+      navigator.clipboard.readText().then((t) => {
+        replaceSpan(span, (t || '').replace(/\r\n/g, '\n'));
+      }).catch(() => {});
+    } else {
+      replaceSpan(span, '');
+    }
+    return true;
+  }
+  /* Ctrl+Z / Alt+← 这些不涉及「往选区里打字」，照旧走原来的路 */
+  if (mod || e.altKey) return false;
+  const k = e.key || '';
+  const kill = k === 'Backspace' || k === 'Delete';
+  /* 输入法开始组字时拿到的是 key='Process'：把选中的内容先删掉、再恢复可写，
+     让组字在空出来的位置上继续（组出来的是什么字，只有输入法知道）。 */
+  const ime = k === 'Process';
+  const typing = k.length === 1 || k === 'Enter';
+  if (ime) {
+    const span = selectionSpan();
+    if (!span || !span.side || span.same) return false;
+    flush();
+    replaceSpan(span, '');
+    return false;
+  }
+  if (!kill && !typing) {
+    /* 其余按键（方向键、Esc、Home/End…）：先把选区收成光标，再把可写恢复回来。
+       不收的话，恢复可写那一刻 Blink 会把跨行选区掐成第一行里的一小段。 */
+    const span = selectionSpan();
+    flush();
+    restoreEditables();
+    if (!span) return false;
+    const at = spanPos(span, k === 'ArrowDown' || k === 'ArrowRight');
+    if (!at) return false;
+    e.preventDefault();
+    if (k === 'ArrowUp' || k === 'ArrowDown') { moveVert(at.side, at.line, k === 'ArrowUp' ? -1 : 1, at.col); return true; }
+    focusAt(at.side, at.line, at.col);
+    return true;
+  }
+  flush();
+  const cur = selectionSpan();
+  if (!cur || !cur.side) { e.preventDefault(); return true; }   // 跨了两栏：没有一条文本可删
+  /* 同一行里：恢复可写，这一下删除/敲字让浏览器自己做（原生撤销粒度也保住了） */
+  if (cur.same) { restoreEditables(); return false; }
+  /* 跨行：直接改模型。敲的字也一起落进去 —— 没有编辑宿主，浏览器不会替我们
+     插入那一个字符，等它等于什么都不会发生。 */
+  e.preventDefault();
+  replaceSpan(cur, kill ? '' : (k === 'Enter' ? '\n' : k));
+  return true;
 }
 
 function render(force = false) {
@@ -1169,6 +1472,7 @@ function startPairText() {
 
 /** 开/关编辑态。按钮与「直接粘贴文本」两条入口共用，避免两套状态切换 */
 function setEdit(on) {
+  restoreEditables();
   if (S.pending) { flush(); S.ver++; recompute(); }
   S.edit = !!on;
   $('toggleEdit').classList.toggle('on', S.edit);
@@ -1264,21 +1568,35 @@ function selectionSpan() {
 /** 删掉跨行的选区：把头尾两行的残段拼起来，中间整行去掉。
  *  浏览器不能跨 contenteditable 宿主删除，所以这一段必须自己算。 */
 function deleteSpan(span) {
+  replaceSpan(span, '');
+}
+
+/** 把跨行选区换成一段文字（`text` 为空 = 删掉）。
+ *
+ *  这是「全选/拖选之后往里打字、粘贴、删除」唯一的落点。浏览器在这里帮不上
+ *  忙：选区跨了好几个 contenteditable 宿主，它连删都删不了，更不会替换。 */
+function replaceSpan(span, text) {
   const st = S.sides[span.side];
   const rowA = S.rows[span.aI];
   const rowB = S.rows[span.bI];
-  if (!rowA || !rowB) return;
+  if (!st || !rowA || !rowB) return;
   const cellA = span.side === 'l' ? rowA.l : rowA.r;
   const cellB = span.side === 'l' ? rowB.l : rowB.r;
   if (!cellA || !cellB) return;
   const from = cellA.no - 1;
   const to = cellB.no - 1;
-  if (from >= to) return;             // 同一行（或方向反常）：交给别的分支
+  if (from > to) return;
   recordUndo(span.side);
   const head = st.lines[from] || '';
   const tail = st.lines[to] || '';
-  st.lines.splice(from, to - from + 1, head.slice(0, span.aCol) + tail.slice(span.bCol));
-  applyEdit(span.side, from + 1, span.aCol);
+  const joined = head.slice(0, span.aCol) + text + tail.slice(span.bCol);
+  const parts = joined.split('\n');
+  st.lines.splice(from, to - from + 1, ...parts);
+  st.dirty = true;
+  /* 光标落在插入内容的末尾：单行就是 aCol + 文本长度，多行就到最后一行 */
+  const line = from + parts.length;
+  const col = parts.length === 1 ? span.aCol + text.length : parts[parts.length - 1].length;
+  applyEdit(span.side, line, col);
 }
 
 function nodeAt(host, col) {
@@ -2025,6 +2343,10 @@ function bind() {
     const cv = el(side, 'canvas');
     cv.addEventListener('input', onInput);
     cv.addEventListener('keydown', onKey);
+    /* 别让浏览器把「按住正文往下拖」当成拖放：文本一旦被选中，Blink 会起一个
+       OS 级拖动会话，之后的 mousemove 全被它吞掉（实测：拖选接管之后指针再也
+       收不到移动，选区就停在按下的那一行），松手还可能把文字挪到另一行。 */
+    cv.addEventListener('dragstart', (e) => e.preventDefault());
     cv.addEventListener('blur', () => {
       if (!S.pending) return;
       /* 只把内容并回模型，**不重画**。
@@ -2042,8 +2364,12 @@ function bind() {
        行号列不是可编辑单元，点它以前什么都不会发生；写上字之后的空白同理。
        规矩跟代码编辑器一致：点行号 = 行首，点行尾/下方空白 = 那一行的末尾。 */
     cv.addEventListener('mousedown', (e) => {
+      /* 全选后点回正文：先把可写恢复，这一步必须在浏览器放置光标之前，
+         否则这一下点不进任何一行（点到哪儿都只是收掉选区）。 */
+      if (strippedHosts.length) restoreEditables();
       if (!S.edit) return;
-      if (e.target.closest && e.target.closest('.cmp-tx')) return;   // 行内交给浏览器
+      if (e.target.closest && e.target.closest('.cmp-tx')) { dragBegin(e); return; }   // 行内：光标与双击/三击交给浏览器
+      drag = null;
       const box = cv.getBoundingClientRect();
       const row = e.target.closest && e.target.closest('.cmp-row');
       const inner = row && row.querySelector('.cmp-tx');
@@ -2066,9 +2392,30 @@ function bind() {
       const col = onNo ? 0 : (S.sides[side].lines[line - 1] || '').length;
       focusAt(side, line, col);
     });
+    /* 拖着选区往视口外走：那里还没有行，先补上。
+       补的时机放在「指针接近上下边缘」这一刻而不是按下时 —— 一屏之内选几个字
+       是常态，不该为此把几万行都摆出来。
+       指针跨出按下的那一行之后，选区由 dragMove 自己接管。 */
+    cv.addEventListener('mousemove', (e) => {
+      if (!e.buttons) return;
+      if (drag && drag.side === side) dragMove(e);
+      const r = el(side, 'scroll').getBoundingClientRect();
+      const M = 40;
+      if (e.clientY < r.top + M || e.clientY > r.bottom - M) ensureAllRows(side);
+    });
     // 只读态下不允许输入，避免 caret 跑进去
     cv.addEventListener('beforeinput', (e) => { if (!S.edit) e.preventDefault(); });
   }
+
+  /* 拖到边缘时指针可能已经在正文区外面（滚动条、窗口外），画布收不到事件 ——
+     拖选和松手都挂在 document 上。松手落在滚动条上时连 document 也收不到
+     mouseup（那是原生控件），所以再用「下一次移动时按键已经松开」兜一次。 */
+  document.addEventListener('mousemove', (e) => {
+    if (!drag) return;
+    if (!e.buttons) { dragEnd(); return; }
+    dragMove(e);
+  });
+  document.addEventListener('mouseup', () => dragEnd());
 
   const ruler = $('ruler');
   const rulerTip = $('rulerTip');
@@ -2108,6 +2455,8 @@ function bind() {
        用户看到的现象就是「Ctrl+Z 没反应」。*/
     const mod = e.ctrlKey || e.metaKey;
     const lk = (e.key || '').toLowerCase();
+    /* 全选只选这一侧全文：浏览器默认的全选会把两栏、行号、悬浮层一起框进来 */
+    if (mod && lk === 'a') { e.preventDefault(); selectAllSide(activeSide(null)); return; }
     if (mod && lk === 'f') { e.preventDefault(); openFind(); return; }
     if (mod && (lk === 'z' || lk === 'y') && S.edit) {
       e.preventDefault();
@@ -2119,6 +2468,10 @@ function bind() {
       undoEither(side, e.shiftKey);
       return;
     }
+    if (e.defaultPrevented) return;
+    /* 全选 / 拖选之后这一侧是「不可写」的（摘掉 contenteditable 才选得起来），
+       往选区里打字、按删除都得自己落到模型上 */
+    if (S.edit && strippedHosts.length && crossSelKey(e)) return;
     if (e.defaultPrevented) return;
     const k = e.key;
     /* Alt+← / Alt+→ 把这一处整段推到那一侧（WinMerge 与 Beyond Compare 的默认绑定）；
