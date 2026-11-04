@@ -365,30 +365,11 @@ function render(force = false) {
   const viewH = el('l', 'scroll').clientHeight || 0;
   $('ruler').style.height = Math.max(1, Math.min(viewH || h, h || 1)) + 'px';
   rulerCache = null;               // 高度/行数都可能刚变过，几何缓存作废
-  updateCurBox();
   updateStats();
   updateMeta();
   syncGutter();
   drawRuler();
   renderList();
-}
-
-// 当前定位块用一个覆盖层框住，而不是给每行各画一个框：
-// 逐行画会把整块切成表格格子，看着像坏了
-function updateCurBox() {
-  const [cs, ce] = blockRange(S.cur);
-  /* blockRange 给的是模型下标，覆盖层的 top 用的是屏幕行位。
-     折叠时两者差得远（差的就是被折掉的那些行）。 */
-  const vs = cs < 0 ? -1 : vposOf(cs);
-  const ve = cs < 0 ? -1 : vposOf(ce);
-  for (const side of ['l', 'r']) {
-    const box = el(side, 'cur');
-    if (!box) continue;
-    if (cs < 0 || vs < 0) { box.hidden = true; continue; }
-    box.hidden = false;
-    box.style.top = vs * ROW_H + 'px';
-    box.style.height = (Math.max(vs, ve) - vs + 1) * ROW_H + 'px';
-  }
 }
 
 function updateStats() {
@@ -651,21 +632,18 @@ function showWarn(text) {
 }
 
 /* ---------------- 预览条 ----------------
- * 三种颜色，各说一件事，不许混用：
- *   红   = 这里有差异
- *   蓝   = 你现在停在这一处（只有一处）
+ * 只有两种颜色：
+ *   红   = 这一行有差异（唯一的「内容」信号）
  *   灰框 = 你正看着的这一屏
- * 以前视口框也用强调色：一条预览条上两处蓝，用户没法知道「蓝框」和「蓝点」
- * 根本不是一回事。视口是导航，不是内容，所以它该是中性色。
+ * 「当前是第几处」不在这条上另开一个颜色：导航结果就在正文里，
+ * 再给一处蓝，读者要花力气分辨「蓝点和蓝框是不是一回事」。
  */
 let RED = '#d92b2b';
-let ACCENT = '#3366f0';
 let SOFT = '#8a8a8a';          // --fg-soft：视口框的中性色
 
 function cacheColors() {
   const cs = getComputedStyle(document.body);
   RED = (cs.getPropertyValue('--cmp-red') || '#d92b2b').trim();
-  ACCENT = (cs.getPropertyValue('--accent') || '#3366f0').trim();
   SOFT = (cs.getPropertyValue('--fg-soft') || '#8a8a8a').trim();
 }
 
@@ -715,7 +693,7 @@ function rulerGeom(force = false) {
 let markCache = null;
 
 function diffMarks(total, per, h) {
-  const key = `${S.ver}:${total}:${h}:${S.cur}`;
+  const key = `${S.ver}:${total}:${h}`;
   if (markCache && markCache.key === key) return markCache.marks;
 
   /* 整份文件都不一样时逐行画既没意义也画不动：>4000 条就退回按块 */
@@ -732,11 +710,10 @@ function diffMarks(total, per, h) {
     const vs = vposOf(it.start);
     const ve = vposOf(it.end);
     if (vs < 0 || ve < 0) continue;
-    const cur = it.index === S.cur;
     if (perLine) {
-      for (let v = vs; v <= ve; v++) marks.push({ y: Math.round(v * per), h: 1, cur });
+      for (let v = vs; v <= ve; v++) marks.push({ y: Math.round(v * per), h: 1 });
     } else {
-      marks.push({ y: vs * per, h: Math.max(1, (ve - vs + 1) * per), cur });
+      marks.push({ y: vs * per, h: Math.max(1, (ve - vs + 1) * per) });
     }
   }
   markCache = { key, marks };
@@ -774,9 +751,14 @@ function drawRuler() {
      原先按「差异块」画粗红段 —— 一段 20 行就是一根 20px 高的柱子，看着像
      滚动条的影子，也分不清是哪几行。改成逐行 1px 之后，「有多少行不一样、
      密不密」能直接数出来，色块感没了。 */
+  /* 细线：只占轨道中间 10px，1px 高。铺满 22px 时，连续几行差异会粘成
+     一根短红柱，看着像滚动条的影子 —— 越密越糊，反而看不出是「几行」。
+     收窄之后，同一处差异依旧连成一条线，但每行的边界还在。 */
+  const mw = 10;
+  const mx = Math.round(tx + (tw - mw) / 2);
   for (const mk of diffMarks(total, per, h)) {
-    g.fillStyle = mk.cur ? ACCENT : RED;
-    g.fillRect(tx, top + mk.y, tw, mk.h);
+    g.fillStyle = RED;
+    g.fillRect(mx, top + mk.y, mw, mk.h);
   }
 
   /* 视口框：内容装得下一屏时不画 —— 那时整条轨道就是视口，
@@ -867,7 +849,6 @@ function followScroll() {
   }
   if (best === S.cur) return;
   S.cur = best;
-  updateCurBox();
   $('curInfo').textContent = tt('第 {i} / {n} 处', { i: S.cur + 1, n });
   renderList();
 }
@@ -1894,7 +1875,7 @@ h1{font-size:20px;margin:0 0 6px}.meta{color:#6b7280;font-size:12.5px;margin-bot
 .row{display:flex;line-height:1.6}.ln{width:52px;flex:none;text-align:right;padding-right:10px;color:#9aa3b2;font-size:11px}
 .tx{flex:1;white-space:pre-wrap;word-break:break-all;padding:0 8px}
 .diff{background:rgba(217,43,43,.07)}.diff .ln{color:#b4232a;box-shadow:inset 3px 0 0 #b4232a}
-mark{background:rgba(217,43,43,.2)}mark.rem{background:rgba(217,43,43,.32);text-decoration:line-through}
+mark{background:rgba(217,43,43,.2);color:inherit}mark.rem{background:rgba(217,43,43,.32)}
 </style>
 <h1>${tt('文本对比报告')}</h1>
 <div class="meta">${esc(S.sides.l.name || tt('空'))} ⇄ ${esc(S.sides.r.name || tt('空'))} · ${new Date().toLocaleString()}</div>

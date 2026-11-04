@@ -1,8 +1,8 @@
 /* ============================================================
    compare.css —— 文本对比独立窗口（compare.html）
    两栏并排 + 右侧预览条。视觉沿用主窗口：三层底色分区域、
-   控件直角、浮层只靠阴影。差异一律用红：行底淡红、行内改动的
-   字加深红、行号栏一条红竖条、预览条上红点。
+   控件直角、浮层只靠阴影。差异只用红字，不铺底色、不加删除线；
+   预览条上每个差异行一条细红线。
    ============================================================ */
 
 body {
@@ -12,7 +12,6 @@ body {
   --cmp-red: #d92b2b;
   --cmp-wash-2: rgba(217, 43, 43, .12);
   --cmp-ln-w: 54px;
-  --cmp-cur-bg: rgba(51, 102, 240, .045);
   --cmp-hit: rgba(51, 102, 240, .14);
   --cmp-hit-2: rgba(51, 102, 240, .24);
   --cmp-void-band: rgba(0, 0, 0, .075);
@@ -29,7 +28,6 @@ body {
 body[data-theme="dark"] {
   --cmp-red: #ff6b6b;
   --cmp-wash-2: rgba(255, 107, 107, .16);
-  --cmp-cur-bg: rgba(109, 141, 255, .08);
   --cmp-hit: rgba(109, 141, 255, .17);
   --cmp-hit-2: rgba(109, 141, 255, .30);
   --cmp-void-band: rgba(255, 255, 255, .07);
@@ -550,31 +548,14 @@ body[data-theme="dark"] {
   stroke-linecap: round;
 }
 
-/* 行内改动：左栏被替换/删掉的字加删除线，两边都只靠红字，
-   不再垫底色 —— 底色叠在淡红底行上会有三层深淡，反而认不出边界 */
+/* 行内改动：两边都只靠红字，不垫底色、不加删除线。
+   删除线看似能区分「删掉的」和「补上的」，但它让这一行读起来像已经被删了 ——
+   对比窗口要说的是「这两边哪里不一样」，两边都红已经说到位了。 */
 .cmp-tx mark {
   background: none;
   color: var(--cmp-red);
   padding: 0;
 }
-
-.cmp-tx mark.rem {
-  background: none;
-  text-decoration: line-through;
-  text-decoration-color: var(--cmp-red);
-}
-
-/* 当前定位到的那一处：整块一个框，压在行上面（逐行画会变成表格格子） */
-.cmp-curbox {
-  position: absolute;
-  left: 0;
-  right: 0;
-  pointer-events: none;
-  box-shadow: inset 0 0 0 1px var(--accent);
-  background: var(--cmp-cur-bg);
-}
-
-.cmp-curbox[hidden] { display: none; }
 
 .cmp-pane.editing .cmp-tx { caret-color: var(--fg); }
 .cmp-pane.editing .cmp-row:hover { background: var(--bg-soft); }
