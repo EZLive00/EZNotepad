@@ -10,9 +10,10 @@
 //   - 打开就停在末尾；标签上写「速记」而不是 quicknote.md
 //   - 打字 350ms 后自动落盘；不出现脏标记
 //   - Ctrl+S 不弹保存框；打字后立刻关标签，最后几个字也要写完
-//   - 编辑模式同样自动保存；「插入当前时间」真的插进正文
+//   - 编辑模式同样自动保存；
+//   - 开着别的文档时清空速记，不会把那个文档也清掉
 //   - 同一个入口重复打开只有一份（不会两个编辑器写同一个文件）
-//   - 菜单里自成一个一级菜单，并写明它存在哪
+//   - 菜单里自成一个一级动作（不再有辅助分区）
 //   - 清空会先留历史快照，然后文件真的变空
 //   - 速记不进「会话」：下次启动不会被当成上次打开的文档
 //
@@ -181,13 +182,6 @@ await type('PLAIN');
 await sleep(900);
 ok('编辑模式下同样自动保存', disk().includes('PLAIN'), JSON.stringify(disk().slice(-10)));
 
-await c.ev('window.__snp.plain.focus(); window.__snp.plain.setSelection(window.__snp.plain.value.length)');
-await c.ev('window.__snp.commands.quickStamp()');
-await sleep(600);
-const stamp = disk().match(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}/);
-ok('插入当前时间，格式是 年-月-日 时:分', !!stamp, stamp && stamp[0]);
-ok('时间戳也落到了磁盘', !!stamp && disk().includes(stamp[0]));
-
 /* ---------- 7. 菜单 ----------
    用户：「速记要点两次，不合理」—— 一级项展开是下拉，里面再点「打开速记」。
    现在它是一个动作项：点一下按钮速记就开，不弹下拉。辅助动作挪进「文件」，
@@ -225,10 +219,16 @@ const fileMenu = await c.ev(`(async () => {
   btn.click();
   return out;
 })()`);
-ok('速记的辅助动作在「文件」菜单里',
-  ['插入当前时间', '清空速记…'].every((s) => (fileMenu.items || []).includes(s)), JSON.stringify(fileMenu.items));
-ok('「文件」里写明速记存在哪',
-  (fileMenu.notes || []).some((s) => s.includes('quicknote.md')), JSON.stringify(fileMenu.notes));
+/* 2026-11-05：速记那一整块分区被撤了 —— 插入时间没意义、「在文件夹中显示」
+   对谁都应该成立（已挪到「打开文件夹」下面）、路径提示前面是「…」看不懂。
+   只剩「清空速记」没有别的入口，留一行不带分区头。 */
+ok('「文件」里不再有速记分区和插入时间',
+  !(fileMenu.items || []).includes('插入当前时间') && !(fileMenu.items || []).includes('复制文件路径'),
+  JSON.stringify(fileMenu.items));
+ok('「在文件夹中显示」对所有文件有效', (fileMenu.items || []).includes('在文件夹中显示'), JSON.stringify(fileMenu.items));
+ok('不再显示「保存在 …\quicknote.md」这种看不懂的路径提示',
+  !(fileMenu.notes || []).length, JSON.stringify(fileMenu.notes));
+ok('「清空速记」还在（它没有别的入口）', (fileMenu.items || []).includes('清空速记'), JSON.stringify(fileMenu.items));
 /* 按 Esc 收菜单（点第一个顶级项只会换成「文件」那个下拉） */
 for (const t of ['keyDown', 'keyUp']) {
   await c.send('Input.dispatchKeyEvent', { type: t, key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 });
@@ -257,6 +257,46 @@ await c.ev(`[...document.querySelectorAll('#dlgFoot button')].find((b) => b.text
 await sleep(700);
 ok('确认后文件真的变空', disk() === '', JSON.stringify(disk()));
 ok('编辑器里的内容也跟着清了', (await editorText()) === '');
+
+/* ---------- 9b. 开着别的文档时清空速记：不许动那个文档 ----------
+   2026-11-05 的真机 bug：清速记走的是 setContent('')，而 setContent 写的是
+   「当前活动标签」—— 开着别的文档时，被清空的是屏幕上那篇。文件没动，
+   但接着一保存就真的覆盖了。 */
+await c.ev(`(() => {
+  window.__snp.newTab('other.md', '# 别人的文档\\n\\n这段内容不该被速记的「清空」动到。', null);
+  return 1;
+})()`);
+await sleep(400);
+/* 先让速记有点内容 */
+await c.ev('window.__snp.openQuickNote()');
+await sleep(500);
+await type('QNOTE-TO-CLEAR');
+await sleep(900);
+/* 切回那篇文档，再清速记 */
+await c.ev(`(() => {
+  const t = [...document.querySelectorAll('.tab')].find((el) => (el.title || '').includes('other.md'));
+  if (t) t.click();
+  return 1;
+})()`);
+await sleep(400);
+const otherBefore = await c.ev('window.__snp.getEditorText()');
+await c.ev('void window.__snp.commands.quickClear()');
+await sleep(400);
+await c.ev(`[...document.querySelectorAll('#dlgFoot button')].find((b) => b.textContent === '清空')?.click()`);
+await sleep(800);
+const otherAfter = await c.ev('window.__snp.getEditorText()');
+ok('清空速记不会顺手清掉当前打开的别的文档',
+  otherAfter === otherBefore && String(otherAfter || '').includes('别人的文档'),
+  JSON.stringify({ before: otherBefore, after: otherAfter }));
+ok('清空速记时那个文档在屏幕上还是原样',
+  (await c.ev(`(() => { const w = document.getElementById('wysiwyg'); return w && !w.classList.contains('hidden') ? w.innerText : (document.querySelector('.cm-content')?.innerText || ''); })()`)).includes('别人的文档'));
+ok('速记文件确实被清空了', disk() === '', JSON.stringify(disk().slice(0, 20)));
+await c.ev(`(() => {
+  const t = [...document.querySelectorAll('.tab')].find((el) => (el.title || '').includes('other.md'));
+  if (t) t.querySelector('.tab-close')?.click();
+  return 1;
+})()`);
+await sleep(300);
 
 /* ---------- 10. 空速记再清一次：不弹多余的对话框 ---------- */
 await c.ev('void window.__snp.commands.quickClear()');

@@ -76,6 +76,8 @@ export const ERR_TEXT = {
   'io.history_clear': '清除历史失败：{detail}',
 
   /* ---- 监听 / 窗口 / 内部 ---- */
+  'pdf.failed': '导出 PDF 失败：{detail}',
+  'pdf.unsupported': '这个平台还不支持导出 PDF',
   'watch.create': '无法建立文件监听：{detail}',
   'file.stat': '读取文件信息失败：{detail}',
   'win.create': '无法打开对比窗口：{detail}',

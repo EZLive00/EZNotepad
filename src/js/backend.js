@@ -125,6 +125,11 @@ export const initialFiles = () => invoke('initial_files');
 /** 应用版本：取自 tauri.conf.json（编译期注入），前端不写死，免得跟版本号脱节 */
 export const appVersion = () => getVersion().catch(() => '');
 
+/* ---------------- 导出 PDF ----------------
+   打印走不了（WebView2 没有实现浏览器的打印面板），改由 Rust 侧调
+   WebView2 的 PrintToPdf：页面按打印样式渲染成 PDF 直接落盘。 */
+export const exportPdf = (path) => invoke('export_pdf', { path });
+
 /* ---------------- 速记 ----------------
    速记的文件位置由后端决定（应用数据目录下固定一份），前端不拼路径：
    这样「换个平台数据目录该在哪」只有一处答案，也不需要用户选位置。 */

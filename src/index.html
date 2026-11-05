@@ -478,6 +478,10 @@
 
   <div class="toast-wrap" id="toasts"></div>
 
+  <!-- 导出 PDF 的内容容器：平时 display:none，只有 @media print 才显示它、
+       顺手把其余一切藏掉。放在最后，避免参与任何布局 -->
+  <div id="printRoot" aria-hidden="true"></div>
+
   <script type="module" src="js/app.js"></script>
 </body>
 </html>

@@ -7,6 +7,9 @@
 //
 //   node test/probe-app.mjs
 // ============================================================
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { ensureApp } from './lib/appctl.mjs';
 
 const PORT = process.env.CDP_PORT || 9333;
@@ -922,6 +925,119 @@ try {
     await sleep(900);
     const py2 = await ev(`window.__snp.getEditorText()`);
     ok('Python 只去行尾空格，缩进原样', py2 === 'def f():\n    return 1\n', JSON.stringify(py2));
+  }
+
+  /* ---------- ```mermaid：真的画出来 ----------
+     纯逻辑测不了：它要 import 5 MB 的引擎、按主题配色、把 SVG 贴回 DOM。
+     这里量的是「预览里真的出现了 <svg>，而且源码块没了」。 */
+  {
+    const md = ['# 图', '', '```mermaid', 'flowchart LR', '  A[开始] --> B[结束]', '```', ''].join('\n');
+    await ev(`window.__snp.newTab('mmd.md', ${JSON.stringify(md)}, null)`);
+    await sleep(420);
+    await ev('window.__snp.commands.modePreview()');
+    /* 首次要加载引擎（5 MB）+ 布局，给足 6 秒 */
+    let figs = 0;
+    for (let i = 0; i < 30; i++) {
+      await sleep(200);
+      figs = await ev(`document.querySelectorAll('#preview .mermaid-fig svg').length`);
+      if (figs) break;
+    }
+    const left = await ev(`document.querySelectorAll('#preview pre code.lang-mermaid').length`);
+    ok('mermaid 代码块在预览里变成真 SVG', figs === 1, `${figs} 个图 / 剩 ${left} 个源码块`);
+    ok('原来的源码块被图替换掉', left === 0);
+
+    /* 画不出来时要留下原因和源码，不能静默消失 */
+    await ev(`window.__snp.newTab('mmd-bad.md', '# 坏图\\n\\n\`\`\`mermaid\\nthis is not a diagram\\n\`\`\`', null)`);
+    await sleep(300);
+    await ev('window.__snp.commands.modePreview()');
+    await sleep(1500);
+    const bad = await ev(`(() => ({
+      err: !!document.querySelector('#preview .mermaid-err'),
+      src: document.querySelectorAll('#preview pre code.lang-mermaid').length,
+    }))()`);
+    ok('画不出来的 mermaid 留下错误提示和源码', bad.err && bad.src === 1, JSON.stringify(bad));
+  }
+
+  /* ---------- 导出 PDF：真的落成一个 PDF 文件 ----------
+     这条以前没法测，因为走的是 window.print()（WebView2 里压根不弹框）。
+     现在写死路径调用 exportPdfTo，绕开系统保存框。 */
+  {
+    const out = path.join(os.tmpdir(), 'eznotepad-probe', 'probe-export.pdf');
+    try { fs.unlinkSync(out); } catch { /* 上次没留 */ }
+    const md = ['# 导出', '', '正文一段。', '', '```js', 'const a = 1;', '```'].join('\n');
+    await ev(`window.__snp.newTab('pdf.md', ${JSON.stringify(md)}, null)`);
+    await sleep(300);
+    await ev('window.__snp.commands.modePreview()');
+    await sleep(500);
+    const before = await ev(`document.body.dataset.theme`);
+    await ev(`window.__snp.exportPdfTo(${JSON.stringify(out)})`);
+    await sleep(1200);
+    const size = fs.existsSync(out) ? fs.statSync(out).size : 0;
+    const head = size ? fs.readFileSync(out).subarray(0, 5).toString('latin1') : '';
+    ok('导出 PDF 真的写了文件', size > 2000 && head === '%PDF-', `${size} 字节 / ${head}`);
+    const after = await ev(`(() => ({
+      theme: document.body.dataset.theme,
+      busy: !!document.querySelector('.pdf-busy'),
+      print: document.getElementById('printRoot').innerHTML.length,
+    }))()`);
+    ok('导出后主题还原、遮罩收起、打印容器清空',
+      after.theme === before && !after.busy && after.print === 0, JSON.stringify(after));
+  }
+
+  /* ---------- 切标签 / 关标签不许串档 ----------
+     2026-11-05 的真机 bug：编辑器 DOM 属于上一个标签，而 activeTab() 已经是新标签，
+     于是「把 DOM 序列化回 content」这一步把上一篇写进了下一篇。
+     真机表现：清空速记之后，速记里出现了刚才那篇文档的内容。 */
+  {
+    await ev(`window.__snp.newTab('cross-a.md', '# A 文档\\n\\nA 的内容。', null)`);
+    await sleep(300);
+    await ev(`window.__snp.newTab('cross-b.md', '# B 文档\\n\\nB 的内容。', null)`);
+    await sleep(300);
+    const back = await ev(`(async () => {
+      const el = [...document.querySelectorAll('.tab')].find((t) => (t.title || '').includes('cross-a.md'));
+      el.click();
+      await new Promise((r) => setTimeout(r, 400));
+      /* 三种模式各自显示在不同容器里：只读「当前看得见的那一坨」 */
+      const w = document.getElementById('wysiwyg');
+      const shown = (w && !w.classList.contains('hidden')) ? w.innerText
+        : (document.querySelector('.cm-content')?.innerText || document.getElementById('preview').innerText);
+      return { content: window.__snp.getEditorText(), shown };
+    })()`);
+    ok('切回 A 时 A 的内容没被 B 覆盖',
+      String(back.content).includes('A 的内容') && !String(back.content).includes('B 的内容'),
+      JSON.stringify(back.content));
+    ok('屏幕上显示的也是 A', String(back.shown).includes('A 的内容') && !String(back.shown).includes('B 的内容'));
+
+    /* 关掉 B（后台标签，没有未保存修改）：A 的内容也不能变 */
+    await ev(`(() => {
+      const el = [...document.querySelectorAll('.tab')].find((t) => (t.title || '').includes('cross-b.md'));
+      el.querySelector('.tab-close').click();
+      return 1;
+    })()`);
+    await sleep(500);
+    const after = await ev(`window.__snp.getEditorText()`);
+    ok('关掉另一个标签后，当前标签的内容原样',
+      String(after).includes('A 的内容') && !String(after).includes('B 的内容'), JSON.stringify(after));
+  }
+
+  /* ---------- 菜单文案：不弹框的项后面不该有省略号 ----------
+     用户原话：「导出pdf，导出网页，历史版本，这些菜单后面没必要跟…」 */
+  {
+    const labels = await ev(`(async () => {
+      const bar = [...document.querySelectorAll('.am-btn')];
+      const btn = bar.find((b) => b.textContent === '文件');
+      btn.click();
+      await new Promise((r) => setTimeout(r, 150));
+      const panel = document.querySelector('.appmenu');
+      const out = [...panel.querySelectorAll('.am-item .am-label')].map((n) => n.textContent);
+      btn.click();
+      return out;
+    })()`);
+    ok('导出 PDF / 导出网页 / 历史版本 不再带省略号',
+      ['导出 PDF', '导出网页（HTML）', '历史版本'].every((s) => labels.includes(s)),
+      JSON.stringify(labels));
+    ok('「在文件夹中显示」紧跟在「打开文件夹」下面',
+      labels.indexOf('在文件夹中显示') === labels.indexOf('打开文件夹…') + 1, JSON.stringify(labels));
   }
 } catch (e) {
   ok('探针执行完成', false, e.message);

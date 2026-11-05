@@ -3268,6 +3268,8 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
  "tauri-plugin-single-instance",
+ "webview2-com",
+ "windows-core",
  "windows-sys 0.61.2",
 ]
 

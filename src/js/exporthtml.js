@@ -11,6 +11,7 @@
 import { renderMarkdown, resolveDocImg } from './markdown.js';
 import { renderPreview } from './preview.js';
 import { renderMathIn } from './math.js';
+import { renderDiagrams } from './diagram.js';
 import { highlight } from './highlight.js';
 import { detectKind } from './format.js';
 import { activeTab } from './state.js';
@@ -81,6 +82,9 @@ export async function exportHtml() {
       imgResolver: (s) => map.get(s) || resolveDocImg(s, docDir),
     });
     renderMathIn(box);
+    /* 图必须先画成 SVG 再序列化：HTML 文件里没有 mermaid 引擎，
+       留着源码就是一段没人渲染的代码块 */
+    await renderDiagrams(box);
   } else {
     renderPreview(kind, t.content, '', box, docDir);
   }

@@ -1545,3 +1545,72 @@ body[data-nowrap] .plainview { white-space: pre; }
    不换行的那一侧不需要它 —— 那儿本来就靠横向滚动。 */
 body:not([data-nowrap]) .preview-body,
 body:not([data-nowrap]) .wysiwyg { overflow-wrap: break-word; }
+
+/* ---- ```mermaid 渲染出的图 ----
+   背景用 --bg-soft 而不是白：深色主题下图里的黑字会看不见，mermaid 的 dark
+   主题会自己换色，这里只负责给它一块和正文区分开的底 */
+.md .mermaid-fig {
+  margin: 1.2em 0; padding: 12px 10px;
+  background: var(--bg-soft); border-radius: var(--r-md);
+  box-shadow: inset 0 0 0 1px var(--line);
+  overflow-x: auto; text-align: center;
+}
+.md .mermaid-fig svg { max-width: 100%; height: auto; }
+/* 图画不出来时把原因留在源码下面：静默吞掉等于「我写的图不见了」 */
+.md .mermaid-err {
+  margin: -.6em 0 1em; padding: 6px 10px;
+  font-size: 12px; line-height: 1.5;
+  color: var(--co-danger, #c0392b);
+  background: var(--co-danger-bg, rgba(192, 57, 43, .08));
+  border-radius: var(--r-sm);
+  white-space: pre-wrap; word-break: break-word;
+}
+
+/* ================= 导出 PDF =================
+   打印只认一个容器：#printRoot。平时它不存在于布局里，@media print 时
+   其余一切（标题栏、标签、编辑区、浮层、toast）统统藏掉。
+   这样同一份 HTML 既是屏幕上的预览，也是 PDF 里的正文，不用维护第二套排版。
+
+   ⚠️ 唯一进 PDF 的东西必须放在 #printRoot 里。谁在别处渲染「打印专用」内容，
+   都会在导出的 PDF 里凭空少一块 —— 而屏幕上看不出来。 */
+#printRoot { display: none; }
+
+.pdf-busy {
+  position: fixed; inset: 0; z-index: 9000;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg);
+}
+.pdf-busy-box {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 13px; color: var(--fg-soft);
+}
+.pdf-spin {
+  width: 14px; height: 14px; border-radius: 50%;
+  border: 2px solid var(--line-strong); border-top-color: var(--accent);
+  animation: pdf-spin .8s linear infinite;
+}
+@keyframes pdf-spin { to { transform: rotate(360deg); } }
+
+@media print {
+  /* 纸张与页边距：边距只在这里给一次（Rust 侧 PrintSettings 的边距是 0），
+     两处都给会把正文挤成窄条 */
+  @page { size: A4; margin: 16mm 15mm; }
+
+  html, body { background: #fff !important; }
+  body > *:not(#printRoot) { display: none !important; }
+  #printRoot { display: block !important; }
+
+  #printRoot .md { max-width: none; font-size: 13.5px; }
+  #printRoot .md h1, #printRoot .md h2 { page-break-after: avoid; }
+  #printRoot .md tr, #printRoot .md img, #printRoot .md pre { page-break-inside: avoid; }
+  /* 代码块 / 长行在纸上没有横向滚动条，只能折 */
+  #printRoot .md pre,
+  #printRoot .plainview { white-space: pre-wrap; word-break: break-word; overflow: visible; }
+  /* 链接在纸上点不了，把地址露出来才不丢信息 */
+  #printRoot .md a[href^="http"]::after {
+    content: " (" attr(href) ")";
+    font-size: .82em; color: #6b7280; word-break: break-all;
+  }
+  /* 预览里的 JSON 校验横幅不该进 PDF：那是屏幕上的提示，不是文档内容 */
+  #printRoot .json-err { display: none !important; }
+}

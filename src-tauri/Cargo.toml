@@ -40,6 +40,10 @@ notify = "8"
 # 无边框窗口的系统圆角（Win11 DWM）。只在 Windows 上参与编译。
 [target.'cfg(windows)'.dependencies]
 raw-window-handle = "0.6"
+# 导 PDF 走 WebView2 自己的 PrintToPdf（window.print() 在嵌入式 WebView 里是空实现）。
+# 版本必须和 tauri 传递依赖里的那份一致，否则 ICoreWebView2Controller 是两种类型、转不过去。
+webview2-com = "0.39"
+windows-core = "0.62"
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Graphics_Dwm",

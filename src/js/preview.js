@@ -9,6 +9,7 @@ import { renderMarkdown, resolveDocImg } from './markdown.js';
 import { highlight, highlightLines } from './highlight.js';
 import { jsonErrorPosition } from './format.js';
 import { renderMathIn } from './math.js';
+import { renderDiagrams } from './diagram.js';
 import { tt } from './i18n.js';
 
 export function renderPreview(kind, text, lang, target, docDir = '') {
@@ -30,6 +31,12 @@ export function renderPreview(kind, text, lang, target, docDir = '') {
     });
     // 公式在渲染完才扫描：先有 DOM 再让 KaTeX 接手，没公式的话这一步直接返回
     renderMathIn(target);
+    /* ```mermaid 同理，只是它更慢（要加载引擎 + 布局），所以不 await：
+       预览先按源码显示，图算好了再原地换掉。没有 mermaid 块时这一步立即返回，
+       连引擎都不会 import。
+       留在容器上的 promise 是给「导 PDF / 导 HTML」用的 —— 它们必须等图画完
+       再序列化，否则导出的是一段没人渲染的源码 */
+    target.__pvDiagrams = renderDiagrams(target);
     return;
   }
   if (kind === 'json') {

@@ -13,6 +13,7 @@
     "build:mac": "tauri build --target universal-apple-darwin",
     "build:cm6": "node scripts/build-cm6.mjs",
     "build:syntax": "node scripts/build-syntax.mjs",
+    "build:mermaid": "node scripts/build-mermaid.mjs",
     "icons": "node scripts/build-icons.mjs",
     "test": "node test/run.mjs",
     "test:editor": "node test/run-editor.mjs",
@@ -54,6 +55,7 @@
     "esbuild": "^0.28.2",
     "highlight.js": "^11.12.0",
     "katex": "0.19.1",
+    "mermaid": "^12.3.0",
     "prettier": "^3.9.10"
   },
   "dependencies": {

@@ -1453,6 +1453,100 @@ fn tool_set_fullscreen(app: tauri::AppHandle, label: String, fill: bool) -> Resu
     }
 }
 
+/* ---------------- 导出 PDF ----------------
+   以前是 window.open('') + win.print()：在真机上「喊不醒打印窗口」。
+   原因是 WebView2 **没有实现**浏览器那套打印面板 —— 嵌入式 WebView 里调用
+   window.print() 既不弹框也不报错，用户看到的就是「点了没反应」。
+
+   改用 WebView2 自己的 PrintToPdf：按打印样式（@media print）把当前页面渲染成
+   PDF 直接写到指定路径。不需要打印机、不需要系统对话框、也不会弹窗。
+
+   页面侧的约定很窄：前端把要导出的内容渲染进 `#printRoot`，打印样式隐藏其余一切，
+   然后调这个命令。这里只做三件事：拿接口 → 设纸张 → 等它写完。 */
+
+#[cfg(target_os = "windows")]
+#[tauri::command]
+async fn export_pdf(window: tauri::WebviewWindow, path: String) -> Result<(), AppError> {
+    use std::sync::mpsc;
+    use std::time::Duration;
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        ICoreWebView2Environment6, ICoreWebView2_7,
+    };
+    use webview2_com::PrintToPdfCompletedHandler;
+    use windows_core::Interface;
+
+    let (tx, rx) = mpsc::channel::<bool>();
+    let target = path.clone();
+
+    window
+        .with_webview(move |wv| {
+            /* 这个闭包在主线程跑：WebView2 的接口都只能在 GUI 线程调用 */
+            let fail = |tx: &mpsc::Sender<bool>| {
+                let _ = tx.send(false);
+            };
+            unsafe {
+                let core = match wv.controller().CoreWebView2() {
+                    Ok(c) => c,
+                    Err(_) => return fail(&tx),
+                };
+                /* PrintToPdf 在 ICoreWebView2_7（2021 年的运行时就有）：
+                   老运行时转不过去，按「失败」返回，不假装成功 */
+                let core7: ICoreWebView2_7 = match core.cast() {
+                    Ok(c) => c,
+                    Err(_) => return fail(&tx),
+                };
+                let env6: ICoreWebView2Environment6 = match wv.environment().cast() {
+                    Ok(e) => e,
+                    Err(_) => return fail(&tx),
+                };
+                let settings = match env6.CreatePrintSettings() {
+                    Ok(s) => s,
+                    Err(_) => return fail(&tx),
+                };
+                /* A4（英寸）；边距交给页面自己的 @page，这里给 0 —— 双重边距会把
+                   正文挤得比预览窄一截，看起来像「导出错了」 */
+                let _ = settings.SetPageWidth(8.27);
+                let _ = settings.SetPageHeight(11.69);
+                let _ = settings.SetMarginTop(0.0);
+                let _ = settings.SetMarginBottom(0.0);
+                let _ = settings.SetMarginLeft(0.0);
+                let _ = settings.SetMarginRight(0.0);
+                /* 底色要打：代码块的浅灰、引用条都靠背景色，不打开会全白 */
+                let _ = settings.SetShouldPrintBackgrounds(true);
+
+                let file = windows_core::HSTRING::from(target.as_str());
+                let done = tx.clone();
+                let handler = PrintToPdfCompletedHandler::create(Box::new(move |hr, ok| {
+                    let _ = done.send(hr.is_ok() && ok);
+                    Ok(())
+                }));
+                if core7.PrintToPdf(&file, &settings, &handler).is_err() {
+                    let _ = tx.send(false);
+                }
+            }
+        })
+        .map_err(|e| AppError::detail("pdf.failed", e))?;
+
+    let written = tauri::async_runtime::spawn_blocking(move || {
+        rx.recv_timeout(Duration::from_secs(180)).unwrap_or(false)
+    })
+    .await
+    .unwrap_or(false);
+
+    if written && std::path::Path::new(&path).exists() {
+        Ok(())
+    } else {
+        Err(AppError::new("pdf.failed"))
+    }
+}
+
+/// 非 Windows 平台暂时没有对应实现（macOS 的 WKWebView 有 createPDF，另做）
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+async fn export_pdf(_window: tauri::WebviewWindow, _path: String) -> Result<(), AppError> {
+    Err(AppError::new("pdf.unsupported"))
+}
+
 /// 原生菜单已移除：窗口改为无边框自绘标题栏（decorations=false），
 /// 菜单由前端 appmenu.js 渲染，命令仍统一走前端 commands 表。
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1506,6 +1600,7 @@ pub fn run() {
             open_folder_compare_window,
             take_folder_compare_request,
             open_in_main,
+            export_pdf,
             tool_set_fullscreen
         ])
         .setup(|app| {

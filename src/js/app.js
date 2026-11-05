@@ -13,7 +13,8 @@ import { PlainEditor } from './editor/plain-editor.js';
 import { toast, dialog, confirmBox, contextMenu } from './ui.js';
 import { MergeWizard } from './mergewizard.js';
 import { showShortcuts } from './shortcuts.js';
-import { exportPdf, printTab } from './pdf.js';
+import { exportPdf, exportPdfTo } from './pdf.js';
+import { resetDiagramCache } from './diagram.js';
 import { exportHtml } from './exporthtml.js';
 import { iconHTML, setIcon } from './icons.js';
 import { createAppMenu } from './appmenu.js';
@@ -109,7 +110,14 @@ let currentLang = '';
 function applyTheme() {
   const sysDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
   const dark = settings.theme === 'dark' || (settings.theme === 'auto' && sysDark);
+  const before = document.body.dataset.theme;
   document.body.dataset.theme = dark ? 'dark' : 'light';
+  /* 图里的颜色是 mermaid 渲染时写死在 SVG 上的，主题一换就得重画：
+     缓存按主题分开存，这里把旧主题的那份丢掉 */
+  if (before !== document.body.dataset.theme) {
+    resetDiagramCache();
+    schedulePreview();
+  }
 }
 
 /* ---------------- WYSIWYG ---------------- */
@@ -436,6 +444,7 @@ function activate(id) {
 }
 
 function clearView() {
+  renderedTabId = null;
   plain.load('');
   el.wysiwyg.innerHTML = '';
   el.preview.innerHTML = '<div class="diff-empty">' + tt('没有打开的文件') + '</div>';
@@ -443,6 +452,12 @@ function clearView() {
   el.outlineList.innerHTML = '<div class="outline-empty">' + tt('新建或打开一个文件开始。') + '</div>';
   el.fmtBadge.textContent = '—';
 }
+
+/* 编辑器里现在**显示着**的是哪个标签的内容。
+   有了它才敢把 DOM 序列化回 t.content：切标签时 activeTab() 已经换成新标签，
+   而编辑器 DOM 还是旧的 —— 不核对身份就把旧 DOM 写进新标签，
+   等于把上一篇的内容灌进刚切过去的那一篇（真机表现：关掉 A 之后 B 被写成了 A）。 */
+let renderedTabId = null;
 
 /* ---------------- 模式 / 布局 ---------------- */
 function setMode(mode, opt = {}) {
@@ -458,7 +473,7 @@ function setMode(mode, opt = {}) {
   /* 从所见即所得切走：先把挂起的输入落进 t.content（失焦触发的 flush 是异步的，
      下面的 plain.load 会抢在前面拿到旧内容）。只在真有未落账的编辑时才读 ——
      没编辑过就读，会把序列化的规范化写法（* → - 之类）写回去，无编辑也亮脏标记。 */
-  if (t.mode === 'wysiwyg' && mode !== 'wysiwyg') {
+  if (renderedTabId === t.id && t.mode === 'wysiwyg' && mode !== 'wysiwyg') {
     if (wys.pending()) t.content = wys.toMarkdown();
     /* 落账完就把挂起标记清掉：DOM 即将换成别的视图，之后那次迟到的 blur
        不能再 flush 一遍 —— 那时 onChange 眼里的「当前标签」已经是别人了。 */
@@ -497,7 +512,10 @@ function setMode(mode, opt = {}) {
   const docDir = t.path ? be.dirName(t.path) : '';
   if (showWys) { wys.setDocDir(docDir); renderWys(t.content); }
   else if (showEditor) { plain.load(t.content, currentLang); }
+  /* 从这一行起，编辑器里装的就是 t 的内容了。之前它是上一个标签的 */
+  renderedTabId = t.id;
   if (showPreview) renderPreview(kind, t.content, currentLang, el.preview, docDir);
+  else dropPreviewDom();
 
   updateModeMenu(kind, allowed);
   updateOutline();
@@ -517,6 +535,18 @@ function setMode(mode, opt = {}) {
   // 手柄只属于所见即所得：切到编辑/预览就收起来
   if (mode === 'wysiwyg') { anchorBlock = null; refreshHandle(); }
   else { closeBlockMenu(); hideHandle(); }
+}
+
+/* 预览不在屏幕上时把它那份 DOM 丢掉。display:none 只是不画，节点还在 ——
+   一篇 900 行的文档在所见即所得模式下等于把正文在内存里放了两份
+   （实测多出 6000+ 节点）。切回预览时 setMode 会重新渲染，代价约 100ms。 */
+function dropPreviewDom() {
+  if (!el.preview || !el.preview.childElementCount) return;
+  el.preview.innerHTML = '';
+  el.preview.__pvText = null;
+  el.preview.__pvKind = null;
+  el.preview.__pvLang = null;
+  el.preview.__pvDir = null;
 }
 
 function updateModeMenu(kind, allowed) {
@@ -1592,21 +1622,11 @@ let quickPath = null;      // 固定路径：问一次后端就记住
 let quickTimer = 0;        // 打字 → 落盘的防抖
 let quickWarned = false;   // 写失败只弹一次，别让每个字都弹一窗
 
+/** 速记的路径固定，前端不拼。打不开时由调用方决定怎么说 */
 async function quickFile() {
   if (!quickPath) quickPath = await be.quickNotePath();
   return quickPath;
 }
-
-/** 路径太长会把菜单撑爆：只留末两级 */
-const shortPath = (p) => {
-  const parts = String(p || '').split(/[\\/]/).filter(Boolean);
-  return parts.length > 2 ? '…\\' + parts.slice(-2).join('\\') : String(p || '');
-};
-
-/** 速记菜单底部那句「它在哪」。还没有路径时说实话，不要留一个空行 */
-const quickHint = () => (quickPath
-  ? tt('保存在 {path}，改动会自动写入', { path: shortPath(quickPath) })
-  : tt('改动会自动写入，不用保存'));
 
 /** 光标放到速记末尾：临时记录永远是「接着上次往下写」 */
 function focusQuickEnd(t) {
@@ -1714,26 +1734,6 @@ async function quickNoteSaveNow(t, copy = false) {
   return ok;
 }
 
-/** 在光标处插入「2026-11-03 09:20」。临时记录里最常想补的就是时间 */
-function insertStamp() {
-  const t = activeTab();
-  if (!t) return;
-  if (t.mode === 'preview') { toast(tt('预览模式下不能编辑')); return; }
-  const d = new Date();
-  const pad = (n) => String(n).padStart(2, '0');
-  const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-
-  if (t.mode === 'edit') { plain.insertText(stamp); plain.focus(); return; }
-  /* 所见即所得：光标在正文里就用浏览器的 insertText（它认得跨行选区、会正常触发
-     input 事件，编辑器据此记历史）；光标根本不在编辑区时退回「插入一个块」。
-     这里用 execCommand 只为了写文字，跟撤销栈无关 —— 历史仍然只由编辑器自己记。 */
-  const ae = document.activeElement;
-  const inWys = ae === wys.root || wys.root.contains(ae);
-  let done = false;
-  if (inWys) { try { done = document.execCommand('insertText', false, stamp); } catch {} }
-  if (!done) wys.insertMarkdown(stamp);
-}
-
 /** 清空速记。清掉之前先存一份历史快照：这是唯一能反悔的地方 */
 async function clearQuickNote() {
   let path;
@@ -1767,7 +1767,12 @@ async function clearQuickNote() {
   if (t) {
     t.content = '';
     t.savedContent = '';
-    setContent('');
+    /* 只在速记**正显示着**的时候才动编辑器。以前这里无条件 setContent('')，
+       而 setContent 写的是「当前活动标签」——开着别的文档时清速记，被清空的是
+       那个文档（文件没动，但屏幕上的内容没了，接着一保存就真的覆盖掉）。
+       不显示时不碰编辑器：t.content 已经置空，标签切过去时自然渲染成空 */
+    if (activeTab() === t) setContent('');
+    else renderTabs();
     focusQuickEnd(t);
   }
   toast(tt('速记已清空'));
@@ -1855,6 +1860,9 @@ async function closeTab(id) {
     if (r === 'save' && !(await saveTab(t))) return;
   }
   const wasActive = activeTab() && activeTab().id === id;
+  /* 关之前先落账，而且要赶在 removeTab 之前 —— removeTab 会把活动标签换成下一个，
+     那之后的 persistCurrentView 看到的是新标签 + 旧 DOM */
+  if (wasActive) persistCurrentView();
   removeTab(id);
   syncWatches();
   if (!tabs.length) { newTab(untitledName('md'), ''); return; }
@@ -2968,6 +2976,13 @@ function setTheme(mode) {
 }
 
 /* ---------------- 命令表 ---------------- */
+/** 当前标签在磁盘上的位置；还没保存过的文档、或者没开标签时为 '' */
+function activePath() {
+  const t = activeTab();
+  if (!t) return '';
+  return t.path || (t.quickNote ? quickPath || '' : '');
+}
+
 const commands = {
   new: newFilePrompt,
   open: openFileDialog,
@@ -2975,17 +2990,14 @@ const commands = {
   saveAs: () => saveTabAs(activeTab()),
   /* —— 速记 —— */
   quickNote: openQuickNote,
-  quickStamp: insertStamp,
   quickClear: clearQuickNote,
-  quickReveal: async () => {
-    try { await revealInFolder(await quickFile()); }
-    catch (e) { dialog({ title: tt('速记打不开'), body: errText(e) }); }
-  },
-  quickCopyPath: async () => {
-    try {
-      await navigator.clipboard.writeText(await quickFile());
-      toast(tt('路径已复制'));
-    } catch { toast(tt('无法复制路径')); }
+  /* 对所有文件都成立（普通文档、速记、只读打开的日志）：拿当前标签的路径去资源管理器里定位 */
+  reveal: async () => {
+    let p = activePath();
+    if (!p && activeTab()?.quickNote) {
+      try { p = await quickFile(); } catch (e) { dialog({ title: tt('速记打不开'), body: errText(e) }); return; }
+    }
+    if (p) await revealInFolder(p);
   },
   closeTab: () => activeTab() && closeTab(activeTab().id),
   quit: async () => {
@@ -3001,9 +3013,10 @@ const commands = {
   copy: () => editCmd('copy'),
   paste: pasteFromClipboard,
   selectAll: () => editCmd('selectAll'),
-  exportPdf,
+  /* 导出前先把编辑器里最新的内容收进 t.content：所见即所得那边是防抖 flush，
+     打完最后一个字立刻按 Ctrl+P 的话，t.content 还差一截 */
+  exportPdf: () => { const t = activeTab(); if (t && t.mode !== 'preview') t.content = readEditor(t); return exportPdf(); },
   exportHtml,
-  print: () => printTab(activeTab()),
   palette: openPalette,
   history: showHistoryPanel,
   find: () => openFind(),
@@ -3188,27 +3201,27 @@ const menuTree = () => [
       { id: 'new', label: tt('新建'), kbd: 'Ctrl+N' },
       { id: 'open', label: tt('打开…'), kbd: 'Ctrl+O' },
       { id: 'openFolder', label: tt('打开文件夹…'), icon: 'folder-open' },
+      /* 紧挨着「打开文件夹」：这两件事问的是同一句话（「这个文件在磁盘的哪儿」），
+         而且对**任何**打开着的文件都成立，不只速记 */
+      { id: 'reveal', label: tt('在文件夹中显示'), icon: 'folder-open', disabled: () => !activePath() },
       ...recentMenuItems(),
       { sep: true },
       { id: 'save', label: tt('保存'), kbd: 'Ctrl+S', disabled: () => !hasTab() },
       { id: 'saveAs', label: tt('另存为…'), kbd: 'Ctrl+Shift+S', disabled: () => !hasTab() },
       { id: 'autoSave', label: tt('自动保存（约 1 秒）'), checked: () => !!settings.autoSave },
       { sep: true },
-      { id: 'exportPdf', label: tt('导出 PDF / 打印…'), kbd: 'Ctrl+P', disabled: () => !hasTab() },
-      { id: 'exportHtml', label: tt('导出网页（HTML）…'), disabled: () => !hasTab() },
-      { id: 'history', label: tt('历史版本…'), disabled: () => !hasTab() },
+      /* 这三项后面不写省略号：它们点了就做，不再问「要导出成什么」以外的参数。
+         省略号只留给「会先弹一个框让你填东西」的项（打开、另存为、查找…） */
+      { id: 'exportPdf', label: tt('导出 PDF'), kbd: 'Ctrl+P', disabled: () => !hasTab() },
+      { id: 'exportHtml', label: tt('导出网页（HTML）'), disabled: () => !hasTab() },
+      { id: 'history', label: tt('历史版本'), disabled: () => !hasTab() },
       { id: 'reload', label: tt('重新载入'), disabled: () => !hasTab() },
       { sep: true },
       { id: 'closeTab', label: tt('关闭标签'), kbd: 'Ctrl+W', disabled: () => !hasTab() },
-      { sep: true },
-      /* 速记的辅助动作在这儿：打开速记本身是菜单栏上的一个动作项（点一次即开），
-         这几项频率低得多，放在「文件」里跟其它「这份内容存在哪」的操作作邻 */
-      { head: tt('速记') },
-      { id: 'quickStamp', label: tt('插入当前时间'), disabled: () => !hasTab() },
-      { id: 'quickReveal', label: tt('在文件夹中显示') },
-      { id: 'quickCopyPath', label: tt('复制文件路径') },
-      { id: 'quickClear', label: tt('清空速记…') },
-      { note: quickHint() },
+      /* 速记的其它辅助动作（插入时间 / 显示 / 复制路径）已经删掉：
+         时间戳在正文里直接打更快，「显示」提到上面一条对谁都成立，
+         复制路径在标签右键里本来就有。只剩「清空」没有别的入口，留一行 */
+      { id: 'quickClear', label: tt('清空速记') },
       { sep: true },
       { id: 'quit', label: tt('退出') },
     ],
@@ -4448,6 +4461,8 @@ function cycleTab(dir) {
 function persistCurrentView() {
   const t = activeTab();
   if (!t) return;
+  /* 编辑器里显示的不是它：DOM 属于别的标签，序列化过来就是串档 */
+  if (renderedTabId !== t.id) return;
   if (t.mode === 'wysiwyg') {
     /* 渐进载入进行中 DOM 只有半截，序列化它会把残缺内容写进 t.content，
        标签随即变脏 —— 自动保存一触发就用残篇覆盖磁盘文件。跳过：
@@ -4565,6 +4580,7 @@ window.__snp = {
   editor: wys,          // 编辑器实例（与 __merge 同类调试面：真机 CDP 探针要用）
   capture: persistCurrentView,
   openCompare: (l, r) => be.openCompareWindow(l, r),
+  exportPdfTo: (p) => exportPdfTo(p),   // 探针：绕开系统保存框跑完整导出
 };
 window.__merge = merge;
 
