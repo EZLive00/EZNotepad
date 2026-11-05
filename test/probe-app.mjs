@@ -702,6 +702,60 @@ try {
       JSON.stringify(cmpItems));
     await closeTop();
   }
+
+  /* ---- K. 点文末空白：只把光标送回文末，不许一直加行 ----
+     补一行本来是给「带边界的块」兜底的（代码块 / 公式块 / 表格 / 分割线：
+     块内没有可写的尾位）。以前无条件 insertEmptyAfter，于是在文末下方
+     随便点几次，文档就多出几个空行 —— 这个兜底变成了加行的入口。 */
+  {
+    const blocks = () => ev(`document.querySelectorAll('.wysiwyg > .w-block').length`);
+    /* 真鼠标：位置按「最后一块下方」算，和用户看到的那片空白一致 */
+    const clickBlank = async () => {
+      const p = await ev(`(() => {
+        const root = document.querySelector('.wysiwyg');
+        const last = root.lastElementChild;
+        const rr = root.getBoundingClientRect();
+        const lb = last ? last.getBoundingClientRect().bottom : rr.top;
+        return { x: Math.round(rr.left + 24), y: Math.round(Math.min(lb + 30, rr.bottom - 8)) };
+      })()`);
+      await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: p.x, y: p.y, button: 'left', clickCount: 1 });
+      await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: p.x, y: p.y, button: 'left', clickCount: 1 });
+      await sleep(220);
+      return p;
+    };
+
+    await ev(`window.__snp.newTab('blank-click.md', '第一段文字。\\n\\n第二段文字。', null)`);
+    await sleep(400);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(600);
+    await ev(`(() => { const b = document.getElementById('findClose'); if (b && !document.getElementById('findbar').classList.contains('hidden')) b.click(); })()`);
+    const p1 = await clickBlank();
+    const n1 = await blocks();
+    await clickBlank();
+    await clickBlank();
+    const n3 = await blocks();
+    ok('段落垫底：点文末空白不加行', n1 === 2 && n3 === 2, `${JSON.stringify(p1)} → ${n1} / 三次后 ${n3}`);
+    /* 光标要真的落在文末那一块里，否则「没加行」可能是因为点空了没反应 */
+    const caretTail = await ev(`(() => {
+      const root = document.querySelector('.wysiwyg');
+      const a = window.getSelection().anchorNode;
+      const b = a && (a.nodeType === 3 ? a.parentElement : a);
+      return !!(b && b.closest && b.closest('.w-block') === root.lastElementChild);
+    })()`);
+    ok('段落垫底：点文末空白光标落回末段', caretTail === true);
+
+    /* 代码块垫底才补一行，而且只补一次：补出来的空段落就是新的末块 */
+    await ev(`window.__snp.newTab('blank-code.md', '\`\`\`js\\nconst a = 1;\\n\`\`\`', null)`);
+    await sleep(400);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(600);
+    await clickBlank();
+    const c1 = await blocks();
+    await clickBlank();
+    await clickBlank();
+    const c3 = await blocks();
+    ok('代码块垫底：点文末空白补一行且只补一次', c1 === 2 && c3 === 2, `${c1} / 三次后 ${c3}`);
+  }
 } catch (e) {
   ok('探针执行完成', false, e.message);
 } finally {

@@ -4084,9 +4084,9 @@ export class WysiwygEditor {
       this.flush();
       return;
     }
-    // 点正文空白：落在最后一个块下方（指示线区域）= 插入一个空段落当新行；
-    // 落在块旁（块没占满行宽）= 聚焦到最后一个块。最后一块若是代码/表格/
-    // 公式/分割线，光标放进里面也没法打字 —— 在它下方开个空段落当落脚点
+    // 点正文空白：把光标送回文末能打字的地方。以前这里只要点在最后一块
+    // 下方就无条件 insertEmptyAfter —— 于是每点一次空白就多一个空行，
+    // 越点越长；而这个兜底本来只为「块后光标出不去」存在，不该成为加行的入口。
     if (e.target === this.root) {
       /* 再确认一次「这一下真的点在空白上」：公共祖先就是 root 只说明
          「按下点与松开点不在同一个块里」，不代表点在块外的空白处。
@@ -4096,33 +4096,39 @@ export class WysiwygEditor {
       this.root.focus();
       const last = this.root.lastElementChild;
       if (!last) return;
-      const lastRect = last.getBoundingClientRect();
-      if (e.clientY > lastRect.bottom + 2) {
-        this.hideInsertLine();
-        const p = this.insertEmptyAfter(last);
-        this.placeCaretStart(p);
-        this.flush();
-        return;
-      }
-      const lt = last.dataset.type;
-      if (lt === 'code' || lt === 'table' || lt === 'math' || lt === 'hr') {
-        const p = this.insertEmptyAfter(last);
-        this.placeCaretStart(p);
-        this.flush();
-      } else {
-        this.placeCaretEnd(last);
-      }
+      this.hideInsertLine();
+      /* 末块本身能落脚（段落 / 标题 / 引用末行 / 列表末项 / 那个空段落），
+         光标进去就够；只有代码块、公式块、表格、分割线把光标包在结构里，
+         块内没有可写的尾位，才需要给它垫一行。补过一次之后那个空段落
+         就是末块，再点空白只会聚焦它，不会继续长。 */
+      if (!this.needsLineBelow(last)) { this.placeCaretEnd(last); return; }
+      const p = this.insertEmptyAfter(last);
+      this.placeCaretStart(p);
+      this.flush();
     }
   }
 
+  /**
+   * 这一块下面要不要垫一行才能站人。代码块 / 公式块 / 表格 / 分割线把光标
+   * 包在自己的结构里（表格还得进格子、分割线连光标位都没有），点在它们下方
+   * 的空白上也没有可写的位置 —— 只有这几种块垫底时才补一个空段落。
+   *
+   * 引用与列表的末行本身就是可写位置，段落和标题更不用说：它们垫底时
+   * 点空白只是把光标送回去，不再顺手加行。
+   */
+  needsLineBelow(block) {
+    const type = block && block.dataset && block.dataset.type;
+    return type === 'code' || type === 'math' || type === 'table' || type === 'hr';
+  }
+
   /* ---------------- 块尾插入指示线 ---------------- */
-  /* 鼠标在最后一个块下方的空白里移动时，显示一条插入位置线；
-     点击即在该处插入空段落。对所有块类型一致 —— 不用先想想
-     「这块能不能点进去」 */
+  /* 只在「点了真的会多一行」的时候亮：末块是代码块 / 公式块 / 表格 / 分割线。
+     别的块垫底时点空白只是把光标送回去（见 needsLineBelow），
+     亮线会骗人 —— 用户会以为点一下能加行，点了却没有。 */
   hoverInsertLine(e) {
     const ind = this.insertLine;
     const last = this.root.lastElementChild;
-    if (!last) { this.hideInsertLine(); return; }
+    if (!last || !this.needsLineBelow(last)) { this.hideInsertLine(); return; }
     const lastRect = last.getBoundingClientRect();
     if (e.clientY <= lastRect.bottom + 2) { this.hideInsertLine(); return; }
     const rootRect = this.root.getBoundingClientRect();
