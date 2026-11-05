@@ -86,6 +86,7 @@ const el = {
  * 全应用共用一个实例（和原来的 textarea 一样），切标签时换内容。
  */
 const plain = new PlainEditor(el.editor, {
+  wrap: settings.wrap !== false,
   onChange: () => onEditorInput(),
   onCursor: () => updateCursorPos(),
   onScroll: () => scheduleOutlineSync(),
@@ -2701,6 +2702,17 @@ function applyReadWidth() {
   document.documentElement.style.setProperty('--rw', w + 'px');
 }
 
+/* 行显示模式（自动换行 / 不换行）。
+   一条全局偏好、三个视图共用：编辑区是 CodeMirror 的 Compartment，预览与
+   所见即所得靠 body[data-nowrap] 的 CSS（换行是浏览器默认，不换行才要额外声明）。
+   用 toggleAttribute 而不是写 dataset.nowrap=''：空串属性同样会被 [data-nowrap]
+   匹配，等于「开着也在不换行」。 */
+function applyWrap() {
+  const on = settings.wrap !== false;
+  document.body.toggleAttribute('data-nowrap', !on);
+  plain.setWrap(on);
+}
+
 function gotoLinePrompt() {
   const t = activeTab();
   if (!t) return;
@@ -3025,6 +3037,18 @@ const commands = {
   toggleLayout: () => setLayout(settings.layout === 'split' ? 'single' : 'split'),
   layoutSingle: () => setLayout('single'),
   layoutSplit: () => setLayout('split'),
+  /* 换行组：三个视图共用一个设置（见 applyWrap）。
+     从菜单/右键进来时焦点在各处，setWrap 只改偏好与 DOM，不碰焦点。 */
+  wrapSoft: () => commands.setWrap(true),
+  wrapNone: () => commands.setWrap(false),
+  setWrap: (on) => {
+    const v = on !== false;
+    if ((settings.wrap !== false) === v) return;
+    settings.wrap = v;
+    saveSettings();
+    applyWrap();
+    toast(v ? tt('长行折到下一行显示') : tt('长行不折行，横向滚动查看'));
+  },
   toggleOutline: () => {
     settings.outlineVisible = !settings.outlineVisible;
     saveSettings();
@@ -3244,6 +3268,11 @@ const menuTree = () => [
       { sep: true },
       { id: 'layoutSingle', label: tt('单栏'), kbd: 'Ctrl+Shift+L', checked: () => settings.layout === 'single' },
       { id: 'layoutSplit', label: tt('双栏'), checked: () => settings.layout === 'split' },
+      { sep: true },
+      /* 行显示模式：换行 / 不换行是一组单选。它对三种模式同时生效，
+         所以放在「视图」而不是某个具体视图的设置里 */
+      { id: 'wrapSoft', label: tt('自动换行'), checked: () => settings.wrap !== false },
+      { id: 'wrapNone', label: tt('不换行'), checked: () => settings.wrap === false },
       { sep: true },
       { id: 'toggleOutline', label: tt('显示大纲'), kbd: 'Ctrl+Shift+O', checked: () => settings.outlineVisible },
       { id: 'toggleToolbar', label: tt('显示快捷按钮'), checked: () => settings.showToolbar !== false },
@@ -3696,8 +3725,37 @@ function bindEvents() {
       { sep: true },
       { label: tt('转大写'), action: commands.upper },
       { label: tt('转小写'), action: commands.lower },
+      { sep: true },
+      { lead: tt('换行'), row: [
+        { label: tt('自动换行'), hint: tt('长行折到下一行显示'), checked: () => settings.wrap !== false, action: () => commands.setWrap(true) },
+        { label: tt('不换行'), hint: tt('长行不折行，横向滚动查看'), checked: () => settings.wrap === false, action: () => commands.setWrap(false) },
+      ] },
     ]);
   });
+  /* 预览区右键：只读，所以不摆格式动作 —— 复制 / 全选 / 换行三件事。
+     换行这一组和编辑区、所见即所得完全同一份实现，改哪儿都跟着变，
+     用户在哪一面发现「这行太长」都能就地切掉。 */
+  el.preview.addEventListener('contextmenu', (e) => {
+    if (!activeTab()) return;
+    e.preventDefault();
+    const hasSel = !!String(window.getSelection() || '');
+    contextMenu(e.clientX, e.clientY, [
+      { label: tt('复制'), shortcut: 'Ctrl+C', disabled: !hasSel, action: () => { try { document.execCommand('copy'); } catch {} } },
+      { label: tt('全选'), shortcut: 'Ctrl+A', action: () => {
+        const r = document.createRange();
+        r.selectNodeContents(el.preview);
+        const s = window.getSelection();
+        s.removeAllRanges();
+        s.addRange(r);
+      } },
+      { sep: true },
+      { lead: tt('换行'), row: [
+        { label: tt('自动换行'), hint: tt('长行折到下一行显示'), checked: () => settings.wrap !== false, action: () => commands.setWrap(true) },
+        { label: tt('不换行'), hint: tt('长行不折行，横向滚动查看'), checked: () => settings.wrap === false, action: () => commands.setWrap(false) },
+      ] },
+    ]);
+  });
+
   document.addEventListener('contextmenu', (e) => {
     if (e.target.closest('.wysiwyg')) {
       e.preventDefault();
@@ -3775,6 +3833,12 @@ function bindEvents() {
         { sep: true },
         { label: tt('全选'), shortcut: 'Ctrl+A', action: () => document.execCommand('selectAll') },
         { label: tt('查找替换…'), shortcut: 'Ctrl+F', action: () => openFind() },
+        { sep: true },
+        /* 和编辑区右键同一组：所见即所得里长表格行、长段落也需要它 */
+        { lead: tt('换行'), row: [
+          { label: tt('自动换行'), hint: tt('长行折到下一行显示'), checked: () => settings.wrap !== false, action: () => commands.setWrap(true) },
+          { label: tt('不换行'), hint: tt('长行不折行，横向滚动查看'), checked: () => settings.wrap === false, action: () => commands.setWrap(false) },
+        ] },
       );
       contextMenu(e.clientX, e.clientY, items);
     }
@@ -3839,6 +3903,7 @@ function bindEvents() {
 
   applyFont();
   applyTheme();
+  applyWrap();
   document.getElementById('toolbar').classList.toggle('hidden', settings.showToolbar === false);
 }
 

@@ -162,7 +162,8 @@ if (!m) {
 }
 
 ok('分组标题是 文字 / 段落 / 表格', JSON.stringify(m.heads) === JSON.stringify(['文字', '段落', '表格']), JSON.stringify(m.heads));
-ok('表格组是 插入 / 对齐 / 删除 三行小按钮', JSON.stringify(m.leads) === JSON.stringify(['插入', '对齐', '删除']), JSON.stringify(m.leads));
+ok('表格组是 插入 / 对齐 / 删除 三行小按钮，末尾跟一行换行开关',
+  JSON.stringify(m.leads) === JSON.stringify(['插入', '对齐', '删除', '换行']), JSON.stringify(m.leads));
 ok('删除行三个按钮带 danger 样式', m.dangerPills === 3, `${m.dangerPills} 个`);
 ok('底部保留 全选 / 查找替换', m.items === 2, `${m.items} 项`);
 ok('菜单位过组织（高度 < 460，不再是竖长条）', m.h < 460, `${Math.round(m.h)}px`);

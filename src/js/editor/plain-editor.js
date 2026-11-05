@@ -77,6 +77,10 @@ export class PlainEditor {
 
     this.langComp = new Compartment();
     this.readOnlyComp = new Compartment();
+    /* 自动换行是 Compartment：切换时不重建 state，撤销历史和选区都还在。
+       一个 Compartment 只能装「一个扩展」或扩展数组，所以「不换行」时塞空数组。 */
+    this.wrapComp = new Compartment();
+    this.wrap = opts.wrap !== false;
 
     const state = EditorState.create({
       doc: opts.value || '',
@@ -110,7 +114,9 @@ export class PlainEditor {
       /* 打 ( 自动补 )：写代码和写 Markdown 链接都用得上。
          光标放在一对括号中间时，再打右括号是「跳过去」而不是插入一个 */
       closeBrackets(),
-      EditorView.lineWrapping,          // 记事本的默认行为：长行折着显示
+      /* 长行折着显示是记事本的默认行为；关掉之后长行横向滚（见 setWrap）。
+         放在 Compartment 里而不是写死，切换时撤销历史和选区都不会丢 */
+      this.wrapComp.of(this.wrap ? EditorView.lineWrapping : []),
       keymap.of([...closeBracketsKeymap, ...defaultKeymap, ...historyKeymap, ...foldKeymap, indentWithTab]),
       cmTheme,
       syntaxHighlighting(cmHighlight),
@@ -279,6 +285,15 @@ export class PlainEditor {
     if (v === this.readOnly) return;
     this.readOnly = v;
     this.view.dispatch({ effects: this.readOnlyComp.reconfigure(this._roExt(v)) });
+  }
+
+  /** 自动换行开关。横向滚动的状态由 CM6 自己管：关掉之后 scrollDOM 会
+      出现横向滚动条，`lineWrapping` 一加回来宽度立刻回收。 */
+  setWrap(on) {
+    const v = on !== false;
+    if (v === this.wrap) return;
+    this.wrap = v;
+    this.view.dispatch({ effects: this.wrapComp.reconfigure(v ? EditorView.lineWrapping : []) });
   }
 
   /* ---------------- 编辑命令 ---------------- */

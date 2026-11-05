@@ -18,6 +18,11 @@ export const DEFAULTS = {
   lang: 'auto',         // auto = 跟随系统；其余为 zh-CN / zh-TW / en / ja / ko / fr / de / es / pt
   fontSize: 13.5,
   readWidth: 800,       // 正文栏宽（px）：宽窗口下正文居中的最大宽度，见 applyReadWidth()
+  /* 行显示模式：true = 自动换行（soft wrap），false = 不换行、横向滚动。
+     三种模式（编辑 / 预览 / 所见即所得）和对比窗口共用这一个开关，
+     改一处全跟着变 —— 这是「记事本」级别的全局偏好，不是某个视图的设置。
+     编辑区（CodeMirror）走 Compartment 重配，其余靠 body[data-nowrap] 的 CSS。 */
+  wrap: true,
   layout: 'single',     // single | split（2026-10-25 起默认单栏）
   outlineVisible: true,
   showToolbar: true,

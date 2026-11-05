@@ -1456,3 +1456,35 @@ body[data-theme="dark"] .ctx-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 2
 .wysiwyg .w-text:empty::after { content: ""; }
 .wysiwyg > .w-p:last-child .w-text,
 .wysiwyg .w-h .w-text { }
+
+/* ================= 行显示模式：自动换行 / 不换行 =================
+   body[data-nowrap] 由 app.js 的 applyWrap() 开关（菜单「视图」、三处右键）。
+   编辑区不走这里 —— CodeMirror 用 lineWrapping Compartment 自己管；这里管的是
+   预览、所见即所得、纯文本预览三个面。
+
+   换行是浏览器的默认行为，所以只写「不换行」这一边：少一半规则，也就少一半
+   「关掉之后忘了改回来」的机会。
+
+   用 nowrap 而不是 pre：预览和所见即所得里，标签之间的换行与缩进属于 HTML
+   结构，不该被 white-space: pre 显示成空白行。nowrap 只关掉折行，不动内容。 */
+body[data-nowrap] .preview-body { overflow-x: auto; white-space: nowrap; }
+/* 正文默认居中收窄到 --read-measure；不换行时长行会超出它，那层限制必须让开。
+   margin-inline 一起归零，否则内容比栏宽时仍停在中间的窄条里 */
+body[data-nowrap] .preview-body > *,
+body[data-nowrap] .preview-body > .md { max-width: none; margin-inline: 0; }
+/* 所见即所得：左右留白退回最小档，别让「居中收窄」把长行挤在一半宽里 */
+body[data-nowrap] .wysiwyg {
+  overflow-x: auto; white-space: nowrap;
+  padding-left: var(--read-gutter);
+  padding-right: var(--read-gutter);
+}
+/* 自己声明过 white-space 的块不会继承容器，逐个改回不折行的那一档 */
+body[data-nowrap] .wysiwyg .w-code,
+body[data-nowrap] .wysiwyg .w-mathblock,
+body[data-nowrap] .plainview { white-space: pre; }
+
+/* 自动换行时，超长的「词」也要折：一长串没有空格的 URL / ID / 日志行，
+   在 word-break: normal 下会整段溢出，看起来跟没开换行一样。
+   不换行的那一侧不需要它 —— 那儿本来就靠横向滚动。 */
+body:not([data-nowrap]) .preview-body,
+body:not([data-nowrap]) .wysiwyg { overflow-wrap: break-word; }

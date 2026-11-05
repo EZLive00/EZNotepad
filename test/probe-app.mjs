@@ -43,6 +43,12 @@ const ev = (expr) => new Promise((res, rej) => {
 const out = [];
 const ok = (name, pass, extra = '') => out.push({ name, pass: !!pass, extra });
 const sleep = (ms) => ev(`new Promise(r => setTimeout(r, ${ms}))`);
+/* 需要真实鼠标事件的断言（右键菜单）走这个：合成事件测不到浏览器默认行为 */
+const send = (method, params) => new Promise((res, rej) => {
+  const id = ++seq;
+  pending.set(id, { res, rej });
+  ws.send(JSON.stringify({ id, method, params }));
+});
 
 try {
   /* 先把设置恢复成出厂值再刷新：真机上的 localStorage 是活的，
@@ -357,6 +363,96 @@ try {
     ok('点下拉条目能切过去',
       (await ev(`document.querySelector('.tab.active')?.title`)) === wantTitle, wantTitle);
     ok('切换后当前标签也在视野内', (await strip()).actIn === true);
+  }
+
+  /* ---- G. 行显示模式（自动换行 / 不换行）----
+     三种模式共用一个设置。换行是浏览器默认，所以真正要验的是「关掉之后
+     长行确实横向滚起来」以及「切回来能复原」—— 只改属性不改编辑器
+     （CodeMirror 走 Compartment）是最容易漏的一半。 */
+  {
+    const LONG = 'A'.repeat(400);
+    await ev(`window.__snp.newTab('wrap.md', ${JSON.stringify('# 长行\n\n' + LONG + '\n')}, null)`);
+    await sleep(300);
+    await ev(`window.__snp.commands.modeEdit()`);
+    await sleep(300);
+
+    const geo = () => ev(`(() => {
+      const cm = document.querySelector('#editor .cm-scroller');
+      const pv = document.getElementById('preview');
+      const wys = document.getElementById('wysiwyg');
+      const m = (el) => (el && el.offsetParent !== null)
+        ? { sw: el.scrollWidth, cw: el.clientWidth, ws: getComputedStyle(el).whiteSpace }
+        : null;
+      return {
+        nowrap: document.body.hasAttribute('data-nowrap'),
+        cm: m(cm), preview: m(pv), wys: m(wys),
+      };
+    })()`);
+
+    const d0 = await geo();
+    ok('默认是自动换行（body 上没有 data-nowrap）', d0.nowrap === false, JSON.stringify(d0.nowrap));
+    ok('编辑区默认不横向溢出：长行折着显示', !!d0.cm && d0.cm.sw <= d0.cm.cw + 1,
+      JSON.stringify(d0.cm));
+
+    await ev(`window.__snp.commands.wrapNone()`);
+    await sleep(700);
+    const d1 = await geo();
+    ok('切到不换行：编辑区能横向滚了', !!d1.cm && d1.cm.sw > d1.cm.cw + 200, JSON.stringify(d1.cm));
+    ok('切到不换行：body 上挂 data-nowrap', d1.nowrap === true);
+
+    /* 菜单里的勾选：状态是每次展开时求值的，不是建菜单那一刻定死的 */
+    await ev(`(() => { [...document.querySelectorAll('.am-btn')].find((b) => b.textContent.trim() === '视图')?.click(); })()`);
+    await sleep(200);
+    const menuWrap = await ev(`(() => {
+      const items = [...document.querySelectorAll('.appmenu .am-item')];
+      return items.filter((b) => /自动换行|不换行/.test(b.textContent))
+        .map((b) => ({ t: b.textContent.trim(), on: !!b.querySelector('.am-slot svg') }));
+    })()`);
+    ok('视图菜单里有换行两项，且当前勾在「不换行」',
+      menuWrap.length === 2 && menuWrap.some((x) => x.on && x.t === '不换行'), JSON.stringify(menuWrap));
+    await ev(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`);
+    await sleep(150);
+
+    /* 预览模式：不换行时长行撑开 body，横向滚 */
+    await ev(`window.__snp.commands.modePreview()`);
+    await sleep(500);
+    const d2 = await geo();
+    ok('预览模式不换行：正文横向滚', !!d2.preview && d2.preview.sw > d2.preview.cw + 200, JSON.stringify(d2.preview));
+    ok('预览模式不换行的 white-space 是 nowrap', !!d2.preview && d2.preview.ws === 'nowrap', d2.preview && d2.preview.ws);
+
+    /* 所见即所得：同一个开关 */
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(600);
+    const d3 = await geo();
+    ok('所见即所得不换行：正文横向滚', !!d3.wys && d3.wys.sw > d3.wys.cw + 200, JSON.stringify(d3.wys));
+
+    /* 编辑器右键里也有这一组（三种模式的右键入口都要在） */
+    await ev(`window.__snp.commands.modeEdit()`);
+    await sleep(400);
+    /* 坐标落在真正的一行文字上，而不是「编辑区容器里的某一点」：
+       上面那些小节可能还留着查找条，容器左上角那一下会打在它身上 */
+    const rc = await ev(`(() => {
+      const close = document.getElementById('findClose');
+      if (close && !document.getElementById('findbar').classList.contains('hidden')) close.click();
+      const line = document.querySelector('#editor .cm-line');
+      const b = (line || document.getElementById('editor')).getBoundingClientRect();
+      return { x: Math.round(b.left + 60), y: Math.round(b.top + Math.round(b.height / 2)) };
+    })()`);
+    await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: rc.x, y: rc.y, button: 'right', clickCount: 1 });
+    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: rc.x, y: rc.y, button: 'right', clickCount: 1 });
+    await sleep(180);
+    const ctx = await ev(`(() => {
+      const m = document.querySelector('.ctx-menu');
+      return m ? [...m.querySelectorAll('button')].map((b) => b.textContent.trim()) : [];
+    })()`);
+    ok('编辑区右键里有换行开关',
+      ctx.some((t) => t.includes('自动换行')) && ctx.some((t) => t.includes('不换行')), JSON.stringify(ctx));
+    await ev(`(() => { const m = document.querySelector('.ctx-menu'); if (m) m.remove(); })()`);
+
+    /* 复原：后面可能还有别的断言依赖默认值 */
+    await ev(`window.__snp.commands.wrapSoft()`);
+    await sleep(400);
+    ok('切回自动换行，连编辑器一起复原', (await geo()).nowrap === false);
   }
 } catch (e) {
   ok('探针执行完成', false, e.message);
