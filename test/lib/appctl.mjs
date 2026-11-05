@@ -112,12 +112,53 @@ export async function waitForMainPage(port, { timeout = 25000 } = {}) {
 }
 
 /**
+ * 点掉启动时的「恢复草稿」对话框。
+ *
+ * 探针的 WebView2 profile 是固定复用的（见上面的 PROBE_PROFILE），上一次跑
+ * 留下的未保存内容会让主窗口一启动就弹这个模态框。它不是可忽略的装饰：
+ * boot 会停在上面，`app.js` 里 `open-files` 的监听把推进来的路径先攒着
+ * （earlyOpen），要等对话框关掉才真正打开。表现是工具窗「在主窗口打开」
+ * 点了没反应 —— 而这条路径的大部分断言都会因此假红。
+ *
+ * 选「丢弃」而不是「恢复」：探针要的是干净起点，恢复出来的内容会把标签
+ * 数量和当前文件名一起改掉。
+ */
+async function dismissDraftPrompt(page, { timeout = 4000 } = {}) {
+  /* 就绪判据只看 window.__snp，它比草稿对话框挂得早 —— 先留一点时间让它弹出来 */
+  await sleep(400);
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    let state;
+    try {
+      state = await evalIn(page.webSocketDebuggerUrl, `(() => {
+        const ov = document.getElementById('dlgOverlay');
+        if (!ov || ov.classList.contains('hidden')) return 'none';
+        const btns = [...ov.querySelectorAll('button')];
+        if (!btns.length) return 'wait';
+        const b = btns.find((x) => /丢弃|Discard/i.test(x.textContent)) || btns[btns.length - 1];
+        b.click();
+        return 'dismissed';
+      })()`);
+    } catch { state = 'error'; }
+    if (state === 'none') return state;
+    if (state === 'dismissed') {
+      /* 关掉之后 boot 才会把攒下的路径真正打开，给这一段留出时间 */
+      await sleep(400);
+      return state;
+    }
+    await sleep(150);
+  }
+  return 'timeout';
+}
+
+/**
  * 端口上已经有应用就直接复用；否则起一个，并登记退出时收掉。
  * 探针末尾的 process.exit() 也会触发 exit 钩子，所以调用方不需要善后。
  */
 export async function ensureApp(port = Number(process.env.CDP_PORT || 9333), { timeout = 30000 } = {}) {
   if (await cdpReady(port)) {
-    await waitForMainPage(port, { timeout });
+    const page = await waitForMainPage(port, { timeout });
+    await dismissDraftPrompt(page);
     return { reused: true };
   }
 
@@ -140,7 +181,8 @@ export async function ensureApp(port = Number(process.env.CDP_PORT || 9333), { t
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
     if (await cdpReady(port)) {
-      await waitForMainPage(port, { timeout: Math.max(5000, deadline - Date.now()) });
+      const page = await waitForMainPage(port, { timeout: Math.max(5000, deadline - Date.now()) });
+      await dismissDraftPrompt(page);
       return { reused: false, pid: proc.pid };
     }
     await sleep(200);
