@@ -80,6 +80,21 @@ window.__run = () => {
   const R = [];
   const eq = (name, got, want) => R.push({ name, ok: String(got) === String(want), got: String(got), want: String(want) });
   const has = (name, ok) => R.push({ name, ok: !!ok, got: String(!!ok), want: 'true' });
+  /* 把光标摆到「整个块的最后一个字符之后」：表格取最后一格，代码块取末行。
+     表格的 textContent 是各格拼起来的，restoreCaret 的块内偏移量落不进格子，
+     所以这里直接按 DOM 摆 */
+  const caretEndOf = (sel) => {
+    const all = [...root.querySelectorAll(sel)];
+    const el = all[all.length - 1];
+    if (!el) return;
+    const r = document.createRange();
+    r.selectNodeContents(el);
+    r.collapse(false);
+    const s = getSelection();
+    s.removeAllRanges();
+    s.addRange(r);
+    root.focus();
+  };
 
   // 增量序列化：flush 的结果必须与全量现算完全一致（缓存脏块判定不能漏）
   T.reset('# 甲\n\n段落 **加粗** 与 `代码`。\n\n- 列表项\n- 第二项\n\n> 引用\n\n| A | B |\n| --- | --- |\n| 1 | 2 |');
@@ -549,6 +564,43 @@ window.__run = () => {
   }
   T.key('ArrowDown');
   eq('表格末格方向键出表', T.blocks().join(','), 'table=1,p=');
+
+  /* 19e1. → 走到表格右下角也是出表 —— 「右边没有更靠后的位置」和
+     「下面没有」是同一件事，不能一个出得去一个原地打转 */
+  T.reset('| a | b |\n|---|---|\n| 1 | 2 |');
+  caretEndOf('.w-table td');
+  T.key('ArrowRight');
+  eq('表格末格 → 也出表', T.blocks().join(','), 'table=1,p=');
+
+  /* 19e2. 后面已经空着一行：两个键都复用那一行。
+     旧实现无条件 insertEmptyAfter，按一下多一个空行，文档末尾越按越长 */
+  T.reset('| a | b |\n|---|---|\n| 1 | 2 |');
+  caretEndOf('.w-table td');
+  T.key('ArrowDown');
+  caretEndOf('.w-table td');
+  T.key('ArrowDown');
+  eq('下面已经空了，↓ 不再加行', T.blocks().join(','), 'table=1,p=');
+  caretEndOf('.w-table td');
+  T.key('ArrowRight');
+  eq('下面已经空了，→ 也不加行', T.blocks().join(','), 'table=1,p=');
+
+  /* 19e3. 后面跟着正文：落进那一段开头，不插空行把它顶下去 */
+  T.reset('| a | b |\n|---|---|\n| 1 | 2 |\n\n后一段');
+  caretEndOf('.w-table td');
+  T.key('ArrowDown');
+  eq('表格后面有正文时 ↓ 落进那一段', T.blocks().join(','), 'table=1,p=后一段');
+
+  /* 19e4. 代码块是同一类「带范围的块」：末行 → / ↓ 都出块，后面有空行则复用 */
+  T.reset(['```', '甲', '乙', '```'].join('\n'));
+  caretEndOf('.w-code');
+  T.key('ArrowRight');
+  eq('代码块末行 → 出块', T.blocks().length, 2);
+  caretEndOf('.w-code');
+  T.key('ArrowRight');
+  eq('代码块后面已空一行时 → 不再加行', T.blocks().length, 2);
+  caretEndOf('.w-code');
+  T.key('ArrowDown');
+  eq('代码块后面已空一行时 ↓ 不再加行', T.blocks().length, 2);
 
   // 19f. 表格空行回车 = 退出表格（双击模式：空行上是第二下，出表开段落）
   T.reset('| a | b |\n|---|---|\n|  |  |');

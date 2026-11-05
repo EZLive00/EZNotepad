@@ -1203,9 +1203,11 @@ try {
     dragged.top > 0 && dragged.lines > 40, JSON.stringify({ dragDom0, dragged }));
   ok('视口外的行会被补进 DOM（否则选区到边缘就断）',
     dragged.dom > dragDom0, `${dragDom0} → ${dragged.dom}`);
+  /* 判「没散」而不是「一字不差」：dragTick 每几十毫秒补一屏，采样 dragged
+     与松手之间还隔着一次 IPC 往返，边界上多出几行是正常的；真散了两行都不剩 */
+  const afterDrag = await cmp.ev(`getSelection().toString().split('\\n').filter(Boolean).length`);
   ok('松手后拖出来的选区还在（不会一放就散）',
-    (await cmp.ev(`getSelection().toString().split('\\n').filter(Boolean).length`)) === dragged.lines,
-    String(dragged.lines));
+    afterDrag > 40 && afterDrag >= dragged.lines, `${dragged.lines} → ${afterDrag}`);
 
   /* 这一段选区跨了好几个编辑宿主：浏览器连删都删不了，得自己落到模型上 */
   await pressKey(8, 'Backspace', 'Backspace');

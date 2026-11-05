@@ -536,6 +536,65 @@ try {
     const saved = await ev(`window.__snp.getEditorText()`);
     ok('粘贴内容进了代码块（没有跑到块外变成段落）',
       saved === '前一段\n\n```json\n{\n  "b": 2,\n  "c": [1, 2]\n}\n```\n\n后一段\n', JSON.stringify(saved));
+
+    /* ---- I. 带范围的块末尾：↓ / → 都要能出块，且不重复开空行 ----
+       表格和代码块内部没有「更靠后的光标位」，走到头就得走出去；而出去要有地方站，
+       老实现无条件插一个空段落，于是「下面本来就空着」时按一下多一行、越按越长。 */
+    const TB = ['| 甲 | 乙 |', '| --- | --- |', '| 丙 | 丁 |', ''].join('\n');
+    const bl = () => ev(`(() => [...document.querySelectorAll('.wysiwyg > .w-block')].map((b) => (b.dataset.type || 'p') + ':' + (b.textContent || '').replace(/\\u200b/g, '')))()`);
+    const caretEndOf = (sel) => ev(`(() => {
+      const all = [...document.querySelectorAll(${JSON.stringify(sel)})];
+      const el = all[all.length - 1];
+      if (!el) return;
+      const r = document.createRange(); r.selectNodeContents(el); r.collapse(false);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      document.querySelector('.wysiwyg').focus();
+    })()`);
+    const arrow = async (key, code, vk) => {
+      await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key, code, windowsVirtualKeyCode: vk });
+      await send('Input.dispatchKeyEvent', { type: 'keyUp', key, code, windowsVirtualKeyCode: vk });
+      await sleep(320);
+    };
+    const down = () => arrow('ArrowDown', 'ArrowDown', 40);
+    const right = () => arrow('ArrowRight', 'ArrowRight', 39);
+
+    await ev(`window.__snp.newTab('dir.md', ${JSON.stringify(TB)}, null)`);
+    await sleep(400);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(500);
+
+    await caretEndOf('.w-table td');
+    await down();
+    ok('表格末格 ↓ 在表格后开一行', (await bl()).length === 2, JSON.stringify(await bl()));
+    await caretEndOf('.w-table td');
+    await down();
+    ok('表格下面已经空着一行，再按 ↓ 不再加行', (await bl()).length === 2, JSON.stringify(await bl()));
+    await caretEndOf('.w-table td');
+    await right();
+    ok('表格末格 → 也出表，不多开一行', (await bl()).length === 2, JSON.stringify(await bl()));
+
+    /* 表格后面已有正文：落进那一段开头，而不是插一个空行把它顶下去 */
+    await ev(`window.__snp.newTab('dir2.md', ${JSON.stringify(TB + '\n后一段')}, null)`);
+    await sleep(400);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(500);
+    await caretEndOf('.w-table td');
+    await down();
+    ok('表格后面有正文时 ↓ 落进那一段', JSON.stringify(await bl()) === '["table:甲乙丙丁","p:后一段"]', JSON.stringify(await bl()));
+    ok('落进正文没有改动文档', (await ev(`window.__snp.getEditorText()`)) === TB + '\n后一段', JSON.stringify(await ev(`window.__snp.getEditorText()`)));
+
+    /* 代码块是同一类：末行 → 出块，后面空着就复用 */
+    const CB2 = ['```', '甲', '乙', '```', ''].join('\n');
+    await ev(`window.__snp.newTab('dir3.md', ${JSON.stringify(CB2)}, null)`);
+    await sleep(400);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(500);
+    await caretEndOf('.w-code');
+    await right();
+    ok('代码块末行 → 出块', (await bl()).length === 2, JSON.stringify(await bl()));
+    await caretEndOf('.w-code');
+    await right();
+    ok('代码块后面已经空着一行，→ 不再加行', (await bl()).length === 2, JSON.stringify(await bl()));
   }
 } catch (e) {
   ok('探针执行完成', false, e.message);

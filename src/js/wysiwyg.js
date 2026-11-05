@@ -2673,7 +2673,10 @@ export class WysiwygEditor {
     if (e.key === 'Enter') return this.handleEnter(e, block, cell);
     if (e.key === 'Backspace') return this.handleBackspace(e, block, cell);
     if (e.key === 'Delete') return this.handleDelete(e, block, cell);
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') return this.handleArrow(e, block, cell);
+    /* → 也要过这里：表格右下角和代码块末行没有它就走不出去 */
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'ArrowRight') {
+      return this.handleArrow(e, block, cell);
+    }
   }
 
   handleTab(e, block, cell) {
@@ -2885,37 +2888,53 @@ export class WysiwygEditor {
 
   /**
    * 表格 / 代码块边缘的方向键逃生口：
-   * 最后一格末尾 ↓ 跳到表格下方，第一格开头 ↑ 跳到上方，代码块底 ↓ 出块。
+   * 最后一格末尾 ↓ 或 → 走出去，代码块末行 ↓ 或 → 出块。
    * 没有这条路的话，这些块只能靠鼠标点击才能离开。
+   *
+   * → 和 ↓ 在这里做同一件事，因为「块内已经没有更靠后的位置了」——
+   * 往右走到头的下一步就是出块，用户不会预期它反而在原地打转。
    */
   handleArrow(e, block, cell) {
+    const exit = e.key === 'ArrowDown' || e.key === 'ArrowRight';
     if (cell) {
+      if (!exit) return;
       const info = this.tableInfo();
       if (!info) return;
       const row = cell.parentElement;
-      if (e.key === 'ArrowDown'
-        && info.rowIdx === info.rows.length - 1
-        && info.colIdx === row.children.length - 1
-        && this.isCaretAtEnd(cell)) {
-        e.preventDefault();
-        const p = this.insertEmptyAfter(info.block);
-        this.placeCaretStart(p);
-        this.flush();
-      }
+      if (info.rowIdx !== info.rows.length - 1) return;
+      if (info.colIdx !== row.children.length - 1) return;
+      if (!this.isCaretAtEnd(cell)) return;
+      e.preventDefault();
+      this.caretAfterBlock(info.block);
       return;
     }
-    if (e.key !== 'ArrowDown' || !block) return;
+    if (!exit || !block) return;
     const type = block.dataset.type;
     if (type !== 'code' && type !== 'math') return;
     if (!this.isCaretAtEnd(block)) return;
     e.preventDefault();
+    this.caretAfterBlock(block);
+  }
+
+  /**
+   * 从「带范围的块」里走出来的落点。表格 / 代码块 / 公式块内部不长光标位，
+   * 出块就得在外面找个地方站；找法按顺序只取第一个成立的：
+   *
+   *   1. 紧邻的下一块 —— 空段落就停进去，别的块就停在它开头；
+   *   2. 后面什么都没有，才新开一个空段落。
+   *
+   * 第 1 条里「空段落就停进去」是关键：以前不管三七二十一先 insertEmptyAfter，
+   * 于是表格后面已经有一个空行时按 ↓ 又冒一个，文档末尾越按越长。
+   */
+  caretAfterBlock(block) {
     const next = block.nextElementSibling;
-    if (next) this.placeCaretStart(next);
-    else {
-      const p = this.insertEmptyAfter(block);
-      this.placeCaretStart(p);
-      this.flush();
+    if (next) {
+      this.placeCaretStart(next);
+      return;
     }
+    const p = this.insertEmptyAfter(block);
+    this.placeCaretStart(p);
+    this.flush();
   }
 
   /* ---------------- 结构操作 ---------------- */
