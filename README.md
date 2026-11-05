@@ -169,7 +169,7 @@ Measured locally (Windows 11, x64, release build):
 | Opening 10.8 MB / 77,866 blocks | **1.14 s**, ~48 blocks in the DOM, no freeze |
 | Typing / scrolling / undo in that document | p50 **0.3 ms** / ~**17 ms** per frame / **37 ms** per step |
 | CodeMirror 6, plain text | 50k lines in **49 ms**, 100k lines in **20 ms** |
-| Memory / installer | ~**170 MB** on a clean start / **2.63 MB** |
+| Memory / installer | ~**170 MB** on a clean start / **4.58 MB** |
 
 Huge Markdown files use viewport rendering: only the visible blocks exist in the DOM, everything else is a record.
 Undo snapshots are record arrays, so a keystroke never copies the whole document.

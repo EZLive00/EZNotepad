@@ -171,7 +171,7 @@ Medido en local (Windows 11, x64, compilación release):
 | Abrir 10,8 MB / 77.866 bloques | **1,14 s**, ~48 bloques en el DOM, sin congelarse |
 | Escribir / desplazar / deshacer en ese documento | p50 **0,3 ms** / ~**17 ms** por fotograma / **37 ms** por paso |
 | CodeMirror 6, texto plano | 50 k líneas en **49 ms**, 100 k en **20 ms** |
-| Memoria / instalador | ~**170 MB** en arranque limpio / **2,63 MB** |
+| Memoria / instalador | ~**170 MB** en arranque limpio / **4,58 MB** |
 
 Los Markdown enormes usan renderizado por ventana: solo los bloques visibles están en el DOM, el resto son registros.
 Las instantáneas de deshacer son esas matrices de registros, así que una tecla nunca copia el documento entero.

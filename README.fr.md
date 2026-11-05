@@ -171,7 +171,7 @@ Mesuré en local (Windows 11, x64, build release) :
 | Ouverture de 10,8 Mo / 77 866 blocs | **1,14 s**, ~48 blocs dans le DOM, aucun gel |
 | Frappe / défilement / annulation dans ce document | p50 **0,3 ms** / ~**17 ms** par image / **37 ms** par pas |
 | CodeMirror 6, texte brut | 50 k lignes en **49 ms**, 100 k en **20 ms** |
-| Mémoire / installateur | ~**170 Mo** au démarrage à froid / **2,63 Mo** |
+| Mémoire / installateur | ~**170 Mo** au démarrage à froid / **4,58 Mo** |
 
 Les gros fichiers Markdown utilisent le rendu par fenêtre : seuls les blocs visibles existent dans le DOM, le reste est
 une liste d'enregistrements. Les instantanés d'annulation sont ces tableaux, donc une touche ne copie jamais tout le document.

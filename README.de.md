@@ -169,7 +169,7 @@ Lokal gemessen (Windows 11, x64, Release-Build):
 | 10,8 MB / 77.866 Blöcke öffnen | **1,14 s**, ~48 Blöcke im DOM, kein Einfrieren |
 | Tippen / Scrollen / Rückgängig in diesem Dokument | p50 **0,3 ms** / ~**17 ms** pro Frame / **37 ms** pro Schritt |
 | CodeMirror 6, reiner Text | 50.000 Zeilen in **49 ms**, 100.000 in **20 ms** |
-| Speicher / Installer | ~**170 MB** im Kaltstart / **2,63 MB** |
+| Speicher / Installer | ~**170 MB** im Kaltstart / **4,58 MB** |
 
 Riesige Markdown-Dateien laufen über Viewport-Rendering: nur sichtbare Blöcke liegen im DOM, alles andere sind Datensätze.
 Rückgängig-Schnappschüsse sind diese Datensatz-Arrays, ein Tastendruck kopiert also nie das ganze Dokument.

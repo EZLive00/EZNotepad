@@ -171,7 +171,7 @@ Medido localmente (Windows 11, x64, build release):
 | Abrir 10,8 MB / 77.866 blocos | **1,14 s**, ~48 blocos no DOM, sem travar |
 | Digitar / rolar / desfazer nesse documento | p50 **0,3 ms** / ~**17 ms** por quadro / **37 ms** por passo |
 | CodeMirror 6, texto simples | 50 mil linhas em **49 ms**, 100 mil em **20 ms** |
-| Memória / instalador | ~**170 MB** na partida limpa / **2,63 MB** |
+| Memória / instalador | ~**170 MB** na partida limpa / **4,58 MB** |
 
 Markdown gigantes usam renderização por janela: só os blocos visíveis existem no DOM, o resto são registros.
 Os instantâneos de desfazer são essas matrizes de registros, então uma tecla nunca copia o documento inteiro.
