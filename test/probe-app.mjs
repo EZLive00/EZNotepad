@@ -454,6 +454,89 @@ try {
     await sleep(400);
     ok('切回自动换行，连编辑器一起复原', (await geo()).nowrap === false);
   }
+
+  /* ---- H. 跨块拖选 与 代码块内粘贴 ----
+     两件事都只在真机上才看得见：
+     ①跨块拖选松手后浏览器把 click 派发给「按下点与松开点的最近公共祖先」，
+       也就是编辑区根节点 —— 和「点了正文空白」完全是同一个事件形状；
+     ②代码块里粘贴多行，走的是 paste 事件 + 真实选区。
+     离线套件里用合成事件盖住了这两条，这里再按真鼠标 / 真粘贴走一遍。 */
+  {
+    const SRC = [
+      '第一段文字，用来拖选的起点。', '',
+      '第二段文字，中间应该被选中。', '',
+      '第三段文字，也应当被选中。', '',
+    ].join('\n');
+    await ev(`window.__snp.newTab('sel.md', ${JSON.stringify(SRC)}, null)`);
+    await sleep(400);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(600);
+    await ev(`(() => { const b = document.getElementById('findClose'); if (b && !document.getElementById('findbar').classList.contains('hidden')) b.click(); })()`);
+    await sleep(150);
+
+    const pts = await ev(`(() => [...document.querySelectorAll('.wysiwyg > .w-block')].map((b) => {
+      const t = b.querySelector('.w-text') || b;
+      const r = t.getBoundingClientRect();
+      return { x: Math.round(r.left + 20), y: Math.round(r.top + Math.round(r.height / 2)) };
+    }))()`);
+    const a = pts[0], z = pts[2];
+    await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: a.x, y: a.y, buttons: 0 });
+    await sleep(60);
+    await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: a.x, y: a.y, button: 'left', clickCount: 1, buttons: 1 });
+    for (let i = 1; i <= 6; i++) {
+      const y = Math.round(a.y + ((z.y - a.y) * i) / 6);
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: a.x, y, button: 'left', buttons: 1 });
+      await sleep(40);
+    }
+    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: z.x, y: z.y, button: 'left', clickCount: 1, buttons: 0 });
+    await sleep(300);
+
+    const sel = await ev(`(() => {
+      const s = getSelection(); const r = s.rangeCount ? s.getRangeAt(0) : null;
+      const bl = [...document.querySelectorAll('.wysiwyg > .w-block')];
+      return { collapsed: s.isCollapsed, len: String(s).length, spanning: r ? bl.filter((b) => r.intersectsNode(b)).length : 0, blocks: bl.length };
+    })()`);
+    ok('跨块拖选：松手后选区还在', sel.collapsed === false && sel.len > 10, JSON.stringify(sel));
+    ok('跨块拖选：选区真的跨了 3 个块', sel.spanning === 3, String(sel.spanning));
+    ok('跨块拖选：没有凭空补一个空段落', sel.blocks === 3, String(sel.blocks));
+
+    /* 选中的字要真能删 —— 只看选区长度，容易被「选中了但键盘不动」骗过去。
+       选区是从第 1 段开头到第 3 段开头，删完只剩第 3 段（按内容判，别钉子符数） */
+    await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', windowsVirtualKeyCode: 8, code: 'Backspace', key: 'Backspace' });
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', windowsVirtualKeyCode: 8, code: 'Backspace', key: 'Backspace' });
+    await sleep(400);
+    const after = await ev(`window.__snp.getEditorText()`);
+    ok('跨块拖选后按退格，整段真的删掉了',
+      after.includes('第三段') && !after.includes('第一段') && !after.includes('第二段'), JSON.stringify(after));
+
+    /* 代码块里粘贴多行 JSON：块必须还在，内容必须进块 */
+    const CB = ['前一段', '', '```json', '```', '', '后一段', ''].join('\n');
+    await ev(`window.__snp.newTab('paste.md', ${JSON.stringify(CB)}, null)`);
+    await sleep(400);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(500);
+    await ev(`(() => {
+      const c = document.querySelector('.w-code');
+      const r = document.createRange();
+      r.selectNodeContents(c);
+      r.collapse(true);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      document.querySelector('.wysiwyg').focus();
+    })()`);
+    await sleep(150);
+    await ev(`(() => {
+      const dt = new DataTransfer();
+      dt.setData('text/plain', '{\\n  "b": 2,\\n  "c": [1, 2]\\n}');
+      document.querySelector('.w-code').dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+    })()`);
+    await sleep(500);
+
+    const types = await ev(`(() => [...document.querySelectorAll('.wysiwyg > .w-block')].map((b) => b.dataset.type))()`);
+    ok('空代码块里粘贴多行：代码块还在', JSON.stringify(types) === '["p","code","p"]', JSON.stringify(types));
+    const saved = await ev(`window.__snp.getEditorText()`);
+    ok('粘贴内容进了代码块（没有跑到块外变成段落）',
+      saved === '前一段\n\n```json\n{\n  "b": 2,\n  "c": [1, 2]\n}\n```\n\n后一段\n', JSON.stringify(saved));
+  }
 } catch (e) {
   ok('探针执行完成', false, e.message);
 } finally {

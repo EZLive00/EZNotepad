@@ -40,10 +40,29 @@ const T = {
     root.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...o }));
     return ed.toMarkdown();
   },
-  /* 模拟「点最后一个块下方的空白」：jsdom 里矩形都是 0，clientY 给个大值即可命中插入分支 */
+  /* 模拟「点最后一个块下方的空白」。按坐标问命中，所以点必须真的落在
+     最后一块下方；老写法固定 clientY=100，块一多就落在字上，测的其实是
+     「点了一个段落」。 */
   clickRootBelow() {
-    root.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientY: 100 }));
+    const last = root.lastElementChild;
+    const rr = root.getBoundingClientRect();
+    const bottom = last ? last.getBoundingClientRect().bottom : rr.top;
+    const y = Math.min(bottom + 24, rr.bottom - 4);
+    root.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: 3, clientY: y }));
     return ed.toMarkdown();
+  },
+  /* 粘贴：走真实的 paste 事件，handler 从 selection 取光标，target 是谁都一样 */
+  paste(text) {
+    const dt = new DataTransfer();
+    dt.setData('text/plain', text);
+    root.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+    return ed.toMarkdown();
+  },
+  selBlocks() {
+    const s = getSelection();
+    if (!s.rangeCount) return 0;
+    const r = s.getRangeAt(0);
+    return [...root.querySelectorAll('.w-block')].filter((b) => r.intersectsNode(b)).length;
   },
   blocks: () => [...root.children].map((b) => {
     const t = (b.querySelector('.w-text') || b.querySelector('td') || b).textContent;
@@ -386,6 +405,47 @@ window.__run = () => {
   dt.setData('text/plain', '## 小标题\n- 甲\n- 乙');
   root.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
   eq('多行粘贴保留结构', T.out(), '## 小标题\n\n- 甲\n- 乙');
+
+  // 18b. 代码块里粘贴 = 原文进块，绝不按 Markdown 解析
+  //      （空代码块曾整块被 replaceWith 掉：粘一段 JSON，代码块凭空消失）
+  T.reset('```json\n```');
+  T.caret(0, 0);
+  T.paste('{\n  "b": 2\n}');
+  eq('空代码块内粘贴不会被换掉', T.blocks().map((s) => s.split('=')[0]).join(','), 'code');
+  eq('空代码块内粘贴原文进块', T.out(), '```json\n{\n  "b": 2\n}\n```');
+
+  T.reset('```json\n{"a": 1}\n```');
+  ed.restoreCaret({ blockIndex: 0, offset: 8 });
+  T.paste('{\n  "b": 2,\n  "c": [1, 2]\n}');
+  eq('代码块行尾粘贴多行接在后面', T.out(), '```json\n{"a": 1}{\n  "b": 2,\n  "c": [1, 2]\n}\n```');
+
+  T.reset('```js\nab\n```');
+  ed.restoreCaret({ blockIndex: 0, offset: 1 });
+  T.paste('XY');
+  eq('代码块内粘贴单行', T.out(), '```js\naXYb\n```');
+
+  T.reset('```js\nab\n```');
+  ed.restoreCaret({ blockIndex: 0, offset: 2 });
+  T.paste('\ncd');
+  T.type('!');
+  eq('粘贴以换行结尾后接着打字不跑回上一行', T.out(), '```js\nab\ncd!\n```');
+
+  // 18c. 跨块拖选后浏览器派发到 root 的 click 不许吃掉选区
+  //      （click 的 target 是「按下点与松开点的最近公共祖先」，选到两行以上就是 root）
+  T.reset('甲\n\n乙\n\n丙');
+  {
+    const bs = [...root.querySelectorAll('.w-block')];
+    const r = document.createRange();
+    r.setStart(bs[0].querySelector('.w-text').firstChild, 0);
+    r.setEnd(bs[2].querySelector('.w-text').firstChild, 1);
+    const s = getSelection();
+    s.removeAllRanges(); s.addRange(r);
+    const y = bs[1].querySelector('.w-text').getBoundingClientRect().top + 4;
+    root.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: 20, clientY: y }));
+  }
+  eq('跨块拖选后选区还在（没被当成点空白）', getSelection().isCollapsed, false);
+  eq('跨块拖选后仍跨 3 个块', T.selBlocks(), 3);
+  eq('跨块拖选后不补空块', T.blocks().length, 3);
 
   // 19. 代码块内回车：永远块内换行；空末行再回车才出块（Typora 约定）
   T.reset('```js\nconst a = 1;\n```');

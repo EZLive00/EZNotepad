@@ -3226,6 +3226,61 @@ export class WysiwygEditor {
     this.flush();
   }
 
+  /** 光标是否落在「只能放原文的块」里（代码块 / 公式块）—— 粘贴要区别对待。
+      只看真正的正文宿主（.w-code / .w-tex）：点语言条那种 contenteditable=false
+      的装饰层不算，否则会往一个不可写的地方塞节点。 */
+  caretInRawBlock() {
+    const block = this.currentBlock();
+    if (!block) return false;
+    const type = block.dataset.type;
+    if (type !== 'code' && type !== 'math') return false;
+    const host = textEl(block);
+    const sel = window.getSelection();
+    if (!sel.rangeCount) return false;
+    const node = sel.getRangeAt(0).startContainer;
+    const el = node && (node.nodeType === 1 ? node : node.parentElement);
+    return !!(el && host.contains(el));
+  }
+
+  /** 把一段原文插到光标处（代码块 / 公式块内部的粘贴）。
+      换行一律用 <br>，理由同 codeNewline：往文本节点里塞 '\n'，Chromium 下一次
+      输入会把行尾那个吃掉，光标漂到换行前面。末尾再垫一个零宽空格，否则以换行
+      结尾的粘贴会让光标停在行尾的 <br> 上，接着打字跑回上一行。 */
+  insertRawText(text) {
+    const sel = window.getSelection();
+    if (!sel.rangeCount) return;
+    /* 空块里只有一个占位 <br>：先摘掉再插，否则粘进来的内容前面会多一个空行
+       （序列化时那个 <br> 就是一次换行）。空块里光标只可能在开头，所以直接归位。 */
+    const block = this.currentBlock();
+    const host = block ? textEl(block) : null;
+    if (host && host.childNodes.length === 1 && host.firstChild.nodeName === 'BR') {
+      host.textContent = '';
+      const atStart = document.createRange();
+      atStart.selectNodeContents(host);
+      atStart.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(atStart);
+    }
+    const r = sel.getRangeAt(0);
+    r.deleteContents();
+    const frag = document.createDocumentFragment();
+    const lines = String(text).replace(/\r\n?/g, '\n').split('\n');
+    lines.forEach((ln, i) => {
+      if (i) frag.appendChild(document.createElement('br'));
+      if (ln) frag.appendChild(document.createTextNode(ln));
+    });
+    const tail = document.createTextNode(ZWSP);
+    frag.appendChild(tail);
+    r.insertNode(frag);       // insertNode 会把 frag 的孩子搬走，tail 的引用不受影响
+    const after = document.createRange();
+    after.setStart(tail, tail.nodeValue.length);
+    after.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(after);
+    this.hCoalesce = false;
+    this.flush();
+  }
+
   /** 有序列表重新编号（每个连续 run 各自从头算，嵌套层级各自计数）。
    *  顺手维护引用组的 data-bq-tail（前行是否紧跟一条未断开的引用，
    *  CSS 拿它折叠引用框 —— 不能用 :has(+ ...)，见 styles.css 的说明）。
@@ -3865,6 +3920,15 @@ export class WysiwygEditor {
       return;
     }
 
+    /* 代码块 / 公式块里粘贴 = 原文进块，绝不按 Markdown 解析。
+       走下面那条解析路的话，粘一段 JSON 会变成五六个段落：空代码块被
+       `replaceWith` 整块换掉（代码块凭空消失），非空的则把段落插到块**外面**
+       （内容跑到代码块下方，块里一个字节没多）。两条都不是「粘贴」的意思。 */
+    if (this.caretInRawBlock()) {
+      this.insertRawText(text);
+      return;
+    }
+
     const lines = text.replace(/\r\n?/g, '\n').split('\n');
     if (lines.length === 1) {
       document.execCommand('insertText', false, lines[0]);
@@ -3887,6 +3951,14 @@ export class WysiwygEditor {
 
   handleClick(e) {
     if (this.loading) return;
+    /* 刚用鼠标拖选完，别再当成「点了一下」处理。
+       跨块拖选之后 `click` 的 target 是**按下点与松开点的最近公共祖先** ——
+       选到两行以上时它就是 root 本身，和「点了正文空白」长得一模一样。
+       以前照空白处理：在文末补一个空段落、把光标搬进去，用户刚选好的一段字
+       在松手那一刻就没了（「所见即所得无法选多行」的真身就是这个）。
+       mousedown 已经把选区收起过，所以「点了但没选中任何东西」不受影响。 */
+    const sel0 = window.getSelection();
+    if (sel0 && !sel0.isCollapsed) return;
     const a = e.target.closest && e.target.closest('a');
     if (a) {
       // Ctrl/⌘ + 点击 = 打开链接；直接点仍然是定位光标（否则想改链接文字就没法下手了）
@@ -3918,6 +3990,11 @@ export class WysiwygEditor {
     // 落在块旁（块没占满行宽）= 聚焦到最后一个块。最后一块若是代码/表格/
     // 公式/分割线，光标放进里面也没法打字 —— 在它下方开个空段落当落脚点
     if (e.target === this.root) {
+      /* 再确认一次「这一下真的点在空白上」：公共祖先就是 root 只说明
+         「按下点与松开点不在同一个块里」，不代表点在块外的空白处。
+         按坐标问元素，命中任何块（含块里的 .w-text）就只是「点在字上」。 */
+      const under = document.elementFromPoint(e.clientX, e.clientY);
+      if (under && under.closest && under.closest('.w-block')) return;
       this.root.focus();
       const last = this.root.lastElementChild;
       if (!last) return;
