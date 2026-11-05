@@ -663,6 +663,24 @@ window.__run = () => {
   T.key('ArrowDown');
   eq('段落末尾 ↓ 不长新行', T.blocks().length, 2);
 
+  /* 分割线没有光标位：它落在文末时，光标停在上面那行的末尾按 ↓
+     也得能走到线下面去（否则最后那条 `---` 就是一道墙） */
+  T.reset('前文\n\n---');
+  T.caret(0, 2);
+  T.key('ArrowDown');
+  eq('分割线在文末时 ↓ 在线下开一行', T.blocks().join(','), 'p=前文,hr=,p=');
+
+  T.reset('前文\n\n---\n\n后文');
+  T.caret(0, 2);
+  T.key('ArrowDown');
+  eq('分割线下面有正文时 ↓ 落进去', T.blocks().join(','), 'p=前文,hr=,p=后文');
+  eq('落到的是下文那一段', ed.caretState().blockIndex, 2);
+
+  T.reset('前文一二\n\n---\n\n后文');
+  T.caret(0, 2);
+  T.key('ArrowDown');
+  eq('光标不在行尾时 ↓ 不接管', ed.caretState().blockIndex, 0);
+
   // 19f. 表格空行回车 = 退出表格（双击模式：空行上是第二下，出表开段落）
   T.reset('| a | b |\n|---|---|\n|  |  |');
   ed.focusCell(root.querySelector('.w-table'), 1, 0);

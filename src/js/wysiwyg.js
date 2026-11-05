@@ -2909,7 +2909,18 @@ export class WysiwygEditor {
       return;
     }
     if (!exit || !block) return;
-    if (!this.endsBounded(block)) return;
+    if (!this.endsBounded(block)) {
+      /* 紧跟着一条分割线：它本身没有光标位，光标停在上面那一行的末尾按 ↓
+         就再也没有下文（分割线落在文末时尤其明显）。走过它去下一个能站人的块，
+         后面确实什么都没有才新开一行 —— 和出块用的是同一个落点函数。 */
+      const after = block.nextElementSibling;
+      if (e.key === 'ArrowDown' && after && after.dataset.type === 'hr'
+        && this.isCaretAtEnd(block)) {
+        e.preventDefault();
+        this.caretAfterBlock(after);
+      }
+      return;
+    }
     if (!this.isCaretAtEnd(block)) return;
     e.preventDefault();
     this.caretAfterBlock(block);

@@ -651,6 +651,14 @@ try {
     await right();
     ok('列表中间项 → 不多开块', (await bl()).length === 3, JSON.stringify(await bl()));
 
+    /* 分割线本身放不了光标：它落在文末时，光标停在上面那行末尾按 ↓ 得能穿过去 */
+    await load('dirh.md', '前文\n\n---\n');
+    await caretAt(0);
+    await down();
+    ok('分割线在文末时 ↓ 在线下开一行',
+      JSON.stringify(await bl()) === '["p:前文","hr:","p:"]', JSON.stringify(await bl()));
+    ok('穿过分割线后光标在普通段落里', (await caretBlock()) === 'p', await caretBlock());
+
     /* ---- J. 菜单栏：速记与对比放在最右边 ----
        它们原来分别在「文件」的第二位和「工具」的中段 —— 天天点的东西不该让人
        在菜单栏上找。两个都是一级项：速记是动作（点一次直接打开，没有下拉），
