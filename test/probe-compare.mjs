@@ -667,6 +667,57 @@ try {
   const caretRedone = await caretNow();
   ok('重做也不跳位置', caretRedone.inCell && Math.abs(caretRedone.line - mid.line) <= 1, JSON.stringify(caretRedone));
 
+  /* ---------- 9b. 点工具栏按钮撤销/重做，视口不许动 ----------
+     这里测的是**另一条路**：滚动会重建行 DOM，选区跟着作废，于是点按钮那
+     一刻 getSelection() 已经指向脱落的节点 —— caretAt() 退回「第 1 行」，
+     屏幕一跳到底。键盘那条路（焦点还在行里）不会暴露这个问题。 */
+  await cmp.ev(`(() => { const c = document.getElementById('optFold'); if (c.checked) c.click(); return c.checked; })()`);
+  await sleep(400);
+  await cmp.ev(`document.getElementById('scrollL').scrollTop = 8000`);
+  await sleep(400);
+  const midBtn = await midRow();
+  const hitHere = async (xy) => {
+    await cmp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: xy.x, y: xy.y, button: 'left', clickCount: 1 });
+    await cmp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: xy.x, y: xy.y, button: 'left', clickCount: 1 });
+    await sleep(200);
+  };
+  const btnXY = (id) => cmp.ev(`(() => {
+    const r = document.getElementById('${id}').getBoundingClientRect();
+    return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+  })()`);
+  await hitHere(midBtn);
+  const stat0 = await cmp.ev(`document.getElementById('stat').textContent`);
+  await cmp.send('Input.insertText', { text: 'BTN' });
+  await sleep(900);
+  const statTyped = await cmp.ev(`document.getElementById('stat').textContent`);
+  ok('点按钮之前先打一笔（差异数变了）', statTyped !== stat0, `${stat0} -> ${statTyped}`);
+
+  /* 滚到别处再点按钮：用户报的就是这个场景 */
+  await cmp.ev(`document.getElementById('scrollL').scrollTop = 16000`);
+  await sleep(400);
+  const topFar = await cmp.ev(`document.getElementById('scrollL').scrollTop`);
+  const undoXY = await btnXY('undoBtn');
+  await hitHere(undoXY);
+  const topAfterBtn = await cmp.ev(`document.getElementById('scrollL').scrollTop`);
+  const caretBtn = await caretNow();
+  const statUndone = await cmp.ev(`document.getElementById('stat').textContent`);
+  ok('点工具栏「撤销」视口不动（不再跳回顶部）',
+    Math.abs(topAfterBtn - topFar) < 24, `scrollTop ${topFar} -> ${topAfterBtn}`);
+  ok('点按钮撤销真的撤掉了（差异数回到打字前）', statUndone === stat0, `${statTyped} -> ${statUndone}`);
+  ok('点按钮撤销后焦点仍在正文里（键盘还能接着用）', caretBtn.inCell === true, JSON.stringify(caretBtn));
+
+  const redoXY = await btnXY('redoBtn');
+  await hitHere(redoXY);
+  const topAfterRedo = await cmp.ev(`document.getElementById('scrollL').scrollTop`);
+  ok('点工具栏「重做」视口也不动',
+    Math.abs(topAfterRedo - topFar) < 24, `scrollTop ${topFar} -> ${topAfterRedo}`);
+  ok('点按钮重做把字放回来了', (await cmp.ev(`document.getElementById('stat').textContent`)) === statTyped);
+
+  /* 还原成没打过字的样子，后面的段落沿用前面的假设（折叠也开回去） */
+  await hitHere(undoXY);
+  await cmp.ev(`(() => { const c = document.getElementById('optFold'); if (!c.checked) c.click(); return c.checked; })()`);
+  await sleep(300);
+
   /* 文档变短的撤销（回车断行 → 撤销）也要把光标夹到合法位置，不许掉到 body 上 */
   await openPair(p('edit-a.txt'), p('edit-a2.txt'));
   await enterEdit();

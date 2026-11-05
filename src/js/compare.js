@@ -84,6 +84,10 @@ const S = {
   pending: null,       // 还没合并进模型的那一行（输入防抖）
   lastSort: null,      // 上一次「按字典排序」前的快照（两侧一起，Ctrl+Z 一次还原）
   lastSide: '',        // 最近一次改动落在哪一侧：光标不在行里时 Ctrl+Z 按它来
+  /* 最后一次真实的光标位置。点工具栏的撤销/重做按钮时焦点已经交给按钮，
+     那一刻的 window.getSelection() 可能已经空了 —— 只能靠这份备份，
+     否则撤销会退回第 1 行，屏幕一跳到底（见 caretAt）。 */
+  lastCaret: null,     // { side, line, col }
   list: { open: false, sort: 'pos', dir: 1, filter: 'all', sig: '' },
   /* 查找：hits 是全文扫描的结果，map 只用来给已渲染的行上色 ——
      虚拟滚动下不可能给全部命中挂 DOM，所以「行级高亮」是唯一可靠的画法。 */
@@ -1623,7 +1627,7 @@ function nearestVisible(i) {
   return best >= 0 ? best : v[0];
 }
 
-function focusAt(side, line, col) {
+function focusAt(side, line, col, opts) {
   /* 行号列号一律夹到当前内容里：撤销之后文档可能变短，调用方给的
      「原来那一行」就不存在了。不夹的话 lineRow.get() 返回 undefined，
      这个函数会直接 return —— 重画后 DOM 已换新，焦点就掉到 body 上，
@@ -1637,25 +1641,39 @@ function focusAt(side, line, col) {
      「修改」变成了「相同」，随即被收起）。退到最近的一条可见行 —— 宁可
      光标差一行，也不能让它掉到 body 上：那样键盘就彻底没反应了。 */
   if (vposOf(i) < 0) i = nearestVisible(i);
-  focusRowIdx(side, i, col);
+  focusRowIdx(side, i, col, opts);
 }
 
-/** 按「对齐行索引」聚焦。占位行没有本侧行号，只有索引 —— 点它时只能走这条 */
-function focusRowIdx(side, i, col) {
+/** 按「对齐行索引」聚焦。占位行没有本侧行号，只有索引 —— 点它时只能走这条
+ *
+ *  `opts.keepScroll`：光标放回去但**不主动滚动**。撤销/重做用它 ——
+ *  用户可能正看着文档别处，撤一下就把视线拽走（更别说跳回顶部）是打断。 */
+function focusRowIdx(side, i, col, opts) {
   if (i == null || i < 0 || i >= S.rows.length) return;
-  const vi = vposOf(i);
+  let vi = vposOf(i);
   if (vi < 0) return;         // 这一行被折叠掉了，没有位置可放
-  S.pin = i;                  // 光标落在这里，折叠时别把它收走
   const sc = el(side, 'scroll');
+  const keepScroll = !!(opts && opts.keepScroll);
+  /* 不动视口时，目标行可能根本不在屏幕上（用户滚到别处才按的撤销）。
+     此时把光标夹到视口正中那一条可见行：视口不动，但焦点必须留在正文里 ——
+     掉到 body 上，用户下一次按键就是「没反应」，那比光标差几行严重得多。 */
+  if (keepScroll
+      && (vi * ROW_H + ROW_H <= sc.scrollTop || vi * ROW_H >= sc.scrollTop + sc.clientHeight)) {
+    vi = Math.min(S.view.length - 1, Math.max(0, Math.floor((sc.scrollTop + sc.clientHeight / 2) / ROW_H)));
+    i = S.view[vi];
+  }
+  S.pin = i;                  // 光标落在这里，折叠时别把它收走
   const y = vi * ROW_H;
-  if (y < sc.scrollTop || y + ROW_H > sc.scrollTop + sc.clientHeight) {
+  if (!keepScroll && (y < sc.scrollTop || y + ROW_H > sc.scrollTop + sc.clientHeight)) {
     sc.scrollTop = Math.max(0, y - sc.clientHeight / 2);
     syncFrom(side, sc.scrollTop, sc.scrollLeft);
   }
   render(true);
   const host = el(side, 'canvas').querySelector(`.cmp-tx[data-i="${i}"]`);
   if (!host) return;
-  host.focus();
+  /* focus() 默认会把目标滚进视野 —— 上面好不容易不动的视口会在这里被拽走。
+     preventScroll 只在「不主动滚」的调用里给（见 keepScroll 的注释）。 */
+  host.focus({ preventScroll: keepScroll });
   const p = nodeAt(host, col);
   const r = document.createRange();
   try {
@@ -1756,14 +1774,14 @@ function undoTarget(e) {
 /** 结构性编辑（换行 / 并行 / 缩进 / 撤销）之后统一走这里：重算、重画、把光标放回去。
  *  必须顺手标脏 —— 只有打字那条路径会经 flush() 标脏，换行、并行这些不经过它，
  *  漏掉的话 Ctrl+S 会认为「没有需要保存的改动」，改动直接丢掉（实测踩过）。 */
-function applyEdit(side, line, col) {
+function applyEdit(side, line, col, opts) {
   S.sides[side].dirty = true;
   S.lastSide = side;          // 光标可能随后跑到工具栏上，撤销还得知道落在哪一侧
   S.ver++;
   recompute();
   render(true);
   updateMeta();
-  focusAt(side, line, col);
+  focusAt(side, line, col, opts);
 }
 
 function onInput(e) {
@@ -1861,11 +1879,18 @@ function moveVert(side, line, dir, col) {
 }
 
 /** 撤销前光标在哪：撤销/重做之后要回到原处，而不是跳回第 1 行。
- *  光标不在这一侧（焦点在工具栏或另一栏）时给第 1 行，由 focusAt 夹一次。 */
+ *
+ *  两级来源：先读实时选区（键盘 Ctrl+Z 时焦点还在行里，最准）；
+ *  读不到就退回 lastCaret —— 点工具栏按钮时焦点已经给了按钮，
+ *  这时 getSelection() 常常是空的。没有这一级，line 会退回 1，
+ *  focusAt(1) 把屏幕滚到顶部：用户看到的就是「撤销一下跳回开头」。
+ *  某一侧从没落过光标时才给第 1 行，由 focusAt 夹一次。 */
 function caretAt(side) {
   const p = caretPos();
-  if (!p || p.side !== side) return { line: 1, col: 0 };
-  return { line: p.line, col: p.col };
+  if (p && p.side === side) return { line: p.line, col: p.col };
+  const lc = S.lastCaret;
+  if (lc && lc.side === side) return { line: lc.line, col: lc.col };
+  return { line: 1, col: 0 };
 }
 
 function undo(side, redo) {
@@ -1878,7 +1903,9 @@ function undo(side, redo) {
   to.push(st.lines.slice());
   st.lines = from.pop();
   st.dirty = true;
-  applyEdit(side, at.line, at.col);
+  /* keepScroll：撤/重做只把光标放回原处，不主动把视口拖走。用户可能正看着
+     文档另一段，操作一下画面就跳过去是打断。 */
+  applyEdit(side, at.line, at.col, { keepScroll: true });
   return true;
 }
 
@@ -2416,6 +2443,13 @@ function bind() {
     dragMove(e);
   });
   document.addEventListener('mouseup', () => dragEnd());
+
+  /* 光标每动一次就记一份：撤销要在「焦点已经不在正文」的情况下也找得到位置
+     （点工具栏按钮那一刻 getSelection() 常常是空的，见 caretAt）。 */
+  document.addEventListener('selectionchange', () => {
+    const p = caretPos();
+    if (p) S.lastCaret = { side: p.side, line: p.line, col: p.col };
+  });
 
   const ruler = $('ruler');
   const rulerTip = $('rulerTip');
