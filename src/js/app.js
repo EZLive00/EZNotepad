@@ -3362,30 +3362,39 @@ const svgIco = (n) => `<svg class="ico" aria-hidden="true"><use href="#i-${n}" /
 /* 图标要和「点了会发生什么」对得上：以前标题三级都画 `type`、列表两种都画
    `list-tree`、引用也是 `type`、表格是个空方框、链接是两个箭头，一列看下来
    分不出谁是谁。现在每个都用自己的图标。
-   group 只用来在菜单里插分隔线：文本类 / 提示块，13 项一坨太难扫。 */
+   group 只用来在菜单里插分隔线：文本类 / 提示块，13 项一坨太难扫。
+
+   key 是**面板打开时的单字符选择键**（面板焦点始终在编辑区，所以按键只能由
+   keydown 自己分派，见 setupBlockHandle）。编号不连号而是按语义分段：
+   0 归零、1~3 标题、4~6 三种列表、7~8 引用与代码、9 起给提示块，
+   提示块的四个 key 用 warning / danger / success 的首字母，能盲打。
+   数字只有十个，硬连号会把 w/d/s 挤成 a/b/c —— 那三个字母没有任何语义，
+   每次都得看菜单，等于白做。 */
 const blockKinds = () => [
-  { id: 'body', label: tt('正文段落'), icon: 'pilcrow', group: 'text' },
-  { id: 'h1', label: tt('标题 1'), icon: 'heading-1', group: 'text' },
-  { id: 'h2', label: tt('标题 2'), icon: 'heading-2', group: 'text' },
-  { id: 'h3', label: tt('标题 3'), icon: 'heading-3', group: 'text' },
-  { id: 'ul', label: tt('无序列表'), icon: 'list', group: 'text' },
-  { id: 'ol', label: tt('有序列表'), icon: 'list-ordered', group: 'text' },
-  { id: 'taskList', label: tt('任务列表'), icon: 'list-todo', group: 'text' },
-  { id: 'quote', label: tt('引用'), icon: 'text-quote', group: 'text' },
-  { id: 'codeBlock', label: tt('代码块'), icon: 'code', group: 'text' },
-  { id: 'calloutInfo', label: tt('信息提示块'), icon: 'info', group: 'callout' },
-  { id: 'calloutWarning', label: tt('警告提示块'), icon: 'triangle-alert', group: 'callout' },
-  { id: 'calloutDanger', label: tt('危险提示块'), icon: 'octagon-alert', group: 'callout' },
-  { id: 'calloutSuccess', label: tt('成功提示块'), icon: 'circle-check', group: 'callout' },
+  { id: 'body', label: tt('正文段落'), icon: 'pilcrow', group: 'text', key: '0' },
+  { id: 'h1', label: tt('标题 1'), icon: 'heading-1', group: 'text', key: '1', kbd: 'Ctrl+Alt+1' },
+  { id: 'h2', label: tt('标题 2'), icon: 'heading-2', group: 'text', key: '2', kbd: 'Ctrl+Alt+2' },
+  { id: 'h3', label: tt('标题 3'), icon: 'heading-3', group: 'text', key: '3', kbd: 'Ctrl+Alt+3' },
+  { id: 'ul', label: tt('无序列表'), icon: 'list', group: 'text', key: '4', kbd: 'Ctrl+Shift+8' },
+  { id: 'ol', label: tt('有序列表'), icon: 'list-ordered', group: 'text', key: '5', kbd: 'Ctrl+Shift+7' },
+  { id: 'taskList', label: tt('任务列表'), icon: 'list-todo', group: 'text', key: '6', kbd: 'Ctrl+Shift+9' },
+  { id: 'quote', label: tt('引用'), icon: 'text-quote', group: 'text', key: '7', kbd: 'Ctrl+Shift+Q' },
+  { id: 'codeBlock', label: tt('代码块'), icon: 'code', group: 'text', key: '8' },
+  { id: 'calloutInfo', label: tt('信息提示块'), icon: 'info', group: 'callout', key: '9' },
+  { id: 'calloutWarning', label: tt('警告提示块'), icon: 'triangle-alert', group: 'callout', key: 'w' },
+  { id: 'calloutDanger', label: tt('危险提示块'), icon: 'octagon-alert', group: 'callout', key: 'd' },
+  { id: 'calloutSuccess', label: tt('成功提示块'), icon: 'circle-check', group: 'callout', key: 's' },
 ];
 
-/** 插入类：这几件事自己知道往哪插，不用先造空块。kbd 只是提示，真正的按键在快捷键表里 */
+/** 插入类：这几件事自己知道往哪插，不用先造空块。kbd 只是提示，真正的按键在快捷键表里。
+    两张表的 key 不能重：面板只开一张，但用户在两张之间切换时不能有歧义。
+    `T` 与 `t` 是同一族的两档（3×3 / 自定大小），大写那档要按 Shift。 */
 const blockInserts = () => [
-  { id: 'table', label: tt('表格（3 × 3）'), icon: 'table', kbd: 'Ctrl+Shift+T' },
-  { id: 'tablePrompt', label: tt('表格（自定大小）…'), icon: 'table' },
-  { id: 'image', label: tt('图片…'), icon: 'image' },
-  { id: 'link', label: tt('链接…'), icon: 'link', kbd: 'Ctrl+K' },
-  { id: 'hr', label: tt('分割线'), icon: 'minus' },
+  { id: 'table', label: tt('表格（3 × 3）'), icon: 'table', key: 't', kbd: 'Ctrl+Shift+T' },
+  { id: 'tablePrompt', label: tt('表格（自定大小）…'), icon: 'table', key: 'T' },
+  { id: 'image', label: tt('图片…'), icon: 'image', key: 'i' },
+  { id: 'link', label: tt('链接…'), icon: 'link', key: 'l', kbd: 'Ctrl+K' },
+  { id: 'hr', label: tt('分割线'), icon: 'minus', key: '-' },
 ];
 const SELF_INSERTING = new Set(['table', 'tablePrompt', 'image', 'link', 'hr']);
 
@@ -3397,6 +3406,13 @@ let handleBlock = null;      // 当前画出手柄的那个块，由 placeHandle
 let pointerInside = false;   // 鼠标是否在编辑区里，决定 selectionchange 能不能抢锚点
 let handleTimer = 0;
 let bmMode = 'convert';
+/* 面板是从 "/" 长出来的吗：这决定两件事——
+   1) 关面板而没选任何项时，要把那个 "/" 补回正文（用户可能就是想打个斜杠）；
+   2) 当前块是空段落时直接把这一块改类型，而不是在它下面再造一个（留个空行很难看）。 */
+let bmFromSlash = false;
+/* 被拦下的 "/" 应该回到哪里：{ block, off }。off 是按 .w-text 的字符偏移算的，
+   跟 wysiwyg 的 offsetIn 同一套口径（忽略 <br>，零宽空格算一个字符）。 */
+let slashAt = null;
 /* 键盘高亮：焦点始终留在编辑区（菜单一抢焦点，正文选区就没了），所以「当前项」
    用 .hot 类表达，而不是真焦点。bmRows 只收可执行项，head / sep 不在里面。 */
 let bmHot = -1;
@@ -3453,12 +3469,16 @@ function refreshHandle() {
   if (target) placeHandle(target); else hideHandle();
 }
 
-function openBlockMenu(mode) {
+function openBlockMenu(mode, fromSlash = false) {
   if (!handleBlock || !handleBlock.isConnected) return;
+  /* 鼠标打开的菜单没有待补的斜杠；万一切标签/切模式时漏了一个，这里一并作废，
+     免得关面板时往旧块里插字符 */
+  if (!fromSlash) slashAt = null;
   const box = el.wBlockMenu;
   // 同一个按钮再点一次 = 收起
   if (!box.classList.contains('hidden') && bmMode === mode) { closeBlockMenu(); return; }
   bmMode = mode;
+  bmFromSlash = fromSlash;
   anchorBlock = handleBlock;        // 菜单锚在手柄上，锚点跟它对齐
   box.innerHTML = '';
   bmRows = [];
@@ -3483,8 +3503,13 @@ function openBlockMenu(mode) {
     b.className = 'bm-item' + (checked ? ' checked' : '');
     b.setAttribute('role', 'menuitem');
     if (checked) b.setAttribute('aria-checked', 'true');
+    /* 右侧固定显示面板内的**选择键**：一次按键就到位，这才是这张面板的主交互。
+       全局快捷键退到 title / aria-keyshortcuts —— 两个 kbd 挤在一行会把
+       「表格（自定大小）…」这种长标签顶到换行。 */
+    b.dataset.key = it.key || '';
     b.innerHTML = svgIco(it.icon || 'type') + `<span>${it.label}</span>`
-      + (it.kbd ? `<kbd class="bm-kbd">${it.kbd}</kbd>` : '');
+      + (it.key ? `<kbd class="bm-kbd">${it.key}</kbd>` : '');
+    if (it.kbd) { b.title = it.kbd; b.setAttribute('aria-keyshortcuts', it.kbd); }
     b.addEventListener('mousedown', (e) => e.preventDefault());   // 保住编辑区选区
     /* 鼠标停在谁身上，Enter 就作用在谁身上 —— 键盘和鼠标混着用也不会错位 */
     const idx = bmRows.push(b) - 1;
@@ -3522,13 +3547,80 @@ function openBlockMenu(mode) {
   el.whMenu.classList.toggle('open', mode === 'convert');
 }
 
+/** 文本元素里的字符偏移 → DOM 位置。口径与 wysiwyg 的 offsetIn 一致
+    （TreeWalker 只数文本节点，`<br>` 不算，零宽空格算一个字符）。 */
+function textPosAt(root, offset) {
+  const walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let left = Math.max(0, offset | 0);
+  let node = walk.nextNode();
+  let last = null;
+  while (node) {
+    const len = node.nodeValue.length;
+    if (left <= len) return { node, off: left };
+    left -= len;
+    last = node;
+    node = walk.nextNode();
+  }
+  return last ? { node: last, off: last.nodeValue.length } : { node: root, off: 0 };
+}
+
+/** 光标在 root 里的字符偏移；选区为空或不在 root 里返回 -1 */
+function caretOffsetIn(root) {
+  const sel = window.getSelection();
+  if (!sel.rangeCount || !sel.isCollapsed) return -1;
+  const r = sel.getRangeAt(0);
+  if (!root.contains(r.startContainer)) return -1;
+  const pre = document.createRange();
+  pre.selectNodeContents(root);
+  pre.setEnd(r.startContainer, r.startOffset);
+  return pre.toString().length;
+}
+
+/** 把被 "/" 吞掉的那个字符还给用户。只有「面板关了却什么都没选」才走这里。
+    插回的是**原偏移**，不是当前光标 —— 点了一下别处再关面板，那个斜杠也该回到
+    它本来该在的位置，而不是跟到新光标处。 */
+function restoreSlash() {
+  const s = slashAt;
+  slashAt = null;
+  if (!s) return;
+  /* 面板还开着的这期间用户可能切了模式/切了标签：那时编辑区里的内容已经不是
+     「他打字时那一份」，再往里插字符只会插到别人身上。丢掉比分错地方好。 */
+  if (!isWysMode()) return;
+  const block = s.block;
+  if (!block || !block.isConnected) return;
+  const t = block.querySelector('.w-text');
+  if (!t) return;
+  /* 光标还停在原处（Esc / 打字触发关闭）才把光标推到斜杠后面；
+     已经点到别处的就别抢焦点。 */
+  const stick = caretOffsetIn(t) === s.off;
+  const p = textPosAt(t, s.off);
+  const r = document.createRange();
+  try { r.setStart(p.node, p.off); } catch { return; }
+  r.collapse(true);
+  const ch = document.createTextNode('/');
+  r.insertNode(ch);
+  if (stick) {
+    const sel = window.getSelection();
+    const r2 = document.createRange();
+    r2.setStartAfter(ch);
+    r2.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(r2);
+  }
+  wys.flush();
+}
+
 function closeBlockMenu() {
   el.wBlockMenu.classList.add('hidden');
   el.wBlockMenu.innerHTML = '';
   bmRows = [];
   bmHot = -1;
+  bmFromSlash = false;
   el.whAdd.classList.remove('open');
   el.whMenu.classList.remove('open');
+  /* 没选东西就关掉 = 那个 "/" 得还给用户。放在清完 UI 之后：它要往正文里
+     插字符、重排，菜单还留着会跟着抖一下。 */
+  restoreSlash();
 }
 
 /** 高亮第 i 项（-1 = 都不亮），并保证它在菜单可视范围内 */
@@ -3560,6 +3652,9 @@ function bmStep(dir) {
 function bmRun(id) {
   const block = handleBlock;
   const mode = bmMode;
+  const fromSlash = bmFromSlash;
+  /* 选定了就不再补斜杠：那个 "/" 是触发符，跟菜单里的项一起消费掉 */
+  slashAt = null;
   closeBlockMenu();
   if (!block || !block.isConnected) return;
   if (mode === 'insert') {
@@ -3567,7 +3662,10 @@ function bmRun(id) {
       wys.focusBlock(block, true);
       commands[id]?.();
     } else {
-      const nb = wys.insertEmptyAfter(block);
+      /* 从 "/" 进面板、而这一块本来就是空的：直接把这块改掉。
+         否则用户会看到「斜杠没了，标题出现在下面一行」，还留一个空段落。 */
+      const reuse = fromSlash && !(block.textContent || '').replace(/[\s\u200b]/g, '');
+      const nb = reuse ? block : wys.insertEmptyAfter(block);
       wys.focusBlock(nb);
       if (id !== 'body') commands[id]?.();
     }
@@ -3620,6 +3718,40 @@ function setupBlockHandle() {
     }, 0);
   });
 
+  /* ---- "/" 起一个插入面板（手不离键盘） ----
+     只认「行首或空白之后」：日期 2026/11、路径 a/b、分数 1/2 都不该弹面板。
+     代码块 / 公式块 / 表格单元格里也不弹 —— 那里的 "/" 是正文里的字符。 */
+  el.wysiwyg.addEventListener('keydown', (e) => {
+    if (e.defaultPrevented || e.key !== '/') return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.isComposing || e.keyCode === 229) return;   // 组字中：标点归输入法
+    if (!isWysMode() || blockMenuOpen()) return;
+    const block = wys.currentBlock();
+    if (!block || wys.currentCell()) return;
+    if (!/^(p|h[1-6]|li|bq)$/.test(block.dataset.type || '')) return;
+    const t = block.querySelector('.w-text');
+    if (!t) return;
+    const off = caretOffsetIn(t);
+    if (off < 0) return;
+    const before = t.textContent.slice(0, off).replace(/\u200b/g, '');
+    if (!/(^|\s)$/.test(before)) return;
+    /* 先确认菜单真能开（手柄落到这一块上），能开才吞掉这个字符 ——
+       否则 "/" 被 preventDefault 掉了、菜单又没出来，字符就凭空没了 */
+    anchorBlock = block;
+    placeHandle(block);
+    if (handleBlock !== block) return;
+    e.preventDefault();
+    slashAt = { block, off };
+    openBlockMenu('insert', true);
+  }, true);
+
+  /* 输入法开始组字 = 用户要打中文了，面板不能再占着按键：否则「按 1 选第一个
+     候选词」会变成「按 1 选了标题」。组字中的 keydown 本来就是 229/isComposing，
+     到不了上面的分支，这条只是把「菜单悬在半空不动」这个歧义彻底收掉。 */
+  document.addEventListener('compositionstart', () => {
+    if (blockMenuOpen()) closeBlockMenu();
+  }, true);
+
   for (const b of [el.whAdd, el.whMenu]) b.addEventListener('mousedown', (e) => e.preventDefault());
   el.whAdd.onclick = () => openBlockMenu('insert');
   el.whMenu.onclick = () => openBlockMenu('convert');
@@ -3643,6 +3775,17 @@ function setupBlockHandle() {
       closeBlockMenu();
       return;
     }
+    /* "/"：面板开着的这一下，用户要的是「关掉面板并打一个斜杠」。
+       由 "/" 唤醒的面板，原斜杠会被 closeBlockMenu 补回，所以这一下不再落字；
+       点 + 号打开的面板没有待补的斜杠，字符照常落下。
+       stopPropagation 是必须的：编辑区那层 "/" 监听不能用「菜单是否开着」来判断
+       （此时已经关了），会当场把面板重新弹出来。 */
+    if (k === '/') {
+      if (slashAt) e.preventDefault();
+      closeBlockMenu();
+      e.stopPropagation();
+      return;
+    }
     if (k === 'Tab' || k === 'ArrowLeft' || k === 'ArrowRight') { closeBlockMenu(); return; }
     if (k === 'ArrowDown') { e.preventDefault(); e.stopPropagation(); bmStep(1); return; }
     if (k === 'ArrowUp') { e.preventDefault(); e.stopPropagation(); bmStep(-1); return; }
@@ -3652,6 +3795,16 @@ function setupBlockHandle() {
       if (bmHot >= 0 && bmRows[bmHot]) { e.preventDefault(); e.stopPropagation(); bmRows[bmHot].click(); }
       else closeBlockMenu();
       return;
+    }
+    /* 单字符直达：面板开着的这瞬间，数字和字母是「选择」不是「打字」。
+       精确匹配优先 —— t 与 T 是同一族的两档（表格 3×3 / 自定大小）。
+       没命中的字符照常掉进下面的「收起菜单、字符落进正文」，所以
+       "/abc" 这种「其实想打斜杠」的输入只会多闪一下面板，不丢字。 */
+    if (!e.ctrlKey && !e.metaKey && !e.altKey && k.length === 1) {
+      const lk = k.toLowerCase();
+      const hit = bmRows.find((b) => b.dataset.key === k)
+        || bmRows.find((b) => b.dataset.key && b.dataset.key.toLowerCase() === lk);
+      if (hit) { e.preventDefault(); e.stopPropagation(); hit.click(); return; }
     }
     if (!e.ctrlKey && !e.metaKey && !e.altKey) closeBlockMenu();
   }, true);
