@@ -3181,15 +3181,6 @@ const menuTree = () => [
     ],
   },
   {
-    /* 速记是**一个动作**，不是一叠文件操作 —— 所以它跟「设置」一样不带下拉，
-       点一下就打开。以前这里是下拉：点标题展开、再点「打开速记」，两次点击，
-       而用户的第一反应是「我明明已经点了速记」。
-       其余四项（插入时间 / 显示 / 复制路径 / 清空）频率低得多，
-       挪进「文件」菜单的速记小节，不再借着「打开」占用户第二次点击。 */
-    label: tt('速记'),
-    action: () => { commands.quickNote(); },
-  },
-  {
     label: tt('编辑'),
     items: [
       { id: 'undo', label: tt('撤销'), kbd: 'Ctrl+Z', disabled: () => !canUndo() },
@@ -3308,10 +3299,6 @@ const menuTree = () => [
       { id: 'lower', label: tt('转小写'), disabled: () => !hasTab() },
       { id: 'title', label: tt('首字母大写'), disabled: () => !hasTab() },
       { sep: true },
-      { id: 'textCompare', label: tt('文本对比…'), kbd: 'Ctrl+D' },
-      { id: 'folderCompare', label: tt('文件夹对比…') },
-      { id: 'merge', label: tt('三向合并…') },
-      { sep: true },
       { id: 'wordCount', label: tt('字数统计'), disabled: () => !hasTab() },
       { id: 'encoding', label: tt('文件编码…'), disabled: () => !hasTab() },
       { id: 'eol', label: tt('切换换行符'), disabled: () => !hasTab() },
@@ -3329,6 +3316,25 @@ const menuTree = () => [
     items: [
       { id: 'shortcuts', label: tt('快捷键一览') },
       { id: 'about', label: tt('关于 EZNotepad') },
+    ],
+  },
+  /* 两个高频入口放在菜单栏最右边，位置固定、伸手就到。
+     它们原来分别躲在「文件」的第二位和「工具」的中段 —— 天天用的东西
+     不该让人在菜单上找。
+
+     速记仍然是**一个动作**：点一次直接打开，不套一层「打开速记」。
+     辅助动作（插入时间 / 显示 / 复制路径 / 清空）留在「文件」的速记小节，
+     频率低得多，不该借「打开」占用户第二次点击。 */
+  {
+    label: tt('速记'),
+    action: () => { commands.quickNote(); },
+  },
+  {
+    label: tt('对比'),
+    items: [
+      { id: 'textCompare', label: tt('文本对比…'), kbd: 'Ctrl+D' },
+      { id: 'folderCompare', label: tt('文件夹对比…') },
+      { id: 'merge', label: tt('三向合并…') },
     ],
   },
 ];

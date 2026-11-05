@@ -595,6 +595,49 @@ try {
     await caretEndOf('.w-code');
     await right();
     ok('代码块后面已经空着一行，→ 不再加行', (await bl()).length === 2, JSON.stringify(await bl()));
+
+    /* ---- J. 菜单栏：速记与对比放在最右边 ----
+       它们原来分别在「文件」的第二位和「工具」的中段 —— 天天点的东西不该让人
+       在菜单栏上找。两个都是一级项：速记是动作（点一次直接打开，没有下拉），
+       对比是一组同族窗口的下拉。 */
+    const bar = await ev(`[...document.querySelectorAll('#menubar .am-btn')].map((b) => b.textContent.trim())`);
+    ok('菜单栏最后两项是「速记」「对比」',
+      JSON.stringify(bar.slice(-2)) === '["速记","对比"]', JSON.stringify(bar));
+
+    const items = () => ev(`(() => {
+      const m = document.querySelector('.appmenu');
+      return m && !m.hidden ? [...m.querySelectorAll('.am-item')].map((b) => b.textContent.trim()) : null;
+    })()`);
+    const openTop = async (name) => {
+      await ev(`(() => { [...document.querySelectorAll('#menubar .am-btn')].find((b) => b.textContent.trim() === ${JSON.stringify(name)})?.click(); })()`);
+      await sleep(260);
+    };
+    const closeTop = async () => {
+      await ev(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`);
+      await sleep(160);
+    };
+
+    await openTop('工具');
+    const tools = await items();
+    ok('「工具」里不再重复列对比入口',
+      !!tools && !tools.some((t) => /文本对比|文件夹对比|三向合并/.test(t)), JSON.stringify(tools));
+    await closeTop();
+
+    /* 速记是一级**动作**：点一次直接开，不该先展开一个只有「打开速记」的下拉 */
+    await openTop('速记');
+    await sleep(700);
+    const qn = await ev(`({
+      menu: (document.querySelector('.appmenu') || { hidden: true }).hidden,
+      quick: !!(window.__snp.getActiveTab() || {}).quickNote,
+    })`);
+    ok('点「速记」直接打开速记，不展开下拉', qn.menu === true && qn.quick === true, JSON.stringify(qn));
+
+    await openTop('对比');
+    const cmpItems = await items();
+    ok('「对比」下拉里有文本 / 文件夹 / 三向合并',
+      !!cmpItems && ['文本对比', '文件夹对比', '三向合并'].every((k) => cmpItems.some((t) => t.includes(k))),
+      JSON.stringify(cmpItems));
+    await closeTop();
   }
 } catch (e) {
   ok('探针执行完成', false, e.message);
