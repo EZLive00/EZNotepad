@@ -839,6 +839,90 @@ try {
     const sel2 = await ev(`window.getSelection().toString()`);
     ok('再按一次才扩到全文', sel2.includes('第二段'), JSON.stringify(sel2));
   }
+
+  /* ---------- 语言覆盖面：类型表是唯一真源 ----------
+     以前 .jsonl / .kt 这类扩展名「不在表里」就一路掉到纯文本，
+     界面上完全看不出区别。这里量的是「编辑区真的产生了着色 span」。 */
+  {
+    const probes = [
+      ['p1.jsonl', '{"id": 1, "name": "a"}\n{"id": 2, "name": "b"}\n', 'JSON Lines'],
+      ['p2.js', 'const a = 1;\nfunction f() { return a; }\n', 'JavaScript'],
+      ['p3.kt', 'fun main() {\n    val a = 1\n    println(a)\n}\n', 'Kotlin'],
+      ['p4.toml', 'name = "x"\n[table]\nkey = 1\n', 'TOML'],
+    ];
+    for (const [name, body, label] of probes) {
+      await ev(`window.__snp.newTab(${JSON.stringify(name)}, ${JSON.stringify(body)}, null)`);
+      await sleep(420);
+      const n = await ev(`document.querySelectorAll('#editor .cm-line span').length`);
+      ok(`${label}：编辑区有语法着色`, n > 0, `${n} 个 span`);
+    }
+
+    /* JSONL 不是合法 JSON（一行一条），预览必须走代码视图而不是「JSON 语法错误」 */
+    await ev(`window.__snp.newTab('pv.jsonl', '{"a": 1}\\n{"b": 2}', null)`);
+    await ev(`window.__snp.commands.modePreview()`);
+    await sleep(320);
+    const pv = await ev(`(() => {
+      const el = document.getElementById('preview');
+      return { code: !!el.querySelector('.codeview'), err: !!el.querySelector('.json-err') };
+    })()`);
+    ok('JSON Lines 预览按代码看，不当成坏 JSON', pv.code && !pv.err, JSON.stringify(pv));
+  }
+
+  /* ---------- 新建文档：类型够多 + 自定义扩展名 ---------- */
+  {
+    /* 末尾补 `; 0`：commands.new() 返回的 promise 要等对话框关闭才 resolve，
+       直接 await 会把 CDP 求值卡死在这里 */
+    await ev(`window.__snp.commands.new(); 0`);
+    await sleep(260);
+    const grid = await ev(`(() => {
+      const cells = document.querySelectorAll('.new-types .new-type');
+      const input = document.querySelector('.new-ext');
+      const go = document.querySelector('.new-go');
+      return { n: cells.length, hasInput: !!input, disabled: !!go && go.disabled };
+    })()`);
+    ok('新建网格列出的类型 ≥ 28', grid.n >= 28, String(grid.n));
+    ok('新建网格有自定义扩展名输入', grid.hasInput);
+    ok('没填扩展名时「创建」不可点', grid.disabled);
+
+    const made = await ev(`(async () => {
+      const input = document.querySelector('.new-ext');
+      input.value = 'kt';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      const go = document.querySelector('.new-go');
+      const enabled = !go.disabled;
+      go.click();
+      await new Promise((r) => setTimeout(r, 260));
+      return { enabled, name: window.__snp.getActiveTab().name };
+    })()`);
+    ok('填了扩展名后「创建」可点', made.enabled);
+    ok('自定义类型建出 未命名.kt', made.name === '未命名.kt', made.name);
+  }
+
+  /* ---------- 格式化走 prettier（懒加载） ---------- */
+  {
+    /* 第一次按会现拉 2 MB 的引擎，等久一点 */
+    await ev(`window.__snp.newTab('fmt.json', '{"a":1,"b":[1,2],"c":{"d":true}}', null)`);
+    await sleep(260);
+    await ev(`window.__snp.commands.format(); 0`);
+    await sleep(1400);
+    const json2 = await ev(`window.__snp.getEditorText()`);
+    ok('JSON 被 prettier 重排成两空格缩进', /\n {2}"a": 1,/.test(json2), JSON.stringify(json2.slice(0, 40)));
+
+    await ev(`window.__snp.newTab('fmt.md', '# 标题\\n正文一行\\n- a\\n', null)`);
+    await sleep(260);
+    await ev(`window.__snp.commands.format(); 0`);
+    await sleep(1200);
+    const md2 = await ev(`window.__snp.getEditorText()`);
+    ok('Markdown 标题后补了空行（prettier 行为）', /# 标题\n\n正文一行/.test(md2), JSON.stringify(md2));
+
+    /* prettier 不管的语言：只做保守清理，绝不重排缩进 */
+    await ev(`window.__snp.newTab('fmt.py', 'def f():   \\n    return 1   \\n', null)`);
+    await sleep(260);
+    await ev(`window.__snp.commands.format(); 0`);
+    await sleep(900);
+    const py2 = await ev(`window.__snp.getEditorText()`);
+    ok('Python 只去行尾空格，缩进原样', py2 === 'def f():\n    return 1\n', JSON.stringify(py2));
+  }
 } catch (e) {
   ok('探针执行完成', false, e.message);
 } finally {

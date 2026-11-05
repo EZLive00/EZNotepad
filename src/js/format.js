@@ -1,25 +1,23 @@
 // ============================================================
-// format.js —— 按文件类型的「一键格式化」与行列处理
-// 原则：不丢内容、可撤销、语法错误时不改动原文
+// format.js —— 文件类型判定 + 一键格式化
+//
+// 格式化本身交给 **prettier**（src/vendor/format.js，首次用时才加载）：
+// 缩进、折行、引号、尾逗号、Markdown 块间距这些规则一条都不在本项目里，
+// 也不再自己写「自动修复全角引号 / 尾逗号」那类正则补丁 —— 那种补丁只在
+// 它见过的那几种坏法上有效，修错了还会静默改坏用户的数据。
+//
+// prettier 不管的语言（Python / Go / Rust / SQL …）保持原来的保守清理：
+// 统一换行、去行尾空格、压缩连续空行。**不动缩进、不动语法**，
+// 因为这几门语言在浏览器侧没有成熟格式化器，硬凑一个必然出错。
 // ============================================================
-
-/** 由扩展名判断格式类型 */
 import { tt } from './i18n.js';
 import { errText } from './errors.js';
+import { LANGS, langForFile, langInfo } from './langs.js';
+
+/** 由文件名判断格式类型（语言表是唯一真源） */
 export function detectKind(fileName = '') {
-  const ext = (fileName.split('.').pop() || '').toLowerCase();
-  if (!fileName.includes('.')) return 'txt';
-  const md = ['md', 'markdown', 'mdown', 'mkd'];
-  const code = ['js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx', 'py', 'rs', 'go', 'java', 'kt', 'c', 'h', 'cpp', 'cc', 'hpp',
-    'cs', 'css', 'scss', 'less', 'html', 'xml', 'svg', 'vue', 'sql', 'sh', 'bash', 'zsh', 'ps1', 'yaml', 'yml',
-    'toml', 'ini', 'conf', 'php', 'rb', 'swift', 'dart', 'lua', 'bat', 'psm1', 'gradle', 'props'];
-  if (md.includes(ext)) return 'md';
-  if (ext === 'json' || ext === 'jsonc') return 'json';
-  if (code.includes(ext)) return 'code';
-  if (['log', 'csv', 'tsv', 'txt', 'text', 'dat', 'srt', 'ass', 'nfo'].includes(ext)) {
-    return ['csv', 'tsv'].includes(ext) ? 'data' : 'txt';
-  }
-  return 'txt';
+  const id = langForFile(fileName);
+  return id ? LANGS[id].kind : 'txt';
 }
 
 export function kindLabel(kind) {
@@ -32,9 +30,90 @@ export function modesFor(kind) {
   return ['edit', 'preview'];
 }
 
+/* ---------------- prettier 懒加载 ---------------- */
+
+/** 2 MB 的格式化引擎不该进启动路径：按下第一次「格式化」才拉进来 */
+let fmtMod = null;
+function loadFormatter() {
+  if (!fmtMod) fmtMod = import('../vendor/format.js');
+  return fmtMod;
+}
+
+/**
+ * 传给 prettier 的选项。
+ * printWidth 100 而不是默认 80：这个应用是「看文件」的，不是写库的，
+ * 80 列会把本来一行放得下的配置折成三行。
+ * proseWrap: preserve —— 中文段落按用户自己的换行，别重排。
+ */
+const FORMAT_OPTIONS = {
+  printWidth: 100,
+  tabWidth: 2,
+  useTabs: false,
+  proseWrap: 'preserve',
+  endOfLine: 'lf',
+};
+
+/** prettier 的 parser 名 → 出错时给人看的语言名（对话框里那句「无法格式化」） */
+function engineLabel(id) {
+  const def = langInfo(id);
+  return def ? def.label : id;
+}
+
+/* ---------------- 保守清理（prettier 不管的类型） ---------------- */
+
 const trimTrailing = (s) => s.replace(/[ \t]+$/gm, '');
 
-/** 找到 JSON 语法错误的行列（基于 V8 报错信息） */
+/** 纯文本 / 日志 / 代码：统一换行、去行尾空格、压缩连续空行 */
+export function formatPlain(text, kind) {
+  const s = trimTrailing(String(text).replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n'));
+  const out = [];
+  for (const l of s.split('\n')) {
+    if (l === '' && out.length && out[out.length - 1] === '') continue; // 压缩连续空行
+    out.push(l);
+  }
+  while (out.length && out[out.length - 1] === '') out.pop();
+  const notes = kind === 'code'
+    ? ['统一 LF 换行', '去除行尾空格', '压缩连续空行']
+    : ['去除行尾空格', '压缩连续空行'];
+  return { text: out.join('\n') + '\n', notes };
+}
+
+/**
+ * 一键格式化。
+ *
+ * @param {string} kind      detectKind() 的结果
+ * @param {string} text      全文
+ * @param {string} fileName  用来认语言（不传就按 kind 猜 md / json）
+ * @returns {Promise<{text: string, notes: string[]}>}
+ * @throws 语法错误时抛出带 line / col 的 Error（原文件保持不变）
+ */
+export async function formatByKind(kind, text, fileName = '') {
+  const id = langForFile(fileName) || (kind === 'md' ? 'md' : kind === 'json' ? 'json' : '');
+  const def = id ? LANGS[id] : null;
+
+  if (def && def.fmt) {
+    const { formatText } = await loadFormatter();
+    try {
+      const out = await formatText(String(text), def.fmt, FORMAT_OPTIONS);
+      return { text: out, notes: [] };
+    } catch (e) {
+      /* prettier 的错误消息自带行列（e.loc.start），原样带着走，
+         上层据此弹「第几行第几列」并把光标送过去 */
+      const msg = errText(e).replace(/^\[error\]\s*/i, '');
+      const err = new Error(msg);
+      const loc = e && e.loc && e.loc.start;
+      if (loc) { err.line = loc.line; err.col = loc.column; }
+      err.engine = engineLabel(id);
+      throw err;
+    }
+  }
+
+  return formatPlain(text, kind);
+}
+
+/* ---------------- JSON 出错定位（预览用，非格式化） ---------------- */
+
+/** 找到 JSON 语法错误的行列（基于 V8 报错信息，兜底才自己扫） */
 export function jsonErrorPosition(text, err) {
   const msg = errText(err);
   const mLineCol = msg.match(/line (\d+) column (\d+)/);
@@ -81,111 +160,7 @@ function scanJsonError(text) {
   return null;
 }
 
-/** JSON 一键格式化 */
-export function formatJSON(text, indent = 2) {
-  let src = text.replace(/^\uFEFF/, '');
-  const fixes = [];
-  // 常见错误自动修复（仅在全角标点、尾逗号、单引号上做保守处理）
-  const note = (n) => { if (!fixes.includes(n)) fixes.push(n); };
-  let fixed = src
-    .replace(/[\u201c\u201d]/g, () => { note(tt('全角引号已改为半角')); return '"'; })
-    .replace(/\uff1a/g, () => { note(tt('全角冒号已改为半角')); return ':'; })
-    .replace(/,\s*([}\]])/g, (m, c) => { note(tt('已移除多余逗号')); return c; })
-    .replace(/\/\/[^\n"]*$/gm, () => { note(tt('已移除行注释')); return ''; })
-    .replace(/\/\*[\s\S]*?\*\//g, () => { note('已移除块注释'); return ''; });
-
-  const attempt = (s) => {
-    try {
-      return { ok: true, value: JSON.parse(s) };
-    } catch (e) {
-      return { ok: false, err: e };
-    }
-  };
-
-  let r = attempt(fixed);
-  if (!r.ok && fixed !== src) {
-    r = attempt(src);
-    fixed = src;
-    fixes.length = 0;
-  }
-  if (!r.ok) {
-    const p = jsonErrorPosition(fixed, r.err);
-    const e = new Error(p.message);
-    e.line = p.line;
-    e.col = p.col;
-    throw e;
-  }
-  const out = JSON.stringify(r.value, null, indent);
-  return { text: out + '\n', notes: fixes };
-}
-
-/** Markdown 规范化 */
-export function formatMarkdown(text) {
-  let s = text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
-  s = trimTrailing(s);
-  const lines = s.split('\n');
-  const out = [];
-  let inFence = false;
-
-  for (let i = 0; i < lines.length; i++) {
-    let line = lines[i];
-
-    if (/^\s*(```|~~~)/.test(line)) {
-      inFence = !inFence;
-      out.push(line);
-      continue;
-    }
-    if (inFence) { out.push(line); continue; }
-
-    // 标题：确保 # 后有一个空格，且标题前后有空行
-    const h = line.match(/^\s*(#{1,6})([^#\s].*)$/);
-    if (h) line = `${h[1]} ${h[2].trim()}`;
-    const isHeading = /^#{1,6}\s/.test(line);
-
-    if (isHeading && out.length && out[out.length - 1].trim() !== '') out.push('');
-
-    // 列表符号统一为 -
-    if (/^\s*[*+]\s+/.test(line)) line = line.replace(/^(\s*)[*+](\s+)/, '$1-$2');
-
-    out.push(line);
-    if (isHeading && i + 1 < lines.length && lines[i + 1].trim() !== '') out.push('');
-  }
-
-  // 连续空行压缩为一行；文末仅留一个换行
-  const res = [];
-  for (const l of out) {
-    if (l.trim() === '' && res.length && res[res.length - 1].trim() === '') continue;
-    res.push(l);
-  }
-  while (res.length && res[res.length - 1].trim() === '') res.pop();
-  return { text: res.join('\n') + '\n', notes: [] };
-}
-
-/** 纯文本 / 日志 / 代码：保守清理 */
-export function formatPlain(text, kind) {
-  let s = text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
-  s = trimTrailing(s);
-  const lines = s.split('\n');
-  const out = [];
-  for (const l of lines) {
-    if (l === '' && out.length && out[out.length - 1] === '') continue; // 压缩连续空行
-    out.push(l);
-  }
-  while (out.length && out[out.length - 1] === '') out.pop();
-  const notes = kind === 'code' ? ['统一 LF 换行', '去除行尾空格', '压缩连续空行'] : ['去除行尾空格', '压缩连续空行'];
-  return { text: out.join('\n') + '\n', notes };
-}
-
-/** 统一入口 */
-export function formatByKind(kind, text) {
-  switch (kind) {
-    case 'json': return formatJSON(text);
-    case 'md': return formatMarkdown(text);
-    default: return formatPlain(text, kind);
-  }
-}
-
-/* ---------------- 行列处理 ---------------- */
+/* ---------------- 行列处理（与语言无关，保留） ---------------- */
 
 export const lineOps = {
   sortAsc: (t) => t.split('\n').sort((a, b) => a.localeCompare(b, 'zh-CN')).join('\n'),

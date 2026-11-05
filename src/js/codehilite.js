@@ -19,11 +19,45 @@ import { highlight, normalizeLang, detectLang } from './highlight.js';
 
 const PREFIX = 'sn-tok-';
 /** highlight() 真正会产出的 token 类（styles.css 里各有一条 ::highlight 规则） */
-const CLS = ['key', 'str', 'num', 'comment', 'punc', 'fn', 'tag', 'attr'];
-/** 单块上限：超过就不上色，宁可没有也别让打字变卡 */
-const MAX_CHARS = 80000;
+const CLS = ['key', 'str', 'num', 'comment', 'punc', 'fn', 'tag', 'attr', 'type'];
+/** 单块上限：超过就不上色，宁可没有也别让打字变卡
+    （highlight.js 是完整分词器，比旧的正则版慢一档：40k 约 40ms） */
+const MAX_CHARS = 40000;
 
 const live = () => typeof CSS !== 'undefined' && !!CSS.highlights && typeof Highlight !== 'undefined';
+
+/* ---------------- 自动识别：缓存 + 延后 ----------------
+ * highlightAuto 要跑几十门语法（实测 2 KB 约 150 ms、70 KB 超过 1 s），绝不能挂在
+ * 每次输入的防抖回调上。这里两条规矩：
+ *   1. 结果按「文本前缀」缓存 —— 在长块末尾打字时前缀没变，一次都不用重算；
+ *   2. 没命中缓存就排一次 500 ms 后的识别，**本次先不上色**。用户停手之后颜色才
+ *      出现，比每敲一个字卡一下好得多。
+ * JSON 例外：`JSON.parse` 几毫秒就能验完，立刻给结果，不必等。
+ */
+const AUTO_SAMPLE = 2000;
+const autoCache = new Map();
+let autoTimer = null;
+let autoRoot = null;
+
+function autoLang(text, root) {
+  const key = text.length > AUTO_SAMPLE ? text.slice(0, AUTO_SAMPLE) : text;
+  if (autoCache.has(key)) return autoCache.get(key);
+  const t = text.trim();
+  if (t[0] === '{' || t[0] === '[') {
+    try { JSON.parse(t); autoCache.set(key, 'json'); return 'json'; } catch { /* 不是合法 JSON */ }
+  }
+  autoRoot = root;
+  if (!autoTimer) {
+    autoTimer = setTimeout(() => {
+      autoTimer = null;
+      const id = detectLang(key);
+      if (autoCache.size > 300) autoCache.clear();
+      autoCache.set(key, id);
+      if (autoRoot) refreshCode(autoRoot);
+    }, 500);
+  }
+  return '';
+}
 
 /**
  * 代码块的源码文本。
@@ -148,7 +182,7 @@ export function refreshCode(root) {
     const block = el.closest('.w-block');
     const declared = ((block && block.dataset.lang) || '').trim();
     const text = codeText(el);
-    const auto = declared || !text ? '' : detectLang(text);
+    const auto = declared || !text ? '' : autoLang(text, root);
     paintBar(block, declared || auto);
 
     if (!canPaint || !text || text.length > MAX_CHARS) continue;

@@ -6,7 +6,7 @@
 //  txt/log -> 等宽只读
 // ============================================================
 import { renderMarkdown, resolveDocImg } from './markdown.js';
-import { highlight, normalizeLang } from './highlight.js';
+import { highlight, highlightLines } from './highlight.js';
 import { jsonErrorPosition } from './format.js';
 import { renderMathIn } from './math.js';
 import { tt } from './i18n.js';
@@ -49,12 +49,12 @@ function renderPlain(text) {
 }
 
 function renderCode(text, lang) {
-  const lines = text.split('\n');
-  const html = lines.map((l, i) => {
-    // 逐行高亮：保证代码块语言状态不串行（对多行注释/字符串有轻微差异，可接受）
-    const body = highlight(l, lang) || '&nbsp;';
-    return `<div class="codeline"><span class="ln">${i + 1}</span><span class="lc">${body || ' '}</span></div>`;
-  });
+  /* 整段一次交给 highlight.js：逐行喂会把多行注释 / 模板字符串的状态切断，
+     颜色从第二行起就是错的。行号与 <div class="codeline"> 由 highlightLines
+     切出来（它在换行处自己收尾、下一行重开 span）。 */
+  const bodies = highlightLines(text, lang);
+  const html = bodies.map((b, i) =>
+    `<div class="codeline"><span class="ln">${i + 1}</span><span class="lc">${b || '&nbsp;'}</span></div>`);
   return `<pre class="plainview codeview" style="font-family:var(--font-mono)">${html.join('')}</pre>`;
 }
 

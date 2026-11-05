@@ -15,6 +15,7 @@ import { diffLines, buildSideBySide, diffStats } from '../src/js/diff.js';
 import { blockItems, arrange, rangeText } from '../src/js/difflist.js';
 import { sortLines, sortKey, isSorted } from '../src/js/linesort.js';
 import { detectLang } from '../src/js/highlight.js';
+import { normalizeLang, langForFile, newDocTypes } from '../src/js/langs.js';
 
 const out = [];
 const eq = (name, got, want) => out.push({ name, ok: JSON.stringify(got) === JSON.stringify(want), got, want });
@@ -177,21 +178,28 @@ ok('已经是字典序时 isSorted 为真', isSorted(['a', 'b', 'c']));
 ok('乱序时 isSorted 为假', !isSorted(['b', 'a']));
 
 /* ---------- 代码块语言自动识别 ----------
-   没标语言的代码块（``` 后面空着）靠它决定怎么上色。要的是「贴一段 JSON /
-   脚本进来能认出来」，以及**别把散文也认成代码** —— 后者比不识别更难看。 */
+   没标语言的代码块（``` 后面空着）靠它决定怎么上色，底层是 highlight.js 的
+   highlightAuto。判据两条：**真代码要认出来**、**不够长就老实不认**
+   —— 短片段按关键字打分本来就不可靠，涂错颜色比不上色难查得多。 */
 eq('识别：JSON', detectLang('{"a": 1, "b": [2, 3]}'), 'json');
-eq('识别：python', detectLang('def foo(x):\n    return x'), 'py');
-eq('识别：js', detectLang('const a = 1;\nconsole.log(a);'), 'js');
-eq('识别：ts 不会被 js 抢走', detectLang('interface Foo {\n  a: string;\n}'), 'ts');
-eq('识别：go', detectLang('package main\n\nfunc main() {\n\tfmt.Println("hi")\n}'), 'go');
-eq('识别：rust', detectLang('fn main() {\n    let mut x = 1;\n}'), 'rust');
-eq('识别：html', detectLang('<div class="a">hi</div>'), 'html');
-eq('识别：shell 命令行', detectLang('sudo apt-get install nginx'), 'sh');
-eq('识别：sql 不分大小写', detectLang('select id, name from users where id = 1'), 'sql');
-eq('识别：cpp 不会被 c 抢走', detectLang('#include <iostream>\nstd::cout << 1;'), 'cpp');
+eq('识别：python', detectLang('import os\nimport json\nfrom typing import Any\n\ndef load(path: str) -> dict[str, Any]:\n    if not os.path.exists(path):\n        raise FileNotFoundError(path)\n    with open(path, encoding="utf-8") as f:\n        data = json.load(f)\n    return data\n'), 'py');
+eq('识别：js', detectLang('import fs from "node:fs";\n\nconst cache = new Map();\n\nexport function read(key) {\n  if (cache.has(key)) {\n    return cache.get(key);\n  }\n  const value = fs.readFileSync(key, "utf8");\n  cache.set(key, value);\n  return value;\n}\n'), 'js');
+eq('识别：go', detectLang('package main\n\nimport (\n\t"fmt"\n\t"os"\n)\n\nfunc main() {\n\tf, err := os.Open("a.txt")\n\tif err != nil {\n\t\tfmt.Println(err)\n\t\treturn\n\t}\n\tdefer f.Close()\n\tfmt.Println(f.Name())\n}\n'), 'go');
+eq('识别：rust', detectLang('use std::collections::HashMap;\n\npub fn count(m: &HashMap<String, u32>) -> u32 {\n    let mut n = 0;\n    for v in m.values() {\n        n += v;\n    }\n    n\n}\n'), 'rs');
+eq('识别：html', detectLang('<!doctype html>\n<html>\n  <body>\n    <div class="a">hi</div>\n    <p>text</p>\n  </body>\n</html>'), 'html');
+eq('识别：shell 脚本', detectLang('set -e\nfor f in *.txt; do\n  echo "processing $f"\n  grep -v "^#" "$f" >> out.txt\ndone\necho done'), 'sh');
+eq('识别：cpp 不会被 c 抢走', detectLang('#include <iostream>\n#include <vector>\n\nint main() {\n    std::vector<int> v{1, 2, 3};\n    for (auto x : v) std::cout << x;\n    return 0;\n}'), 'cpp');
+eq('识别：短片段宁可不认（打分不可靠）', detectLang('interface Foo {\n  a: string;\n}'), '');
 eq('识别：散文保持原样', detectLang('这是一段普通的中文说明，没有任何代码。'), '');
 eq('识别：空白串不猜', detectLang('   \n  '), '');
 eq('识别：坏的 JSON 不硬认成 json', detectLang('{ 这不是 json'), '');
+
+/* ---------- 语言注册表是唯一真源 ---------- */
+eq('语言表：jsonl 有名字', normalizeLang('jsonl'), 'jsonl');
+eq('语言表：按扩展名认', langForFile('a.kt'), 'kt');
+eq('语言表：无扩展名按整名认', langForFile('Dockerfile'), 'docker');
+eq('语言表：认不出返回空', langForFile('a.zzz'), '');
+ok('语言表：新建类型够多', newDocTypes().length >= 24);
 
 /* ---------- boot 顺序：外面推进来的文件，监听必须比恢复流程先挂 ----------
    恢复草稿是个模态框（「是否恢复」），用户不点，boot 就停在 await 上。

@@ -5,6 +5,7 @@
 import { createTab, tabs, settings, saveSettings, LS, isDirty, activeTab, setActive, removeTab, DEFAULTS } from './state.js';
 import * as be from './backend.js';
 import { detectKind, kindLabel, modesFor, formatByKind, lineOps, caseOps } from './format.js';
+import { newDocTypes } from './langs.js';
 import { renderPreview, extractOutline } from './preview.js';
 import { outlineFromMarkdown, headingSlugs } from './markdown.js';
 import { WysiwygEditor } from './wysiwyg.js';
@@ -2165,19 +2166,18 @@ async function openExternal(href) {
   try { await openPath(p); } catch { toast(tt('打不开：') + p); }
 }
 
-/* ---------------- 新建文档：先选类型 ---------------- */
-const newTypes = () => [
-  { ext: 'md', name: 'Markdown', desc: tt('所见即所得写作') },
-  { ext: 'txt', name: tt('纯文本'), desc: tt('记事 / 日志') },
-  { ext: 'json', name: 'JSON', desc: tt('校验 + 高亮') },
-  { ext: 'csv', name: 'CSV', desc: tt('表格文本') },
-  { ext: 'js', name: 'JavaScript', desc: tt('代码高亮') },
-  { ext: 'ts', name: 'TypeScript' },
-  { ext: 'py', name: 'Python' },
-  { ext: 'html', name: 'HTML' },
-  { ext: 'css', name: 'CSS' },
-  { ext: 'sh', name: tt('Shell 脚本') },
-];
+/* ---------------- 新建文档：先选类型 ----------------
+ * 类型清单来自 langs.js 的注册表（那里加一门语言，这里自动多一格）。
+ * 最后一格是「自定义」：填任何扩展名都能建，认不出的扩展名按纯文本处理，
+ * 不会因为「不在列表里」而拦住用户。
+ */
+const newTypes = () => newDocTypes().map((ty) => ({ ...ty, name: tt(ty.label) }));
+
+/** 自定义扩展名归一：去掉前导点、只留一个词、小写；非法返回 '' */
+function normExt(raw) {
+  const s = String(raw || '').trim().replace(/^\.+/, '').toLowerCase();
+  return /^[a-z0-9][a-z0-9_+-]{0,15}$/.test(s) ? s : '';
+}
 
 /** 新建文档的名字：连开三个不该都叫「未命名.md」——重名时依次加序号 */
 function untitledName(ext) {
@@ -2196,7 +2196,8 @@ async function newFilePrompt() {
   const box = document.createElement('div');
   box.className = 'new-types';
   const last = settings.lastNewExt || 'md';
-  newTypes().forEach((ty) => {
+  const types = newTypes();
+  types.forEach((ty) => {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'new-type' + (ty.ext === last ? ' active' : '');
@@ -2204,11 +2205,42 @@ async function newFilePrompt() {
     b.innerHTML = `<b>${ty.name}</b><small>.${ty.ext}${ty.desc ? ' · ' + ty.desc : ''}</small>`;
     box.appendChild(b);
   });
+
+  /* 自定义：填扩展名 → 建「未命名.<ext>」。按钮默认不可点，
+     输入合法之后才挂 data-dialog-close（dialog 的点击代理靠它收尾） */
+  const custom = document.createElement('div');
+  custom.className = 'new-custom';
+  const input = document.createElement('input');
+  input.className = 'new-ext';
+  input.type = 'text';
+  input.spellcheck = false;
+  input.maxLength = 16;
+  input.placeholder = tt('自定义扩展名，如 r / kt / jsonl');
+  input.setAttribute('aria-label', tt('自定义扩展名'));
+  const go = document.createElement('button');
+  go.type = 'button';
+  go.className = 'new-go';
+  go.textContent = tt('创建');
+  go.disabled = true;
+  const sync = () => {
+    const ext = normExt(input.value);
+    go.disabled = !ext;
+    if (ext) go.dataset.dialogClose = ext; else delete go.dataset.dialogClose;
+    go.title = ext ? tt('新建 .{ext} 文档', { ext }) : '';
+  };
+  input.addEventListener('input', sync);
+  input.addEventListener('keydown', (e) => {
+    /* 回车只认这一格：dialog 的全局 Enter 会去点主按钮，那会建上次的类型 */
+    if (e.key === 'Enter' && !go.disabled) { e.preventDefault(); e.stopPropagation(); go.click(); }
+  });
+  custom.append(input, go);
+  box.appendChild(custom);
+
   const picked = await dialog({
     title: tt('新建文档'),
     body: box,
     buttons: [
-      { id: last, label: tt('新建 {type}', { type: newTypes().find((t) => t.ext === last)?.name || 'Markdown' }), primary: true },
+      { id: last, label: tt('新建 {type}', { type: types.find((t) => t.ext === last)?.name || 'Markdown' }), primary: true },
       { id: 'cancel', label: tt('取消') },
     ],
   });
@@ -2254,14 +2286,15 @@ function transformText(fn, label) {
   undoToast(tt('{op}已应用（{scope}）', { op: label, scope: hasSel ? tt('选区') : tt('全文') }), backup);
 }
 
-function formatDoc() {
+async function formatDoc() {
   const t = activeTab();
   if (!t || !requireEditMode()) return;
   t.content = readEditor(t);
   const kind = detectKind(t.name);
   const backup = t.content;
   try {
-    const r = formatByKind(kind, t.content);
+    /* 格式化引擎按需加载（2 MB 的 prettier），第一次按会多等一拍 */
+    const r = await formatByKind(kind, t.content, t.name);
     if (r.text === t.content) { toast(tt('已经是最佳格式，无需调整')); return; }
     setContent(r.text);
     const notes = r.notes && r.notes.length ? `（${r.notes.join('、')}）` : '';

@@ -62,7 +62,7 @@ export { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
 
 export { tags } from '@lezer/highlight';
 
-/* ---- 具体语言 ---- */
+/* ---- 具体语言（lezer 语法，增量解析） ---- */
 export { javascript } from '@codemirror/lang-javascript';
 export { python } from '@codemirror/lang-python';
 export { rust } from '@codemirror/lang-rust';
@@ -75,7 +75,40 @@ export { yaml } from '@codemirror/lang-yaml';
 export { markdown } from '@codemirror/lang-markdown';
 export { java } from '@codemirror/lang-java';
 export { cpp } from '@codemirror/lang-cpp';
+export { less } from '@codemirror/lang-less';
+export { sass } from '@codemirror/lang-sass';
+export { vue } from '@codemirror/lang-vue';
+export { php } from '@codemirror/lang-php';
 
-/* ---- 只做了 stream 版本的老语言（shell / ini），包一层照样有高亮 ---- */
+/* ---- 老 CodeMirror 的 stream 语法（官方没出 lezer 版本的） ---- */
 export { shell } from '@codemirror/legacy-modes/mode/shell';
 export { properties } from '@codemirror/legacy-modes/mode/properties';
+export { xml } from '@codemirror/legacy-modes/mode/xml';
+export { toml } from '@codemirror/legacy-modes/mode/toml';
+export { ruby } from '@codemirror/legacy-modes/mode/ruby';
+export { lua } from '@codemirror/legacy-modes/mode/lua';
+export { swift } from '@codemirror/legacy-modes/mode/swift';
+export { perl } from '@codemirror/legacy-modes/mode/perl';
+export { powerShell } from '@codemirror/legacy-modes/mode/powershell';
+export { dockerFile as dockerfile } from '@codemirror/legacy-modes/mode/dockerfile';
+export { diff } from '@codemirror/legacy-modes/mode/diff';
+export { r } from '@codemirror/legacy-modes/mode/r';
+export { julia } from '@codemirror/legacy-modes/mode/julia';
+export { haskell } from '@codemirror/legacy-modes/mode/haskell';
+export { clojure } from '@codemirror/legacy-modes/mode/clojure';
+export { erlang } from '@codemirror/legacy-modes/mode/erlang';
+export { groovy } from '@codemirror/legacy-modes/mode/groovy';
+export { protobuf } from '@codemirror/legacy-modes/mode/protobuf';
+export { cmake } from '@codemirror/legacy-modes/mode/cmake';
+export { nginx } from '@codemirror/legacy-modes/mode/nginx';
+export { vb } from '@codemirror/legacy-modes/mode/vb';
+export { verilog } from '@codemirror/legacy-modes/mode/verilog';
+export { vhdl } from '@codemirror/legacy-modes/mode/vhdl';
+export { fortran } from '@codemirror/legacy-modes/mode/fortran';
+export { pascal } from '@codemirror/legacy-modes/mode/pascal';
+export { stex } from '@codemirror/legacy-modes/mode/stex';
+export { http } from '@codemirror/legacy-modes/mode/http';
+
+/* clike 家族：kotlin / csharp / scala / dart / objc 都由同一个工厂导出，
+   它们自带关键字与注释规则，拿来即用 */
+export { kotlin, csharp, scala, dart, objectiveC } from '@codemirror/legacy-modes/mode/clike';

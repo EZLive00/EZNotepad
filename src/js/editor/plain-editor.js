@@ -27,35 +27,83 @@ import {
   syntaxHighlighting, indentOnInput, indentUnit, bracketMatching, foldGutter, foldKeymap,
   closeBrackets, closeBracketsKeymap, StreamLanguage,
   javascript, python, rust, go, json, css, html, sql, yaml, markdown, java, cpp,
-  shell, properties,
+  less, sass, vue, php,
+  shell, properties, xml, toml, ruby, lua, swift, perl, powerShell, dockerfile, diff,
+  r, julia, haskell, clojure, erlang, groovy, protobuf, cmake, nginx, vb,
+  verilog, vhdl, fortran, pascal, stex, http,
+  kotlin, csharp, scala, dart, objectiveC,
 } from '../../vendor/cm6.js';
 import { cmTheme, cmHighlight } from './theme.js';
-import { normalizeLang } from '../highlight.js';
+import { LANGS, normalizeLang } from '../langs.js';
 
 /**
- * 扩展名（经 normalizeLang 归一）→ CM6 语言工厂。
- * sh / ini 官方没出 lezer 语法，用 legacy-modes 的 stream 版本包一层照样高亮；
- * c 和 cpp 共用一个语法（C 本来就是 C++ 的子集，高亮层面没有差别）。
+ * 语言工厂表：key 是 langs.js 里的 `cm` 字段，不是扩展名。
+ *
+ * 三条来路，按优先级排：
+ *   1. @codemirror/lang-* 的 lezer 语法（增量解析，最准）；
+ *   2. @codemirror/legacy-modes 的 stream 模式（老 CodeMirror 的语法，
+ *      一次性扫描，够用且覆盖广）；
+ *   3. legacy 里的 `clike` 家族（kotlin / csharp / scala / dart / objc
+ *      都在里面导出，直接拿来用，不自己写关键字表）。
+ *
+ * 想加语言：先去 langs.js 登记，再看 vendor-entry 那边有没有语法可引，
+ * 最后在这里补一行工厂。**不要**在这里写正则分词。
  */
-const LANGS = {
+const stream = (m) => () => StreamLanguage.define(m);
+const CM = {
+  javascript: () => javascript(),
   js: () => javascript(),
+  jsx: () => javascript({ jsx: true }),
   ts: () => javascript({ typescript: true }),
   tsx: () => javascript({ typescript: true, jsx: true }),
-  jsx: () => javascript({ jsx: true }),
   py: () => python(),
   rust: () => rust(),
   go: () => go(),
   json: () => json(),
   css: () => css(),
+  scss: () => sass({ indented: false }),
+  less: () => less(),
   html: () => html(),
+  vue: () => vue(),
+  xml: () => StreamLanguage.define(xml),
+  php: () => php(),
   sql: () => sql(),
   yaml: () => yaml(),
-  md: () => markdown(),
+  markdown: () => markdown(),
   java: () => java(),
   c: () => cpp(),
   cpp: () => cpp(),
-  sh: () => StreamLanguage.define(shell),
-  ini: () => StreamLanguage.define(properties),
+  sh: stream(shell),
+  ini: stream(properties),
+  toml: stream(toml),
+  ruby: stream(ruby),
+  lua: stream(lua),
+  swift: stream(swift),
+  perl: stream(perl),
+  ps1: stream(powerShell),
+  dockerfile: stream(dockerfile),
+  diff: stream(diff),
+  r: stream(r),
+  jl: stream(julia),
+  hs: stream(haskell),
+  clj: stream(clojure),
+  erl: stream(erlang),
+  groovy: stream(groovy),
+  proto: stream(protobuf),
+  cmake: stream(cmake),
+  nginx: stream(nginx),
+  vb: stream(vb),
+  verilog: stream(verilog),
+  vhdl: stream(vhdl),
+  fortran: stream(fortran),
+  pascal: stream(pascal),
+  tex: stream(stex),
+  http: stream(http),
+  kotlin: stream(kotlin),
+  csharp: stream(csharp),
+  scala: stream(scala),
+  dart: stream(dart),
+  objc: stream(objectiveC),
 };
 
 export class PlainEditor {
@@ -141,7 +189,8 @@ export class PlainEditor {
   }
 
   _langExt(key) {
-    const make = LANGS[key];
+    const def = LANGS[key];
+    const make = def && def.cm && CM[def.cm];
     return make ? make() : [];
   }
 

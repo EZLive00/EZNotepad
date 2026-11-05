@@ -885,6 +885,7 @@ input[type="search"] { cursor: var(--cur-text), text; }
 .tok-fn { color: var(--tok-fn); }
 .tok-tag { color: var(--tok-tag); }
 .tok-attr { color: var(--tok-attr); }
+.tok-type { color: var(--tok-type); }
 
 /* JSON 错误提示 */
 .json-err {
@@ -984,6 +985,7 @@ body[data-theme="dark"] ::highlight(sn-find-cur) { background-color: #ffc247; co
 ::highlight(sn-tok-fn) { color: var(--tok-fn); }
 ::highlight(sn-tok-tag) { color: var(--tok-tag); }
 ::highlight(sn-tok-attr) { color: var(--tok-attr); }
+::highlight(sn-tok-type) { color: var(--tok-type); }
 
 /* ================= 专注模式 ================= */
 /* 标题栏必须留着：窗口是无边框的，连标题栏都没了就没法拖、没法最小化关闭，
@@ -1337,7 +1339,7 @@ body[data-theme="dark"] .ctx-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 2
 }
 
 /* ---- 新建文档：类型选择网格 ---- */
-.new-types { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 2px; }
+.new-types { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 2px; max-height: min(56vh, 430px); overflow: auto; padding-right: 2px; }
 .new-type {
   display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
   padding: 7px 10px; border: 1px solid var(--line); background: transparent;
@@ -1348,6 +1350,27 @@ body[data-theme="dark"] .ctx-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 2
 .new-type b { font-size: 13px; font-weight: 600; }
 .new-type small { font-size: 11px; color: var(--fg-faint); }
 .new-type.active { border-color: var(--accent); background: var(--bg-hover); }
+/* 自定义扩展名：横跨两列，贴在类型网格末尾。输入框自己撑开，
+   「创建」只在输入合法之后才亮 —— 免得点了没反应还以为坏了 */
+.new-custom {
+  grid-column: 1 / -1; display: flex; gap: 6px; align-items: center;
+  /* 吸在滚动区底部：类型变多以后它会被挤到可视区外，等于藏起来了 */
+  position: sticky; bottom: 0; margin-top: 2px; padding: 6px 0 2px;
+  background: var(--bg-panel);
+}
+.new-ext {
+  flex: 1; min-width: 0; font: inherit; font-size: 12.5px; color: var(--fg);
+  background: var(--bg-input, transparent); border: 1px solid var(--line);
+  border-radius: var(--r-sm); padding: 6px 9px;
+}
+.new-ext:focus { outline: none; border-color: var(--accent); }
+.new-go {
+  font: inherit; font-size: 12.5px; padding: 6px 12px; cursor: pointer;
+  border: 1px solid var(--line); border-radius: var(--r-sm);
+  background: transparent; color: var(--fg);
+}
+.new-go:disabled { color: var(--fg-faint); cursor: default; opacity: .6; }
+.new-go:not(:disabled):hover { border-color: var(--accent); background: var(--bg-hover); }
 .wysiwyg .w-h[data-type="h1"] { font-size: 1.9em; font-weight: 680; margin: 1.5em 0 .5em; line-height: 1.28; letter-spacing: -.022em; }
 /* h2 不再画下边框：中文里那条横线会把标题压成「分节条」，显旧。
    改用「上方大间距 + 字号差」来分段，视线一样能一刀切开 */
