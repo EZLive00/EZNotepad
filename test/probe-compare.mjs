@@ -1430,6 +1430,95 @@ try {
   await sleep(600);
   const wsStat2 = await cmp.ev(`document.getElementById('stat').textContent`);
   ok('关掉忽略空白，行尾差异就露出来了', /差异/.test(wsStat2), wsStat2);
+
+  /* ---------- 21. 行显示模式：默认折行，不换行时横向滚 ----------
+     对比窗口原来固定「一行一条、20px」。打开自动换行之后一行能折成好几行，
+     行高与行位都不再是「下标 × 行高」（见 compare.js 的 layout）—— 这一节
+     守的就是那套几何：折了多高、有没有裁字、关掉能不能横滚、
+     切换时视口顶部那一行会不会跳走。 */
+  /* 400 行：40 行在 20px 行高下只有 800px，比视口高不出多少，
+     切到不换行之后滚动范围只剩几像素 —— 那样「顶部那一行不跳走」根本测不出来 */
+  const longText = (ch) => Array.from({ length: 400 }, (_, i) => ch.repeat(300) + ' #' + (i + 1)).join('\n') + '\n';
+  fs.writeFileSync(p('wrap-a.txt'), longText('A'), 'utf8');
+  fs.writeFileSync(p('wrap-b.txt'), longText('B'), 'utf8');
+  await openPair(p('wrap-a.txt'), p('wrap-b.txt'));
+
+  const wrapGeo = () => cmp.ev(`(() => {
+    const sc = document.getElementById('scrollL');
+    const row = document.querySelector('#rowsL .cmp-row');
+    const tx = row && row.querySelector('.cmp-tx');
+    const base = parseFloat(getComputedStyle(document.body).getPropertyValue('--cmp-row'));
+    return {
+      on: document.getElementById('optWrap').checked,
+      nowrap: document.body.hasAttribute('data-nowrap'),
+      rowH: row ? Math.round(row.getBoundingClientRect().height) : -1,
+      baseH: Math.round(base),
+      textH: tx ? tx.scrollHeight : -1,
+      sw: sc.scrollWidth, cw: sc.clientWidth,
+      ws: tx ? getComputedStyle(tx).whiteSpace : '',
+    };
+  })()`);
+
+  const wg0 = await wrapGeo();
+  ok('对比窗口默认就是自动换行',
+    wg0.on === true && wg0.nowrap === false && wg0.ws === 'pre-wrap', JSON.stringify(wg0));
+  ok('长行真的折了：这一行有好几倍行高',
+    wg0.rowH >= wg0.baseH * 2, `${wg0.baseH} → ${wg0.rowH}`);
+  /* 折几行是 JS 按字符宽度算的，不是量的。算少了，文字就压到下一行上 */
+  ok('折下来的字没有被裁（行高 ≥ 内容实际高度）',
+    wg0.textH <= wg0.rowH + 1, JSON.stringify({ textH: wg0.textH, rowH: wg0.rowH }));
+  ok('自动换行时不需要横向滚动',
+    wg0.sw <= wg0.cw + 1, JSON.stringify({ sw: wg0.sw, cw: wg0.cw }));
+
+  /* 视口顶部那一行的行号。滚到 1600px：换行态下正好落在第 21 行顶 */
+  const firstLine = () => cmp.ev(`(() => {
+    const sc = document.getElementById('scrollL');
+    const s = sc.getBoundingClientRect();
+    const r = [...document.querySelectorAll('#rowsL .cmp-row')]
+      .find((x) => x.getBoundingClientRect().bottom > s.top + 1);
+    return r ? r.querySelector('.cmp-ln').textContent : null;
+  })()`);
+
+  await cmp.ev(`document.getElementById('scrollL').scrollTop = 1600`);
+  await sleep(450);
+  const top0 = await firstLine();
+  ok('滚到中段，顶部落在第 21 行', top0 === '21', String(top0));
+
+  await cmp.ev(`(() => { const e = document.getElementById('optWrap'); e.checked = false; e.dispatchEvent(new Event('change')); })()`);
+  await sleep(700);
+  const wg1 = await wrapGeo();
+  ok('关掉自动换行：回到单行高', wg1.rowH === wg1.baseH, JSON.stringify({ rowH: wg1.rowH, baseH: wg1.baseH }));
+  ok('关掉之后长行横向滚起来', wg1.sw > wg1.cw + 100, JSON.stringify({ sw: wg1.sw, cw: wg1.cw }));
+  ok('body 上挂着 data-nowrap，白空格规则也回到 pre',
+    wg1.nowrap === true && wg1.ws === 'pre', JSON.stringify(wg1));
+  /* 行高从 80 变回 20，scrollTop 那个数字的含义全变了；不补偿的话
+     正在读第 21 行的人会被甩到别处 —— 这是切换时最容易忽略的一处 */
+  const top1 = await firstLine();
+  ok('切换显示模式时视口顶部那一行不跳走', top1 === '21', `${top0} → ${top1}`);
+
+  await cmp.ev(`(() => { const e = document.getElementById('optWrap'); e.checked = true; e.dispatchEvent(new Event('change')); })()`);
+  await sleep(700);
+  const top2 = await firstLine();
+  ok('切回自动换行，顶部还是同一行', top2 === '21', `${top1} → ${top2}`);
+
+  /* 右键：和主窗口一样，换行开关在右键里也要有 —— 只读态也常想「这行太长，折一下」 */
+  await cmp.ev(`document.getElementById('scrollL').scrollTop = 0`);
+  await sleep(400);
+  const rb = await cmp.ev(`(() => {
+    const b = document.querySelector('#rowsL .cmp-row').getBoundingClientRect();
+    return { x: Math.round(b.left + 80), y: Math.round(b.top + 8) };
+  })()`);
+  await cmp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: rb.x, y: rb.y, button: 'right', clickCount: 1 });
+  await cmp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: rb.x, y: rb.y, button: 'right', clickCount: 1 });
+  await sleep(450);
+  const ctxLabels = await cmp.ev(`(() => {
+    const m = document.querySelector('.ctx-menu');
+    return m ? [...m.querySelectorAll('button')].map((b) => b.textContent.trim()) : [];
+  })()`);
+  ok('对比窗口的右键菜单里有换行开关',
+    ctxLabels.some((t) => t.includes('自动换行')) && ctxLabels.some((t) => t.includes('不换行')),
+    JSON.stringify(ctxLabels));
+  await cmp.ev(`(() => { const m = document.querySelector('.ctx-menu'); if (m) m.remove(); })()`);
 } finally {
   main.close();
   // 夹具留在 node_modules/.tmp/probe-cmp 下不复用删除：每轮 writeFileSync 直接覆盖。

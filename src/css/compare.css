@@ -410,9 +410,28 @@ body[data-theme="dark"] {
 .cmp-tx {
   flex: 1;
   padding-right: 14px;
-  white-space: pre;
+  /* 默认自动换行：一行可以折成好几行，高度由 JS 按「折行数 × 行高」写进
+     行内 style（见 compare.js 的 layout）。
+     break-all + anywhere 是为了让断点**严格按字符**走 —— JS 那边用
+     「显示宽度 ÷ 每行宽度」算行高，只要浏览器按词断一次，算出来就矮一行，
+     文字会压到下一行上去。line-break: anywhere 再压掉中文的避头尾规则：
+     否则行首遇到「，」会提前一个字换行，同样对不上。 */
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+  line-break: anywhere;
   outline: none;
   min-width: 0;
+}
+
+/* 不换行：回到单行，长行交给 .cmp-sc 的 overflow: auto 横向滚。
+   断行规则也一并收回默认 —— 留着 break-all 会让「复制出去的那一行」
+   在看到的位置断开，而它在文件里本来是一整行。 */
+body[data-nowrap] .cmp-tx {
+  white-space: pre;
+  word-break: normal;
+  overflow-wrap: normal;
+  line-break: auto;
 }
 
 /* 占位行：这一侧在这条对齐位置上没有内容（差异对齐补出来的空位）。

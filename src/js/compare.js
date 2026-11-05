@@ -14,13 +14,13 @@ import * as be from './backend.js';
 import { buildSideBySide, diffStats, inlineDiff } from './diff.js';
 import { blockItems, arrange, rangeText } from './difflist.js';
 import { sortLines, isSorted } from './linesort.js';
-import { toast } from './ui.js';
+import { toast, contextMenu } from './ui.js';
 import { invoke } from '../vendor/api/core.js';
 import { listen } from '../vendor/api/event.js';
 import { getCurrentWindow } from '../vendor/api/window.js';
 import { PhysicalPosition, PhysicalSize } from '../vendor/api/dpi.js';
 import { tt, setLang, resolveLang, applyDom } from './i18n.js';
-import { settings } from './state.js';
+import { settings, saveSettings } from './state.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -53,6 +53,16 @@ const S = {
     r: { path: '', name: '', loaded: false, lines: [''], enc: 'UTF-8', bom: false, eol: '\n', dirty: false, base: [''], undo: [], redo: [], undoAt: 0 },
   },
   opt: { ignoreWS: true, ignoreCase: false, collapse: true },
+  /* 行显示模式：true = 自动换行（soft wrap），false = 不换行、横向滚动。
+     默认值与主窗口共用 settings.wrap（见 applyWrap），对比窗口跟着同一个偏好。 */
+  wrap: true,
+  /* 行位几何（见 layout）：y 是每行顶边，hh 是每行高度，uL/uR 是每行左右
+     两侧的显示宽度（半角单元数，全角算 2）。换行时行高 = 折行数 × ROW_H，
+     所以这两个数组必须和 S.rows 同长。 */
+  y: null,
+  hh: null,
+  uL: null,
+  uR: null,
   rows: [],
   blocks: [],
   items: [],           // 差异清单的数据（recompute 时折好）
@@ -150,9 +160,50 @@ function applyFontSize() {
   document.body.style.setProperty('--cmp-row', ROW_H + 'px');
 }
 
+/**
+ * 行显示模式：自动换行 / 不换行。
+ *
+ * 和主窗口共用 settings.wrap 这一份偏好（两个窗口读同一份 localStorage），
+ * 在哪儿改都是改同一个开关 —— 「我明明在对比窗口关掉了折行，回编辑器又折回来」
+ * 是两个开关才会有的问题。
+ *
+ * 换行会改变每行的高度（见 layout），所以几何缓存（预览条、行位）一起作废。
+ */
+function setWrap(on) {
+  const v = on !== false;
+  document.body.toggleAttribute('data-nowrap', !v);
+  if ($('optWrap')) {
+    $('optWrap').checked = v;
+    /* 提示语跟着状态走：开着的时候说「会折行」，关掉时说「会横向滚」，
+       不然用户只能靠试。 */
+    const lab = $('optWrap').closest('label');
+    if (lab) lab.title = tt(v ? '长行折到下一行显示' : '长行不折行，横向滚动查看');
+  }
+  if (v === S.wrap) return;
+  S.wrap = v;
+  settings.wrap = v;
+  saveSettings();
+  /* 行高整体变了，scrollTop 那个数字的含义也跟着变：留在原处的话，正在读
+     第 300 行的人会被甩到第 90 行。记下「视口顶部是哪一行」，重排之后再滚回去 ——
+     换成不换行时同理，否则一按就往回跳一大截。 */
+  const sc = el('l', 'scroll');
+  const keep = S.view.length ? rowAtY(sc.scrollTop) : 0;
+  layoutKey = '';
+  rulerCache = null;
+  markCache = null;
+  if (S.view.length) {
+    render(true);
+    sc.scrollTop = clamp(rowTop(keep), 0, Math.max(0, totalHeight() - sc.clientHeight));
+    syncFrom('l', sc.scrollTop, sc.scrollLeft);
+    renderRows('l', true);
+    renderRows('r', true);
+    drawRuler();
+    syncGutter();
+  }
+}
+
 function applyTheme() {
-  let t = settings.theme || 'auto';
-  if (t === 'auto') {
+  let t = settings.theme || 'auto';  if (t === 'auto') {
     t = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   }
   document.body.dataset.theme = t;
@@ -193,6 +244,8 @@ function recompute() {
     S.view = [];
     S.cur = 0;
     S.units = { l: 0, r: 0 };
+    S.uL = new Uint32Array(0);
+    S.uR = new Uint32Array(0);
     return;
   }
 
@@ -226,10 +279,15 @@ function recompute() {
   }
 
   let ul = 0, ur = 0;
-  for (const row of S.rows) {
-    if (row.l) ul = Math.max(ul, unitsOf(row.l.text));
-    if (row.r) ur = Math.max(ur, unitsOf(row.r.text));
-  }
+  /* 每行的显示宽度要留着算折行数（见 layout）。算一次存下来：
+     recompute 本来就要遍历全部行取最大值，顺手存进两个数组，
+     后面每次重排只读数组，不再重算字符宽度。 */
+  S.uL = new Uint32Array(S.rows.length);
+  S.uR = new Uint32Array(S.rows.length);
+  S.rows.forEach((row, i) => {
+    if (row.l) { const u = unitsOf(row.l.text); S.uL[i] = u; if (u > ul) ul = u; }
+    if (row.r) { const u = unitsOf(row.r.text); S.uR[i] = u; if (u > ur) ur = u; }
+  });
   // 单侧打开时，另一侧按同一宽度排，滚动条不会左右跳
   if (!hasR) ur = ul;
   if (!hasL) ul = ur;
@@ -273,6 +331,9 @@ function buildView() {
   const out = [];
   for (let i = 0; i < total; i++) if (keep[i]) out.push(i);
   S.view = out;
+  /* 视图换了（折叠/展开/查找露出），行位几何必然作废 —— 但不必在这里重算：
+     多数调用方紧接着就 render。作废只需把 key 清掉，下次 layout 自然重算。 */
+  layoutKey = '';
 }
 
 /** 模型行下标 → 屏幕行位；找不到（被折叠掉了）返回 -1。
@@ -290,7 +351,104 @@ function vposOf(i) {
   return -1;
 }
 
+/* ---------------- 行位几何：换行之后每行不一样高 ----------------
+ *
+ * 不换行时每行就是 ROW_H，「第 v 行在第几像素」= v × ROW_H（原来的做法）。
+ * 打开自动换行后，一行可能折成三行，高度不再相同 —— 所有换算都得走 S.y：
+ * 它是**每行顶部**的 y 偏移，长度 = 视图行数 + 1（最后一项是总高）。
+ *
+ * 折几行是**算**出来的，不是量出来的：对比窗口是等宽字体，一个半角字符
+ * 固定 CHAR_W 宽，一行能放多少字符 = 可用宽度 / CHAR_W；CSS 那边再配
+ * `word-break: break-all` + `line-break: anywhere`，断点就严格按字符走，
+ * 于是「算出来的行数」与浏览器排出来的高度一致。量的话每行要读一次布局，
+ * 两万行就是两万次强制重排，滚动直接卡死。
+ *
+ * 单位不是字符数而是**半角单元**（全角算 2，见 unitsOf）：中文一折就错位，
+ * 那是这个窗口最主要的用途。
+ */
+let LAYOUT_VER = 0;      // 几何版本：换行开关 / 列宽 / 行数一变就 +1，预览条缓存靠它作废
+
+/** 一行能放几个半角单元。两栏宽度可能差一两像素，取小的那边 —— 行高按
+ *  较窄的一侧算，较宽的一侧只会更空，不会把字挤出格子。
+ *
+ *  行号列宽读 CSS 变量而不是量 DOM：第一帧画布还是空的，量不到 `.cmp-ln`，
+ *  退回默认值会让首屏行高算错一截（滚动一下才自愈）。 */
+function wrapCols() {
+  const lnW = parseFloat(getComputedStyle(document.body).getPropertyValue('--cmp-ln-w')) || 54;
+  let cols = 0;
+  for (const side of ['l', 'r']) {
+    const cv = el(side, 'canvas');
+    const sc = el(side, 'scroll');
+    const avail = (cv.clientWidth || sc.clientWidth || 0) - lnW - 14;   // 14 = .cmp-tx 的 padding-right
+    const c = Math.floor(avail / CHAR_W);
+    if (c > 0 && (cols === 0 || c < cols)) cols = c;
+  }
+  return Math.max(8, cols || 80);
+}
+
+/** 重算 S.y / S.hh。调用点只有 render() 和需要「先知道行位再滚动」的地方。
+ *  key 没变就直接返回：5 万行的前缀和不算贵，但每帧都算一遍就白费了。 */
+let layoutKey = '';
+
+function layout() {
+  const n = S.view.length;
+  const cols = S.wrap ? wrapCols() : 0;
+  const key = `${n}:${S.ver}:${cols}:${ROW_H}`;
+  if (key === layoutKey && S.y && S.y.length === n + 1) return;
+  layoutKey = key;
+
+  const y = new Float64Array(n + 1);
+  const hh = new Float64Array(n);
+  if (!S.wrap) {
+    for (let i = 0; i < n; i++) { y[i] = i * ROW_H; hh[i] = ROW_H; }
+    y[n] = n * ROW_H;
+  } else {
+    let acc = 0;
+    for (let vi = 0; vi < n; vi++) {
+      y[vi] = acc;
+      const mi = S.view[vi];
+      const row = S.rows[mi];
+      /* 一条对齐行两栏都有内容时取高的那一侧：两栏共用同一个行位，
+         矮的那侧多出来的空白比「错行」好受得多 */
+      let lines = 1;
+      if (row && row.l) lines = Math.max(lines, Math.ceil(S.uL[mi] / cols));
+      if (row && row.r) lines = Math.max(lines, Math.ceil(S.uR[mi] / cols));
+      hh[vi] = lines * ROW_H;
+      acc += hh[vi];
+    }
+    y[n] = acc;
+  }
+  S.y = y;
+  S.hh = hh;
+  LAYOUT_VER++;
+}
+
+/** 内容总高（像素） */
+function totalHeight() {
+  const y = S.y;
+  return y && y.length ? y[y.length - 1] : S.view.length * ROW_H;
+}
+
+/** 第 vi 条视图行的顶边 / 高度 */
+const rowTop = (vi) => (S.y && vi < S.y.length ? S.y[vi] : vi * ROW_H);
+const rowH = (vi) => (S.hh && vi < S.hh.length ? S.hh[vi] : ROW_H);
+
+/** 内容坐标 y 落在第几条视图行（二分；返回 0..n-1） */
+function rowAtY(y) {
+  const n = S.view.length;
+  if (!n) return 0;
+  const Y = S.y;
+  if (!Y || Y.length < n + 1) return clamp(Math.floor(y / ROW_H), 0, n - 1);
+  let lo = 0, hi = n - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (Y[mid] <= y) lo = mid; else hi = mid - 1;
+  }
+  return lo;
+}
+
 /* ---------------- 渲染 ---------------- */
+
 function el(side, what) {
   return $(what + sideKey(side));
 }
@@ -346,7 +504,7 @@ function rowHtml(row, i, side, vi) {
     const c = S.find.hits[S.find.cur];
     if (c && c.side === side && c.mi === i) hit += ' hit-cur';
   }
-  return `<div class="${rowClass(row, i, side)}${gap}${hit}" style="top:${vi * ROW_H}px">`
+  return `<div class="${rowClass(row, i, side)}${gap}${hit}" style="top:${rowTop(vi)}px;height:${rowH(vi)}px">`
     + `<span class="cmp-ln">${cell ? cell.no : ''}</span>`
     + `<span class="cmp-tx" data-i="${i}" data-side="${side}" data-n="1"${fill}${editable}>${inner}</span>`
     + '</div>';
@@ -358,8 +516,10 @@ function renderRows(side, force = false) {
   const total = S.view.length;
   const vh = sc.clientHeight || 400;
 
-  const first = Math.max(0, Math.floor(sc.scrollTop / ROW_H) - 6);
-  const last = Math.min(total - 1, Math.ceil((sc.scrollTop + vh) / ROW_H) + 6);
+  /* 换行之后一屏里行的条数不固定：上界按坐标反查，再各留 6 行余量。
+     -6 / +6 是「滚动一点点不必重画」的缓冲，和原来一致。 */
+  const first = Math.max(0, rowAtY(sc.scrollTop) - 6);
+  const last = Math.min(total - 1, rowAtY(sc.scrollTop + vh) + 6);
 
   /* 拖动选区 / 全选期间（S.hold）：只往两端补，绝不重建。
      重建会把正在进行的那段选区连同选中节点一起摘掉；而屏幕外面还没有的行
@@ -528,8 +688,8 @@ function dragTick() {
   drag.top = sc.scrollTop;
   const vh = sc.clientHeight || 400;
   const total = S.view.length;
-  const first = Math.max(0, Math.floor(sc.scrollTop / ROW_H) - 8);
-  const last = Math.min(total - 1, Math.ceil((sc.scrollTop + vh) / ROW_H) + 8);
+  const first = Math.max(0, rowAtY(sc.scrollTop) - 8);
+  const last = Math.min(total - 1, rowAtY(sc.scrollTop + vh) + 8);
   growRows(drag.side, first, last);
   dragExtend();
   drag.raf = requestAnimationFrame(dragTick);
@@ -655,17 +815,29 @@ function crossSelKey(e) {
 }
 
 function render(force = false) {
-  const total = S.view.length;
-  const h = total * ROW_H;
+  /* 先定宽度，再算行位（换行时行高取决于一行能放多少字符），最后才铺高。
+     顺序反过来的话，第一帧会按上一轮的列宽排版，滚动时看起来在抖。 */
   for (const side of ['l', 'r']) {
     const cv = el(side, 'canvas');
-    cv.style.height = Math.max(h, 1) + 'px';
-    /* 宽度 **至少** 铺满可视区。只按内容算的话，贴上两段短文本时 canvas
-       只有内容那么宽，行右侧那一大片「看起来还是正文」的空白其实不属于任何行；
-       点上去落在 .cmp-sc 上，光标不动 —— 用户看到的就是「点了没反应」。
-       内容更宽时仍然按内容算，横向滚动照旧。 */
-    const viewW = el(side, 'scroll').clientWidth || 0;
-    cv.style.width = Math.max(Math.round(S.units[side] * CHAR_W + 54 + 40), viewW) + 'px';
+    const sc = el(side, 'scroll');
+    const viewW = sc.clientWidth || 0;
+    if (S.wrap) {
+      /* 换行：内容永远不超过一栏宽，不需要横向滚动，宽度交给 CSS 的
+         `.cmp-cv { min-width: 100% }` —— 自己按 clientWidth 写一个值反而更糟：
+         纵向滚动条一出现 clientWidth 少 11px，写死的宽度就成了横向滚动条。 */
+      cv.style.width = '';
+    } else {
+      /* 宽度 **至少** 铺满可视区。只按内容算的话，贴上两段短文本时 canvas
+         只有内容那么宽，行右侧那一大片「看起来还是正文」的空白其实不属于任何行；
+         点上去落在 .cmp-sc 上，光标不动 —— 用户看到的就是「点了没反应」。
+         内容更宽时仍然按内容算，横向滚动照旧。 */
+      cv.style.width = Math.max(Math.round(S.units[side] * CHAR_W + 54 + 40), viewW) + 'px';
+    }
+  }
+  layout();
+  const h = totalHeight();
+  for (const side of ['l', 'r']) {
+    el(side, 'canvas').style.height = Math.max(h, 1) + 'px';
     renderRows(side, force);
   }
   /* 预览条本身只占内容那么高：短文档时它就是一小截，不会拉满整列 */
@@ -985,22 +1157,25 @@ function rulerGeom(force = false) {
   const rb = box.getBoundingClientRect();
   const sb = sc.getBoundingClientRect();
   const total = S.view.length;
-  const contentH = total * ROW_H;
+  /* 内容总高：换行时不是 total × 行高，得问几何（见 contentH） */
+  const ch = totalHeight();
   const viewH = sc.clientHeight || box.clientHeight || 1;
   const top = Math.max(0, Math.round(sb.top - rb.top));
-  const h = Math.max(1, Math.round(Math.min(viewH, contentH || 1)));
-  rulerCache = { box, cv: $('rulerC'), rb, top, h, contentH, viewH, total };
+  const h = Math.max(1, Math.round(Math.min(viewH, ch || 1)));
+  rulerCache = { box, cv: $('rulerC'), rb, top, h, contentH: ch, viewH, total };
   return rulerCache;
 }
 
 /* 预览条上的差异标记。每一行一条：轨道是 1:1 时逐行 1px；文档长到一行
    分不到 2.5px 时，行与行之间已经挤不下缝，只能按段并成一条（仍然是细的）。
-   结果按「版本 / 总行数 / 轨道高 / 当前块」缓存 —— 滚动时几何不变，
-   每帧重算几万条会让滚动发黏。 */
+   结果按「版本 / 几何 / 总行数 / 轨道高」缓存 —— 滚动时几何不变，
+   每帧重算几万条会让滚动发黏。
+   `per` 只是**平均**每行像素，用来判断「还画不画得开」；具体位置一律按
+   S.y 换算 —— 换行之后一行能有 3 行高，按平均画会整体错位。 */
 let markCache = null;
 
-function diffMarks(total, per, h) {
-  const key = `${S.ver}:${total}:${h}`;
+function diffMarks(total, per, h, ch) {
+  const key = `${S.ver}:${LAYOUT_VER}:${total}:${h}`;
   if (markCache && markCache.key === key) return markCache.marks;
 
   /* 整份文件都不一样时逐行画既没意义也画不动：>4000 条就退回按块 */
@@ -1012,15 +1187,23 @@ function diffMarks(total, per, h) {
   }
   const perLine = per >= 2.5 && lines <= 4000;
 
+  const Y = S.y;
+  const span = ch || 1;
+  const yAt = (v) => (Y && v < Y.length ? (Y[v] / span) * h : v * per);
+
   const marks = [];
   for (const it of S.items) {
     const vs = vposOf(it.start);
     const ve = vposOf(it.end);
     if (vs < 0 || ve < 0) continue;
     if (perLine) {
-      for (let v = vs; v <= ve; v++) marks.push({ y: Math.round(v * per), h: 1 });
+      for (let v = vs; v <= ve; v++) {
+        /* 逐行 1px —— 不是「这一行有多高」。折行之后一行能有 80px，
+           按高度画就成了粗柱子，又把「这是几行」糊掉了。 */
+        marks.push({ y: Math.round(yAt(v)), h: 1 });
+      }
     } else {
-      marks.push({ y: vs * per, h: Math.max(1, (ve - vs + 1) * per) });
+      marks.push({ y: yAt(vs), h: Math.max(1, yAt(ve + 1) - yAt(vs)) });
     }
   }
   markCache = { key, marks };
@@ -1063,7 +1246,7 @@ function drawRuler() {
      收窄之后，同一处差异依旧连成一条线，但每行的边界还在。 */
   const mw = 10;
   const mx = Math.round(tx + (tw - mw) / 2);
-  for (const mk of diffMarks(total, per, h)) {
+  for (const mk of diffMarks(total, per, h, contentH)) {
     g.fillStyle = RED;
     g.fillRect(mx, top + mk.y, mw, mk.h);
   }
@@ -1104,8 +1287,9 @@ function jumpToRatio(ratio) {
   const total = S.view.length;
   if (!total || ratio === null) return;
   const sc = el('l', 'scroll');
-  const y = ratio * total * ROW_H;
-  sc.scrollTop = clamp(y - sc.clientHeight / 2, 0, Math.max(0, total * ROW_H - sc.clientHeight));
+  const h = totalHeight();
+  const y = ratio * h;
+  sc.scrollTop = clamp(y - sc.clientHeight / 2, 0, Math.max(0, h - sc.clientHeight));
   syncFrom('l', sc.scrollTop, sc.scrollLeft);
   renderRows('l');
   renderRows('r');
@@ -1120,7 +1304,9 @@ function rulerHover(e) {
   if (!total) { tip.hidden = true; return; }
   const y = e.clientY - gg.rb.top - gg.top;
   if (y < 0 || y > gg.h) { tip.hidden = true; return; }
-  const rowIdx = Math.min(total - 1, Math.floor((y / gg.h) * total));
+  /* 按 y 反查行，不能按「第几格」均分：换行之后每行高度不同，
+     均分出来的行号会越往下偏得越多 */
+  const rowIdx = rowAtY((y / gg.h) * gg.contentH);
   const r = S.rows[S.view[rowIdx]];
   if (!r) { tip.hidden = true; return; }
   /* 并排行号对用户没意义，显示的是两侧文件里的真实行号 */
@@ -1146,8 +1332,8 @@ function followScroll() {
   const n = S.blocks.length;
   if (!n || !S.view.length) return;
   const sc = el('l', 'scroll');
-  const center = (sc.scrollTop + sc.clientHeight / 2) / ROW_H;
-  const vi = clamp(Math.floor(center), 0, S.view.length - 1);
+  const center = rowAtY(sc.scrollTop + sc.clientHeight / 2);
+  const vi = clamp(center, 0, S.view.length - 1);
   const mi = S.view[vi];
   let lo = 0, hi = n - 1, best = 0;
   while (lo <= hi) {
@@ -1191,7 +1377,8 @@ function gotoBlock(i) {
   /* 块的位置是模型下标，滚动要按屏幕行位算（折叠时两者差着被折掉的行数） */
   const vi = Math.max(0, vposOf(S.blocks[S.cur]));
   const sc = el('l', 'scroll');
-  sc.scrollTop = clamp(vi * ROW_H - sc.clientHeight / 2 + ROW_H, 0, Math.max(0, S.view.length * ROW_H - sc.clientHeight));
+  sc.scrollTop = clamp(rowTop(vi) - sc.clientHeight / 2 + rowH(vi), 0,
+    Math.max(0, totalHeight() - sc.clientHeight));
   syncFrom('l', sc.scrollTop, sc.scrollLeft);
   S.ver++;
   render(true);
@@ -1249,12 +1436,13 @@ function findJump() {
   /* 命中行可能刚被折叠掉（相同行），buildView 会把「当前命中」留出来 */
   buildView();
   S.ver++;
+  layout();          // 视图刚换过，行位要立刻跟上才能算滚动量
   const vi = vposOf(h.mi);
   if (vi >= 0) {
     const sc = el('l', 'scroll');
-    const y = vi * ROW_H;
-    if (y < sc.scrollTop || y + ROW_H > sc.scrollTop + sc.clientHeight) {
-      sc.scrollTop = clamp(y - sc.clientHeight / 2, 0, Math.max(0, S.view.length * ROW_H - sc.clientHeight));
+    const y = rowTop(vi);
+    if (y < sc.scrollTop || y + rowH(vi) > sc.scrollTop + sc.clientHeight) {
+      sc.scrollTop = clamp(y - sc.clientHeight / 2, 0, Math.max(0, totalHeight() - sc.clientHeight));
       syncFrom('l', sc.scrollTop, sc.scrollLeft);
     }
   }
@@ -1658,13 +1846,13 @@ function focusRowIdx(side, i, col, opts) {
      此时把光标夹到视口正中那一条可见行：视口不动，但焦点必须留在正文里 ——
      掉到 body 上，用户下一次按键就是「没反应」，那比光标差几行严重得多。 */
   if (keepScroll
-      && (vi * ROW_H + ROW_H <= sc.scrollTop || vi * ROW_H >= sc.scrollTop + sc.clientHeight)) {
-    vi = Math.min(S.view.length - 1, Math.max(0, Math.floor((sc.scrollTop + sc.clientHeight / 2) / ROW_H)));
+      && (rowTop(vi) + rowH(vi) <= sc.scrollTop || rowTop(vi) >= sc.scrollTop + sc.clientHeight)) {
+    vi = rowAtY(sc.scrollTop + sc.clientHeight / 2);
     i = S.view[vi];
   }
   S.pin = i;                  // 光标落在这里，折叠时别把它收走
-  const y = vi * ROW_H;
-  if (!keepScroll && (y < sc.scrollTop || y + ROW_H > sc.scrollTop + sc.clientHeight)) {
+  const y = rowTop(vi);
+  if (!keepScroll && (y < sc.scrollTop || y + rowH(vi) > sc.scrollTop + sc.clientHeight)) {
     sc.scrollTop = Math.max(0, y - sc.clientHeight / 2);
     syncFrom(side, sc.scrollTop, sc.scrollLeft);
   }
@@ -2061,7 +2249,10 @@ function syncGutter() {
   const ve = cs < 0 ? -1 : vposOf(ce);
   let center = headTop + sc.clientHeight / 2;       // 当前块看不见时落在正中
   if (vs >= 0 && ve >= 0) {
-    center = headTop + vs * ROW_H + ((Math.max(vs, ve) - vs + 1) * ROW_H) / 2 - sc.scrollTop;
+    /* 块的首行顶到末行底的中线。换行之后一行能有几行高，
+       按「条数 × 行高」算会把箭头拽得太靠下 */
+    const mid = (rowTop(vs) + rowTop(Math.max(vs, ve)) + rowH(Math.max(vs, ve))) / 2;
+    center = headTop + mid - sc.scrollTop;
   }
   const top = clamp(center - boxH / 2, headTop + 2,
     Math.max(headTop + 2, headTop + sc.clientHeight - boxH - 2));
@@ -2297,6 +2488,7 @@ function bind() {
 
   $('optWS').onchange = (e) => { S.opt.ignoreWS = e.target.checked; S.ver++; recompute(); render(true); };
   $('optCase').onchange = (e) => { S.opt.ignoreCase = e.target.checked; S.ver++; recompute(); render(true); };
+  $('optWrap').onchange = (e) => setWrap(e.target.checked);
   /* 折叠不改变 diff 结果，不需要重算差异 —— 只要重排可见行 */
   $('optFold').onchange = (e) => {
     S.opt.collapse = e.target.checked;
@@ -2317,6 +2509,34 @@ function bind() {
     if (host) S.lastSide = sideOf(host);
   });
   $('save').onclick = save;
+
+  /* 右键：换行开关要在任何状态下都点得到（只读也常想「这行太长，折一下」）。
+     复制/全选跟着编辑态走 —— 只读时没有剪切粘贴可言。 */
+  for (const side of ['l', 'r']) {
+    el(side, 'scroll').addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      const hasSel = !!String(window.getSelection() || '');
+      const clip = (cmd) => { try { document.execCommand(cmd); } catch {} };
+      const items = S.edit
+        ? [
+            { label: tt('剪切'), shortcut: 'Ctrl+X', disabled: !hasSel, action: () => clip('cut') },
+            { label: tt('复制'), shortcut: 'Ctrl+C', disabled: !hasSel, action: () => clip('copy') },
+            { label: tt('粘贴'), shortcut: 'Ctrl+V', action: () => clip('paste') },
+            { label: tt('全选'), shortcut: 'Ctrl+A', action: () => selectAllSide(side) },
+            { sep: true },
+          ]
+        : [
+            { label: tt('复制'), shortcut: 'Ctrl+C', disabled: !hasSel, action: () => clip('copy') },
+            { label: tt('全选'), shortcut: 'Ctrl+A', action: () => selectAllSide(side) },
+            { sep: true },
+          ];
+      items.push({ lead: tt('换行'), row: [
+        { label: tt('自动换行'), hint: tt('长行折到下一行显示'), checked: () => S.wrap, action: () => setWrap(true) },
+        { label: tt('不换行'), hint: tt('长行不折行，横向滚动查看'), checked: () => !S.wrap, action: () => setWrap(false) },
+      ] });
+      contextMenu(e.clientX, e.clientY, items);
+    });
+  }
   $('report').onclick = saveReport;
 
   /* 差异清单 */
@@ -2403,7 +2623,8 @@ function bind() {
       let i = inner ? +inner.dataset.i : NaN;
       if (!Number.isFinite(i)) {
         // 行下方的空白：按坐标算离得最近的那一行（坐标是行位，换回模型下标）
-        const vi = Math.max(0, Math.min(S.view.length - 1, Math.floor((e.clientY - box.top) / ROW_H)));
+        // 行下方的空白：按坐标算离得最近的那一行（坐标是行位，换回模型下标）
+        const vi = clamp(rowAtY(e.clientY - box.top), 0, S.view.length - 1);
         i = S.view[vi];
         if (i == null) return;
       }
@@ -2564,6 +2785,11 @@ function pickSide(side) {
   document.getElementById('nameR').textContent = tt('右侧未选择');
 
   applyTheme();
+  /* 行显示模式：跟着主窗口那份偏好（默认自动换行）。必须在第一次 render
+     之前定下来，否则首帧按错误的高度排版，接着又整体重排一次。
+     setWrap 在「值没变」时会提前返回，但属性、勾选、提示语已经全部设好。 */
+  S.wrap = settings.wrap !== false;
+  setWrap(S.wrap);
   await fitToScreen();
   cacheColors();
   CHAR_W = measureCharW();

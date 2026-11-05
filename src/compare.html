@@ -65,6 +65,10 @@
     <label class="cmp-chk" title="比较时忽略行首行尾空白与连续空格" data-i18n-title="比较时忽略行首行尾空白与连续空格"><input type="checkbox" id="optWS" checked /><span data-i18n="忽略空白">忽略空白</span></label>
     <label class="cmp-chk" title="比较时忽略大小写" data-i18n-title="比较时忽略大小写"><input type="checkbox" id="optCase" /><span data-i18n="忽略大小写">忽略大小写</span></label>
     <label class="cmp-chk" title="相同行收起来，只留差异和前后 3 行；编辑时自动展开" data-i18n-title="相同行收起来，只留差异和前后 3 行；编辑时自动展开"><input type="checkbox" id="optFold" checked /><span data-i18n="只看差异">只看差异</span></label>
+    <!-- 行显示模式：和主窗口共用同一个偏好（settings.wrap），改哪儿都一样。
+         放这一组是因为它和「忽略空白 / 只看差异」同属「怎么显示」，
+         而不是「比什么」—— 它不影响差异结果。 -->
+    <label class="cmp-chk" title="长行折到下一行显示" data-i18n-title="长行折到下一行显示"><input type="checkbox" id="optWrap" checked /><span data-i18n="自动换行">自动换行</span></label>
 
     <div class="cmp-sep"></div>
 
