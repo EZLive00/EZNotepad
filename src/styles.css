@@ -972,6 +972,19 @@ input[type="search"] { cursor: var(--cur-text), text; }
 body[data-theme="dark"] ::highlight(sn-find) { background-color: rgba(255, 196, 0, .18); }
 body[data-theme="dark"] ::highlight(sn-find-cur) { background-color: #ffc247; color: #1a1300; }
 
+/* 编辑态代码块高亮（codehilite.js）：同样走 CSS Custom Highlight API，
+   所以规则只能设 color 一类「绘制属性」—— font-style / 斜体用不上。
+   颜色直接复用预览那套 --tok-*，两处看到的着色是同一份。不铺背景色：
+   代码块底色已经定了，再叠一层会和选区、和查找高亮打架。 */
+::highlight(sn-tok-key) { color: var(--tok-key); }
+::highlight(sn-tok-str) { color: var(--tok-str); }
+::highlight(sn-tok-num) { color: var(--tok-num); }
+::highlight(sn-tok-comment) { color: var(--tok-comment); }
+::highlight(sn-tok-punc) { color: var(--tok-punc); }
+::highlight(sn-tok-fn) { color: var(--tok-fn); }
+::highlight(sn-tok-tag) { color: var(--tok-tag); }
+::highlight(sn-tok-attr) { color: var(--tok-attr); }
+
 /* ================= 专注模式 ================= */
 /* 标题栏必须留着：窗口是无边框的，连标题栏都没了就没法拖、没法最小化关闭，
    等于把用户关在自己写的文档里。所以只收标签行 / 侧栏 / 状态栏 / 菜单，
@@ -1426,7 +1439,28 @@ body[data-theme="dark"] .ctx-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 2
 .wysiwyg .w-mathblock::after { content: " $$"; color: var(--fg-faint); }
 /* 代码块：去掉描边，用一块比正文略沉的底 + 圆角，边界靠底色而不是线 */
 .wysiwyg .w-codeblock { background: var(--code-bg); border-radius: var(--r-md); margin: 1.15em 0; overflow: hidden; box-shadow: inset 0 0 0 1px var(--line); }
-.wysiwyg .w-codebar { padding: 6px 14px; font-size: 10.5px; color: var(--fg-faint); letter-spacing: .06em; border-bottom: 1px solid var(--line); }
+.wysiwyg .w-codebar {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 3px 8px 3px 14px; font-size: 10.5px; color: var(--fg-faint);
+  letter-spacing: .06em; border-bottom: 1px solid var(--line);
+}
+.wysiwyg .cc-lang { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 复制按钮：默认不现身，鼠标落在代码块上才淡出来 —— 每块代码都挂一个常驻
+   按钮，等于让工具栏长在正文里。点中后图标换成对勾，1.2s 自己退回 */
+.wysiwyg .cc-copy {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: 0 0 auto; width: 22px; height: 22px; padding: 0;
+  border: 0; border-radius: var(--r-md); background: transparent;
+  color: var(--fg-faint); cursor: pointer;
+  opacity: 0; transition: opacity .12s, background .12s, color .12s;
+}
+.wysiwyg .w-codeblock:hover .cc-copy,
+.wysiwyg .cc-copy:focus-visible { opacity: 1; }
+.wysiwyg .cc-copy:hover { background: var(--bg-hover); color: var(--fg); }
+.wysiwyg .cc-copy .ico { width: 13px; height: 13px; stroke-width: 2; }
+.wysiwyg .cc-copy .cc-ico-done { display: none; color: var(--tok-str); }
+.wysiwyg .cc-copy.done .cc-ico-copy { display: none; }
+.wysiwyg .cc-copy.done .cc-ico-done { display: block; }
 .wysiwyg .w-text { outline: none; }
 .wysiwyg .w-code { display: block; white-space: pre-wrap; font-family: var(--font-mono); font-size: 13px; line-height: 1.68; padding: 12px 14px; }
 .wysiwyg code { background: var(--code-bg); padding: .12em .4em; border-radius: var(--r-sm); font-family: var(--font-mono); font-size: .88em; box-shadow: inset 0 0 0 1px var(--line); }

@@ -14,6 +14,7 @@ import { extractOutline } from '../src/js/preview.js';
 import { diffLines, buildSideBySide, diffStats } from '../src/js/diff.js';
 import { blockItems, arrange, rangeText } from '../src/js/difflist.js';
 import { sortLines, sortKey, isSorted } from '../src/js/linesort.js';
+import { detectLang } from '../src/js/highlight.js';
 
 const out = [];
 const eq = (name, got, want) => out.push({ name, ok: JSON.stringify(got) === JSON.stringify(want), got, want });
@@ -174,6 +175,23 @@ eq('排序键：去首尾空白', sortKey('  Ab '), 'Ab');
 eq('排序键：去空白并转小写', sortKey('  Ab ', { ignoreCase: true }), 'ab');
 ok('已经是字典序时 isSorted 为真', isSorted(['a', 'b', 'c']));
 ok('乱序时 isSorted 为假', !isSorted(['b', 'a']));
+
+/* ---------- 代码块语言自动识别 ----------
+   没标语言的代码块（``` 后面空着）靠它决定怎么上色。要的是「贴一段 JSON /
+   脚本进来能认出来」，以及**别把散文也认成代码** —— 后者比不识别更难看。 */
+eq('识别：JSON', detectLang('{"a": 1, "b": [2, 3]}'), 'json');
+eq('识别：python', detectLang('def foo(x):\n    return x'), 'py');
+eq('识别：js', detectLang('const a = 1;\nconsole.log(a);'), 'js');
+eq('识别：ts 不会被 js 抢走', detectLang('interface Foo {\n  a: string;\n}'), 'ts');
+eq('识别：go', detectLang('package main\n\nfunc main() {\n\tfmt.Println("hi")\n}'), 'go');
+eq('识别：rust', detectLang('fn main() {\n    let mut x = 1;\n}'), 'rust');
+eq('识别：html', detectLang('<div class="a">hi</div>'), 'html');
+eq('识别：shell 命令行', detectLang('sudo apt-get install nginx'), 'sh');
+eq('识别：sql 不分大小写', detectLang('select id, name from users where id = 1'), 'sql');
+eq('识别：cpp 不会被 c 抢走', detectLang('#include <iostream>\nstd::cout << 1;'), 'cpp');
+eq('识别：散文保持原样', detectLang('这是一段普通的中文说明，没有任何代码。'), '');
+eq('识别：空白串不猜', detectLang('   \n  '), '');
+eq('识别：坏的 JSON 不硬认成 json', detectLang('{ 这不是 json'), '');
 
 /* ---------- boot 顺序：外面推进来的文件，监听必须比恢复流程先挂 ----------
    恢复草稿是个模态框（「是否恢复」），用户不点，boot 就停在 await 上。

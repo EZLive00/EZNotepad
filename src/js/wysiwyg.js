@@ -14,6 +14,7 @@
 
 import { resolveDocImg, headingSlugs, CALLOUT_TYPES, RE_CALLOUT, normalizeCallout, splitImgAlt } from './markdown.js';
 import { tt } from './i18n.js';
+import { codeText, refreshCode } from './codehilite.js';
 
 const MAX_INDENT = 6;
 const ZWSP = '\u200b';
@@ -239,10 +240,28 @@ export function mkQuote(text = '', level = 0, callout = '', title = '') {
 export function mkCode(text = '', lang = '') {
   const b = blockEl('code', 'w-codeblock');
   b.dataset.lang = lang || '';
+  /* 语言条：左边是语言名（没标语言时由高亮模块填识别结果），右边是「复制」
+     图标按钮。整条不可编辑、也不进 .w-text —— 序列化只认 .w-code 里的字，
+     这条栏里加多少东西都不影响存盘。 */
   const bar = document.createElement('div');
   bar.className = 'w-codebar';
   bar.contentEditable = 'false';
-  bar.innerHTML = `<span>${escapeHtml(lang || 'code')}</span>`;
+  const name = document.createElement('span');
+  name.className = 'cc-lang';
+  name.textContent = lang || 'code';
+  const copy = document.createElement('button');
+  copy.type = 'button';
+  copy.className = 'cc-copy';
+  copy.contentEditable = 'false';
+  copy.tabIndex = -1;                       // Tab 在编辑器里有自己的含义，别让它落进按钮
+  copy.title = tt('复制代码');
+  copy.setAttribute('aria-label', tt('复制代码'));
+  /* 图标统一挂 .ico：绘制属性（fill:none / stroke:currentColor）在样式表里
+     一处给，symbol 里只留路径。不挂的话 svg 会用默认的黑色实心 —— 深色主题
+     下就是一团黑块，而且完全看不出是复制。 */
+  copy.innerHTML = '<svg class="ico cc-ico-copy"><use href="#i-copy"/></svg>'
+    + '<svg class="ico cc-ico-done"><use href="#i-check"/></svg>';
+  bar.append(name, copy);
   const s = document.createElement('span');
   s.className = 'w-text w-code';
   s.textContent = text;
@@ -639,16 +658,38 @@ function tableToMarkdown(block) {
   return out;
 }
 
-/** 代码块里的文本：<br> 还原成换行（textContent 会丢掉 <br>） */
-function codeToText(el) {
-  if (el.childNodes.length === 1 && el.firstChild.nodeName === 'BR') return '';
-  let s = '';
-  el.childNodes.forEach((n) => {
-    if (n.nodeType === 3) s += n.nodeValue.replace(/\u00a0/g, ' ').replace(/\u200b/g, '');
-    else if (n.nodeName === 'BR') s += '\n';
-    else if (n.nodeType === 1) s += codeToText(n);
-  });
-  return s;
+/* 代码块里的文本：<br> 还原成换行（textContent 会丢掉 <br>）。
+   真正的实现搬到 codehilite.js —— 高亮分词要按「同一份文本」算偏移，
+   两处各写一遍迟早漂移。这里留个别名，调用点不用改。 */
+const codeToText = codeText;
+
+/**
+ * 把一段文本写进系统剪贴板，返回成功与否。
+ *
+ * 不用 `navigator.clipboard.writeText`：WebView2 里它在没有用户激活时抛
+ * `NotAllowedError`，有激活时也偶发不 resolve（对比窗口读剪贴板踩过同一个坑，
+ * 见 compare.js 的注释）。`execCommand('copy')` 只依赖「有选区」这一个条件、
+ * 同步给出成败，复制按钮要的正是这种确定性。
+ *
+ * 代价是 textarea 的 `select()` 会顶掉编辑区的选区 —— 进出都把它还回去，
+ * 用户只会看到按钮图标闪一下。
+ */
+function writeClipboard(text) {
+  const sel = window.getSelection();
+  const saved = sel && sel.rangeCount ? sel.getRangeAt(0).cloneRange() : null;
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  /* 不能 display:none / visibility:hidden —— 那样 select() 选不中，复制出来是空的 */
+  ta.style.cssText = 'position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0;';
+  document.body.appendChild(ta);
+  ta.select();
+  ta.setSelectionRange(0, text.length);
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch { ok = false; }
+  ta.remove();
+  if (saved && sel) { sel.removeAllRanges(); sel.addRange(saved); }
+  return ok;
 }
 
 /**
@@ -1086,6 +1127,26 @@ const liMd = (li) => ' '.repeat(Math.max(0, Math.min(li.indent || 0, MAX_INDENT)
 
 const textEl = (block) => block.querySelector('.w-text') || block;
 
+/**
+ * 元素内第一个 / 最后一个文本节点。
+ * 选区的边界要落在**文本节点**上，不能落在元素上：元素边界（`(el, 0)`）看起来
+ * 是同一个位置，但 Chromium 在「已选中一个内联元素」之后再执行全选会把选区
+ * 整块吃掉（见 handleKey 里 Ctrl+A 的实测记录）。
+ */
+function firstTextNode(el) {
+  const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  return w.nextNode();
+}
+
+function lastTextNode(el) {
+  const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  let last = null;
+  let n;
+  while ((n = w.nextNode())) last = n;
+  return last;
+}
+
+
 function placeCaret(node, offset = 0) {
   const sel = window.getSelection();
   const r = document.createRange();
@@ -1238,6 +1299,25 @@ export class WysiwygEditor {
     // 光标离开某个标题时，把它亮出来的 ### 收回去
     this._onSelChange = () => this.collapseHashes();
     document.addEventListener('selectionchange', this._onSelChange);
+    /* 代码块高亮：只在 DOM 真的变了才重算。输入、粘贴、撤销、render、
+       视口搬家都会落到这里 —— 比在每个出口各挂一次可靠（少一处就少一次
+       「有的路径高亮不刷新」的怪象）。它不碰 DOM，所以不会自激。 */
+    this._codeObs = new MutationObserver(() => this.scheduleCodeHilite());
+    this._codeObs.observe(root, { childList: true, subtree: true, characterData: true });
+  }
+
+  /**
+   * 排一次代码块高亮重算。输入时每键都排，所以必须防抖 —— 分词 + 建 Range
+   * 在长代码块上不是免费的；停手 120ms 后算一次，视觉上仍是「边打边上色」。
+   * 大文档载入期间（loading）先让路，载完再来。
+   */
+  scheduleCodeHilite(delay = 120) {
+    if (this._hlTimer) clearTimeout(this._hlTimer);
+    this._hlTimer = setTimeout(() => {
+      this._hlTimer = 0;
+      if (this.loading) { this.scheduleCodeHilite(200); return; }
+      refreshCode(this.root);
+    }, delay);
   }
 
   /* ---------------- 公共 API ---------------- */
@@ -2176,6 +2256,46 @@ export class WysiwygEditor {
    * beforeinput / copy / cut 接管，按整篇文档处理。
    */
 
+  /**
+   * 当前选区是不是**已经盖住**这个元素的内容。Ctrl+A 在代码块里分两步走
+   * （先选块、再选全篇），靠它判断「已经走到第几步」——判据是选区本身，
+   * 不记状态，用户中途点别处、切标签都不会残留。
+   *
+   * 用「覆盖」而不是「边界完全相同」：`selectNodeContents` 把边界放在元素上、
+   * 我们手动选的时候放在文本节点上，(el, 0) 与 (firstText, 0) 在 DOM 里是
+   * 同一个位置，但用 `=== 0` 比容易因为容器不同而判错（判错的表现是第二次
+   * Ctrl+A 又选了一遍块，永远扩不到全文）。
+   */
+  _isWholeRange(el) {
+    const sel = window.getSelection();
+    if (!sel.rangeCount || sel.isCollapsed) return false;
+    const first = firstTextNode(el);
+    const last = lastTextNode(el);
+    if (!first || !last) return false;
+    const a = document.createRange();
+    a.setStart(first, 0);
+    a.collapse(true);
+    const b = document.createRange();
+    b.setStart(last, last.nodeValue.length);
+    b.collapse(true);
+    const r = sel.getRangeAt(0);
+    return r.compareBoundaryPoints(Range.START_TO_START, a) <= 0
+      && r.compareBoundaryPoints(Range.END_TO_END, b) >= 0;
+  }
+
+  /** 整篇全选（非视口模式）。不交给浏览器，理由见 handleKey 里 Ctrl+A 的注释 */
+  _selectAllDom() {
+    const kids = this.root.children;
+    if (!kids.length) return;
+    const r = document.createRange();
+    /* 顺序有讲究：selectNodeContents 会重置整个 range，先圈末块再拉回起点 */
+    r.selectNodeContents(kids[kids.length - 1]);
+    r.setStart(textEl(kids[0]), 0);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(r);
+  }
+
   /** 选区是否仍然覆盖「整个窗口」（用户一旦点别处 / 收窄选区就作废） */
   _selAllHeld() {
     if (!this.virtual || !this.records) return false;
@@ -2657,8 +2777,31 @@ export class WysiwygEditor {
     if ((e.metaKey || e.ctrlKey) && !e.altKey) {
       const k = e.key.toLowerCase();
       if (k === 'a') {
-        /* 视口模式下原生全选只覆盖窗口那几十块，语义完全不对（见 _selectAllVirtual） */
-        if (this.virtual && this.records) { e.preventDefault(); this._selectAllVirtual(); }
+        /* 代码块里 Ctrl+A = 选中**这一块自己的代码**（编辑器里的共识：想改一段
+           代码时先全选它）。再按一次才扩到整篇 —— 判据是「选区是不是已经盖住
+           这块」，不是记状态，所以用户中途点别处也不会残留。
+
+           全篇这一下**自己选、不交给浏览器**：WebView2 里在「已选中某个内联块」
+           之后执行 SelectAll，会把选区整块吃掉（实测 `execCommand('selectAll')`
+           返回 true 而选区变空，anchor 从 SPAN 掉回 #text、collapsed）。 */
+        const code = block && block.dataset.type === 'code'
+          ? block.querySelector('.w-code') : null;
+        const inCode = code && !this._isWholeRange(code);
+        e.preventDefault();
+        if (inCode) {
+          /* 边界落在**文本节点**上，不是元素上：元素边界会让下一次的全选
+             把自己吃掉（同上），也让「已经选满了没有」难以判断 */
+          const r = document.createRange();
+          const first = firstTextNode(code);
+          const last = lastTextNode(code);
+          if (first && last) { r.setStart(first, 0); r.setEnd(last, last.nodeValue.length); }
+          else r.selectNodeContents(code);
+          sel.removeAllRanges();
+          sel.addRange(r);
+          return;
+        }
+        if (this.virtual && this.records) this._selectAllVirtual();
+        else this._selectAllDom();
         return;
       }
       if (k === 'z') { e.preventDefault(); if (e.shiftKey) this.redo(); else this.undo(); return; }
@@ -3931,6 +4074,8 @@ export class WysiwygEditor {
   }
 
   handlePointerDown(e) {
+    /* 复制按钮按下的那一下别把编辑区的光标/选区抢走 */
+    if (e.target && e.target.closest && e.target.closest('.cc-copy')) { e.preventDefault(); return; }
     const img = e.target;
     if (!img || img.tagName !== 'IMG' || !img.classList.contains('w-img')) return;
     const r = img.getBoundingClientRect();
@@ -4049,6 +4194,22 @@ export class WysiwygEditor {
 
   handleClick(e) {
     if (this.loading) return;
+    /* 代码块右上角的「复制」：整块代码直接进剪贴板，不需要先选中。
+       必须待在选区判断之前 —— 用户常常是先选了一段、再想起来复制整块，
+       而下面那句「有选区就直接返回」会把这个点击吞掉。 */
+    const cc = e.target && e.target.closest && e.target.closest('.cc-copy');
+    if (cc) {
+      e.preventDefault();
+      const blk = cc.closest('.w-block');
+      const code = blk && blk.querySelector('.w-code');
+      if (code && writeClipboard(codeToText(code))) {
+        cc.classList.add('done');
+        clearTimeout(cc._doneTimer);
+        cc._doneTimer = setTimeout(() => cc.classList.remove('done'), 1200);
+      }
+      this.root.focus({ preventScroll: true });
+      return;
+    }
     /* 刚用鼠标拖选完，别再当成「点了一下」处理。
        跨块拖选之后 `click` 的 target 是**按下点与松开点的最近公共祖先** ——
        选到两行以上时它就是 root 本身，和「点了正文空白」长得一模一样。

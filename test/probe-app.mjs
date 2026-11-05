@@ -756,6 +756,89 @@ try {
     const c3 = await blocks();
     ok('代码块垫底：点文末空白补一行且只补一次', c1 === 2 && c3 === 2, `${c1} / 三次后 ${c3}`);
   }
+
+  /* ---- L. 代码块：自动识别语言 / 编辑态高亮 / 一键复制 / Ctrl+A ----
+     三件事都只有真机才验得到：高亮走 CSS Custom Highlight API（区间建立与否
+     能查，实际上色是像素级的事）；复制要真鼠标激活 + 真剪贴板；Ctrl+A 的
+     第二下是浏览器的默认全选，合成事件根本不触发它。 */
+  {
+    const ctrlA = async () => {
+      await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', modifiers: 2, key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65 });
+      await send('Input.dispatchKeyEvent', { type: 'keyUp', modifiers: 2, key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65 });
+      await sleep(300);
+    };
+    const paste = async () => {
+      await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', modifiers: 2, key: 'v', code: 'KeyV', windowsVirtualKeyCode: 86 });
+      await send('Input.dispatchKeyEvent', { type: 'keyUp', modifiers: 2, key: 'v', code: 'KeyV', windowsVirtualKeyCode: 86 });
+      await sleep(500);
+    };
+
+    /* 没标语言的 JSON 块：语言条应当自己认出来，键名要真的着色 */
+    await ev(`window.__snp.newTab('code-auto.md', '\`\`\`\\n{"name": "snp", "n": 3}\\n\`\`\`\\n\\n第二段', null)`);
+    await sleep(400);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(900);
+    await ev(`(() => { const b = document.getElementById('findClose'); if (b && !document.getElementById('findbar').classList.contains('hidden')) b.click(); })()`);
+    const cinfo = await ev(`(() => {
+      const cb = document.querySelector('.w-codeblock');
+      const attr = CSS.highlights && CSS.highlights.get('sn-tok-attr');
+      const str = CSS.highlights && CSS.highlights.get('sn-tok-str');
+      return {
+        lang: cb && cb.querySelector('.cc-lang') ? cb.querySelector('.cc-lang').textContent : null,
+        btn: !!(cb && cb.querySelector('.cc-copy')),
+        attr: attr ? [...attr].map((r) => r.toString()) : [],
+        str: str ? str.size : 0,
+      };
+    })()`);
+    ok('没标语言时自动识别成 json', cinfo.lang === 'json', JSON.stringify(cinfo.lang));
+    ok('识别结果真的驱动了高亮（键名区间在）',
+      cinfo.attr.length >= 2 && cinfo.attr.every((t) => /^"[^"]+"$/.test(t)), JSON.stringify(cinfo.attr));
+    ok('语言条上有复制按钮', cinfo.btn === true);
+
+    /* 一键复制：真鼠标点按钮 → 图标切对勾 → 粘回编辑器验证内容 */
+    const cp = await ev(`(() => {
+      const btn = document.querySelector('.w-codeblock .cc-copy');
+      const r = btn.getBoundingClientRect();
+      return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), w: Math.round(r.width) };
+    })()`);
+    ok('复制按钮有实际尺寸（不是 0×0 的画外元素）', cp.w >= 12, JSON.stringify(cp));
+    await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: cp.x, y: cp.y, button: 'left', clickCount: 1 });
+    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: cp.x, y: cp.y, button: 'left', clickCount: 1 });
+    await sleep(400);
+    const done = await ev(`document.querySelector('.w-codeblock .cc-copy').classList.contains('done')`);
+    ok('点复制后按钮切成对勾（说明 execCommand 真的成功了）', done === true);
+
+    /* 粘回去：光标放在第二段末尾，把剪贴板内容贴进来 */
+    await ev(`(() => {
+      const p = [...document.querySelectorAll('.wysiwyg > .w-block')].pop();
+      const t = p.querySelector('.w-text');
+      const r = document.createRange();
+      r.selectNodeContents(t); r.collapse(false);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+    })()`);
+    await paste();
+    const pasted = await ev(`window.__snp.getEditorText()`);
+    ok('复制出去的确实是整块代码（粘回来一字不差）',
+      pasted.includes('{"name": "snp", "n": 3}'), JSON.stringify(pasted));
+
+    /* Ctrl+A：代码块里第一下选自己，第二下才扩到全篇 */
+    await ev(`window.__snp.newTab('code-sel.md', '\`\`\`js\\nconst a = 1;\\n\`\`\`\\n\\n第二段', null)`);
+    await sleep(400);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(700);
+    await ev(`(() => {
+      const t = document.querySelector('.w-code');
+      const r = document.createRange();
+      r.setStart(t.firstChild, 3); r.collapse(true);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+    })()`);
+    await ctrlA();
+    const sel1 = await ev(`window.getSelection().toString()`);
+    ok('代码块内 Ctrl+A 只选这一块', sel1 === 'const a = 1;', JSON.stringify(sel1));
+    await ctrlA();
+    const sel2 = await ev(`window.getSelection().toString()`);
+    ok('再按一次才扩到全文', sel2.includes('第二段'), JSON.stringify(sel2));
+  }
 } catch (e) {
   ok('探针执行完成', false, e.message);
 } finally {

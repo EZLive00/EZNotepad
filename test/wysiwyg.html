@@ -17,6 +17,7 @@
 <script type="module">
 import { WysiwygEditor, blocksToMarkdown } from '../src/js/wysiwyg.js';
 import { renderMarkdown } from './../src/js/markdown.js';
+import { refreshCode } from '../src/js/codehilite.js';
 import * as df from '../src/js/domfind.js';
 
 const root = document.getElementById('wysiwyg');
@@ -585,6 +586,92 @@ window.__run = () => {
   eq('段落垫底不亮插入线', T.hoverBelow(), 'none');
   T.reset('```js\nx\n```');
   eq('代码块垫底亮插入线', T.hoverBelow(), 'block');
+
+  /* 19c3. 代码块：语言条 / 自动识别 / 一键复制 / Ctrl+A 只选自己
+     高亮走 CSS Custom Highlight API（不改 DOM，见 codehilite.js），所以断言
+     直接读 CSS.highlights 里的区间 —— 与预览共享同一份 highlight() 输出，
+     这里要守的是「DOM 偏移 ↔ 源码偏移」的换算（<br> 算一位、零宽空格不算）。 */
+  T.reset('```js\nconst a = 1;\n```');
+  {
+    const cb = root.querySelector('.w-codeblock');
+    has('代码块语言条带复制按钮', !!cb.querySelector('.cc-copy'));
+    eq('语言条显示声明的语言', cb.querySelector('.cc-lang').textContent, 'js');
+  }
+
+  T.reset('```js\nconst a = 1;\nlet b = 2;\n```');
+  refreshCode(root);
+  {
+    const keys = [...(CSS.highlights.get('sn-tok-key') || [])].map((r) => r.toString());
+    eq('关键字着色落在 const / let 上', keys, ['const', 'let']);
+    const nums = [...(CSS.highlights.get('sn-tok-num') || [])].map((r) => r.toString());
+    eq('第二行（<br> 之后）的数字也着色', nums, ['1', '2']);
+  }
+
+  T.reset('```\n{"a": 1, "b": [2, 3]}\n```');
+  refreshCode(root);
+  eq('没标语言时自动识别成 json', root.querySelector('.cc-lang').textContent, 'json');
+  has('识别出的语言也真的上色', !!CSS.highlights.get('sn-tok-attr'));
+
+  T.reset('```\n这是一段普通的中文说明，没有任何代码。\n```');
+  refreshCode(root);
+  eq('认不出的代码块保持 code', root.querySelector('.cc-lang').textContent, 'code');
+  has('认不出就不上色', !CSS.highlights.get('sn-tok-key'));
+
+  /* Ctrl+A：代码块里先选这一块，再按一次才扩到全篇。
+     全篇这一下我们**自己选**、不交给浏览器（WebView2 里在已选中内联块之后
+     执行 SelectAll 会把选区整块吃掉），所以合成事件也测得到。 */
+  T.reset('```js\nconst a = 1;\nconsole.log(a);\n```\n\n段落二');
+  ed.restoreCaret({ blockIndex: 0, offset: 3 });
+  T.key('a', { ctrlKey: true });
+  eq('代码块内 Ctrl+A 选中自己', getSelection().toString(), 'const a = 1;\nconsole.log(a);');
+  T.key('a', { ctrlKey: true });
+  has('再按一次 Ctrl+A 扩到全篇', getSelection().toString().includes('段落二'));
+  T.key('a', { ctrlKey: true });
+  has('第三次仍是全篇（不会塌缩）', getSelection().toString().includes('段落二'));
+
+  /* 段落里的 Ctrl+A 也走同一条路 —— 别把普通全选搞坏 */
+  T.reset('第一段\n\n第二段');
+  ed.restoreCaret({ blockIndex: 0, offset: 1 });
+  T.key('a', { ctrlKey: true });
+  has('段落里 Ctrl+A 还是全选整篇', getSelection().toString().includes('第二段'));
+
+  /* 一键复制：把 execCommand 换成「记下当前选中的 textarea 内容」——
+     真写系统剪贴板那一步由真机探针负责（合成事件不算用户激活，headless 里
+     复制会被拒），这里守的是「喂给剪贴板的是哪段字」 */
+  T.reset('```js\nconst a = 1;\nconst b = 2;\n```');
+  {
+    const btn = root.querySelector('.cc-copy');
+    let copied = null;
+    const orig = document.execCommand;
+    document.execCommand = function (cmd) {
+      if (cmd === 'copy') { copied = document.activeElement && document.activeElement.value; return true; }
+      return orig.apply(document, arguments);
+    };
+    btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    document.execCommand = orig;
+    eq('复制按钮取整块代码（换行还原成 \\n）', copied, 'const a = 1;\nconst b = 2;');
+    has('复制后图标切成对勾', btn.classList.contains('done'));
+  }
+
+  /* 有选区时点复制也要生效：它会先被「有选区就当拖选」那条分支吞掉 */
+  T.reset('```js\nx = 1;\n```');
+  {
+    const code = root.querySelector('.w-code');
+    const r5 = document.createRange();
+    r5.selectNodeContents(code);
+    const s5 = getSelection();
+    s5.removeAllRanges(); s5.addRange(r5);
+    const btn = root.querySelector('.cc-copy');
+    let copied = null;
+    const orig = document.execCommand;
+    document.execCommand = function (cmd) {
+      if (cmd === 'copy') { copied = document.activeElement && document.activeElement.value; return true; }
+      return orig.apply(document, arguments);
+    };
+    btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    document.execCommand = orig;
+    eq('有选区时点复制仍然复制整块', copied, 'x = 1;');
+  }
 
   // 19d. 提示块回车 = 同框续行（染同色），序列化不重写 [!x]；续行行首退格并回上一行
   T.reset('> [!info] 标题\n> 正文');

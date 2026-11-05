@@ -44,6 +44,139 @@ export function normalizeLang(lang) {
   return map[l] || l;
 }
 
+/* ---------------- 语言自动识别 ----------------
+ * 代码块没标语言（``` 后面空着）时用它决定怎么上色。做法是给每种语言记一组
+ * 特征正则，命中就加权累加，取最高分且过门槛的那个 —— 顺序有意义：更专门的
+ * 语言排在前面，同分时先到先得（cpp 必须排在 c 前面，`#include` 两边都命中）。
+ *
+ * 门槛是必须的：散文里也会出现 `const`、`#`、`:`，没有门槛就会给随手一段文字
+ * 套上高亮，比不高亮更难看。这里也不追求「识别得多准」，只要求「贴一段 JSON /
+ * 脚本进来能认出来」，认不出就老实不高亮。
+ */
+const HINTS = {
+  json: [
+    [/^\s*[[{][\s\S]*[\]}]\s*$/, 2],
+    [/"[^"\n]*"\s*:/, 3],
+    [/:\s*(?:"|-?\d|true\b|false\b|null\b|\{|\[)/, 2],
+  ],
+  html: [
+    [/<!doctype\s+html/i, 6],
+    [/<\/?(?:html|head|body|div|span|p|ul|ol|li|a|table|section|h[1-6]|script|style)\b[^>]*>/i, 3],
+    [/<\/[a-z][\w-]*>/i, 2],
+    [/&(?:amp|lt|gt|quot|nbsp|#\d+);/, 1],
+  ],
+  css: [
+    [/@(?:media|import|keyframes|font-face|supports)\b/, 3],
+    [/[.#]?[a-z][\w-]*(?:\s*[,>+~]\s*[.#]?[a-z][\w-]*)*\s*\{/, 2],
+    [/[\w-]+\s*:\s*[^;{}\n]+;/, 2],
+    [/\b\d+(?:px|em|rem|vh|vw|s|ms|%)\b/, 1],
+  ],
+  sh: [
+    [/^#!.*\b(?:ba|z|k)?sh\b/m, 6],
+    [/^\s*(?:sudo|apt|apt-get|yum|dnf|brew|npm|pnpm|yarn|npx|git|docker|kubectl|systemctl|chmod|mkdir|rm|cp|mv|curl|wget|tar|ssh)\s+[\w.@/-]+/m, 3],
+    [/^\s*\$\s+\S/m, 3],
+    [/\|\s*(?:grep|awk|sed|sort|uniq|head|tail|xargs|tee)\b/, 2],
+    [/\b(?:echo|export|set\s+-e)\b/, 1],
+  ],
+  py: [
+    [/^\s*def\s+\w+\s*\([^)]*\)\s*(?:->[^:]+)?:\s*$/m, 5],
+    [/^\s*(?:import|from)\s+[\w.]+\s+import\s+/m, 3],
+    [/^\s*(?:if|elif|else|for|while|try|except|finally|with|class)\b[^;{]*:\s*$/m, 2],
+    [/\b(?:None|True|False)\b/, 2],
+    [/\bself\b/, 2],
+    [/\bprint\s*\(/, 1],
+  ],
+  ts: [
+    [/^\s*interface\s+\w+\s*\{/m, 4],
+    [/^\s*(?:type|enum)\s+\w+\s*[={]/m, 3],
+    [/:\s*(?:string|number|boolean|void|any|unknown|never)\b/, 2],
+    [/\b(?:public|private|protected|readonly)\s+\w+/, 2],
+  ],
+  go: [
+    [/^\s*package\s+\w+\s*$/m, 5],
+    [/^\s*func\s+(?:\([^)]*\)\s*)?\w+\s*[<(]/m, 3],
+    [/:=/, 2],
+    [/\bfmt\.\w+\(/, 2],
+    [/\b(?:chan|goroutine|defer)\b/, 1],
+  ],
+  rust: [
+    [/^\s*fn\s+\w+\s*[<(]/m, 4],
+    [/\blet\s+mut\s+/, 3],
+    [/^\s*impl\s+\w+/m, 3],
+    [/\b(?:println|format|vec|write)!\s*[\(\[]/, 2],
+    [/\b(?:Some|None|Ok|Err)\s*\(/, 1],
+  ],
+  java: [
+    [/^\s*public\s+(?:final\s+|abstract\s+)?(?:class|interface|enum)\s+\w+/m, 4],
+    [/\bSystem\.(?:out|err)\.print/, 3],
+    [/@Override\b/, 2],
+    [/\b(?:private|protected)\s+\w+\s+\w+\s*[;=]/, 2],
+  ],
+  cpp: [
+    [/#include\s*<(?:iostream|vector|string|map|memory|algorithm)>/, 5],
+    [/\bstd::\w+/, 3],
+    [/\btemplate\s*</, 3],
+    [/\b(?:cout|cin|cerr)\s*<</, 2],
+  ],
+  c: [
+    [/#include\s*<\w+\.h>/, 4],
+    [/\bint\s+main\s*\(/, 4],
+    [/\b(?:printf|scanf|malloc|free|sizeof)\b/, 2],
+    [/\b(?:struct|typedef)\s+\w+/, 1],
+  ],
+  sql: [
+    [/\bselect\b[\s\S]{0,400}?\bfrom\b/i, 4],
+    [/\b(?:insert\s+into|update\s+\w+\s+set|delete\s+from|create\s+table)\b/i, 3],
+    [/\bwhere\b[\s\S]{0,200}?(?:=|>|<|like\b)/i, 1],
+  ],
+  yaml: [
+    [/^---\s*$/m, 2],
+    [/^\s*[\w.$-]+:\s*(?:$|[^;{])/m, 2],
+    [/^\s*-\s+\S/m, 1],
+    [/^\s*#/m, 1],
+  ],
+  ini: [
+    [/^\s*\[[\w.-]+\]\s*$/m, 3],
+    [/^\s*[\w.-]+\s*=\s*\S/m, 2],
+  ],
+  js: [
+    [/\b(?:const|let|var)\s+\w+\s*=/, 3],
+    [/\bfunction\s*\w*\s*\(/, 2],
+    [/=>/, 2],
+    [/\bconsole\.\w+\(/, 2],
+    [/\b(?:require|import)\s*\(/, 2],
+    [/===|!==/, 1],
+    [/\b(?:document|window)\.\w+/, 1],
+  ],
+};
+
+/** 过了这个分才认 —— 低于它宁可不高亮，也别给散文套色 */
+const DETECT_MIN = 3;
+
+/**
+ * 猜一段代码是什么语言，返回归一后的名字（`''` = 没把握）。
+ * @param {string} code
+ * @returns {string}
+ */
+export function detectLang(code) {
+  const s = String(code || '');
+  if (!s.trim()) return '';
+  /* JSON 是唯一能「验算」的：解析通过就不必再看别的语言脸色 */
+  const head = s.trim();
+  if (head[0] === '{' || head[0] === '[') {
+    try { JSON.parse(head); return 'json'; } catch { /* 不是合法 JSON，继续打分 */ }
+  }
+  let best = '';
+  let bestScore = 0;
+  for (const [lang, rules] of Object.entries(HINTS)) {
+    let score = 0;
+    for (const [re, w] of rules) if (re.test(s)) score += w;
+    if (score > bestScore) { bestScore = score; best = lang; }
+  }
+  return bestScore >= DETECT_MIN ? best : '';
+}
+
+
 /**
  * 高亮代码
  * @returns {string} HTML（已转义）

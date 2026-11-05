@@ -74,10 +74,10 @@ $('#wysiwyg').innerHTML = `
 <div class="w-block w-li" data-list="ul" data-indent="1"><span class="w-li-marker">◦</span><div class="w-text">缩进层级用小圆点区分，实际很难看出层次</div></div>
 <div class="w-block w-bq"><div class="w-text">克制不等于寡淡。现代感来自留白比例、字号阶梯和克制的对比度，而不是更多的装饰。</div></div>
 <div class="w-block w-h" data-type="h3"><div class="w-text">代码块也要说</div></div>
-<div class="w-block w-codeblock"><div class="w-codebar">javascript</div><code class="w-code">const theme = matchMedia('(prefers-color-scheme: dark)');
+<div class="w-block w-codeblock" data-type="code"><div class="w-codebar" contenteditable="false"><span class="cc-lang">javascript</span><button type="button" class="cc-copy" title="复制代码" aria-label="复制代码"><svg class="ico cc-ico-copy"><use href="#i-copy"/></svg><svg class="ico cc-ico-done"><use href="#i-check"/></svg></button></div><span class="w-text w-code">const theme = matchMedia('(prefers-color-scheme: dark)');
 function apply(next) {
   document.body.dataset.theme = next ? 'dark' : 'light';
-}</code></div>
+}</span></div>
 <div class="w-block w-p"><div class="w-text">行内 <code>dataset.theme</code> 一切换，全部颜色跟着走，不需要刷新。</div></div>
 `;
 

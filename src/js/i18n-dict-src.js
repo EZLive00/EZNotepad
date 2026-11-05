@@ -216,6 +216,7 @@ export const SRC = {
   '重做 (Ctrl+Y)': ["Redo (Ctrl+Y)", "やり直す (Ctrl+Y)", "다시 실행 (Ctrl+Y)", "Rétablir (Ctrl+Y)", "Wiederholen (Strg+Y)", "Rehacer (Ctrl+Y)", "Refazer (Ctrl+Y)"],
   '剪切': ["Cut", "切り取り", "잘라내기", "Couper", "Ausschneiden", "Cortar", "Recortar"],
   '复制': ["Copy", "コピー", "복사", "Copier", "Kopieren", "Copiar", "Copiar"],
+  '复制代码': ["Copy code", "コードをコピー", "코드 복사", "Copier le code", "Code kopieren", "Copiar código", "Copiar código"],
   '粘贴': ["Paste", "貼り付け", "붙여넣기", "Coller", "Einfügen", "Pegar", "Colar"],
   '全选': ["Select All", "すべて選択", "모두 선택", "Tout sélectionner", "Alles auswählen", "Seleccionar todo", "Selecionar tudo"],
   '查找…': ["Find…", "検索…", "찾기…", "Rechercher…", "Suchen…", "Buscar…", "Localizar…"],
