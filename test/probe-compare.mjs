@@ -1322,6 +1322,52 @@ try {
   const leftP2 = await sideRows('L');
   ok('来回粘第二次仍然生效', leftP2[0] === 'L-9', JSON.stringify(leftP2.slice(0, 3)));
 
+  /* 用户报的第二种情形：粘进来的行**比原来多**。先改的那一侧变长之后，另一侧
+     在对齐表里就多出一串尾部占位行；再全选时选区末端落在占位行上（那里没有
+     本侧的行号），替换整段不能因此整段放弃 —— 现象是「全选后按粘贴没反应」。 */
+  const TEN = Array.from({ length: 10 }, (_, i) => `new-${i + 1}`);
+  fs.writeFileSync(p('grow-a.txt'), PA.join('\n') + '\n', 'utf8');
+  fs.writeFileSync(p('grow-b.txt'), PA.join('\n') + '\n', 'utf8');
+  await openPair(p('grow-a.txt'), p('grow-b.txt'), false);
+  await enterEdit();
+
+  setClip(TEN.join('\n'));
+  const ga = await rowBox('L', 0);
+  await clickXY(ga.x, ga.y);
+  await pressKey(65, 'a', 'KeyA', 2);
+  await pressKey(86, 'v', 'KeyV', 2);
+  await sleep(900);
+  const grownL = await sideRows('L');
+  ok('粘 10 行进 5 行的一侧：左侧变成 10 行',
+    grownL.length >= 10 && grownL[9] === 'new-10', `len=${grownL.length} ${JSON.stringify(grownL.slice(0, 3))}`);
+
+  setClip(TEN.map((x) => x.replace('new', 'R')).join('\n'));
+  const gb = await rowBox('R', 0);
+  await clickXY(gb.x, gb.y);
+  await pressKey(65, 'a', 'KeyA', 2);
+  await pressKey(86, 'v', 'KeyV', 2);
+  await sleep(900);
+  const grownR = await sideRows('R');
+  ok('另一侧（对齐表里带着尾部占位行）全选粘贴同样生效',
+    grownR[0] === 'R-1' && grownR[9] === 'R-10', `len=${grownR.length} ${JSON.stringify(grownR.slice(0, 3))}`);
+
+  /* 反过来：短的一侧在**开头**就是占位行（对面多出来的行在前面）。全选时选区
+     起点落在占位行上，同样不能整段放弃。 */
+  const TEN2 = Array.from({ length: 10 }, (_, i) => `line-${i + 1}`);
+  fs.writeFileSync(p('lead-a.txt'), TEN2.join('\n') + '\n', 'utf8');
+  fs.writeFileSync(p('lead-b.txt'), TEN2.slice(5).join('\n') + '\n', 'utf8');
+  await openPair(p('lead-a.txt'), p('lead-b.txt'), false);
+  await enterEdit();
+  setClip('head-1\nhead-2\nhead-3');
+  const lead0 = await rowBox('R', 0);
+  await clickXY(lead0.x, lead0.y);
+  await pressKey(65, 'a', 'KeyA', 2);
+  await pressKey(86, 'v', 'KeyV', 2);
+  await sleep(900);
+  const leadR = await sideRows('R');
+  ok('开头就是占位行的那一侧，全选粘贴也生效',
+    leadR[0] === 'head-1' && leadR[2] === 'head-3', `len=${leadR.length} ${JSON.stringify(leadR.slice(0, 4))}`);
+
   /* ---------- 16c. 差异只用红字：没有蓝框、没有删除线 ---------- */
   fs.writeFileSync(p('strike-a.txt'), '甲\n乙一\n丙\n', 'utf8');
   fs.writeFileSync(p('strike-b.txt'), '甲\n乙二\n丙\n', 'utf8');

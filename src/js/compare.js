@@ -751,14 +751,51 @@ function dragEnd() {
   }
 }
 
-/** 选区的某一端落在哪一行哪一列（跨行选区用；`end` 为 true 时取另一端） */
+/** 选区的某一端落在哪一行哪一列（跨行选区用；`end` 为 true 时取另一端）。
+ *
+ *  占位行也算「有位置」：它落在「将来这一行会插进来的那一行」的行首（`fL/fR`
+ *  由 recompute 算好，和往占位行写字的落点是同一套）。以前占位行直接返回 null
+ *  —— 一侧粘进来的行比对面多之后，另一侧全选时末端就落在尾部占位行上，回车
+ *  之后连 paste 事件都派发不出来，用户看到的是「全选后按粘贴没反应」。 */
 function spanPos(span, end) {
   if (!span || !span.side) return null;
   const i = end ? span.bI : span.aI;
+  const off = sideOffset(span.side, i, end ? span.bCol : span.aCol);
+  return posOfOffset(span.side, off);
+}
+
+/** 对齐行（+ 列）→ 本侧文本里的字符偏移。
+ *
+ *  占位行不是错误：它表示「这条对齐位置上本侧还没有行」，偏移落在紧邻的那条
+ *  行界上。因此跨行选区可以跨过占位行，替换/删除照常算 —— 这也是「一侧比另一侧
+ *  长」时唯一的正确答案。 */
+function sideOffset(side, i, col) {
+  const lines = S.sides[side].lines;
+  const starts = [0];
+  for (let k = 1; k < lines.length; k++) starts[k] = starts[k - 1] + lines[k - 1].length + 1;
+  const total = lines.length ? starts[lines.length - 1] + lines[lines.length - 1].length : 0;
   const row = S.rows[i];
-  const cell = row && (span.side === 'l' ? row.l : row.r);
-  if (!cell) return null;
-  return { side: span.side, line: cell.no, col: end ? span.bCol : span.aCol };
+  const cell = row ? (side === 'l' ? row.l : row.r) : null;
+  if (!cell) {
+    /* 占位行：fL/fR 是「这一行若填上会排第几行」，减一就是它前面的行界；
+       尾部占位（后面没有本侧的行了）就是正文末尾。 */
+    const no = (row && (side === 'l' ? row.fL : row.fR)) || lines.length + 1;
+    return no - 1 < lines.length ? starts[no - 1] : total;
+  }
+  const no = Math.min(Math.max(1, cell.no), lines.length);
+  return Math.min(starts[no - 1] + Math.min(Math.max(0, col | 0), (lines[no - 1] || '').length), total);
+}
+
+/** 字符偏移 → 行号列号（行号 1 起） */
+function posOfOffset(side, off) {
+  const lines = S.sides[side].lines;
+  let acc = 0;
+  for (let k = 0; k < lines.length; k++) {
+    if (off <= acc + lines[k].length) return { side, line: k + 1, col: off - acc };
+    acc += lines[k].length + 1;
+  }
+  const n = Math.max(1, lines.length);
+  return { side, line: n, col: (lines[n - 1] || '').length };
 }
 
 /** 当前选区「按下的那一端」—— Shift+点击要接着它往下扩。
@@ -1812,25 +1849,24 @@ function deleteSpan(span) {
  *  忙：选区跨了好几个 contenteditable 宿主，它连删都删不了，更不会替换。 */
 function replaceSpan(span, text) {
   const st = S.sides[span.side];
-  const rowA = S.rows[span.aI];
-  const rowB = S.rows[span.bI];
-  if (!st || !rowA || !rowB) return;
-  const cellA = span.side === 'l' ? rowA.l : rowA.r;
-  const cellB = span.side === 'l' ? rowB.l : rowB.r;
-  if (!cellA || !cellB) return;
-  const from = cellA.no - 1;
-  const to = cellB.no - 1;
+  if (!st) return;
+  /* 两端都换算成「本侧正文里的字符偏移」再替换。以前是按行号取的：两端都必须
+     有本侧的行，占位行一律放弃 —— 于是「对面比自己长」时全选粘贴毫无反应
+     （选区末端正好落在尾部占位行上）。偏移对占位行也有定义，这条路才完整。 */
+  const from = sideOffset(span.side, span.aI, span.aCol);
+  const to = sideOffset(span.side, span.bI, span.bCol);
   if (from > to) return;
   recordUndo(span.side);
-  const head = st.lines[from] || '';
-  const tail = st.lines[to] || '';
-  const joined = head.slice(0, span.aCol) + text + tail.slice(span.bCol);
-  const parts = joined.split('\n');
-  st.lines.splice(from, to - from + 1, ...parts);
+  const full = st.lines.join('\n');
+  const next = full.slice(0, from) + text + full.slice(to);
+  const parts = next.split('\n');
+  st.lines.splice(0, st.lines.length);
+  for (const p of parts) st.lines.push(p);   // 不重建数组：别处可能还握着这个引用
   st.dirty = true;
-  /* 光标落在插入内容的末尾：单行就是 aCol + 文本长度，多行就到最后一行 */
-  const line = from + parts.length;
-  const col = parts.length === 1 ? span.aCol + text.length : parts[parts.length - 1].length;
+  /* 光标落在插入内容的末尾：数一数前面有几个换行就知道第几行第几列 */
+  const at = Math.min(from + text.length, next.length);
+  const line = next.slice(0, at).split('\n').length;
+  const col = at - (next.lastIndexOf('\n', at - 1) + 1);
   applyEdit(span.side, line, col);
 }
 
