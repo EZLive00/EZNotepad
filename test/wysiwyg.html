@@ -602,6 +602,67 @@ window.__run = () => {
   T.key('ArrowDown');
   eq('代码块后面已空一行时 ↓ 不再加行', T.blocks().length, 2);
 
+  /* 19e5. 引用 / 提示块 / 列表也是「带范围的块」：末行 ↓、→ 都出块。
+     它们一行一块，所以「组内还有下一行」时必须让浏览器自己走，
+     别替它跳 —— 折行的那几行会被跳过 */
+  T.reset('> 引用一行');
+  caretEndOf('.w-bq .w-text');
+  T.key('ArrowDown');
+  eq('引用末行 ↓ 出块', T.blocks().join(','), 'bq@0=引用一行,p=');
+
+  T.reset('> 引用一行');
+  caretEndOf('.w-bq .w-text');
+  T.key('ArrowRight');
+  eq('引用末行 → 出块', T.blocks().join(','), 'bq@0=引用一行,p=');
+
+  T.reset('> 引用一行');
+  caretEndOf('.w-bq .w-text');
+  T.key('ArrowDown');
+  T.key('ArrowDown');
+  eq('引用出块后 ↓ 停在新段落，不再加行', T.blocks().length, 2);
+
+  /* 组内（还有下一行引用）：不新开块，交给浏览器在组内移动 */
+  T.reset('> 甲\n> 乙');
+  T.caret(0, 1);
+  T.key('ArrowDown');
+  eq('引用组内还有下一行时不多开块', T.blocks().length, 2);
+  T.caret(0, 1);
+  T.key('ArrowRight');
+  eq('引用组内还有下一行时 → 也不多开块', T.blocks().length, 2);
+
+  /* 组末行后面跟着正文：落进那一段开头，不插空行 */
+  T.reset('> 甲\n> 乙\n\n后文');
+  T.caret(1, 1);
+  T.key('ArrowDown');
+  eq('引用组末行 ↓ 落进后文', T.blocks().join(','), 'bq@0=甲,bq@0=乙,p=后文');
+
+  /* 提示块同理：末行出去，别把 [ !info ] 那行一起带走 */
+  T.reset('> [!info] 标题\n> 正文');
+  T.caret(1, 2);
+  T.key('ArrowDown');
+  eq('提示块末行 ↓ 出块', T.blocks().length, 3);
+  eq('提示块出块后落在普通段落', T.blocks()[2].startsWith('p'), true);
+  eq('提示块出块后 Markdown 不变', T.out(), '> [!info] 标题\n> 正文');
+
+  /* 列表：最后一项出去，中间项不动（浏览器走下一项） */
+  T.reset('- 甲\n- 乙');
+  T.caret(1, 1);
+  T.key('ArrowDown');
+  eq('列表末项 ↓ 出块', T.blocks().length, 3);
+  eq('列表末项出块后是普通段落', T.blocks()[2].startsWith('p'), true);
+  eq('列表出块后 Markdown 不变', T.out(), '- 甲\n- 乙');
+
+  T.reset('- 甲\n- 乙\n- 丙');
+  T.caret(0, 1);
+  T.key('ArrowRight');
+  eq('列表中间项 → 不多开块', T.blocks().length, 3);
+
+  /* 普通段落不算带范围的块：文档末尾 ↓ 不该长出新行 */
+  T.reset('第一段\n\n第二段');
+  T.caret(1, 3);
+  T.key('ArrowDown');
+  eq('段落末尾 ↓ 不长新行', T.blocks().length, 2);
+
   // 19f. 表格空行回车 = 退出表格（双击模式：空行上是第二下，出表开段落）
   T.reset('| a | b |\n|---|---|\n|  |  |');
   ed.focusCell(root.querySelector('.w-table'), 1, 0);

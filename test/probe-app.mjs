@@ -596,6 +596,61 @@ try {
     await right();
     ok('代码块后面已经空着一行，→ 不再加行', (await bl()).length === 2, JSON.stringify(await bl()));
 
+    /* ---- I2. 引用 / 提示块 / 列表也是「带范围的块」 ----
+       它们一行一块：只有「这一组的最后一行」归我们管，组内还有下一行时交给
+       浏览器自己走（折了几行、要不要顺手滚动，只有它知道）。 */
+    const caretAt = (i) => ev(`(() => {
+      const b = [...document.querySelectorAll('.wysiwyg > .w-block')][${i}];
+      const t = b.querySelector('.w-text') || b;
+      const r = document.createRange(); r.selectNodeContents(t); r.collapse(false);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      document.querySelector('.wysiwyg').focus();
+    })()`);
+    const caretBlock = () => ev(`(() => {
+      const s = getSelection();
+      const n = s.anchorNode;
+      const el = n && (n.nodeType === 1 ? n : n.parentElement);
+      const b = el && el.closest ? el.closest('.wysiwyg > .w-block') : null;
+      return b ? b.dataset.type : 'none';
+    })()`);
+    const load = async (name, md) => {
+      await ev(`window.__snp.newTab(${JSON.stringify(name)}, ${JSON.stringify(md)}, null)`);
+      await sleep(400);
+      await ev(`window.__snp.commands.modeWysiwyg()`);
+      await sleep(500);
+    };
+
+    await load('dirq.md', '> 甲\n> 乙\n');
+    await caretAt(1);
+    await down();
+    ok('引用末行 ↓ 在下面开一行', (await bl()).length === 3, JSON.stringify(await bl()));
+    ok('引用出块后光标在普通段落里', (await caretBlock()) === 'p', await caretBlock());
+    await caretAt(0);
+    await down();
+    ok('引用组内还有下一行时不多开块', (await bl()).length === 3, JSON.stringify(await bl()));
+    ok('引用组内向下的落点仍是引用', (await caretBlock()) === 'bq', await caretBlock());
+
+    await load('dirq2.md', '> 甲\n> 乙\n\n后文\n');
+    await caretAt(1);
+    await right();
+    ok('引用组末行 → 落进后面那一段',
+      JSON.stringify(await bl()) === '["bq:甲","bq:乙","p:后文"]', JSON.stringify(await bl()));
+
+    await load('dirc.md', '> [!info] 标题\n> 正文\n');
+    await caretAt(1);
+    await down();
+    ok('提示块末行 ↓ 出块（不把标题行一起带走）', (await bl()).length === 3, JSON.stringify(await bl()));
+    ok('提示块出块后光标在普通段落里', (await caretBlock()) === 'p', await caretBlock());
+
+    await load('dirl.md', '- 甲\n- 乙\n');
+    await caretAt(1);
+    await down();
+    ok('列表末项 ↓ 在列表外开一行', (await bl()).length === 3, JSON.stringify(await bl()));
+    ok('列表出块后光标在普通段落里', (await caretBlock()) === 'p', await caretBlock());
+    await caretAt(0);
+    await right();
+    ok('列表中间项 → 不多开块', (await bl()).length === 3, JSON.stringify(await bl()));
+
     /* ---- J. 菜单栏：速记与对比放在最右边 ----
        它们原来分别在「文件」的第二位和「工具」的中段 —— 天天点的东西不该让人
        在菜单栏上找。两个都是一级项：速记是动作（点一次直接打开，没有下拉），

@@ -2887,9 +2887,9 @@ export class WysiwygEditor {
   }
 
   /**
-   * 表格 / 代码块边缘的方向键逃生口：
-   * 最后一格末尾 ↓ 或 → 走出去，代码块末行 ↓ 或 → 出块。
-   * 没有这条路的话，这些块只能靠鼠标点击才能离开。
+   * 带边界的块的方向键出口：光标已经在**块内最后一个可编辑位置**时，
+   * ↓ 与 → 把光标送到块外（表格最后一格、代码块 / 公式块末行、引用与提示块末行、
+   * 列表最后一项）。没有这条路的话，这些块只能靠鼠标点击才能离开。
    *
    * → 和 ↓ 在这里做同一件事，因为「块内已经没有更靠后的位置了」——
    * 往右走到头的下一步就是出块，用户不会预期它反而在原地打转。
@@ -2909,16 +2909,38 @@ export class WysiwygEditor {
       return;
     }
     if (!exit || !block) return;
-    const type = block.dataset.type;
-    if (type !== 'code' && type !== 'math') return;
+    if (!this.endsBounded(block)) return;
     if (!this.isCaretAtEnd(block)) return;
     e.preventDefault();
     this.caretAfterBlock(block);
   }
 
   /**
-   * 从「带范围的块」里走出来的落点。表格 / 代码块 / 公式块内部不长光标位，
-   * 出块就得在外面找个地方站；找法按顺序只取第一个成立的：
+   * 这一块是不是「带边界的块」的**最后一行**。带边界的块把光标包在结构里，
+   * 走到最后一个可编辑位置之后，下一行已经不在块内 —— 只有它们需要出口：
+   *
+   *   表格（最后一格）/ 代码块 / 公式块 / 引用 / 提示块 / 列表
+   *
+   * 引用与提示块一行一块，组内还有下一行时交给浏览器：它知道换行折了几行、
+   * 要不要顺手滚动，我们插一手只会更差。列表同理（下一项还是 li 就不管）。
+   * `data-bq-tail` 正是「这一行后面还跟着同一组的引用行」，renumber() 维护。
+   */
+  endsBounded(block) {
+    const type = block.dataset.type;
+    if (type === 'code' || type === 'math') return true;
+    if (type === 'bq') return !block.dataset.bqTail;
+    if (type === 'li') {
+      const next = block.nextElementSibling;
+      return !(next && next.dataset && next.dataset.type === 'li');
+    }
+    /* 表格靠上面的 cell 分支处理：块本身不长光标位，这里再放行会让
+       光标在表格根节点上乱跑 */
+    return false;
+  }
+
+  /**
+   * 从「带范围的块」里走出来的落点。表格 / 代码块 / 公式块 / 引用 / 列表
+   * 的末尾都不长光标位，出块就得在外面找个地方站；找法按顺序只取第一个成立的：
    *
    *   1. 紧邻的下一块 —— 空段落就停进去，别的块就停在它开头；
    *   2. 后面什么都没有，才新开一个空段落。
