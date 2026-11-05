@@ -14,6 +14,7 @@
 // ============================================================
 import fs from 'node:fs';
 import path from 'node:path';
+import { execSync } from 'node:child_process';
 import { ensureApp } from './lib/appctl.mjs';
 
 const PORT = process.env.CDP_PORT || 9333;
@@ -1238,6 +1239,88 @@ try {
   await pressKey(90, 'z', 'KeyZ', 2);
   await sleep(700);
   ok('撤销把全选被替换掉的正文找回来', (await rowsNow()) === rows0, `${rows0} → ${await rowsNow()}`);
+
+  /* ---------- 16d. 跨行选区：Shift+点击扩选，两侧各自「全选 + 粘贴」 ----------
+     两个都是「选区的边界撞上编辑宿主」的后果：
+       · Shift+点击本来靠浏览器扩选，而 Blink 不许选区跨出当前那一行；
+       · Ctrl+A 之后粘贴走 navigator.clipboard.readText()，在 WebView2 里它既不
+         授权也不 reject，Promise 永远挂着 —— 用户看到的是「一边改完，另一边
+         按粘贴没反应」。现在按键放行、由 paste 事件的 clipboardData 落模型。 */
+  const PA = ['aaaa 一', 'bbbb 二', 'cccc 三', 'dddd 四', 'eeee 五'];
+  fs.writeFileSync(p('shift-a.txt'), PA.join('\n') + '\n', 'utf8');
+  fs.writeFileSync(p('shift-b.txt'), PA.join('\n') + '\n', 'utf8');
+  await openPair(p('shift-a.txt'), p('shift-b.txt'), false);
+  await enterEdit();
+
+  const clickMod = async (x, y, modifiers = 0) => {
+    await cmp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, modifiers });
+    await cmp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1, modifiers });
+    await cmp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1, modifiers });
+    await sleep(280);
+  };
+  const selStat = () => cmp.ev(`(() => {
+    const s = getSelection(); const r = s.rangeCount ? s.getRangeAt(0) : null;
+    const topOf = (n) => {
+      const e = n && (n.nodeType === 1 ? n : n.parentElement);
+      const h = e && e.closest ? e.closest('.cmp-tx') : null;
+      const row = h && h.closest('.cmp-row');
+      return row ? Math.round(row.getBoundingClientRect().top) : -1;
+    };
+    return { len: String(s).length, lines: String(s).split('\\n').filter(Boolean).length,
+             a: r ? topOf(s.anchorNode) : -1, f: r ? topOf(s.focusNode) : -1 };
+  })()`);
+
+  const s0 = await rowBox('L', 0);
+  await clickXY(s0.x, s0.y);
+  const s3 = await rowBox('L', 3);
+  await clickMod(s3.x, s3.y, 8);                    // 8 = Shift
+  const shift1 = await selStat();
+  ok('Shift+点击能选中跨多行', shift1.lines >= 3, JSON.stringify(shift1));
+  const s1 = await rowBox('L', 1);
+  await clickMod(s1.x, s1.y, 8);
+  const shift2 = await selStat();
+  ok('再 Shift+点击往回缩，锚点仍在最初那一点',
+    shift2.lines === 2 && shift2.a === shift1.a, JSON.stringify({ shift1, shift2 }));
+
+  /* 剪贴板：WebView2 里 navigator.clipboard.writeText 在无用户激活时 NotAllowedError，
+     而 paste 事件的 clipboardData 读的是系统剪贴板（不需要权限）。用系统那一份
+     最接近用户真实操作 —— 这个探针要验的也正是「按键 → paste 事件」这条链路。 */
+  const clipFile = p('clip.txt');
+  const setClip = (text) => {
+    fs.writeFileSync(clipFile, text, 'utf8');
+    execSync(`powershell -NoProfile -Command "Get-Content -Raw '${clipFile}' | Set-Clipboard"`, { stdio: 'ignore' });
+  };
+  const sideRows = (s) => cmp.ev(`[...document.querySelectorAll('#rows${s} .cmp-tx')].map((e) => e.textContent.replace(/\\u200b/g, ''))`);
+
+  setClip('L-1\nL-2');
+  await clickXY(s0.x, s0.y);
+  await pressKey(65, 'a', 'KeyA', 2);
+  await pressKey(86, 'v', 'KeyV', 2);
+  await sleep(900);
+  const leftP = await sideRows('L');
+  ok('左侧全选后 Ctrl+V，整侧被替换成剪贴板内容',
+    leftP[0] === 'L-1' && leftP[1] === 'L-2', JSON.stringify(leftP.slice(0, 4)));
+
+  /* 用户报的就是这一步：左边改完，右边再全选粘贴就没反应了 */
+  setClip('R-1\nR-2');
+  const r0 = await rowBox('R', 0);
+  await clickXY(r0.x, r0.y);
+  await pressKey(65, 'a', 'KeyA', 2);
+  await pressKey(86, 'v', 'KeyV', 2);
+  await sleep(900);
+  const rightP = await sideRows('R');
+  ok('一边改完，另一边照样能全选 + 粘贴',
+    rightP[0] === 'R-1' && rightP[1] === 'R-2', JSON.stringify(rightP.slice(0, 4)));
+
+  /* 再回到左边粘一次：状态不能残留（strippedHosts / pendingPaste 都得干净） */
+  setClip('L-9');
+  const l0 = await rowBox('L', 0);
+  await clickXY(l0.x, l0.y);
+  await pressKey(65, 'a', 'KeyA', 2);
+  await pressKey(86, 'v', 'KeyV', 2);
+  await sleep(900);
+  const leftP2 = await sideRows('L');
+  ok('来回粘第二次仍然生效', leftP2[0] === 'L-9', JSON.stringify(leftP2.slice(0, 3)));
 
   /* ---------- 16c. 差异只用红字：没有蓝框、没有删除线 ---------- */
   fs.writeFileSync(p('strike-a.txt'), '甲\n乙一\n丙\n', 'utf8');

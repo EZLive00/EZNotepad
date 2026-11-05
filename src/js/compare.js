@@ -111,6 +111,12 @@ const S = {
    用户下一次点回正文、或者关掉编辑态时恢复。 */
 let strippedHosts = [];
 
+/* 一次「跨行选区上等着的粘贴」：Ctrl+V 先把选区记在这里、恢复可写，然后放行
+   按键，等浏览器派发 paste 时再从 clipboardData 取文本落到模型（见 crossSelKey
+   与 paste 监听）。不这样绕就没有别的读法 —— 异步剪贴板 API 在 WebView2 里
+   既不授权也不拒绝，Promise 永远挂着。 */
+let pendingPaste = null;
+
 function restoreEditables() {
   for (const h of strippedHosts) {
     if (h.isConnected) h.setAttribute('contenteditable', 'plaintext-only');
@@ -645,21 +651,14 @@ function caretNodeAt(x, y, side) {
   return { node: r.startContainer, off: r.startOffset };
 }
 
-/** 从锚点到指针位置建选区。两个方向都要能选：往上拖时起点反而在下面。 */
+/** 从锚点到指针位置建选区。两个方向都要能选，而且**锚点必须留在按下那一端**：
+ *  用 `setBaseAndExtent` 而不是手工 setStart/setEnd —— 后者只能让选区正向，
+ *  向上取的那一段会把锚点悄悄换到点击处，接着 Shift+点击就扩不动了。 */
 function setSelBetween(a, b) {
-  const keep = document.createRange();
-  try {
-    keep.setStart(a.node, a.off);
-    keep.collapse(true);
-  } catch { return; }
-  const r = document.createRange();
-  try {
-    if (keep.comparePoint(b.node, b.off) < 0) { r.setStart(b.node, b.off); r.setEnd(a.node, a.off); }
-    else { r.setStart(a.node, a.off); r.setEnd(b.node, b.off); }
-  } catch { return; }
   const sel = window.getSelection();
-  sel.removeAllRanges();
-  sel.addRange(r);
+  try {
+    sel.setBaseAndExtent(a.node, a.off, b.node, b.off);
+  } catch { /* 节点已脱离（拖动期间重建过）：这一帧不动它 */ }
 }
 
 /** 每次指针一动/滚动一格都要重拉选区：内容在脚下动了，落点就变了 */
@@ -695,9 +694,22 @@ function dragTick() {
   drag.raf = requestAnimationFrame(dragTick);
 }
 
-function dragBegin(e) {
-  drag = { side: sideOf(e.target.closest('.cmp-tx')), rowEl: e.target.closest('.cmp-row'),
+/** `anchor`：Shift+点击时沿用「已有选区的那一端」，为空则是一次普通按下 */
+function dragBegin(e, anchor) {
+  const host = e.target.closest('.cmp-tx');
+  drag = { side: sideOf(host), rowEl: e.target.closest('.cmp-row'),
            node: null, off: 0, x: e.clientX, y: e.clientY, took: false, raf: 0 };
+  /* Shift+点击 = 「从已有锚点扩到这儿」。浏览器原生做不到：选区一跨出行，
+     Blink 就把它掐回那一行（和拖选的老毛病同源），所以直接接管成一次
+     到位的拖选 —— 和拖选共用 stripSide / dragExtend，行为完全一致。 */
+  if (!e.shiftKey || !anchor || anchor.side !== drag.side) return;
+  e.preventDefault();          // 别让浏览器把选区收成一个光标
+  drag.node = anchor.node;
+  drag.off = anchor.off;
+  stripSide(drag.side);
+  S.hold[drag.side] = true;
+  drag.took = true;
+  dragExtend();
 }
 
 function dragMove(e) {
@@ -747,6 +759,23 @@ function spanPos(span, end) {
   return { side: span.side, line: cell.no, col: end ? span.bCol : span.aCol };
 }
 
+/** 当前选区「按下的那一端」—— Shift+点击要接着它往下扩。
+ *  必须在恢复 contenteditable **之前**取：一旦这一侧重新可写，Blink 会把跨行
+ *  选区掐回一行，锚点跟着消失。
+ *
+ *  光标（选区已收起）同样算数：普通点击之后 Shift+点击是「从刚才那一点扩到
+ *  这儿」，这正是最常见的用法，collapsed 时不返回会让它根本扩不起来。 */
+function currentAnchor() {
+  const sel = window.getSelection();
+  if (!sel || !sel.rangeCount) return null;
+  const n = sel.anchorNode;
+  if (!n) return null;
+  const e2 = n.nodeType === 1 ? n : n.parentElement;
+  const host = e2 && e2.closest ? e2.closest('.cmp-tx') : null;
+  if (!host) return null;
+  return { node: n, off: sel.anchorOffset, side: sideOf(host) };
+}
+
 /** 选中的是一整段、而这一侧此刻不可写时，按键得自己落到模型上。
  *
  *  为什么不能交给浏览器：contenteditable 被摘掉之后，页面里没有编辑上下文，
@@ -757,21 +786,33 @@ function crossSelKey(e) {
   const lk = (e.key || '').toLowerCase();
   /* 剪贴板两头也得自己接：没有编辑宿主，浏览器的粘贴/剪切无从下手。
      复制不用管 —— 选区是真的，Ctrl+C 照常进剪贴板。 */
-  if (mod && (lk === 'v' || lk === 'x')) {
+  if (mod && lk === 'x') {
     const span = selectionSpan();
     if (!span || !span.side || span.same) return false;
     e.preventDefault();
     flush();
-    const text = lk === 'x' ? window.getSelection().toString() : '';
-    if (lk === 'x') navigator.clipboard.writeText(text).catch(() => {});
-    if (lk === 'v') {
-      navigator.clipboard.readText().then((t) => {
-        replaceSpan(span, (t || '').replace(/\r\n/g, '\n'));
-      }).catch(() => {});
-    } else {
-      replaceSpan(span, '');
-    }
+    /* 复制这一步交给浏览器：选区是真的，`execCommand('copy')` 不需要编辑宿主。
+       `navigator.clipboard.writeText` 在 WebView2 里会 NotAllowedError（实测） */
+    try { document.execCommand('copy'); } catch {}
+    replaceSpan(span, '');
     return true;
+  }
+  if (mod && lk === 'v') {
+    const span = selectionSpan();
+    if (!span || !span.side || span.same) return false;
+    /* 跨行选区的粘贴只能靠 paste 事件 —— 那是唯一不依赖权限的读法。
+       但没有编辑宿主时浏览器根本不派发 paste（实测整条链只剩一个 keydown），
+       所以先把这一侧恢复可写、把光标摆到选区起点，再**放行**这次按键；
+       真正的替换在 paste 监听里做（见 pendingPaste）。
+
+       不要试 `navigator.clipboard.readText()`：在 WebView2 里它既不 resolve 也不
+       reject，实测 1.2 秒后仍在等 —— 用户看到的是一点反应都没有。 */
+    flush();
+    pendingPaste = span;
+    restoreEditables();
+    const at = spanPos(span, false);
+    if (at) focusAt(at.side, at.line, at.col, { keepScroll: true });
+    return false;          // 拦了就没有 paste 事件了
   }
   /* Ctrl+Z / Alt+← 这些不涉及「往选区里打字」，照旧走原来的路 */
   if (mod || e.altKey) return false;
@@ -2611,11 +2652,14 @@ function bind() {
        行号列不是可编辑单元，点它以前什么都不会发生；写上字之后的空白同理。
        规矩跟代码编辑器一致：点行号 = 行首，点行尾/下方空白 = 那一行的末尾。 */
     cv.addEventListener('mousedown', (e) => {
+      /* 锚点要在恢复可写**之前**取：restoreEditables 一恢复 contenteditable，
+         跨行选区立刻被掐回一行，Shift+点击就无从接着扩了。 */
+      const anchor = e.shiftKey ? currentAnchor() : null;
       /* 全选后点回正文：先把可写恢复，这一步必须在浏览器放置光标之前，
          否则这一下点不进任何一行（点到哪儿都只是收掉选区）。 */
       if (strippedHosts.length) restoreEditables();
       if (!S.edit) return;
-      if (e.target.closest && e.target.closest('.cmp-tx')) { dragBegin(e); return; }   // 行内：光标与双击/三击交给浏览器
+      if (e.target.closest && e.target.closest('.cmp-tx')) { dragBegin(e, anchor); return; }   // 行内：光标与双击/三击交给浏览器
       drag = null;
       const box = cv.getBoundingClientRect();
       const row = e.target.closest && e.target.closest('.cmp-row');
@@ -2664,6 +2708,21 @@ function bind() {
     dragMove(e);
   });
   document.addEventListener('mouseup', () => dragEnd());
+
+  /* 跨行选区上的粘贴落点。crossSelKey 已经把选区记进 pendingPaste、并把这一侧
+     恢复成可写（否则浏览器不会派发 paste 事件），这里拦住浏览器的默认插入 ——
+     它只会写进光标所在那一行，把「选中了一整段」当没选 —— 改由 replaceSpan
+     落到模型上。单行粘贴不设 pendingPaste，这里直接放行。 */
+  document.addEventListener('paste', (e) => {
+    const span = pendingPaste;
+    pendingPaste = null;
+    if (!span) return;
+    e.preventDefault();
+    if (!S.edit) return;
+    const t = e.clipboardData ? e.clipboardData.getData('text/plain') : '';
+    flush();
+    replaceSpan(span, String(t || '').replace(/\r\n/g, '\n'));
+  });
 
   /* 光标每动一次就记一份：撤销要在「焦点已经不在正文」的情况下也找得到位置
      （点工具栏按钮那一刻 getSelection() 常常是空的，见 caretAt）。 */
