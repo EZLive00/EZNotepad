@@ -447,6 +447,47 @@ window.__run = () => {
   eq('跨块拖选后仍跨 3 个块', T.selBlocks(), 3);
   eq('跨块拖选后不补空块', T.blocks().length, 3);
 
+  // 18d. 列表项 / 引用里粘多行 = 容器内续行（不许把容器打断成普通段落）
+  T.reset('- 第一项\n- 第二项');
+  T.caret(1, 4);
+  T.paste('甲\n乙\n丙');
+  eq('列表项末尾粘多行续成多项', T.out(), '- 第一项\n- 第二项甲\n- 乙\n- 丙');
+
+  T.reset('- a\n- b');
+  T.caret(0, 1);
+  T.paste('X\nY');
+  eq('列表项中间粘多行按光标劈开', T.out(), '- aX\n- Y\n- b');
+
+  T.reset('1. a\n2. b');
+  T.caret(0, 3);
+  T.paste('x\ny');
+  eq('有序列表续项后编号接上', T.out(), '1. ax\n2. y\n3. b');
+
+  T.reset('- [ ] a\n- [ ] b');
+  T.caret(0, 7);
+  T.paste('x\ny');
+  eq('任务列表续项仍是待办', T.out(), '- [ ] ax\n- [ ] y\n- [ ] b');
+
+  T.reset('- a\n  - b');
+  T.caret(1, 5);
+  T.paste('m\nn');
+  eq('嵌套列表续项保留缩进', T.out(), '- a\n  - bm\n  - n');
+
+  T.reset('- a\n- b');
+  T.caret(0, 3);
+  T.paste('一\n\n二');
+  eq('粘贴里的空行不占一项、也不退出列表', T.out(), '- a一\n- 二\n- b');
+
+  T.reset('> 甲\n> 乙');
+  T.caret(0, 2);
+  T.paste('丙\n丁');
+  eq('引用行里粘多行仍在同一个引用组', T.out(), '> 甲丙\n> 丁\n> 乙');
+
+  T.reset('> [!info] 标题\n> 正文');
+  T.caret(1, 2);
+  T.paste('A\nB');
+  eq('提示块里粘多行不重写 [!info]', T.out(), '> [!info] 标题\n> 正文A\n> B');
+
   // 19. 代码块内回车：永远块内换行；空末行再回车才出块（Typora 约定）
   T.reset('```js\nconst a = 1;\n```');
   ed.restoreCaret({ blockIndex: 0, offset: 5 });

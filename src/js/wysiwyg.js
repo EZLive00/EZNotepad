@@ -3104,8 +3104,10 @@ export class WysiwygEditor {
     this.flush();
   }
 
-  /** 回车拆分：光标前留在当前块，光标后进入新块（保留行内样式） */
-  splitBlock(block) {
+  /** 回车拆分：光标前留在当前块，光标后进入新块（保留行内样式）。
+      `batch` = 调用方要连着拆好几刀（批量粘贴），收尾的 renumber / flush 由它自己
+      做一次 —— 逐行 flush 在万块文档上是一次几百毫秒的全量序列化。 */
+  splitBlock(block, batch = false) {
     const type = block.dataset.type;
 
     // 空列表项 / 空引用 / 空标题：退出结构（在空标题里回车 = 我要写正文）
@@ -3144,6 +3146,7 @@ export class WysiwygEditor {
       else if (block.dataset.coFollow) nb.dataset.coFollow = block.dataset.coFollow;
     }
     this.placeCaretStart(nb);
+    if (batch) return;          // 连着拆：由调用方统一收尾
     this.renumber();
     this.hCoalesce = false;
     this.flush();
@@ -3935,6 +3938,15 @@ export class WysiwygEditor {
       return;
     }
 
+    /* 列表项 / 引用行是「容器块」：多行要往容器里续，不能按段落插到块后面 ——
+       那样列表被拦腰截断（`- 第二项` 后面冒出三个普通段落，还各隔一个空行）。
+       续行规则和回车完全一致：li 续同 kind 同缩进，bq 续同缩进并接住提示块颜色。 */
+    const hostBlock = this.currentBlock();
+    if (hostBlock && (hostBlock.dataset.type === 'li' || hostBlock.dataset.type === 'bq')) {
+      this.pasteLinesInContainer(hostBlock, lines);
+      return;
+    }
+
     // 多行：整段按 Markdown 解析成块，顶替当前空行或插到当前块之后。
     // 这样从别处粘一段带标题/列表的文字，结构是保留的，而不是糊成一行行纯文本。
     const block = this.currentBlock();
@@ -3944,6 +3956,40 @@ export class WysiwygEditor {
     else if (block) block.after(...nodes);
     else this.root.append(...nodes);
     this.placeCaretEnd(nodes[nodes.length - 1]);
+    this.renumber();
+    this.hCoalesce = false;
+    this.flush();
+  }
+
+  /** 在容器块（列表项 / 引用行）里粘贴多行：等价于逐行按回车续行。
+      整段算一次编辑 —— 期间把 `silent` 打开，别让每行都跑一遍 onInput 的
+      规范化与块规则，末尾统一 renumber + flush 一次。
+
+      空行不占一项：容器里「一行 = 一项」，空行只是排版，而空列表项在模型里
+      存不住（序列化直接丢掉），真去造一个空的 li/bq 只会留下一块看不见的空位。
+      代价是粘多段文本进引用会并成一个引用组 —— 比「空行把引用断成两截、后面
+      几段全变正文」好解释。 */
+  pasteLinesInContainer(block, lines) {
+    const items = lines.filter((s) => s !== '');
+    if (!items.length) return;
+    const sel = window.getSelection();
+    if (!sel.rangeCount) return;
+    const prevSilent = this.silent;
+    this.silent = true;
+    try {
+      let cur = block;
+      sel.getRangeAt(0).deleteContents();
+      document.execCommand('insertText', false, items[0]);
+      for (let i = 1; i < items.length; i++) {
+        /* 等于按一次回车：li 续同 kind、同缩进，bq 续同缩进并接住提示块的颜色。
+           拆完光标落在新块行首，接着写下一行。 */
+        this.splitBlock(cur, true);
+        cur = this.currentBlock() || cur;
+        document.execCommand('insertText', false, items[i]);
+      }
+    } finally {
+      this.silent = prevSilent;
+    }
     this.renumber();
     this.hCoalesce = false;
     this.flush();
