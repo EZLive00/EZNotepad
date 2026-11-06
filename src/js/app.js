@@ -2498,7 +2498,9 @@ function locateMatch() {
   }
   const [a, b] = find.matches[find.index] || [];
   if (a == null) return;
-  plain.revealOffset(a, b);
+  /* 不抢焦点：查找框每敲一个字都会走到这里，revealOffset 一 focus 查找框就失焦，
+     表现就是「输入一个字符后再也打不进字」。选区照设，跳转照做。 */
+  plain.revealOffset(a, b, { focus: false });
   updateStatus();
 }
 
@@ -2604,9 +2606,17 @@ async function replaceAll() {
 }
 
 function closeFind() {
+  /* 焦点在查找栏里时关掉它，等于把人晾在半空：接着打字没反应。
+     所以收起来之前先把焦点还给正文（点 ×、按 Esc 都走这里）。 */
+  const hadFocus = el.findbar.contains(document.activeElement);
   el.findbar.classList.add('hidden');
   domfind.clear();
   find.matches = [];
+  if (!hadFocus) return;
+  const t = activeTab();
+  if (!t) return;
+  if (t.mode === 'wysiwyg') el.wysiwyg.focus();
+  else if (t.mode === 'edit') plain.focus();
 }
 
 /** 拖进来的图片文件：走「复制到 assets」那条路，和「插入图片」对话框一致 */

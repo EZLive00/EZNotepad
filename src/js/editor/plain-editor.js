@@ -286,6 +286,10 @@ export class PlainEditor {
    * opt.atTop 为真时改为「行顶贴在 yMargin 像素处」（相对滚动容器顶）——大纲点击用。
    * 不走 scrollIntoView 的 yMargin（它对齐的是光标矩形，差半行距），自己按窗口坐标增量补差。
    * 目标点略高于基准线 8px：高亮判据是「基准线落在哪个行块里」，正好压线会取到上一块。
+   *
+   * opt.focus === false 时不把焦点抢回编辑区：查找定位每敲一个字都会走到这里，
+   * 抢一次焦点查找框就失焦一次 —— 症状是「输入一个字符就不能继续打了」。
+   * 选区照样设进 view（CM6 的 dispatch 不要求焦点），只是不高亮成活动选区。
    */
   revealOffset(pos, end = pos, opt = {}) {
     const from = this._clamp(pos);
@@ -298,7 +302,7 @@ export class PlainEditor {
     } else {
       this.view.dispatch({ effects: EditorView.scrollIntoView(from, { y: 'center' }) });
     }
-    this.view.focus();
+    if (opt.focus !== false) this.view.focus();
   }
 
   /** 滚到某行（1 起），不改变选区 */

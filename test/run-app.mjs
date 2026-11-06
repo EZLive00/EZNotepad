@@ -70,6 +70,25 @@ try {
     await ev('window.__snp.commands.find()');
     ok('Ctrl+F 不收起已展开的替换行', !(await cls('#findReplaceRow')).includes('hidden'));
 
+    // ---- 1.5 焦点 ----
+    // 打开后焦点必须在查找框里；否则键盘还在编辑器，打字直接进正文。
+    const afOpen = await ev(`document.activeElement.id`);
+    ok('Ctrl+F 把焦点送进查找框', afOpen === 'findInput', afOpen);
+
+    // 编辑模式下每敲一个字都会 runFind → locateMatch → revealOffset，
+    // 而 revealOffset 末尾会 view.focus()，一次就把焦点抢回正文 —— 症状是打一个字就再也打不进去。
+    await ev('window.__snp.commands.modeEdit()');
+    await typeIn('#findInput', 'EZNotepad');
+    await ev('new Promise(r => setTimeout(r, 80))');
+    const afType = await ev(`document.activeElement.id`);
+    ok('编辑模式：输入后焦点仍留在查找框', afType === 'findInput', afType);
+    const typed = await val('#findInput');
+    ok('编辑模式：输入的字没有被吞掉', typed === 'EZNotepad', JSON.stringify(typed));
+    // 定位本身要照常工作（焦点让出去不等于不跳转）
+    const sel = await ev(`(() => { const s = window.__snp.plain.selection; return s.to - s.from; })()`);
+    ok('定位仍选中命中文本', sel === 9, sel);
+    await ev('window.__snp.commands.modeWysiwyg()');
+
     // ---- 2. 查找与计数 ----
     await typeIn('#findInput', 'EZNotepad');
     await ev('new Promise(r => setTimeout(r, 120))');
