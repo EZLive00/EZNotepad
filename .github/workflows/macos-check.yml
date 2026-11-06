@@ -1,0 +1,58 @@
+name: Build check (macOS)
+
+# 这个分支在 Windows 开发机上没法验证：没有 macOS SDK，交叉编译也不现实。
+# 每次推分支就让 macos-latest 真编一次 .app，配置写错当场暴露。
+on:
+  push:
+    branches: ['platform/macos']
+  pull_request:
+    branches: ['platform/macos']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: 缓存 Rust 编译产物
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: macos-check-arm64
+
+      - name: 安装前端依赖
+        run: pnpm install --frozen-lockfile
+
+      # 没配签名证书时 Tauri 走 ad-hoc 签名，不会触发公证。
+      # 只出 .app：dmg 排版与签名留到真正发版时再验。
+      - name: 构建 .app
+        run: pnpm exec tauri build --target aarch64-apple-darwin --bundles app --verbose
+
+      - name: 校验产物
+        run: |
+          APP="src-tauri/target/aarch64-apple-darwin/release/bundle/macos/EZNotepad.app"
+          test -d "$APP" || { echo "::error::没有生成 $APP"; exit 1; }
+          ls -lh "$APP/Contents/MacOS/"
