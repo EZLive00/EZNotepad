@@ -40,6 +40,12 @@ GitHub 托管 runner **排队没接单，不是编译失败**（判别方法：j
 `runner` 下拉框手动选 `macos-26-intel` / `macos-latest` / `macos-15` 重跑；
 本机交叉类型检查可作兜底，真正要出包还是在 Mac 上跑 `打包-macOS.command`。
 
+✅ **#3 已通过**（commit `2b78b7d`，run `42240371783`）：`macos-15-intel` 上
+`completed success`，14 步全绿，`构建 .app` 与 `校验产物` 都过 ——
+macOS-only 的 Rust 分支、Tauri 配置、前端依赖与打包链路第一次在真机上被完整
+验证。判断状态**以 API 为准**：网页的 `Status In progress` 会缓存十几分钟，
+这次 15:18 就成功，网页直到 15:26 还显示进行中。
+
 保留 Windows 的 `#[cfg]` 分支不是舍不得删，而是删掉之后本机就完全失去
 回归能力了：共用代码（约 1.4 万行前端 + 大部分 Rust 命令）改坏了没人报。
 现在本机离线套件与真机探针仍可全量跑。
@@ -55,7 +61,7 @@ GitHub 托管 runner **排队没接单，不是编译失败**（判别方法：j
 | 最低系统 | `11.0`（WKWebView 的分页打印 API 需要 11+；10.15 上会缺功能） |
 | WebView2 参数 | **保留** `additionalBrowserArgs`（`--disable-gpu-sandbox`）：wry 在非 Windows 平台用 `#[cfg(windows)]` 包着、会忽略它；但删掉之后本机 Windows 上第二个 WebView 就创建不出来（见下「踩过的坑」） |
 | 构建入口 | `打包-macOS.command` 支持 `EZ_ARCH=aarch64/x86_64/universal`，自动 `rustup target add`；`package.json` 加 `build:mac:arm` / `build:mac:intel` |
-| CI | `macos-check.yml`（推分支即真机编译，原生 target + 可切换 runner 队列）、`release.yml` 换成 macOS 通用包发版；两者默认 `macos-15-intel`（14GB，`lto=true` 跑得动） |
+| CI | `macos-check.yml`（推分支即真机编译，原生 target + 可切换 runner 队列）、`release.yml` 换成 macOS 通用包发版；两者默认 `macos-15-intel`（14GB，`lto=true` 跑得动）。`macos-check.yml` **已真机通过**（run `42240371783`，`completed success`） |
 
 ### M2 数据安全与文件打开
 
