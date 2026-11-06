@@ -172,13 +172,18 @@ body[data-theme="dark"] {
 #wmax.restored .i-restore { display: block; }
 
 /* ---------- 第二行：统计 / 选项 / 导航 ---------- */
+/* 工具行铺一层 --bg-side：主界面的标签带、状态栏也是它。三个窗口用同一套
+   「灰面 = 界面 / 白面 = 内容」的分法，切过去不会有陌生感 */
 .cmp-tools {
   height: 38px;
   flex: none;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   padding: 0 12px;
+  background: var(--bg-side);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line-strong);
   overflow: hidden;
 }
 
@@ -210,22 +215,25 @@ body[data-theme="dark"] {
 .cmp-chk {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   font-size: 12px;
   color: var(--fg-soft);
   white-space: nowrap;
   cursor: pointer;
   user-select: none;
+  padding: 0 2px;
+  transition: color .12s var(--ease);
 }
 
-.cmp-chk input { margin: 0; accent-color: var(--accent); }
+.cmp-chk:hover { color: var(--fg); }
+.cmp-chk input { margin: 0; accent-color: var(--accent); width: 13px; height: 13px; }
 
 .cmp-sep {
   width: 1px;
-  height: 16px;
+  height: 15px;
   flex: none;
+  margin: 0 2px;
   background: var(--line-strong);
-  opacity: .7;
 }
 
 .cmp-btn {
@@ -233,8 +241,8 @@ body[data-theme="dark"] {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 0 9px;
-  background: var(--bg-soft);
+  padding: 0 8px;
+  background: transparent;
   color: var(--fg-soft);
   border: 0;
   border-radius: var(--r-sm);
@@ -242,10 +250,11 @@ body[data-theme="dark"] {
   font-size: 12px;
   white-space: nowrap;
   cursor: pointer;
+  transition: background .12s var(--ease), color .12s var(--ease);
 }
 
 .cmp-btn:hover { background: var(--bg-hover); color: var(--fg); }
-.cmp-btn:disabled { opacity: .45; cursor: default; background: var(--bg-soft); }
+.cmp-btn:disabled { opacity: .45; cursor: default; background: transparent; }
 /* `hidden` 属性默认是 display:none，但 .cmp-btn 的 display:inline-flex
    优先级更高，会把它盖掉 —— 于是「隐藏」的按钮照样显示出来。 */
 .cmp-btn[hidden] { display: none; }
@@ -255,11 +264,12 @@ body[data-theme="dark"] {
 
 .cmp-btn .cmp-ico { width: 12px; height: 12px; }
 
-/* 编辑态：按钮变成「亮着的」样子，提醒现在是可写模式 */
+/* 编辑态：按钮变成「亮着的」样子，提醒现在是可写模式。
+   不再套一圈蓝描边 —— 工具行上同时有「置顶」和「编辑」两个开关，
+   两个都描边时像两颗选中态在抢；浅蓝底 + 蓝字已经说清「我开着」。 */
 .cmp-btn.on {
   background: var(--accent-soft);
   color: var(--accent);
-  box-shadow: inset 0 0 0 1px var(--accent);
 }
 
 /* ---------- 窄窗口：工具栏降级 ----------
@@ -323,8 +333,10 @@ body[data-theme="dark"] {
 /* 箭头：两个方钮上下摞着，中间不留缝。底色用浮层色，压在竖线上时
    竖线从中穿过会让箭头看着像被切成两半 */
 .cmp-arrow {
-  width: 20px;
-  height: 18px;
+  /* 21×19 而不是 20×18：加上圆角之后 20px 宽的点按区域偏小，
+     而中缝只有 26px，再宽就会顶到两侧正文 */
+  width: 21px;
+  height: 19px;
   display: grid;
   place-items: center;
   padding: 0;
@@ -332,11 +344,15 @@ body[data-theme="dark"] {
   border-radius: var(--r-sm);
   background: var(--bg-float);
   color: var(--fg-soft);
-  box-shadow: 0 0 0 1px var(--line-strong);
+  /* 描边 + 一层贴地投影：它压在两栏中间那道竖线上，只有描边时
+     看着像「画在纸上的方框」，加一层影才像一颗按得下去的按钮 */
+  box-shadow: 0 0 0 1px var(--line-strong), 0 1px 2px rgba(17, 24, 39, .10);
   cursor: pointer;
+  transition: background .12s var(--ease), color .12s var(--ease), box-shadow .12s var(--ease);
 }
+body[data-theme="dark"] .cmp-arrow { box-shadow: 0 0 0 1px var(--line-strong), 0 1px 3px rgba(0, 0, 0, .5); }
 
-.cmp-arrow:hover { background: var(--accent-soft); color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.cmp-arrow:hover { background: var(--accent-soft); color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 1px 2px rgba(17, 24, 39, .10); }
 .cmp-arrow:disabled { opacity: .45; cursor: default; background: var(--bg-float); color: var(--fg-soft); box-shadow: 0 0 0 1px var(--line-strong); }
 .cmp-arrow .cmp-ico { width: 12px; height: 12px; stroke-width: 2; }
 

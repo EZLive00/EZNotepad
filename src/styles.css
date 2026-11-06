@@ -58,7 +58,7 @@ body[data-theme="light"] {
   --accent: #3366f0;
   --accent-soft: #eaf0ff;
   --accent-fg: #ffffff;
-  --code-bg: #f5f6f8;
+  --code-bg: #f7f8fa;
   --add-bg: #e6f7ec;
   --add-fg: #137a3a;
   --del-bg: #fdeaea;
@@ -123,7 +123,9 @@ body[data-theme="dark"] {
   /* 深色下侧栏比正文再暗一档：暗 = 后退，和浅色正好相反 */
   --bg-side: #15171b;
   --bg-raised: rgba(255, 255, 255, .07);
-  --bg-soft: #202329;
+  /* 比正文亮 9 级。原来只亮 7 级，引用块和表头在深色下几乎和正文同色，
+     整页看起来像一段连续的字（浅色主题里 7 级够用，深色下眼睛对亮度差更钝） */
+  --bg-soft: #23272e;
   --bg-hover: #272a31;
   --bg-active: #2f333b;
   --fg: #e7e9ee;
@@ -135,7 +137,7 @@ body[data-theme="dark"] {
   --accent: #6d8dff;
   --accent-soft: #1d2740;
   --accent-fg: #0d1015;
-  --code-bg: #16181d;
+  --code-bg: #14161a;
   --add-bg: #14301f;
   --add-fg: #62d38b;
   --del-bg: #341a1c;
@@ -1290,7 +1292,10 @@ body[data-zen="1"] .win-title { color: var(--fg-faint); }
 }
 .toast {
   background: var(--fg); color: var(--bg-panel); padding: 8px 16px; border-radius: var(--r-md);
-  font-size: 12.5px; box-shadow: var(--shadow); animation: toastIn .22s var(--ease);
+  font-size: 12.5px; animation: toastIn .22s var(--ease);
+  /* toast 是反色的（深底浅字），--shadow 里那道深色描边在它身上看不见；
+     单独给它一层更实的投影，才「飘」在页面上方 */
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .18), 0 8px 20px -6px rgba(0, 0, 0, .32);
   max-width: 70vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 @keyframes toastIn { from { opacity: 0; transform: translateY(8px); } }
