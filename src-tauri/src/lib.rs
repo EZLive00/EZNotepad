@@ -18,6 +18,24 @@ struct ReadResult {
     eol: String,
 }
 
+/* 严格 UTF-8 校验失败时拿什么兜底，按平台分：
+   Windows 中文环境的系统 ANSI 就是 GBK 系，GB18030 是对的；
+   macOS / Linux 上一个非法 UTF-8 文件更可能是 Latin-1 或二进制误判，
+   继续按 GB18030 解会解出「看起来像中文的乱码」—— 用户看不出异常，
+   一保存就把原文件覆盖了。windows-1252 是 Latin-1 超集，永不失败，
+   而且状态栏会显示当前编码，用户可以用「以…编码重新打开」纠正。 */
+#[cfg(target_os = "windows")]
+fn fallback_decode(bytes: &[u8]) -> (String, &'static str) {
+    let (s, _, _) = encoding_rs::GB18030.decode(bytes);
+    (s.into_owned(), "GBK")
+}
+
+#[cfg(not(target_os = "windows"))]
+fn fallback_decode(bytes: &[u8]) -> (String, &'static str) {
+    let (s, _, _) = encoding_rs::WINDOWS_1252.decode(bytes);
+    (s.into_owned(), "WINDOWS-1252")
+}
+
 /// 用 encoding_rs 按顺序尝试解码，返回 (文本, 编码名)
 fn decode_bytes(bytes: &[u8]) -> (String, String, bool) {
     if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
@@ -32,12 +50,12 @@ fn decode_bytes(bytes: &[u8]) -> (String, String, bool) {
         let (s, _, _) = encoding_rs::UTF_16BE.decode(&bytes[2..]);
         return (s.into_owned(), "UTF-16BE".into(), true);
     }
-    // 严格校验 UTF-8，失败则回退 GB18030（兼容 GBK/GB2312）
+    // 严格校验 UTF-8，失败交给按平台选的兜底编码（见 fallback_decode）
     match std::str::from_utf8(bytes) {
         Ok(s) => (s.to_string(), "UTF-8".into(), false),
         Err(_) => {
-            let (s, _, _) = encoding_rs::GB18030.decode(bytes);
-            (s.into_owned(), "GBK".into(), false)
+            let (s, enc) = fallback_decode(bytes);
+            (s, enc.into(), false)
         }
     }
 }
@@ -76,6 +94,7 @@ fn read_text_file(path: String, encoding: Option<String>) -> Result<ReadResult, 
             let body: &[u8] = if has_bom { &bytes[3..] } else { &bytes[..] };
             let cs = match enc {
                 "GBK" => encoding_rs::GB18030,
+                "WINDOWS-1252" => encoding_rs::WINDOWS_1252,
                 "UTF-16LE" => encoding_rs::UTF_16LE,
                 "UTF-16BE" => encoding_rs::UTF_16BE,
                 _ => encoding_rs::UTF_8,
@@ -135,6 +154,10 @@ fn save_text_file(opts: SaveOptions) -> Result<String, AppError> {
                 out.extend_from_slice(&u.to_be_bytes());
             }
         }
+        "WINDOWS-1252" => {
+            let (bytes, _, _) = encoding_rs::WINDOWS_1252.encode(&opts.content);
+            out.extend_from_slice(&bytes);
+        }
         "GBK" => {
             let (bytes, _, _) = encoding_rs::GB18030.encode(&opts.content);
             out.extend_from_slice(&bytes);
@@ -157,6 +180,16 @@ fn file_stat(path: String) -> Result<bool, AppError> {
    只接受**单层名字**：路径分隔符一律拒绝，免得前端传个 "../.." 就把操作范围
    伸到工作目录外面。删除走系统回收站，误点了还能捞回来。 */
 
+#[cfg(target_os = "windows")]
+fn illegal_name_char(c: char) -> bool {
+    matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*')
+}
+
+#[cfg(not(target_os = "windows"))]
+fn illegal_name_char(c: char) -> bool {
+    c == ':' || c == '\0'
+}
+
 fn check_simple_name(name: &str) -> Result<String, AppError> {
     let n = name.trim();
     if n.is_empty() {
@@ -165,7 +198,7 @@ fn check_simple_name(name: &str) -> Result<String, AppError> {
     if n.contains('/') || n.contains('\\') || n == "." || n == ".." {
         return Err(AppError::new("name.path_sep"));
     }
-    if n.chars().any(|c| matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*')) {
+    if n.chars().any(illegal_name_char) {
         return Err(AppError::new("name.invalid_chars"));
     }
     Ok(n.to_string())
@@ -229,7 +262,7 @@ fn delete_file_impl(p: &Path) -> Result<(), AppError> {
     op.fFlags = (FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI) as u16;
     let rc = unsafe { SHFileOperationW(&mut op) };
     if rc != 0 {
-        return Err(AppError::var("recycle.failed", "rc", rc));
+        return Err(AppError::detail("recycle.failed", format!("Win32 error {rc}")));
     }
     if op.fAnyOperationsAborted != 0 {
         return Err(AppError::new("op.cancelled"));
@@ -237,9 +270,13 @@ fn delete_file_impl(p: &Path) -> Result<(), AppError> {
     Ok(())
 }
 
+/// 非 Windows：走系统废纸篓。`trash` 在 macOS 调 NSFileManager.trashItemAtURL，
+/// 会一并写好「放回原处」的元数据；直接 rename 到 ~/.Trash 会丢这份元数据，
+/// 而且在新系统上有 TCC 权限问题。界面上这个动作叫「删除（进回收站）」，
+/// 悄悄改成永久删除是不能接受的。
 #[cfg(not(target_os = "windows"))]
 fn delete_file_impl(p: &Path) -> Result<(), AppError> {
-    fs::remove_file(p).map_err(|e| AppError::detail("io.delete", e))
+    trash::delete(p).map_err(|e| AppError::detail("recycle.failed", e))
 }
 
 /// 删除文件（进回收站）或空目录
@@ -284,9 +321,42 @@ fn compare_args(argv: &[String]) -> Option<(Option<String>, Option<String>)> {
     Some((left, right))
 }
 
+/* macOS 的「双击 .md 打开」不走 argv：LaunchServices 发 Apple Event，
+   RunEvent::Opened 里才有 URL，而且冷启动时可能早于前端监听器注册。
+   两条路按「前端来取过没有」互斥：没来过就暂存，来过了直接 emit，
+   同一个文件不会被开两次。前端的 initial_files() 那次调用正是就绪信号，
+   所以业务层一行都不用改。 */
+#[derive(Default)]
+struct OpenedFiles {
+    pending: std::sync::Mutex<Vec<String>>,
+    ready: std::sync::atomic::AtomicBool,
+}
+
+static EXIT_ALLOWED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 #[tauri::command]
-fn initial_files() -> Vec<String> {
-    file_args(&std::env::args().collect::<Vec<_>>())
+fn initial_files(app: tauri::AppHandle) -> Vec<String> {
+    use tauri::Manager;
+    let state = app.state::<OpenedFiles>();
+    state.ready.store(true, std::sync::atomic::Ordering::SeqCst);
+    let mut files = file_args(&std::env::args().collect::<Vec<_>>());
+    if let Ok(mut g) = state.pending.lock() {
+        for p in g.drain(..) {
+            if !files.contains(&p) {
+                files.push(p);
+            }
+        }
+    }
+    files
+}
+
+/* ⌘Q 走应用级退出，不经过窗口的 onCloseRequested，未保存的标签会被绕过。
+   Rust 先拦下来问前端，前端跑完同一套守卫后再调这个命令放行。
+   不这么做的话 app.exit() 会再次触发 ExitRequested，形成死循环。 */
+#[tauri::command]
+fn confirm_app_exit(app: tauri::AppHandle) {
+    EXIT_ALLOWED.store(true, std::sync::atomic::Ordering::SeqCst);
+    app.exit(0);
 }
 
 /// 两两比对文件内容，返回同长度的「是否逐字节相同」。
@@ -1029,17 +1099,25 @@ fn create_tool_window(
     #[cfg(target_os = "windows")]
     let (bx, by, bw, bh) = screen.logical();
     #[cfg(not(target_os = "windows"))]
-    let (bx, by, bw, bh) = (0f64, 0f64, 1280f64, 860f64);
+    let (bw, bh) = (1280f64, 860f64);
 
     let mut builder =
         tauri::WebviewWindowBuilder::new(app, label, tauri::WebviewUrl::App(page.into()))
             .title(title)
             .inner_size(bw, bh)
-            .position(bx, by)
             .min_inner_size(min_w, min_h)
             .decorations(false)
             .shadow(true)
             .visible(true);
+
+    #[cfg(target_os = "windows")]
+    { builder = builder.position(bx, by); }
+    #[cfg(not(target_os = "windows"))]
+    { builder = builder.center(); }
+    /* 前端工具窗口的 filled 初值是 true（按钮显示「还原」），出生就得是最大化态。
+       macOS 有原生最大化，不需要 Win32 那套 DWM 隐形边框补偿。 */
+    #[cfg(target_os = "macos")]
+    { builder = builder.maximized(true); }
 
     // 页面加载完再补一次：tao 应用 inner_size 比我们晚，第一次铺满可能被顶回来
     let app_load = app.clone();
@@ -1540,7 +1618,18 @@ async fn export_pdf(window: tauri::WebviewWindow, path: String) -> Result<(), Ap
     }
 }
 
-/// 非 Windows 平台暂时没有对应实现（macOS 的 WKWebView 有 createPDF，另做）
+/* macOS 的导出 PDF 还没落地，这里**故意**返回「不支持」而不是伪造成功。
+
+   已确认的技术路径（objc2-web-kit 0.3.2 / objc2 0.6.5，与 wry 传递依赖同版本）：
+   `with_webview(|wv| &*wv.inner().cast::<WKWebView>())` 能拿到 WKWebView，
+   `createPDFWithConfiguration_completionHandler` 给一个 NSData。但这个方法生成的是
+   **当前页面 bounds 的单页 PDF**，而 Windows 版 PrintToPdf 走完整打印管线、
+   按 CSS `@page` 分页成多页 A4 —— 直接用它，业务行为并不一致。
+   要真对齐得走 `WKWebView.printOperation(with:)` → NSPrintOperation 设
+   NSPrintJobSavingURL 落盘（macOS 11+），且必须在目标机器上验证分页与边距。
+
+   前端 pdf.js 的 exportPdfTo(path, tab) 与 @media print 规则都不用改，
+   平台差异只落在这条命令里。见 docs/macOS-开发.md 的 M4。 */
 #[cfg(not(target_os = "windows"))]
 #[tauri::command]
 async fn export_pdf(_window: tauri::WebviewWindow, _path: String) -> Result<(), AppError> {
@@ -1568,6 +1657,11 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        /* 自绘 menubar 承载了动态「最近打开」、勾选状态与右键药丸行；
+           macOS 默认还会建一套系统菜单，两套并排且无处显示快捷键。
+           留自绘、关系统菜单（其它平台是 no-op）。⌘Q 由下面的 ExitRequested 守卫。 */
+        .enable_macos_default_menu(false)
+        .manage(OpenedFiles::default())
         .manage(WatchState(std::sync::Mutex::new(None)))
         .manage(CompareRequest::default())
         .manage(FolderCompareRequest::default())
@@ -1601,6 +1695,7 @@ pub fn run() {
             take_folder_compare_request,
             open_in_main,
             export_pdf,
+            confirm_app_exit,
             tool_set_fullscreen
         ])
         .setup(|app| {
@@ -1619,7 +1714,50 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
-    app.run(|_, _| {});
+    app.run(|app, event| {
+        #[cfg(target_os = "macos")]
+        match event {
+            tauri::RunEvent::Opened { urls } => {
+                use tauri::{Emitter, Manager};
+                let files: Vec<String> = urls
+                    .iter()
+                    .filter_map(|u| u.to_file_path().ok())
+                    .map(|p| p.to_string_lossy().to_string())
+                    .filter(|p| Path::new(p).is_file())
+                    .collect();
+                if files.is_empty() {
+                    return;
+                }
+                let state = app.state::<OpenedFiles>();
+                if state.ready.load(std::sync::atomic::Ordering::SeqCst) {
+                    let _ = app.emit("open-files", files);
+                } else if let Ok(mut g) = state.pending.lock() {
+                    for p in files {
+                        if !g.contains(&p) {
+                            g.push(p);
+                        }
+                    }
+                }
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.unminimize();
+                    let _ = w.show();
+                    let _ = w.set_focus();
+                }
+            }
+            tauri::RunEvent::ExitRequested { api, .. } => {
+                use tauri::Emitter;
+                if !EXIT_ALLOWED.load(std::sync::atomic::Ordering::SeqCst) {
+                    api.prevent_exit();
+                    /* 前端跑完 confirmQuit 守卫后调 confirm_app_exit 放行；
+                       不在这里直接 exit，否则未保存的标签会被绕过 */
+                    let _ = app.emit("app-exit-request", ());
+                }
+            }
+            _ => {}
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = (app, event);
+    });
 }
 
 /* ---------------- 后端单测 ----------------

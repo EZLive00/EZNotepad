@@ -121,6 +121,7 @@ export const deleteEntry = (path) => invoke('delete_entry', { path });
 
 /** 启动参数里带的文件（双击 .md 打开时由系统传进来） */
 export const initialFiles = () => invoke('initial_files');
+export const confirmAppExit = () => invoke('confirm_app_exit');
 
 /** 应用版本：取自 tauri.conf.json（编译期注入），前端不写死，免得跟版本号脱节 */
 export const appVersion = () => getVersion().catch(() => '');

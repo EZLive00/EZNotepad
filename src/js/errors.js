@@ -46,7 +46,7 @@ export const ERR_TEXT = {
   'name.empty': '名字不能为空',
   'name.path_sep': '名字里不能带路径分隔符',
   'name.invalid_chars': '名字里有不允许的字符（< > : " | ? *）',
-  'recycle.failed': '移入回收站失败（错误码 {rc}）',
+  'recycle.failed': '移入回收站失败（{detail}）',
   'op.cancelled': '操作已取消',
 
   /* ---- 文件内容 ---- */
