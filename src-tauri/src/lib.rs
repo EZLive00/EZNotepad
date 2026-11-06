@@ -1083,6 +1083,9 @@ fn create_tool_window(
     min_w: f64,
     min_h: f64,
 ) -> Result<(), AppError> {
+    // 只有 Windows 分支要靠 Manager 取主窗口句柄算工作区；macOS/Linux 走 center +
+    // 原生最大化，无条件 use 在交叉编译时是一条 unused_imports 警告。
+    #[cfg(target_os = "windows")]
     use tauri::Manager;
 
     // 出生尺寸就按工作区给：后面的 SetWindowPos 只是把「DWM 隐形边框」那几像素
@@ -1119,14 +1122,18 @@ fn create_tool_window(
     #[cfg(target_os = "macos")]
     { builder = builder.maximized(true); }
 
-    // 页面加载完再补一次：tao 应用 inner_size 比我们晚，第一次铺满可能被顶回来
-    let app_load = app.clone();
-    builder = builder.on_page_load(move |_w, payload| {
-        if payload.event() == tauri::webview::PageLoadEvent::Finished {
-            #[cfg(target_os = "windows")]
-            fill_work_area_when_ready(app_load.clone(), label);
-        }
-    });
+    // 页面加载完再补一次：tao 应用 inner_size 比我们晚，第一次铺满可能被顶回来。
+    // 这属于 Win32 的 DWM 隐形边框补偿；macOS 用原生最大化，压根不需要这个回调，
+    // 无条件注册会在非 Windows target 上留下一个没用的 app_load。
+    #[cfg(target_os = "windows")]
+    {
+        let app_load = app.clone();
+        builder = builder.on_page_load(move |_w, payload| {
+            if payload.event() == tauri::webview::PageLoadEvent::Finished {
+                fill_work_area_when_ready(app_load.clone(), label);
+            }
+        });
+    }
 
     // 和主窗口用同一组浏览器参数：GPU 沙箱崩溃的问题在这里一样会犯
     #[cfg(target_os = "windows")]
@@ -1136,13 +1143,17 @@ fn create_tool_window(
         );
     }
 
-    let win = builder.build().map_err(|e| AppError::detail("win.create", e))?;
+    // 两条平台各建一次窗：Windows 还要拿窗口句柄补圆角和工作区矩形，
+    // 其它平台建完就行，硬留一个 win 变量只会得到 unused_variables。
     #[cfg(target_os = "windows")]
     {
+        let win = builder.build().map_err(|e| AppError::detail("win.create", e))?;
         apply_rounded_corners(&win);
         // 先把矩形摆好（此时还不可见），页面加载完那一轮再收个尾
         fill_work_area_when_ready(app.clone(), label);
     }
+    #[cfg(not(target_os = "windows"))]
+    builder.build().map_err(|e| AppError::detail("win.create", e))?;
     Ok(())
 }
 

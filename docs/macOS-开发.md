@@ -8,17 +8,29 @@
 
 ## 一、必须承认的一个限制
 
-开发机是 Windows，没有 macOS SDK，`*-apple-darwin` 目标**无法在本机编译，
-也无法运行真机探针**。所以：
+开发机是 Windows，没有 macOS SDK 与 Xcode，本机**链接不出 macOS 产物，
+也跑不了真机探针**。所以：
 
-- Rust 里的 `#[cfg(target_os = "macos")]` 分支在本机**不会被类型检查**；
 - `tauri.conf.json` 的 `titleBarStyle` / `bundle.targets` 在本机**不会被校验**；
-- 交通灯、WKWebView 的剪贴板/拖放/打印行为在本机**看不到**。
+- 交通灯、WKWebView 的剪贴板/拖放/打印行为在本机**看不到**；
+- Objective-C 运行时与系统框架链接只有 Mac 上才验得了。
 
-真实的编译验证靠 `.github/workflows/macos-check.yml`：推一次分支，
+但 Rust 的 macOS 分支**可以在本机做类型检查**（见 §五「交叉类型检查」）：
+装好 `aarch64-apple-darwin` 的 rust-std 后 `cargo check --target` 会把
+`#[cfg(target_os = "macos")]` 和 `#[cfg(not(target_os = "windows"))]` 分支
+真正编译一遍。它不是链接验证，却能提前抓出 API 用错、平台侧未使用变量等
+本机 `cargo build` 永远看不见的问题 —— 这次就靠它抓出 3 条告警。
+
+完整的链接与打包验证仍靠 `.github/workflows/macos-check.yml`：推一次分支，
 `macos-latest` 会 `tauri build --target aarch64-apple-darwin --bundles app`
 并断言 `EZNotepad.app` 真的生成。**改了配置或 Rust 一定要看这条 CI，
 不要只看本机的绿条。**
+
+⚠️ CI 不保证及时：2026-11-06 首跑在 `macos-latest` 队列里等了 15 分钟，
+job 始终 `runner_id=0`、`steps=0`，最后被取消、run 记 `failure`。这是
+GitHub 托管 runner **排队超时，不是编译失败**（判别方法：job 的
+`conclusion=cancelled` 且 steps 为空）。别误当成代码红了去「修代码」；
+重跑或换时段即可，本机交叉类型检查可作兜底。
 
 保留 Windows 的 `#[cfg]` 分支不是舍不得删，而是删掉之后本机就完全失去
 回归能力了：共用代码（约 1.4 万行前端 + 大部分 Rust 命令）改坏了没人报。
@@ -54,6 +66,10 @@
 - 工具窗口：不再写死 `(0,0,1280,860)`（macOS 坐标原点不同、会压在菜单栏下），改成 `.center()` + 出生即 `maximized(true)`，与前端 `filled=true` 的初值一致。
 - **快捷键显示**：`i18n.js` 里加唯一的平台渲染出口 —— `kbdToCombo()` / `kbdLabel()` / `localizeShortcuts()`。数据层仍写 `Ctrl+S`，mac 上显示 `⌘S`；菜单、右键、命令面板、帮助表、HTML title、九语言词条、欢迎文档全部走这一处。按键匹配层依旧 `ctrlKey || metaKey`，没有行为分叉。
 - 按键行为**本来就是跨平台的**，这部分一行没动（CM6 用 `Mod-` 抽象，17 处 `ctrlKey` 都配了 `metaKey`）。
+- **平台侧告警清零**：`cargo check --target aarch64-apple-darwin` 暴露出 3 条本机
+  Windows 构建看不到的告警 —— `use tauri::Manager`、`app_load`、`win` 全是 Win32
+  工作区补偿专用。给它们加 `#[cfg(target_os = "windows")]`，两条平台各建一次窗；
+  Windows 行为完全等价，macOS target 编译零告警。
 
 ## 三、未完成（别当成已支持）
 
@@ -140,8 +156,26 @@ WebView2 error: WindowsError(HRESULT(0x8007139F), "组或资源的状态不是�
 cargo check
 node test/run.mjs && node test/run-app.mjs && node test/run-probe.mjs
 
+# 本机（Windows）：交叉类型检查 macOS 分支（不链接，不需要 Xcode）
+rustup target add aarch64-apple-darwin
+DOCS_RS=1 cargo check --locked --target aarch64-apple-darwin --lib
+
 # Mac：开发 / 打包
 pnpm tauri dev
 ./打包-macOS.command                      # 默认 aarch64
 EZ_ARCH=universal ./打包-macOS.command   # 通用包
+```
+
+`DOCS_RS=1` 是 `objc2-exception-helper` 自带的开关：它只在「不需要链接」时
+跳过 `try_catch.m` 的 Objective-C 编译（docs.rs 正是这么用的）。`cargo check`
+不链接，所以这一步**不会掩盖我们自己代码的问题**；不加它，Windows 上的 GCC
+遇到 `-arch arm64` / `-mmacosx-version-min` 会直接报错。macOS CI 上不要设它 ——
+那边要真的链接出 `.app`。
+
+判断 CI 是排队还是编译失败：
+
+```bash
+curl -s --noproxy '*' \
+  https://api.github.com/repos/EZLive00/EZNotepad/actions/runs/<run_id>/jobs
+# runner_id=0 且 steps=[] 且 conclusion=cancelled → runner 没接单，重跑即可
 ```
