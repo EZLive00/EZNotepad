@@ -18,8 +18,14 @@ export function toast(msg, ms = 2200) {
   }, ms);
 }
 
-/** 通用对话框：返回 Promise<{ok:boolean}> */
-export function dialog({ title = tt('提示'), body = '', buttons = [{ id: 'ok', label: tt('确定'), primary: true }], wide = false } = {}) {
+/**
+ * 通用对话框：返回 Promise<{ok:boolean}>
+ *
+ * `focus`：初始焦点元素。不给就落在主按钮上（回车即确认，是大多数对话框
+ * 想要的手感）；给了就落在它身上 —— 「新建文档」的类型网格要靠方向键走，
+ * 焦点一开始就得在格子里，否则方向键按下去没有任何反应。
+ */
+export function dialog({ title = tt('提示'), body = '', buttons = [{ id: 'ok', label: tt('确定'), primary: true }], wide = false, focus = null } = {}) {
   return new Promise((resolve) => {
     const overlay = document.getElementById('dlgOverlay');
     const titleEl = document.getElementById('dlgTitle');
@@ -39,8 +45,10 @@ export function dialog({ title = tt('提示'), body = '', buttons = [{ id: 'ok',
       btn.textContent = b.label;
       btn.onclick = () => close(b.id);
       footEl.appendChild(btn);
-      if (b.id === 'ok' || b.primary) setTimeout(() => btn.focus(), 30);
     });
+    // 初始焦点只设一次：给了 focus 就听它的，否则落在主按钮（没有主按钮时落最后一个）
+    const first = focus || footEl.querySelector('.primary') || footEl.lastElementChild;
+    if (first) setTimeout(() => first.focus(), 30);
     // body 里带 data-dialog-close 的元素点一下就关闭并把它的值交回去
     // （「新建文档」的类型网格用这个，省得自建一套弹层）
     bodyEl.onclick = (e) => {
@@ -54,6 +62,12 @@ export function dialog({ title = tt('提示'), body = '', buttons = [{ id: 'ok',
     overlay.onkeydown = (e) => {
       if (e.key === 'Escape') { e.stopPropagation(); close('cancel'); }
       if (e.key === 'Enter') {
+        /* 焦点停在「点了会返回某个值」的元素上（新建文档的类型格子），
+           回车认的是它，不是主按钮 —— 否则方向键选了半天，回车还是建上次那个类型。
+           这里必须 preventDefault：回车在按钮上的默认动作就是 click，
+           不拦住会先 click 一次再走下面，同一格被确认两遍。 */
+        const hit = e.target && e.target.closest && e.target.closest('[data-dialog-close]');
+        if (hit) { e.preventDefault(); close(hit.dataset.dialogClose); return; }
         const p = buttons.find((b) => b.primary);
         if (p) { e.preventDefault(); close(p.id); }
       }

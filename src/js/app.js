@@ -2199,12 +2199,14 @@ function createNew(ext = 'md') {
   newTab(untitledName(ext), '');
 }
 
-/** 新建入口：类型网格，点一下直接开，回车默认上次用过的类型 */
+/** 新建入口：类型网格。点一下直接开；焦点默认停在「上次用过的那一格」，
+ *  方向键随便走，回车建的是焦点那一格 */
 async function newFilePrompt() {
   const box = document.createElement('div');
   box.className = 'new-types';
   const last = settings.lastNewExt || 'md';
   const types = newTypes();
+  const cells = [];
   types.forEach((ty) => {
     const b = document.createElement('button');
     b.type = 'button';
@@ -2212,7 +2214,10 @@ async function newFilePrompt() {
     b.dataset.dialogClose = ty.ext;
     b.innerHTML = `<b>${ty.name}</b><small>.${ty.ext}${ty.desc ? ' · ' + ty.desc : ''}</small>`;
     box.appendChild(b);
+    cells.push(b);
   });
+  /* 上次用的是哪个类型，焦点就先落哪一格 */
+  let cur = Math.max(0, types.findIndex((ty) => ty.ext === last));
 
   /* 自定义：填扩展名 → 建「未命名.<ext>」。按钮默认不可点，
      输入合法之后才挂 data-dialog-close（dialog 的点击代理靠它收尾） */
@@ -2244,9 +2249,52 @@ async function newFilePrompt() {
   custom.append(input, go);
   box.appendChild(custom);
 
+  /* 方向键走格子。三件事必须一起做才成「一个可用的面板」：
+     1) 列数从实际布局量出来，别写死 2 —— 换个宽度布局就变了，写死必错；
+     2) 焦点用 roving tabindex 管 —— 28 个类型全留在 Tab 链上的话，
+        想跳过这个面板要按二十八下 Tab；
+     3) 最后一行再按 ↓ 落进自定义输入框，在输入框按 ↑ 回到网格 —— 它们是
+        同一块面板的上下两半，方向键不该在中间断掉。←→ 在输入框里是光标
+        在走，绝不能抢。 */
+  const cols = () => {
+    const top = cells[0].offsetTop;
+    let n = 0;
+    while (n < cells.length && cells[n].offsetTop === top) n++;
+    return Math.max(1, n);
+  };
+  const focusCell = (i) => {
+    cur = Math.max(0, Math.min(cells.length - 1, i));
+    cells.forEach((c, j) => { c.tabIndex = j === cur ? 0 : -1; });
+    cells[cur].focus();
+  };
+  cells.forEach((c, i) => {
+    c.tabIndex = i === cur ? 0 : -1;
+    c.addEventListener('keydown', (e) => {
+      const n = cols();
+      const col = i % n;
+      let to = null;
+      if (e.key === 'ArrowLeft' && col > 0) to = i - 1;
+      else if (e.key === 'ArrowRight' && col < n - 1 && i + 1 < cells.length) to = i + 1;
+      else if (e.key === 'ArrowUp' && i - n >= 0) to = i - n;
+      else if (e.key === 'ArrowDown') to = i + n < cells.length ? i + n : -1;  /* -1 = 输入框 */
+      else if (e.key === 'Home') to = 0;
+      else if (e.key === 'End') to = cells.length - 1;
+      else return;                     /* 回车/空格交给按钮自己的默认动作 */
+      e.preventDefault();
+      if (to === -1) input.focus(); else focusCell(to);
+    });
+  });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowUp' && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault();
+      focusCell(cur);
+    }
+  });
+
   const picked = await dialog({
     title: tt('新建文档'),
     body: box,
+    focus: cells[cur],
     buttons: [
       { id: last, label: tt('新建 {type}', { type: types.find((t) => t.ext === last)?.name || 'Markdown' }), primary: true },
       { id: 'cancel', label: tt('取消') },

@@ -1370,11 +1370,20 @@ body[data-theme="dark"] .ctx-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 2
   padding: 7px 10px; border: 1px solid var(--line); background: transparent;
   border-radius: var(--r-sm); text-align: left; cursor: pointer; font: inherit;
   color: var(--fg);
+  /* 底部那条自定义输入是 sticky 的，会盖住最后一行；方向键把焦点滚进来时留出位子 */
+  scroll-margin-bottom: 44px;
 }
 .new-type:hover { background: var(--bg-hover); border-color: var(--accent); }
 .new-type b { font-size: 13px; font-weight: 600; }
 .new-type small { font-size: 11px; color: var(--fg-faint); }
 .new-type.active { border-color: var(--accent); background: var(--bg-hover); }
+/* 网格拿到键盘焦点时，.active 那圈强调色让位：两块橙色边框并排，谁也说不清
+   回车到底建哪一个。焦点离开网格（Tab 落到底部输入框）它再露出来，
+   这时候「上次用过哪一类」才是有用的信息。 */
+.new-types:focus-within .new-type.active { border-color: var(--line); }
+/* 焦点框画在格子内侧：格子间隙只有 6px，2px 环 + 2px 偏移要在四邻各借 4px，
+   并排时两圈会撞在一起。内环也不会盖掉 .active 的那圈强调色边框。 */
+.new-type:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
 /* 自定义扩展名：横跨两列，贴在类型网格末尾。输入框自己撑开，
    「创建」只在输入合法之后才亮 —— 免得点了没反应还以为坏了 */
 .new-custom {

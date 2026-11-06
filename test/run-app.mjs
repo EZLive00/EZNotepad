@@ -44,6 +44,25 @@ const keyIn = (sel, key, ctrl = false) => ev(`(() => {
 
 try {
   await ev('window.__ready === true');
+  /* harness 的 Chrome profile 是按 cdpPort 固定复用的，上一轮写进去的草稿会让
+     这一轮一启动就弹「恢复上次的草稿」。模态框挡在前面时，后面每一条
+     「点一下会怎样」全是假红（查找条看着根本没打开，其实是被盖住了）。
+     处置和探针 ensureApp 一样：点「丢弃」，要一个干净起点。 */
+  await ev('new Promise((r) => setTimeout(r, 420))');
+  for (let i = 0; i < 10; i++) {
+    const st = await ev(`(() => {
+      const ov = document.getElementById('dlgOverlay');
+      if (!ov || ov.classList.contains('hidden')) return 'none';
+      const bs = [...ov.querySelectorAll('#dlgFoot button')];
+      const drop = bs.find((b) => !b.classList.contains('primary'));
+      if (!drop) return 'wait';
+      drop.click();
+      return 'closed';
+    })()`);
+    if (st === 'closed') { await ev('new Promise((r) => setTimeout(r, 400))'); break; }
+    if (st === 'none') break;
+    await ev('new Promise((r) => setTimeout(r, 150))');
+  }
   ok('app.js 能在假后端下启动', (await ev('!!window.__booted')) === true,
     String(await ev('window.__bootError || ""')).slice(0, 300));
 
@@ -169,6 +188,72 @@ try {
     await click('#dlgFoot button:last-child');
     await ev('new Promise(r => setTimeout(r, 150))');
     ok('取消后内容没被改动', (await ev('window.__snp.getEditorText()')) === '一段 **粗字** 文字');
+
+    // ---- 6. 新建文档：类型网格能用方向键走 ----
+    /* 网格是「两列 + 底部一条自定义输入」，方向键必须把它当一块面板走完：
+       ←→ 只在本行内、↑↓ 跨行、最后一行 ↓ 落进输入框、输入框 ↑ 回网格。
+       起点是上次用过的类型，所以断言全按实测下标算，不写死具体是第几格。 */
+    const gridKey = (key) => ev(`(() => {
+      const all = [...document.querySelectorAll('.new-types .new-type')];
+      const a = document.activeElement;
+      a.dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(key)}, bubbles: true, cancelable: true }));
+      const b = document.activeElement;
+      return {
+        i: all.indexOf(b),
+        inInput: !!(b.classList && b.classList.contains('new-ext')),
+        tabbable: all.filter((x) => x.tabIndex >= 0).length,
+      };
+    })()`);
+
+    await ev('window.__snp.commands.new(); 0');
+    await ev('new Promise(r => setTimeout(r, 140))');
+    const grid = await ev(`(() => {
+      const all = [...document.querySelectorAll('.new-types .new-type')];
+      const top = all[0].offsetTop;
+      let cols = 0;
+      while (cols < all.length && all[cols].offsetTop === top) cols++;
+      const a = document.activeElement;
+      return {
+        cols, total: all.length,
+        onCell: !!(a.classList && a.classList.contains('new-type')),
+        active: all.findIndex((x) => x.classList.contains('active')),
+        start: all.indexOf(a),
+      };
+    })()`);
+    ok('新建面板打开时焦点就在格子里（不然方向键没反应）', grid.onCell && grid.start === grid.active,
+      JSON.stringify(grid));
+    ok('整个网格只留一个 Tab 停靠点', (await ev(`[...document.querySelectorAll('.new-types .new-type')].filter((x) => x.tabIndex >= 0).length`)) === 1);
+
+    const p0 = grid.start;
+    const right = await gridKey('ArrowRight');
+    ok('→ 往右挪一格', right.i === p0 + 1 && !right.inInput, JSON.stringify(right));
+    const down = await gridKey('ArrowDown');
+    ok('↓ 往下挪一行（步长 = 实测列数）', down.i === p0 + 1 + grid.cols, JSON.stringify(down));
+    const up = await gridKey('ArrowUp');
+    ok('↑ 回到上一行', up.i === p0 + 1, JSON.stringify(up));
+    const left = await gridKey('ArrowLeft');
+    ok('← 回到原处', left.i === p0, JSON.stringify(left));
+    ok('走到第一列再 ← 就停住，不绕到上一行末尾', (await gridKey('ArrowLeft')).i === p0);
+
+    ok('End 跳到最后一格', (await gridKey('End')).i === grid.total - 1);
+    const tail = await gridKey('ArrowDown');
+    ok('最后一行按 ↓ 落进自定义扩展名输入框', tail.inInput === true, JSON.stringify(tail));
+    ok('输入框里按 ↑ 回到网格', (await gridKey('ArrowUp')).i === grid.total - 1);
+
+    /* 回车必须建焦点那一格。焦点在格子上时 dialog 的全局 Enter 会去点主按钮，
+       那建的就是「上次用过的类型」—— 方向键选了半天等于白选 */
+    const pick = await ev(`(() => {
+      const all = [...document.querySelectorAll('.new-types .new-type')];
+      const cell = all[3];
+      cell.focus();
+      cell.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+      return { ext: cell.dataset.dialogClose };
+    })()`);
+    await ev('new Promise(r => setTimeout(r, 220))');
+    ok('回车关掉面板', (await cls('#dlgOverlay')).includes('hidden'));
+    ok('回车建的是焦点那一格，不是主按钮那个类型',
+      new RegExp('^未命名.*\\.' + pick.ext + '$').test(await ev('window.__snp.getActiveTab().name')),
+      `${pick.ext} → ${await ev('window.__snp.getActiveTab().name')}`);
   }
 } catch (e) {
   ok('运行期间没有异常', false, String((e && e.message) || e).slice(0, 300));
