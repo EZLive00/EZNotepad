@@ -19,11 +19,17 @@
 
 | Artifact | Best for |
 |---|---|
-| `EZNotepad_<version>_x64-setup.exe` | **Installer** — setup wizard plus file associations, so a double-click on a `.md` / `.txt` opens here |
-| `EZNotepad_<version>_x64-portable.zip` | **Portable** — unzip anywhere and run `EZNotepad.exe` (no registry, no associations) |
+| `EZNotepad_<version>_macos.dmg` | **Installer** — drag into Applications; registers `.md` / `.txt` / `.json` / `.csv` |
+| `EZNotepad_<version>_macos-portable.zip` | **Portable** — unzip and open `EZNotepad.app` |
 
-Releases are unsigned: SmartScreen blocks the first launch once — click **More info → Run anyway**.
-Windows x64 only for now; the portable build uses the system WebView2 runtime (preinstalled on Windows 10 / 11).
+> This is the **macOS branch** (`platform/macos`), a separate product line that is
+> not merged back into `main`. For the Windows build see the `main` branch.
+
+Requires macOS 11.0+. Builds are **unsigned and not notarized**: right-click → Open
+→ confirm on first launch, or run `xattr -cr /Applications/EZNotepad.app`.
+See [docs/macOS-开发.md](docs/macOS-开发.md) for the branch status and the
+on-device checklist. **Export to PDF is not available in this build yet** — the
+command reports "unsupported" rather than producing a file.
 
 ## Screenshots
 
