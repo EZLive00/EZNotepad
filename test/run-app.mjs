@@ -13,7 +13,7 @@ const THEME = process.env.THEME || 'light';
 const out = [];
 const ok = (name, pass, extra = '') => out.push({ name, pass, extra });
 
-const { ev, close } = await runPage({
+const { ev, send, close } = await runPage({
   page: `/test/app-preview.html?theme=${THEME}`,
   theme: THEME,
   port: 8871,
@@ -337,6 +337,62 @@ try {
     await ev('new Promise(r => setTimeout(r, 200))');
     ok('转一圈回来第一次点击就能标亮', (await ev(`document.querySelectorAll('.w-dup').length`)) === 2,
       String(await ev(`document.querySelectorAll('.w-dup').length`)));
+
+    /* ---- 9. 表格里的 ↑↓ 是上下走一格，不是横向跳 ----
+       必须用真实按键：这条逻辑分的是「浏览器默认行为」和「我们的接管」，
+       合成事件根本走不到浏览器的默认那一步。 */
+    const press = async (key, code, vk, text) => {
+      await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key, code, windowsVirtualKeyCode: vk, text, unmodifiedText: text });
+      if (text) await send('Input.dispatchKeyEvent', { type: 'char', key, code, windowsVirtualKeyCode: vk, text, unmodifiedText: text });
+      await send('Input.dispatchKeyEvent', { type: 'keyUp', key, code, windowsVirtualKeyCode: vk });
+      await ev('new Promise(r => setTimeout(r, 200))');
+    };
+    const cellAt = () => ev(`(() => {
+      const info = window.__snp.editor.tableInfo();
+      if (!info) return null;
+      return info.rowIdx + ',' + info.colIdx + ',' + ((info.cell.textContent || '').replace(/\\u200b/g, ''));
+    })()`);
+    const TBL = ['| 甲 | 乙 | 丙 |', '| --- | --- | --- |', '| 丁 | 戊 | 己 |', '| 庚 | 辛 | 壬 |', ''].join('\n');
+    await ev(`window.__snp.newTab('tbl.md', ${JSON.stringify(TBL)}, null)`);
+    await ev('window.__snp.commands.modeWysiwyg()');
+    await ev('new Promise(r => setTimeout(r, 320))');
+    await ev(`(() => { window.__snp.editor.focusCell(document.querySelector('.w-block[data-type=table]'), 1, 1); return 1; })()`);
+    await ev('new Promise(r => setTimeout(r, 160))');
+    ok('起点在中间格（1,1）', (await cellAt()) === '1,1,戊', String(await cellAt()));
+    await press('ArrowDown', 'ArrowDown', 40);
+    ok('↓ 走到同一列的下一行（1,1 → 2,1），不是右边的格', (await cellAt()) === '2,1,辛', String(await cellAt()));
+    await press('ArrowUp', 'ArrowUp', 38);
+    ok('↑ 回同一列的上一行（2,1 → 1,1）', (await cellAt()) === '1,1,戊', String(await cellAt()));
+    await press('ArrowRight', 'ArrowRight', 39);
+    ok('→ 仍在格内逐字走，不再等于 ↓', (await ev(`(() => {
+      const r = getSelection().getRangeAt(0);
+      return window.__snp.editor.tableInfo().rowIdx + ':' + window.__snp.editor.tableInfo().colIdx + ':' + r.startOffset;
+    })()`)) === '1:1:1');
+    await press('ArrowDown', 'ArrowDown', 40);
+    await press('ArrowDown', 'ArrowDown', 40);
+    ok('最后一行按 ↓ 停在原地，不绕回别处', (await cellAt()) === '2,1,辛', String(await cellAt()));
+
+    /* ---- 10. 删空一行之后 "/" 还能唤出插入面板 ----
+       真 bug：删掉最后一个字，光标被 Chromium 提到 .w-block 上、.w-text 只剩 <br>，
+       严格按 .w-text 读偏移得到 -1，面板那道门直接 return。 */
+    await ev(`window.__snp.newTab('slash-del.md', '甲段\\n\\n', null)`);
+    await ev('window.__snp.commands.modeWysiwyg()');
+    await ev('new Promise(r => setTimeout(r, 320))');
+    await ev(`(() => { const b = [...document.querySelectorAll('.wysiwyg > .w-block')].at(-1); window.__snp.editor.focusBlock(b, true); return 1; })()`);
+    await send('Input.insertText', { text: 'x' });
+    await ev('new Promise(r => setTimeout(r, 260))');
+    await press('Backspace', 'Backspace', 8);
+    ok('删空后光标停在块元素上（这正是问题现场）',
+      (await ev(`(() => {
+        const b = document.querySelector('.wysiwyg > .w-block:last-child');
+        const r = getSelection().getRangeAt(0);
+        return r.startContainer === b && (b.querySelector('.w-text').textContent || '') === '';
+      })()`)) === true);
+    await press('/', 'Slash', 191, '/');
+    ok('删空之后再打 / 照样弹出插入面板',
+      (await ev(`!document.getElementById('wBlockMenu').classList.contains('hidden')`)) === true);
+    ok('…斜杠没有落进正文', !(await ev('window.__snp.editor.toMarkdown()')).includes('/'),
+      JSON.stringify(await ev('window.__snp.editor.toMarkdown()')));
   }
 } catch (e) {
   ok('运行期间没有异常', false, String((e && e.message) || e).slice(0, 300));
