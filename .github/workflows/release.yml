@@ -17,7 +17,9 @@ concurrency:
 
 jobs:
   macos:
-    runs-on: macos-latest
+    # universal 要编两套 target 再 lipo，M1 的 macos-latest 只有 7GB，
+    # lto=true 的全量编译容易吃紧；Intel runner 有 14GB。
+    runs-on: macos-15-intel
     steps:
       - name: 检出代码
         uses: actions/checkout@v4

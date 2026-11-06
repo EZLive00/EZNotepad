@@ -1,13 +1,32 @@
 name: Build check (macOS)
 
-# 这个分支在 Windows 开发机上没法验证：没有 macOS SDK，交叉编译也不现实。
-# 每次推分支就让 macos-latest 真编一次 .app，配置写错当场暴露。
+# 这个分支在 Windows 开发机上没法验证：没有 macOS SDK，链接不出 apple-darwin 产物。
+# 每次推分支就让 macOS runner 真编一次 .app，配置写错当场暴露。
+#
+# 不写死 --target：这条 CI 要回答的是「这个分支能不能编译打包」，不是出某个架构的
+# 发布包。用 runner 的原生 target，换 label 时构建命令和产物路径都不用跟着改。
+# 通用包由 release.yml 的 universal-apple-darwin 单独负责。
+#
+# macos-latest 现在是 M1 / 3 CPU / 7GB，而 release profile 开了 lto=true，
+# 全量编译容易吃紧；默认改用 macos-15-intel（4 CPU / 14GB），队列也不同。
+# 排队不接单时，可在 Actions 页面手动 Run workflow 换一个 label 重跑。
 on:
   push:
     branches: ['platform/macos']
   pull_request:
     branches: ['platform/macos']
   workflow_dispatch:
+    inputs:
+      runner:
+        description: 'macOS runner label'
+        required: false
+        default: 'macos-15-intel'
+        type: choice
+        options:
+          - macos-15-intel
+          - macos-26-intel
+          - macos-latest
+          - macos-15
 
 permissions:
   contents: read
@@ -18,7 +37,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: ${{ inputs.runner || 'macos-15-intel' }}
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
@@ -34,14 +53,12 @@ jobs:
 
       - name: 安装 Rust 工具链
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-darwin
 
       - name: 缓存 Rust 编译产物
         uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri -> target
-          key: macos-check-arm64
+          key: macos-check-native
 
       - name: 安装前端依赖
         run: pnpm install --frozen-lockfile
@@ -49,10 +66,10 @@ jobs:
       # 没配签名证书时 Tauri 走 ad-hoc 签名，不会触发公证。
       # 只出 .app：dmg 排版与签名留到真正发版时再验。
       - name: 构建 .app
-        run: pnpm exec tauri build --target aarch64-apple-darwin --bundles app --verbose
+        run: pnpm exec tauri build --bundles app --verbose
 
       - name: 校验产物
         run: |
-          APP="src-tauri/target/aarch64-apple-darwin/release/bundle/macos/EZNotepad.app"
+          APP="src-tauri/target/release/bundle/macos/EZNotepad.app"
           test -d "$APP" || { echo "::error::没有生成 $APP"; exit 1; }
           ls -lh "$APP/Contents/MacOS/"

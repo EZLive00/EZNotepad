@@ -1,8 +1,9 @@
 // ============================================================
 // run-macos.mjs —— platform/macos 分支自检
 //
-// 本机是 Windows，编不了 apple-darwin 目标，macOS-only 的 Rust 分支也不会
-// 被 rustc 类型检查。真正能验构建的是 .github/workflows/macos-check.yml；
+// 本机是 Windows，链接不出 apple-darwin 产物，也跑不了真机探针；但装好
+// aarch64-apple-darwin 的 rust-std 后，可以用 DOCS_RS=1 cargo check --target
+// 做类型检查（见 docs/macOS-开发.md）。完整编译靠 .github/workflows/macos-check.yml。
 // 这个脚本只保证「配置与平台分支没缺件」，防止改一处漏一处。
 // 它不证明 macOS 能编译，别拿它的绿条当编译通过。
 // ============================================================
@@ -80,11 +81,16 @@ has(pack, 'rustup target add', '打包脚本会装 Rust target');
 has(pack, '--bundles app,dmg', '打包脚本显式指定产物');
 
 const check = read('.github/workflows/macos-check.yml');
-has(check, 'macos-latest', '分支 CI 跑在 macos-latest');
+has(check, 'macos-15-intel', '分支 CI 默认用 14GB 的 Intel runner（LTO 更稳、队列不同）');
+has(check, 'inputs.runner', '分支 CI 允许手动重跑时切换 runner 队列');
 has(check, '--bundles app', '分支 CI 真编 .app');
+ok(!check.includes('--target aarch64-apple-darwin'),
+  '分支 CI 不写死 arm64 target（用 runner 原生 target）');
+has(check, 'target/release/bundle/macos/EZNotepad.app', '分支 CI 校验原生 target 的产物路径');
 const release = read('.github/workflows/release.yml');
 ok(!release.includes('windows-latest'), '发版 CI 不再构建 Windows');
 has(release, 'universal-apple-darwin', '发版 CI 出通用包');
+has(release, 'macos-15-intel', '发版 CI 也用 14GB 的 Intel runner');
 
 console.log(`${pass}/${pass + fail} macOS 分支自检通过`);
 if (fail) process.exit(1);

@@ -22,15 +22,23 @@
 本机 `cargo build` 永远看不见的问题 —— 这次就靠它抓出 3 条告警。
 
 完整的链接与打包验证仍靠 `.github/workflows/macos-check.yml`：推一次分支，
-`macos-latest` 会 `tauri build --target aarch64-apple-darwin --bundles app`
-并断言 `EZNotepad.app` 真的生成。**改了配置或 Rust 一定要看这条 CI，
-不要只看本机的绿条。**
+macOS runner 会 `tauri build --bundles app` 并断言 `EZNotepad.app` 真的生成。
+**改了配置或 Rust 一定要看这条 CI，不要只看本机的绿条。**
 
-⚠️ CI 不保证及时：2026-11-06 首跑在 `macos-latest` 队列里等了 15 分钟，
-job 始终 `runner_id=0`、`steps=0`，最后被取消、run 记 `failure`。这是
-GitHub 托管 runner **排队超时，不是编译失败**（判别方法：job 的
-`conclusion=cancelled` 且 steps 为空）。别误当成代码红了去「修代码」；
-重跑或换时段即可，本机交叉类型检查可作兜底。
+**CI 不写死 `--target`**：这条检查只回答「这个分支能不能编译打包」，不是出
+某个架构的发布包。用 runner 的原生 target，换队列时构建命令和产物路径都不用
+跟着改；通用包由 `release.yml` 的 `universal-apple-darwin` 单独负责。
+另外 `macos-latest` 现在是 M1 / 3 CPU / **7GB**，而 release profile 开了
+`lto = true`，全量编译容易吃紧 —— 两条 workflow 默认都走
+`macos-15-intel`（4 CPU / **14GB**）。
+
+⚠️ CI 不保证及时：2026-11-06 前两跑都在 `macos-latest` 队列里等了 15 分钟以上，
+job 始终 `runner_id=0`、`steps=0`，第一跑最后被取消、run 记 `failure`。这是
+GitHub 托管 runner **排队没接单，不是编译失败**（判别方法：job 的
+`conclusion=cancelled` 且 steps 为空）。别误当成代码红了去「修代码」。
+现在的办法：默认换到 Intel 队列，并在 Actions 页面用 `Run workflow` 的
+`runner` 下拉框手动选 `macos-26-intel` / `macos-latest` / `macos-15` 重跑；
+本机交叉类型检查可作兜底，真正要出包还是在 Mac 上跑 `打包-macOS.command`。
 
 保留 Windows 的 `#[cfg]` 分支不是舍不得删，而是删掉之后本机就完全失去
 回归能力了：共用代码（约 1.4 万行前端 + 大部分 Rust 命令）改坏了没人报。
@@ -47,7 +55,7 @@ GitHub 托管 runner **排队超时，不是编译失败**（判别方法：job 
 | 最低系统 | `11.0`（WKWebView 的分页打印 API 需要 11+；10.15 上会缺功能） |
 | WebView2 参数 | **保留** `additionalBrowserArgs`（`--disable-gpu-sandbox`）：wry 在非 Windows 平台用 `#[cfg(windows)]` 包着、会忽略它；但删掉之后本机 Windows 上第二个 WebView 就创建不出来（见下「踩过的坑」） |
 | 构建入口 | `打包-macOS.command` 支持 `EZ_ARCH=aarch64/x86_64/universal`，自动 `rustup target add`；`package.json` 加 `build:mac:arm` / `build:mac:intel` |
-| CI | `macos-check.yml`（推分支即真机编译）、`release.yml` 换成 macOS 通用包发版 |
+| CI | `macos-check.yml`（推分支即真机编译，原生 target + 可切换 runner 队列）、`release.yml` 换成 macOS 通用包发版；两者默认 `macos-15-intel`（14GB，`lto=true` 跑得动） |
 
 ### M2 数据安全与文件打开
 
@@ -179,3 +187,7 @@ curl -s --noproxy '*' \
   https://api.github.com/repos/EZLive00/EZNotepad/actions/runs/<run_id>/jobs
 # runner_id=0 且 steps=[] 且 conclusion=cancelled → runner 没接单，重跑即可
 ```
+
+匿名 GitHub API 每小时只有 60 次，轮询久了会撞 `API rate limit exceeded`
+（返回值里连 `status` 字段都没有）。这时别怀疑 CI 挂了，直接看 Actions 网页，
+或在网页 `Run workflow` 里换一个 `runner` 重跑。
