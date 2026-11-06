@@ -1424,6 +1424,30 @@ try {
   await cmp.ev(`document.getElementById('prev').click()`);
   await sleep(500);
 
+  /* 点哪一处，箭头就去哪一处。
+     以前「当前这一处」只由滚屏算出来（判据是视口中心落在哪块），于是窗口一打开
+     箭头永远停在正中那块，点别的差异行它一动不动 —— 用户报的就是这个。 */
+  const atRow3 = await rowAt('l', 3);
+  await clickRow('l', 3);                       // 第二处差异（丁改）
+  await sleep(350);
+  const blkClick = await cur();
+  const gClick = await gut();
+  ok('点第二处差异行，「当前这一处」跟着点的地方走', blkClick.includes('2 / 2'), blkClick);
+  ok('点第二处差异行，箭头挪到那一行附近',
+    Math.abs(gClick.top + 19 - atRow3.y) < 60 && gClick.top > g0.top + 10,
+    `行 y=${atRow3.y} / 箭头 ${g0.top} → ${gClick.top}`);
+  ok('箭头没被点击拽走滚动位置（点一处看一眼，页面不自己跑）',
+    (await cmp.ev(`document.getElementById('scrollL').scrollTop`)) === 0,
+    String(await cmp.ev(`document.getElementById('scrollL').scrollTop`)));
+
+  await clickRow('l', 0);                       // 第 1 行两侧相同：取最近的一块
+  await sleep(350);
+  const blkBack = await cur();
+  const gBack = await gut();
+  ok('点在相同的行上，箭头落到最近的那一处（不回正中）',
+    blkBack.includes('1 / 2') && Math.abs(gBack.top - g0.top) <= 4,
+    `${blkBack} / ${g0.top} vs ${gBack.top}`);
+
   /* 方向就是箭头指向：右箭头 = 把左边这一处推到右边 */
   await cmp.ev(`document.getElementById('pushRight').click()`);
   await sleep(700);

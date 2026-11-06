@@ -2306,6 +2306,50 @@ function pushBlock(dst, advance = false) {
 }
 
 /**
+ * 换「当前这一处」：只改状态栏计数、侧栏清单和中缝箭头，不碰滚动位置、
+ * 不重画正文（正文 DOM 不依赖 S.cur —— 当前块在正文里不画框，只有中缝那对箭头）。
+ */
+function setCur(k) {
+  const n = S.blocks.length;
+  if (!n) return;
+  k = clamp(k, 0, n - 1);
+  if (k !== S.cur) {
+    S.cur = k;
+    $('curInfo').textContent = tt('第 {i} / {n} 处', { i: k + 1, n });
+    renderList();
+  }
+  syncGutter();
+}
+
+/**
+ * 点在某一行上 → 「当前这一处」挪到离这一行最近的那块差异。
+ *
+ * 以前只有滚屏会算这个，判据是「视口中心落在哪一块」：于是窗口一打开箭头就停在
+ * 正中那一块，点别的差异行它一动不动（用户报的就是这个）。点击是比滚屏更明确的
+ * 「我要这一处」，所以点击优先；之后再滚屏，交回 followScroll。
+ *
+ * 点在两侧都相同的行上时取**最近**的一块 —— 否则箭头会留在上一处，而眼睛已经挪开。
+ * 只改 S.cur 不滚动：点一处看一眼别处，页面不该自己跑。
+ */
+function pinCurAt(mi) {
+  const n = S.blocks.length;
+  if (!n || !Number.isFinite(mi)) return;
+  let lo = 0, hi = n - 1, best = 0;
+  while (lo <= hi) {
+    const m = (lo + hi) >> 1;
+    if (S.blocks[m] <= mi) { best = m; lo = m + 1; } else hi = m - 1;
+  }
+  /* best 是「起点 ≤ 点击行」的最后一块。点击行落在它范围之外（夹在块之间的相同行上）
+     时再和下一块的起点比距离 */
+  const be = blockRange(best)[1];
+  if (mi > be && best + 1 < n) {
+    const next = S.blocks[best + 1];
+    if (next - mi < mi - be) best += 1;
+  }
+  setCur(best);
+}
+
+/**
  * 中间那对箭头：只在「两侧都有内容、开着编辑、且确实有差异」时出现。
  * 纵向跟着**当前这一处**差异走 —— 它就在读者眼睛附近，不用把鼠标从正文
  * 拖回工具栏。当前块滚出视口时夹在可见范围里，仍然能点。
@@ -2696,19 +2740,24 @@ function bind() {
       /* 全选后点回正文：先把可写恢复，这一步必须在浏览器放置光标之前，
          否则这一下点不进任何一行（点到哪儿都只是收掉选区）。 */
       if (strippedHosts.length) restoreEditables();
+      /* 点哪一处，中缝那对箭头就挪到哪一处（见 pinCurAt）。这件事要在
+         `!S.edit` 之前做：只读态不画箭头，但「当前是第几处」也不该落后于
+         用户正在看的地方，否则一开编辑箭头先跳到别处去了。 */
+      const hitTx = e.target.closest ? e.target.closest('.cmp-tx') : null;
+      const hitRow = hitTx ? null : (e.target.closest ? e.target.closest('.cmp-row') : null);
+      const hitInner = hitTx || (hitRow && hitRow.querySelector('.cmp-tx'));
+      if (hitInner) pinCurAt(+hitInner.dataset.i);
       if (!S.edit) return;
-      if (e.target.closest && e.target.closest('.cmp-tx')) { dragBegin(e, anchor); return; }   // 行内：光标与双击/三击交给浏览器
+      if (hitTx) { dragBegin(e, anchor); return; }   // 行内：光标与双击/三击交给浏览器
       drag = null;
       const box = cv.getBoundingClientRect();
-      const row = e.target.closest && e.target.closest('.cmp-row');
-      const inner = row && row.querySelector('.cmp-tx');
-      let i = inner ? +inner.dataset.i : NaN;
+      let i = hitInner ? +hitInner.dataset.i : NaN;
       if (!Number.isFinite(i)) {
-        // 行下方的空白：按坐标算离得最近的那一行（坐标是行位，换回模型下标）
         // 行下方的空白：按坐标算离得最近的那一行（坐标是行位，换回模型下标）
         const vi = clamp(rowAtY(e.clientY - box.top), 0, S.view.length - 1);
         i = S.view[vi];
         if (i == null) return;
+        pinCurAt(i);
       }
       const tx = cv.querySelector(`.cmp-tx[data-i="${i}"]`);
       if (!tx) return;
