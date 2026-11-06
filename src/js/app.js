@@ -24,7 +24,7 @@ import { showHistory } from './history.js';
 import { freeUntitledName, moveById } from './taborder.js';
 import { listen } from '../vendor/api/event.js';
 import * as win from './win.js';
-import { tt, setLang, resolveLang, getLang, applyDom, LANGS } from './i18n.js';
+import { tt, setLang, resolveLang, getLang, applyDom, LANGS, kbdToCombo, comboToKbd, kbdLabel } from './i18n.js';
 import { errText } from './errors.js';
 import { welcomeDoc } from './welcome.js';
 
@@ -1818,6 +1818,17 @@ function finishQuit(ok) {
   forceClose = true;
 }
 
+/* 窗口关闭（Alt+F4 / 标题栏 ✕）和 macOS 的 ⌘Q 走同一套守卫：
+   ⌘Q 是应用级事件，根本不经过 onCloseRequested，不复用这里就会绕过
+   「有未保存的标签先问一句」。差别只在最后一步是关窗还是退出应用。 */
+async function guardedQuit(finish) {
+  persistCurrentView();
+  const ok = await confirmQuit();
+  if (!ok) return;
+  finishQuit(ok);
+  await finish();
+}
+
 /* 批量保存不能走 saveTab()：它靠 readEditor(t) 取内容，而那只对屏幕上那个
    标签成立，拿去写别的文件就是把 A 的正文灌进 B。这里统一用各标签自己的
    t.content（切走时已经同步过）。写不进去的（文件被外部改过 / 权限不足）
@@ -2976,9 +2987,9 @@ function changeEncoding() {
   const box = document.createElement('div');
   box.innerHTML = `<div class="dlg-text">${tt('当前编码：')}<b>${t.encoding}</b>${t.bom ? tt('（含 BOM）') : ''}</div>
     <div class="dlg-label">${tt('以其它编码重新解读当前文件')}</div>
-    <div class="dlg-row">${['UTF-8', 'GBK', 'UTF-16LE'].map((e) => `<button class="mini" data-reopen="${e}" ${t.path ? '' : 'disabled'}>${tt('按 {enc} 重新打开', { enc: e })}</button>`).join('')}</div>
+    <div class="dlg-row">${['UTF-8', 'GBK', 'UTF-16LE', 'WINDOWS-1252'].map((e) => `<button class="mini" data-reopen="${e}" ${t.path ? '' : 'disabled'}>${tt('按 {enc} 重新打开', { enc: e })}</button>`).join('')}</div>
     <div class="dlg-label">${tt('保存时使用编码')}</div>
-    <div class="dlg-row">${['UTF-8', 'GBK', 'UTF-16LE'].map((e) => `<button class="mini${e === t.encoding ? ' primary' : ''}" data-saveenc="${e}">${e}</button>`).join('')}</div>
+    <div class="dlg-row">${['UTF-8', 'GBK', 'UTF-16LE', 'WINDOWS-1252'].map((e) => `<button class="mini${e === t.encoding ? ' primary' : ''}" data-saveenc="${e}">${e}</button>`).join('')}</div>
     <label class="chk" style="margin-top:14px;display:flex"><input type="checkbox" id="bomChk" ${t.bom ? 'checked' : ''}> ${tt('保存时写入 BOM')}</label>`;
   dialog({ title: tt('文件编码'), body: box, buttons: [{ id: 'cancel', label: tt('关闭') }] });
   setTimeout(() => {
@@ -3168,13 +3179,7 @@ const commands = {
     if (p) await revealInFolder(p);
   },
   closeTab: () => activeTab() && closeTab(activeTab().id),
-  quit: async () => {
-    persistCurrentView();
-    const ok = await confirmQuit();
-    if (!ok) return;
-    finishQuit(ok);
-    await win.closeWindow();
-  },
+  quit: () => guardedQuit(() => win.closeWindow()),
   undo: () => editCmd('undo'),
   redo: () => editCmd('redo'),
   cut: () => editCmd('cut'),
@@ -3728,7 +3733,7 @@ function openBlockMenu(mode, fromSlash = false) {
     b.dataset.key = it.key || '';
     b.innerHTML = svgIco(it.icon || 'type') + `<span>${it.label}</span>`
       + (it.key ? `<kbd class="bm-kbd">${it.key}</kbd>` : '');
-    if (it.kbd) { b.title = it.kbd; b.setAttribute('aria-keyshortcuts', it.kbd); }
+    if (it.kbd) { b.title = kbdLabel(kbdToCombo(it.kbd)); b.setAttribute('aria-keyshortcuts', it.kbd); }
     b.addEventListener('mousedown', (e) => e.preventDefault());   // 保住编辑区选区
     /* 鼠标停在谁身上，Enter 就作用在谁身上 —— 键盘和鼠标混着用也不会错位 */
     const idx = bmRows.push(b) - 1;
@@ -4338,7 +4343,7 @@ function paletteItems() {
         id: it.id,
         label: String(it.label || it.id).replace(/…$/, ''),
         group,
-        kbd: it.kbd || '',
+        kbd: it.kbd ? kbdLabel(kbdToCombo(it.kbd)) : '',
         off: typeof it.disabled === 'function' ? !!it.disabled() : !!it.disabled,
       });
     }
@@ -4449,8 +4454,6 @@ function openPalette() {
    默认键位写死在下面那串 if 里（一眼能看完、也不依赖配置）。
    自定义是一层「覆盖」：先查 settings.keymap，命中就执行并截断；
    没命中再走原来的判断。这样默认行为零改动，用户改坏了删掉配置即可复原。 */
-const MOD_KEYS = { ctrl: 'mod', meta: 'mod', cmd: 'mod' };
-
 /** 把一个 keydown 事件折成 "mod+shift+k" 这种稳定的字符串 */
 function comboOf(e) {
   const parts = [];
@@ -4465,22 +4468,7 @@ function comboOf(e) {
   return parts.join('+');
 }
 
-/** 菜单里写的 "Ctrl+Shift+8" → "mod+shift+8" */
-function kbdToCombo(str) {
-  if (!str) return '';
-  const parts = String(str).split('+').map((p) => p.trim().toLowerCase()).filter(Boolean);
-  return parts.map((p) => MOD_KEYS[p] || p).join('+');
-}
-
-/** "mod+shift+8" → "Ctrl+Shift+8"，给界面看 */
-function comboToKbd(combo) {
-  return String(combo || '').split('+').map((p) => {
-    if (p === 'mod') return 'Ctrl';
-    if (p === 'alt') return 'Alt';
-    if (p === 'shift') return 'Shift';
-    return p.length === 1 ? p.toUpperCase() : p.charAt(0).toUpperCase() + p.slice(1);
-  }).join('+');
-}
+/* kbdToCombo / comboToKbd：见 i18n.js，按平台渲染快捷键字样的唯一出口 */
 
 /** 菜单里所有带快捷键的命令（顺序和菜单一致） */
 function keyRows() {
@@ -4521,7 +4509,7 @@ function paintKeyList(list) {
     row.querySelector('.key-name').textContent = r.label.replace(/…$/, '');
     row.querySelector('.key-kbd').textContent = mine.length
       ? mine.map(comboToKbd).join(' / ')
-      : r.kbd;
+      : kbdLabel(kbdToCombo(r.kbd));
     row.querySelector('.key-kbd').classList.toggle('custom', mine.length > 0);
 
     const rec = document.createElement('button');
@@ -4762,6 +4750,8 @@ async function boot() {
   /* 文件变化监听：后端推过来的是「命中名单的绝对路径」。
      拿不到事件源也不影响任何编辑功能，所以静默失败即可。 */
   try { await listen('fs-change', (e) => onFsChange(e.payload)); } catch {}
+  /* ⌘Q：Rust 拦下 ExitRequested 后发到这里，守卫通过才 confirm_app_exit 放行 */
+  try { await listen('app-exit-request', () => guardedQuit(() => be.confirmAppExit())); } catch {}
   syncWatches();
 
   /* 恢复流程走完，把之前攒下的文件开出来（空数组是常态，没有额外开销） */

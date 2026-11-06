@@ -2,7 +2,7 @@
 // shortcuts.js —— 快捷键一览（帮助菜单）
 // ============================================================
 import { dialog } from './ui.js';
-import { tt } from './i18n.js';
+import { tt, localizeShortcuts } from './i18n.js';
 
 const list = () => [
   [tt('新建标签'), 'Ctrl / ⌘ + N'],
@@ -41,6 +41,6 @@ const list = () => [
 export function showShortcuts() {
   dialog({
     title: tt('快捷键一览'),
-    body: `<table class="kbd-table">${list().map(([k, v]) => `<tr><td>${v}</td><td>${k}</td></tr>`).join('')}</table>`,
+    body: `<table class="kbd-table">${list().map(([k, v]) => `<tr><td>${localizeShortcuts(v)}</td><td>${k}</td></tr>`).join('')}</table>`,
   });
 }

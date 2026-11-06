@@ -27,7 +27,8 @@ function escapeAttr(s) {
 export function resolveDocImg(src, docDir) {
   if (!src || !docDir) return src;
   if (/^(https?:|data:|blob:|asset:|file:)/i.test(src)) return src;
-  if (/^[a-z]:[\\/]/i.test(src) || src.startsWith('//')) return src;   // 已经是绝对路径
+  // POSIX 绝对路径（/Users/...）在旧判据下会被当成相对路径再拼一次
+  if (/^[a-z]:[\\/]/i.test(src) || src.startsWith('/') || src.startsWith('\\\\')) return src;
   const abs = docDir.replace(/[\\/]+$/, '') + '/' + src.replace(/^\.\//, '');
   try {
     const conv = window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.convertFileSrc;

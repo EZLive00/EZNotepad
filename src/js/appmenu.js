@@ -4,6 +4,7 @@
 // 由 app.js 的 commands 表统一执行，和快捷键走同一条路径。
 // ============================================================
 import { iconHTML } from './icons.js';
+import { kbdToCombo, kbdLabel } from './i18n.js';
 
 const CHECK = iconHTML('check', 'check');
 
@@ -124,7 +125,7 @@ export function createAppMenu({ bar, menus, run }) {
           const b = makeBtn('am-pill', p);
           if (p.checked && p.checked()) b.classList.add('on');
           b.innerHTML = (p.icon ? iconHTML(p.icon) : '') + `<span>${p.label}</span>`;
-          b.title = (p.hint || p.label) + (p.kbd ? `　${p.kbd}` : '');
+          b.title = (p.hint || p.label) + (p.kbd ? `　${kbdLabel(kbdToCombo(p.kbd))}` : '');
           wrap.appendChild(b);
         });
         if (wrap.children.length) {
@@ -154,7 +155,7 @@ export function createAppMenu({ bar, menus, run }) {
       if (it.kbd) {
         const k = document.createElement('span');
         k.className = 'am-kbd';
-        k.textContent = it.kbd;
+        k.textContent = kbdLabel(kbdToCombo(it.kbd));
         b.appendChild(k);
       }
       panel.appendChild(b);

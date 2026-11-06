@@ -1,3 +1,5 @@
+import { localizeShortcuts } from './i18n.js';
+
 /* ============================================================
    welcome.js —— 首次启动时自动建的那个「欢迎.md」
 
@@ -272,4 +274,4 @@ Digite [!info] e um espaço no início da linha para criar um bloco de aviso —
 };
 
 /** 取当前语言的欢迎文档，缺条目时退到英文 */
-export const welcomeDoc = (lang) => DOCS[lang] || DOCS.en;
+export const welcomeDoc = (lang) => localizeShortcuts(DOCS[lang] || DOCS.en);

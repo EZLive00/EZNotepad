@@ -73,10 +73,51 @@ export function setLang(code) {
   return lang;
 }
 
-/**
- * 取译文。第二参数填占位符：tt('保存到 {path}', { path })
- * 缺译时退回英文，再缺就退回中文原文 —— 永远不会显示成空白或键名。
- */
+/* ---------------- 平台相关的「文案」渲染 ----------------
+   平台只影响给用户看的快捷键字样和窗口外壳；按键匹配层一律 mod 抽象
+   （ctrlKey || metaKey），这里绝不做行为分叉。 */
+
+const PLATFORM = navigator.userAgentData?.platform || navigator.platform || navigator.userAgent || '';
+export const IS_MAC = /Mac|iPhone|iPad/i.test(PLATFORM);
+if (IS_MAC) document.documentElement.dataset.os = 'mac';
+
+const MOD_KEYS = { ctrl: 'mod', meta: 'mod', cmd: 'mod', mod: 'mod' };
+
+/** 菜单 / 词条里写的 "Ctrl+Shift+8" → 稳定的 "mod+shift+8" */
+export function kbdToCombo(str) {
+  if (!str) return '';
+  const parts = String(str).split('+').map((p) => p.trim().toLowerCase()).filter(Boolean);
+  return parts.map((p) => MOD_KEYS[p] || p).join('+');
+}
+
+/** "mod+shift+8" → mac 的 "⌘⇧8" / 其它平台的 "Ctrl+Shift+8"。
+    数据层仍是平台无关的，九种语言的词条不用各写一遍。 */
+export function kbdLabel(combo) {
+  const parts = String(combo || '').split('+').filter(Boolean).map((p) => {
+    if (p === 'mod') return IS_MAC ? '⌘' : 'Ctrl';
+    if (p === 'alt') return IS_MAC ? '⌥' : 'Alt';
+    if (p === 'shift') return IS_MAC ? '⇧' : 'Shift';
+    return p.length === 1 ? p.toUpperCase() : p.charAt(0).toUpperCase() + p.slice(1);
+  });
+  return IS_MAC ? parts.join('') : parts.join('+');
+}
+
+/** 老代码里 comboToKbd 的名字，保留别名，行为跟着平台走 */
+export const comboToKbd = kbdLabel;
+
+/** 整句里嵌了 "Ctrl+S" 的文案（title / toast / 词条 / 欢迎文档）走这里，
+    不逐条改九种语言。 */
+export function localizeShortcuts(text) {
+  if (!IS_MAC || typeof text !== 'string') return text;
+  return text
+    .replace(/Ctrl\s*\/\s*⌘\s*\+\s*/g, '⌘')
+    .replace(/Ctrl\s*\+\s*/g, '⌘')
+    .replace(/Alt\s*\+\s*/g, '⌥')
+    .replace(/Shift\s*\+\s*/g, '⇧');
+}
+
+/** 取译文。第二参数填占位符：tt('保存到 {path}', { path })
+ *  缺译时退回英文，再缺就退回中文原文 —— 永远不会显示成空白或键名。 */
 export function tt(text, vars) {
   const row = DICT[text];
   let out = text;
@@ -87,7 +128,7 @@ export function tt(text, vars) {
   if (vars) {
     out = out.replace(/\{(\w+)\}/g, (m, k) => (vars[k] === undefined ? m : String(vars[k])));
   }
-  return out;
+  return localizeShortcuts(out);
 }
 
 /* 后端错误的翻译在 errors.js：后端只回错误码，文案由前端拼（见那里的注释） */

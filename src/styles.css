@@ -282,6 +282,12 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
 .wc.danger:hover { background: #e5484d; color: #fff; }
 .wc.danger:active { background: #cf3b40; color: #fff; }
 
+/* macOS：decorations(true) + titleBarStyle=Overlay，系统交通灯浮在左上角。
+   自绘的 -□× 收起来（否则窗口右边再出现一套），左边留出三个灯的宽度。
+   工具窗口仍是 decorations(false)、没有交通灯，所以只作用于主窗口。 */
+html[data-os="mac"] .titlebar { padding-left: 88px; }
+html[data-os="mac"] .win-ctrl { display: none; }
+
 /* 标签与工具同行：左边标签，中间留白（可拖窗口），右边是高频操作。
    这样内容区上方只有一行，比原来"标签栏 + 工具栏"两行更干净。
    上沿这一道线把它和标题栏分开——同色平面不画线，两行就糊成一片。
