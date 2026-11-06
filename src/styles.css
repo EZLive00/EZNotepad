@@ -3,11 +3,14 @@
   --font-ui: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
   --font-mono: "SF Mono", "JetBrains Mono", "Cascadia Mono", Consolas, "Courier New", monospace;
   --font-read: -apple-system, "PingFang SC", "Microsoft YaHei", "Noto Sans SC", "Segoe UI", sans-serif;
-  /* 圆角三档 —— 工具风：控件全是直角，只有浮层留一丝（0 会让描边在斜角处
-     露出锯齿，1~3px 是「刻意方正」而不是「渲染坏了」的分界线） */
-  --r-sm: 0px;    /* 按钮 / 标签 / 菜单项 / 输入框 / 行内 code */
-  --r-md: 2px;    /* 菜单面板 / 弹窗 / 代码块 / 图片 */
-  --r-lg: 3px;    /* 应用菜单 / toast / 大抽屉 */
+  /* 圆角三档 —— 工具风，但不再是全直角：3/6/9 只够削掉「机器切出来」的
+     锋利感，远不到圆润。三档必须成阶梯（相邻差 3px），否则同一个面板里
+     25px 按钮和 26px 菜单项会一个像方的、一个像圆的。
+     ⛔ 不要为了「更现代」往上抬 —— 超过 12px 就从硬朗变成柔和了。
+     ⛔ .tab 是共享竖线，必须保持 0（圆角会在接缝处露出缺口）。 */
+  --r-sm: 3px;    /* 按钮 / 标签 / 菜单项 / 输入框 / 行内 code */
+  --r-md: 6px;    /* 菜单面板 / 弹窗 / 代码块 / 图片 */
+  --r-lg: 9px;    /* 应用菜单 / toast / 大抽屉 */
   --ease: cubic-bezier(.2, .7, .3, 1);
   --fs-editor: 13.5px;   /* applyFont() 会在启动后覆盖成用户设置 */
 
@@ -42,8 +45,12 @@ body[data-theme="light"] {
   --fg-faint: #9299a4;
   --line: #e9eaee;
   --line-strong: #d9dce1;
-  --accent: #3366f0;
-  --accent-soft: #eaf0ff;
+  /* 强调色 = 图标那支橙红（底 #ff7d45→#e04a17 的同族）。
+     UI 用的比图标深一档：#d63f10 在白底上对比 4.55:1，13px 文字压得住；
+     再亮一档（#e0491a）就只有 4.1，小字会发虚。
+     ⛔ 强调色只表示状态（当前标签/焦点/链接/主按钮），不当装饰色用。 */
+  --accent: #d63f10;
+  --accent-soft: rgba(214, 63, 16, .07);
   --accent-fg: #ffffff;
   --code-bg: #f5f6f8;
   --add-bg: #e6f7ec;
@@ -67,11 +74,13 @@ body[data-theme="light"] {
   --tok-type: #067a72;
   --tok-comment: #9aa3b2;
   --tok-punc: #5b6474;
-  --sel-bg: #d8e4ff;
+  --sel-bg: #ffd9c4;
 
-  /* 提示块（callout）四色：边条/图标用深色调，底色用低透明度同色 */
-  --co-info: #3366f0;    --co-info-bg: rgba(51, 102, 240, .07);
-  --co-warn: #b45309;    --co-warn-bg: rgba(217, 119, 6, .09);
+  /* 提示块（callout）四色：边条/图标用深色调，底色用低透明度同色。
+     ⛔ info 跟着强调色走橙红之后，warn 必须离开橙棕（#b45309 和 #d63f10
+     摆一起分不出谁是谁），挪到暗金 #96650a —— 靠色相也靠明度拉开。 */
+  --co-info: #d63f10;    --co-info-bg: rgba(214, 63, 16, .07);
+  --co-warn: #96650a;    --co-warn-bg: rgba(166, 110, 10, .10);
   --co-danger: #c22f2f;  --co-danger-bg: rgba(194, 47, 47, .07);
   --co-ok: #15803d;      --co-ok-bg: rgba(21, 128, 61, .08);
 
@@ -106,8 +115,11 @@ body[data-theme="dark"] {
   --fg-faint: #6c7480;
   --line: #262930;
   --line-strong: #343942;
-  --accent: #6d8dff;
-  --accent-soft: #1d2740;
+  --accent: #ff8a5c;
+  /* 深色下不给橙底，给暖灰底（#2f2a26，只带一丝橙味）。
+     橙在低亮度上叠出来必然是「砖棕色」，一块砖压在 #191b20 上像坏掉的面板；
+     状态交给橙字 + 3px 橙竖线去说，底色只负责「这块是活的」。 */
+  --accent-soft: #2f2a26;
   --accent-fg: #0d1015;
   --code-bg: #16181d;
   --add-bg: #14301f;
@@ -128,9 +140,9 @@ body[data-theme="dark"] {
   --tok-type: #6fded2;
   --tok-comment: #6c7585;
   --tok-punc: #a4adbd;
-  --sel-bg: #2f4270;
+  --sel-bg: #4a2a18;
 
-  --co-info: #7ab8ff;    --co-info-bg: rgba(74, 124, 255, .10);
+  --co-info: #ffa07a;    --co-info-bg: rgba(255, 138, 92, .10);
   --co-warn: #ffcf6b;    --co-warn-bg: rgba(255, 176, 32, .09);
   --co-danger: #ff8a8a;  --co-danger-bg: rgba(255, 90, 90, .10);
   --co-ok: #62d38b;      --co-ok-bg: rgba(46, 204, 113, .09);

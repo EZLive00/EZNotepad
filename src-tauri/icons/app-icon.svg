@@ -1,19 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <!-- 应用图标源文件（扁平版）。
-       上一版是渐变底 + 1.7 的细线条，缩到 16 / 20 就糊成一片灰；这一版只用两个
-       颜色、大块面：纯色圆角底 + 一张白纸 + 三道正文条。任务栏、任务视图这些小
-       尺寸下仍然能认出是「一份正在写的文档」。
-       重新生成：node node_modules/@tauri-apps/cli/tauri.js icon src-tauri/icons/app-icon.svg -->
-  <rect width="1024" height="1024" rx="228" fill="#2a5cf0" />
-  <!-- 纸张：四边留呼吸，右上角折一个角 -->
-  <path d="M316 196h290l170 170v450a60 60 0 0 1-60 60H316a60 60 0 0 1-60-60V256a60 60 0 0 1 60-60z"
-        fill="#ffffff" />
-  <!-- 折角：被折过去的那一小片，用浅蓝一档表示「背面」 -->
-  <path d="M606 196l170 170H666a60 60 0 0 1-60-60z" fill="#b9ccff" />
-  <!-- 正文条：用底色开窗，不做描边 -->
-  <g fill="#2a5cf0">
-    <rect x="396" y="392" width="300" height="66" rx="33" />
-    <rect x="396" y="518" width="300" height="66" rx="33" />
-    <rect x="396" y="644" width="186" height="66" rx="33" />
+  <defs><linearGradient id="g" x1="0" y1="0" x2="0.15" y2="1">
+    <stop offset="0" stop-color="#ff7d45"/><stop offset="1" stop-color="#e04a17"/></linearGradient></defs>
+  <rect width="1024" height="1024" rx="232" fill="url(#g)"/>
+  <path d="M264 108h316l228 228v504a40 40 0 0 1-40 40H264a40 40 0 0 1-40-40V148a40 40 0 0 1 40-40z" fill="#fbfaf7"/>
+  <path d="M580 108l228 228H620a40 40 0 0 1-40-40z" fill="#ece2d4"/>
+  <g fill="#1f232c">
+    <rect x="278" y="360" width="340" height="72" rx="36"/>
+    <rect x="278" y="492" width="470" height="48" rx="24"/>
+    <rect x="278" y="584" width="300" height="48" rx="24"/>
   </g>
 </svg>
