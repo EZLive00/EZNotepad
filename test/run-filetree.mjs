@@ -161,9 +161,34 @@ try {
   ok('删除后通知了外层', (await ev(`window.__deleted`))[0] === 'C:/demo/日志.txt');
 
   // ---- 展开 / 局部刷新 ----
+  /* 上一步是「在 assets 下新建文件」，建完会把父目录展开 —— 否则新文件只出现在
+     标签栏、树里找不到。所以此刻它已经是展开态，再点一下才是收起。 */
+  ok('新建文件后父目录自动展开', (await rows()).includes('a.png'), (await rows()).join(','));
   await ev(`[...document.querySelectorAll('.ft-row.dir')][0].click()`);
   await new Promise((r) => setTimeout(r, 120));
-  ok('展开目录能看到子项', (await rows()).includes('a.png'), (await rows()).join(','));
+  ok('点一下收起，子项消失', !(await rows()).includes('a.png'), (await rows()).join(','));
+  await ev(`[...document.querySelectorAll('.ft-row.dir')][0].click()`);
+  await new Promise((r) => setTimeout(r, 120));
+  ok('再点一下又能看到子项', (await rows()).includes('a.png'), (await rows()).join(','));
+
+  // ---- 文件夹右侧的「＋」：只在新（删仍然只走右键） ----
+  const plus = await ev(`(() => {
+    const all = [...document.querySelectorAll('.ft-row')];
+    return {
+      dirs: all.filter((r) => r.classList.contains('dir')).length,
+      adds: document.querySelectorAll('.ft-add').length,
+      onFile: !!document.querySelector('.ft-row:not(.dir) .ft-add'),
+    };
+  })()`);
+  ok('每个文件夹都有「＋」，文件行没有', plus.adds === plus.dirs && plus.adds > 0 && !plus.onFile, JSON.stringify(plus));
+
+  await ev(`document.querySelector('.ft-row.dir .ft-add').click()`);
+  await new Promise((r) => setTimeout(r, 120));
+  const addLabels = (await labels()).filter(Boolean);
+  ok('「＋」菜单只有新建两项，没有删除',
+    addLabels.length === 2 && addLabels[0].startsWith('新建') && !addLabels.some((l) => /删除/.test(l)),
+    addLabels.join(' | '));
+  ok('点「＋」不会顺手把文件夹收起', (await rows()).includes('a.png'), (await rows()).join(','));
 
   // 展开后再新建，只重画这一层：目录仍然是展开的（整棵树重来会收起）
   await ev(`window.__nextName = 'b.png'`);

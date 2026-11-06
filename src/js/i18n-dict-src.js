@@ -402,6 +402,7 @@ export const SRC = {
   '空目录': ["Empty folder", "空のフォルダー", "빈 폴더", "Dossier vide", "Leerer Ordner", "Carpeta vacía", "Pasta vazia"],
   '新建文件…': ["New File…", "新規ファイル…", "새 파일…", "Nouveau fichier…", "Neue Datei…", "Nuevo archivo…", "Novo arquivo…"],
   '新建文件夹…': ["New Folder…", "新規フォルダー…", "새 폴더…", "Nouveau dossier…", "Neuer Ordner…", "Nueva carpeta…", "Nova pasta…"],
+  '在这个文件夹里新建…': ["New in This Folder…", "このフォルダーに新規作成…", "이 폴더에 새로 만들기…", "Nouveau dans ce dossier…", "In diesem Ordner neu…", "Nuevo en esta carpeta…", "Novo nesta pasta…"],
   '重命名…': ["Rename…", "名前を変更…", "이름 바꾸기…", "Renommer…", "Umbenennen…", "Renombrar…", "Renomear…"],
   '在资源管理器中显示': ["Show in File Explorer", "エクスプローラーで表示", "탐색기에서 보기", "Afficher dans l'explorateur", "Im Explorer anzeigen", "Mostrar en el explorador", "Mostrar no explorador"],
   '刷新': ["Refresh", "更新", "새로 고침", "Actualiser", "Aktualisieren", "Actualizar", "Atualizar"],

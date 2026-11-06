@@ -617,6 +617,19 @@ body[data-theme="dark"] .am-pill { box-shadow: inset 0 0 0 1px rgba(255, 255, 25
 .ft-row.dir .ft-ico { color: var(--fg-soft); }
 .ft-row.active .ft-ico { color: var(--accent); }
 
+/* 文件夹行右侧的「＋」：只在鼠标进入这一行时显形。
+   占位一直留在这里（只切 opacity / pointer-events），
+   否则鼠标扫过一列文件夹时，名字的可用宽度会跟着一抖一抖 */
+.ft-add {
+  width: 18px; height: 18px; flex: none; display: grid; place-items: center;
+  border-radius: var(--r-sm); color: var(--fg-faint);
+  opacity: 0; pointer-events: none; transition: opacity .12s var(--ease);
+}
+.ft-row.dir:hover .ft-add,
+.ft-row.dir.active .ft-add { opacity: 1; pointer-events: auto; }
+.ft-add:hover { background: var(--bg-active); color: var(--fg); }
+.ft-add .ico { width: 13px; height: 13px; }
+
 .ft-hit-file {
   display: flex; align-items: center; gap: 5px; width: 100%;
   margin-top: 4px; padding: 4px 6px; border: none; border-radius: var(--r-sm);

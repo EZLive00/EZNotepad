@@ -96,6 +96,16 @@ export class FileTree {
     tree.className = 'ft-tree';
     tree.append(await this._children(this.root, 0));
     this.body.append(tree);
+    /* `expanded` 是「哪些目录开着」的唯一真相，整棵树重建后必须重新落到 DOM 上：
+       否则刷新一次看着全收起，而标记还留着 —— 再点那一下只会把标记删掉，
+       界面上什么都不发生（要按两下才收得回去）。按层级从浅到深加，
+       深的目录得先有父行的子容器才找得到自己的行。 */
+    const byDepth = [...this.expanded].sort((a, b) => a.split(/[\\/]/).length - b.split(/[\\/]/).length);
+    for (const p of byDepth) {
+      const row = this._rowOf(p);
+      if (row) await this._openRow(row, p, this._depthOf(row));
+      else this.expanded.delete(p);      // 目录已经不在了，别留着标记
+    }
     this.setActive(this.activePath);
     /* 行是新建的，选择状态要重画；顺手把已经不存在的路径从选择里摘掉 */
     if (this.sel.size) {
@@ -144,25 +154,65 @@ export class FileTree {
         ev.stopPropagation();
         this._rowMenu(ev, e, depth);
       };
+      /* 文件夹右侧的「＋」：鼠标移上去才显形，点开是这个目录自己的新增菜单。
+         必须是 span 而不是 button —— .ft-row 本身就是 button，button 套 button
+         会被浏览器拆开，行结构当场散架。占位始终存在（只改 opacity），
+         否则鼠标扫过整列文件夹时名字宽度会跟着抖。 */
+      if (e.is_dir) this._addBtn(row, e);
       frag.append(row);
     }
     return frag;
   }
 
+  /** 往文件夹行里塞那颗「＋」 */
+  _addBtn(row, entry) {
+    const b = document.createElement('span');
+    b.className = 'ft-add';
+    b.setAttribute('role', 'button');
+    b.tabIndex = -1;
+    b.title = tt('在这个文件夹里新建…');
+    b.innerHTML = icon('plus');
+    b.addEventListener('mousedown', (ev) => { ev.preventDefault(); ev.stopPropagation(); });
+    b.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      this._addMenu(ev, entry);
+    });
+    row.appendChild(b);
+  }
+
+  /** 只放「新增」：删除仍然只在右键菜单里，行内这颗按钮不该够得着删文件 */
+  _addMenu(ev, entry) {
+    if (!this.menu) return;
+    const r = ev.currentTarget.getBoundingClientRect();
+    this.menu(r.right - 2, r.bottom + 2, [
+      { label: tt('新建文件…'), icon: 'file-plus', action: () => this._create(entry.path, false) },
+      { label: tt('新建文件夹…'), icon: 'folder-plus', action: () => this._create(entry.path, true) },
+    ]);
+  }
+
   async _toggle(row, entry, depth) {
-    if (this.expanded.has(entry.path)) {
-      this.expanded.delete(entry.path);
-      row.classList.remove('open');
-      const kids = row.nextElementSibling;
-      if (kids && kids.classList.contains('ft-kids')) kids.remove();
-      return;
-    }
-    this.expanded.add(entry.path);
+    if (this.expanded.has(entry.path)) this._closeRow(row, entry.path);
+    else await this._openRow(row, entry.path, depth);
+  }
+
+  /** 展开一行；幂等 —— 已经挂过子容器就直接跳过（render 重放时会重复调） */
+  async _openRow(row, path, depth) {
+    const next = row.nextElementSibling;
+    if (next && next.classList.contains('ft-kids')) { this.expanded.add(path); row.classList.add('open'); return; }
+    this.expanded.add(path);
     row.classList.add('open');
     const kids = document.createElement('div');
     kids.className = 'ft-kids';
-    kids.append(await this._children(entry.path, depth + 1));
+    kids.append(await this._children(path, depth + 1));
     row.after(kids);
+  }
+
+  _closeRow(row, path) {
+    this.expanded.delete(path);
+    row.classList.remove('open');
+    const kids = row.nextElementSibling;
+    if (kids && kids.classList.contains('ft-kids')) kids.remove();
   }
 
   /* ---------------- 右键菜单与写操作 ----------------
@@ -261,8 +311,10 @@ export class FileTree {
     try {
       const p = await this.be.createEntry(dir, name, isDir);
       await this._reloadDir(dir);
+      /* 建完必须看得见：目录没展开时 _reloadDir 什么都不做（没有 kids 可刷），
+         于是新文件只出现在标签栏、树里找不到。这里补一次展开，两种都适用。 */
+      await this._expandRow(dir);
       if (!isDir) this.onOpen(p);          // 建完直接打开：新建文件的下一步就是写
-      else await this._expandRow(dir);
     } catch (e) {
       this.toast(errText(e));
     }
@@ -317,7 +369,7 @@ export class FileTree {
 
   async _expandRow(dir) {
     const row = this._rowOf(dir);
-    if (row && !this.expanded.has(dir)) await this._toggle(row, { path: dir }, this._depthOf(row));
+    if (row) await this._openRow(row, dir, this._depthOf(row));
   }
 
   _rowOf(path) {
