@@ -3046,13 +3046,13 @@ export class WysiwygEditor {
   handleArrow(e, block, cell) {
     const exit = e.key === 'ArrowDown' || e.key === 'ArrowRight';
     if (cell) {
-      if (!exit) return;
+      /* ↑↓ 在格之间是「同一列上下走」。不接管的话浏览器按**阅读顺序**跳
+         （↓ 从中间格跑到右边一格），和 → 一模一样 —— 用户报的就是这个。 */
       const info = this.tableInfo();
       if (!info) return;
-      const row = cell.parentElement;
-      if (info.rowIdx !== info.rows.length - 1) return;
-      if (info.colIdx !== row.children.length - 1) return;
-      if (!this.isCaretAtEnd(cell)) return;
+      if (e.key === 'ArrowUp' || e.key === 'ArrowDown') return this.arrowInCell(e, info);
+      if (!exit) return;
+      if (!this.atTableExit(info)) return;
       e.preventDefault();
       this.caretAfterBlock(info.block);
       return;
@@ -3893,6 +3893,65 @@ export class WysiwygEditor {
   cellIndex(cell) {
     const table = cell.closest('table');
     return [...table.querySelectorAll('th,td')].indexOf(cell);
+  }
+
+  /** 光标在格内第几行 / 这一格共几行。格内换行是 `<br>`（Shift+Enter 打的），
+   *  和序列化同一套口径；光标不在这格里返回 null。 */
+  cellLineOf(cell) {
+    const sel = window.getSelection();
+    if (!sel.rangeCount) return null;
+    const r = sel.getRangeAt(0);
+    if (!cell.contains(r.startContainer)) return null;
+    const pre = document.createRange();
+    pre.selectNodeContents(cell);
+    pre.setEnd(r.startContainer, r.startOffset);
+    return {
+      line: pre.cloneContents().querySelectorAll('br').length,
+      total: cell.querySelectorAll('br').length + 1,
+    };
+  }
+
+  /** 光标在格里的字符偏移（`<br>` 不占位，按 textContent 算） */
+  cellCaretOffset(cell) {
+    const sel = window.getSelection();
+    if (!sel.rangeCount) return 0;
+    const r = sel.getRangeAt(0);
+    if (!cell.contains(r.startContainer)) return 0;
+    const pre = document.createRange();
+    pre.selectNodeContents(cell);
+    pre.setEnd(r.startContainer, r.startOffset);
+    return pre.toString().length;
+  }
+
+  /** 表格右下角那一格、光标又在末尾 —— 这是「↓ / → 出表」唯一的出口 */
+  atTableExit(info) {
+    if (!info) return false;
+    if (info.rowIdx !== info.rows.length - 1) return false;
+    if (info.colIdx !== info.cell.parentElement.children.length - 1) return false;
+    return this.isCaretAtEnd(info.cell);
+  }
+
+  /** 表格里的 ↑↓：同一列上下走一格；格内还有行（Shift+Enter 换的）时先走格内。
+   *
+   *  为什么必须自己接管：单元格没有自己的「行」，浏览器把整张表当一溜行内盒子，
+   *  于是 ↓ 落到的是**阅读顺序的下一格**（中间格 ↓ 往右跑），和 → 完全一样。
+   *  到表格边界就停住 —— 除了右下角那一格，那儿 ↓ 是出表（和 → 共用一处判据）。 */
+  arrowInCell(e, info) {
+    const down = e.key === 'ArrowDown';
+    const pos = this.cellLineOf(info.cell);
+    if (!pos) return;
+    /* 格内确实还有上/下一行：交给浏览器做纯文本的行移动，它更懂折行 */
+    if (down ? pos.line < pos.total - 1 : pos.line > 0) return;
+    e.preventDefault();                  // 不拦的话浏览器会横向跳到邻格
+    const row = info.rows[info.rowIdx + (down ? 1 : -1)];
+    if (row) {
+      const target = row.children[info.colIdx];
+      if (!target) return;
+      /* 目标格短就停在末尾：这里没有更细的锚点，按字符数对齐已经够稳 */
+      setCaretOffset(target, Math.min(this.cellCaretOffset(info.cell), target.textContent.length));
+      return;
+    }
+    if (down && this.atTableExit(info)) this.caretAfterBlock(info.block);
   }
 
   focusCell(block, row, col) {
