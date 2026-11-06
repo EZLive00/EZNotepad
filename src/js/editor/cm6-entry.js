@@ -12,11 +12,12 @@
 // ============================================================
 
 /* ---- 状态 ---- */
-export { EditorState, Compartment, EditorSelection } from '@codemirror/state';
+export { EditorState, Compartment, EditorSelection, StateEffect, StateField } from '@codemirror/state';
 
 /* ---- 视图 ---- */
 export {
   EditorView,
+  Decoration,
   keymap,
   lineNumbers,
   highlightActiveLine,

@@ -75,6 +75,14 @@ body[data-theme="light"] {
   --tok-comment: #9aa3b2;
   --tok-punc: #5b6474;
   --sel-bg: #ffd9c4;
+  /* ==高亮== 的底色。⛔ 不能跟 --sel-bg 同族：一个是「你刚选中」，一个是
+     「文档里本来就标着」，同色就分不清哪块是选区。所以走黄，不走橙。
+     查找命中的琥珀比它更实（那是临时层，要盖在正文之上）。 */
+  --mark-bg: #ffe9a3;
+  /* 「高亮重复行」的视图底色：比 --mark-bg 淡一档，再配一条左侧竖线，
+     一眼能分出「这段被标亮了」和「这几行重复」 */
+  --dup-bg: rgba(255, 196, 0, .09);
+  --dup-bar: #dda700;
 
   /* 提示块（callout）四色：边条/图标用深色调，底色用低透明度同色。
      ⛔ info 跟着强调色走橙红之后，warn 必须离开橙棕（#b45309 和 #d63f10
@@ -141,6 +149,11 @@ body[data-theme="dark"] {
   --tok-comment: #6c7585;
   --tok-punc: #a4adbd;
   --sel-bg: #4a2a18;
+  /* 深色下不铺实底色：黄实底会把黑字换成白字才看得清，正文颜色一变，
+     整段的阅读节奏就断了。半透明黄只提亮那一块，字色原样保留。 */
+  --mark-bg: rgba(255, 214, 102, .26);
+  --dup-bg: rgba(255, 214, 102, .07);
+  --dup-bar: #b8892a;
 
   --co-info: #ffa07a;    --co-info-bg: rgba(255, 138, 92, .10);
   --co-warn: #ffcf6b;    --co-warn-bg: rgba(255, 176, 32, .09);
@@ -874,6 +887,19 @@ input[type="search"] { cursor: var(--cur-text), text; }
 .md th, .md td { border: 1px solid var(--line); padding: 7px 11px; text-align: left; vertical-align: top; }
 .md th { background: var(--bg-soft); font-weight: 620; }
 .md del { color: var(--fg-faint); }
+/* ==高亮==：预览和所见即所得共用一套 —— 同一个 <mark>，两种模式里长得一样。
+   不写 color：字色跟着正文走，深色下半透明黄底才不需要反过来改字色。
+   圆角只给 2px（比控件小一档）：高亮是「行内的一块底」，方一点更像荧光笔。 */
+/* 高亮重复行：只是视图提示，不动文档。左边 2px 竖线 + 极淡底色，
+   和 ==文字== 的黄底区分开 —— 那个是文档内容的一部分，这个只是「帮你看一眼」。 */
+.cm-line.cm-dup, .wysiwyg .w-block.w-dup {
+  background: var(--dup-bg);
+  box-shadow: inset 2px 0 0 var(--dup-bar);
+}
+.md mark, .wysiwyg mark {
+  background: var(--mark-bg); color: inherit;
+  border-radius: 2px; padding: 0 1px;
+}
 .md .task-list { list-style: none; padding-left: .35em; }
 .md .task-list li { margin: .22em 0; }
 .md .task-list ul, .md .task-list ol { padding-left: 1.5em; margin: .2em 0; }

@@ -224,7 +224,11 @@ try {
       JSON.stringify(grid));
     ok('整个网格只留一个 Tab 停靠点', (await ev(`[...document.querySelectorAll('.new-types .new-type')].filter((x) => x.tabIndex >= 0).length`)) === 1);
 
-    const p0 = grid.start;
+    /* 起点是「上次用过的类型」，会随设置变（上一轮跑出来的 lastNewExt 会被记住），
+       所以先把焦点按 Home 归到第一格，后面全都相对它算 */
+    const home = await gridKey('Home');
+    const p0 = 0;
+    ok('Home 回到第一格', home.i === 0, JSON.stringify(home));
     const right = await gridKey('ArrowRight');
     ok('→ 往右挪一格', right.i === p0 + 1 && !right.inInput, JSON.stringify(right));
     const down = await gridKey('ArrowDown');
@@ -254,6 +258,67 @@ try {
     ok('回车建的是焦点那一格，不是主按钮那个类型',
       new RegExp('^未命名.*\\.' + pick.ext + '$').test(await ev('window.__snp.getActiveTab().name')),
       `${pick.ext} → ${await ev('window.__snp.getActiveTab().name')}`);
+
+    // ---- 7. ==高亮==：同一个命令能标上，也能撤掉 ----
+    /* 按「第几个字符」选：块里的文字可能已经被拆成 文本 + <mark> + 文本 三个节点，
+       直接拿 firstChild 当文本节点第二次就选不动了 */
+    const selectInBlock = (a, b) => ev(`(() => {
+      const t = document.querySelector('.wysiwyg .w-text');
+      if (!t) return false;
+      const walk = document.createTreeWalker(t, NodeFilter.SHOW_TEXT);
+      const nodes = [];
+      let n;
+      while ((n = walk.nextNode())) nodes.push(n);
+      const at = (off) => {
+        for (const node of nodes) {
+          const len = node.nodeValue.length;
+          if (off <= len) return [node, off];
+          off -= len;
+        }
+        return null;
+      };
+      const s0 = at(${a});
+      const s1 = at(${b});
+      if (!s0 || !s1) return false;
+      const r = document.createRange();
+      r.setStart(s0[0], s0[1]);
+      r.setEnd(s1[0], s1[1]);
+      const s = window.getSelection();
+      s.removeAllRanges();
+      s.addRange(r);
+      return true;
+    })()`);
+
+    await ev(`window.__snp.newTab('hl.md', '这是重点文字', null)`);
+    await ev('window.__snp.commands.modeWysiwyg()');
+    await ev('new Promise(r => setTimeout(r, 260))');
+    ok('所见即所得里能选中一段文字', await selectInBlock(2, 4));
+    await ev('window.__snp.commands.highlight(); 0');
+    await ev('new Promise(r => setTimeout(r, 200))');
+    ok('选中后高亮写回 ==重点==', (await ev('window.__snp.getEditorText()')) === '这是==重点==文字',
+      JSON.stringify(await ev('window.__snp.getEditorText()')));
+    ok('DOM 里真的变成 mark', (await ev(`!!document.querySelector('.wysiwyg .w-text mark')`)) === true);
+
+    /* 再点一次要能撤掉：这次选中范围落在 <mark> 里面 */
+    await selectInBlock(2, 4);
+    await ev('window.__snp.commands.highlight(); 0');
+    await ev('new Promise(r => setTimeout(r, 200))');
+    ok('再点一次取消高亮', (await ev('window.__snp.getEditorText()')) === '这是重点文字',
+      JSON.stringify(await ev('window.__snp.getEditorText()')));
+
+    // ---- 8. 高亮重复行：只标不改 ----
+    await ev(`window.__snp.newTab('dup.txt', '甲\\n乙\\n甲\\n丙\\n甲\\n', null)`);
+    await ev('window.__snp.commands.modeEdit()');
+    await ev('new Promise(r => setTimeout(r, 260))');
+    await ev('window.__snp.commands.dupLines(); 0');
+    await ev('new Promise(r => setTimeout(r, 200))');
+    ok('重复的三行都被标亮', (await ev(`document.querySelectorAll('.cm-dup').length`)) === 3,
+      String(await ev(`document.querySelectorAll('.cm-dup').length`)));
+    ok('高亮不动文档', (await ev('window.__snp.getEditorText()')) === '甲\n乙\n甲\n丙\n甲\n',
+      JSON.stringify(await ev('window.__snp.getEditorText()')));
+    await ev('window.__snp.commands.dupLines(); 0');
+    await ev('new Promise(r => setTimeout(r, 200))');
+    ok('再点一次清掉标记', (await ev(`document.querySelectorAll('.cm-dup').length`)) === 0);
   }
 } catch (e) {
   ok('运行期间没有异常', false, String((e && e.message) || e).slice(0, 300));

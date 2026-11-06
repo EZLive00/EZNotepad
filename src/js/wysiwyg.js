@@ -102,6 +102,7 @@ export function inlineHtml(src) {
   t = t.replace(/(^|\W)__([^_]+)__(?!_)/g, '$1<strong>$2</strong>');
   t = t.replace(/(^|\W)_([^_\n]+)_(?!\w)/g, '$1<em>$2</em>');
   t = t.replace(/~~([^~]+)~~/g, '<del>$1</del>');
+  t = t.replace(/==([^=\n]+)==/g, '<mark>$1</mark>');
   t = t.replace(/\u0001(\d+)\u0001/g, (_, i) => `<code>${escapeHtml(codes[+i])}</code>`);
   t = t.replace(/\u0002(\d+)\u0002/g, (_, i) => `<span class="w-math">${escapeHtml(maths[+i])}</span>`);
   return t;
@@ -144,6 +145,7 @@ export function inlineToMd(node, brText = '') {
       case 'STRONG': case 'B': s += inner.trim() ? `**${inner}**` : inner; break;
       case 'EM': case 'I': s += inner.trim() ? `_${inner}_` : inner; break;
       case 'DEL': case 'S': case 'STRIKE': s += inner.trim() ? `~~${inner}~~` : inner; break;
+      case 'MARK': s += inner.trim() ? `==${inner}==` : inner; break;
       case 'CODE': s += n.textContent ? '`' + n.textContent + '`' : ''; break;
       case 'A': s += inner ? `[${inner}](${n.getAttribute('href') || ''})` : ''; break;
       default: s += inner;
@@ -772,7 +774,7 @@ function rawBlock(el) {
  * 成本：每块一次 querySelectorAll（C++ 子树遍历），整篇相当于一次全文扫描；
  * 纯文本块（段落/标题的常态，万块级文档里占绝大多数）走 childNodes 快路径跳过它。
  */
-const SIG_TAGS = 'code,strong,em,del,b,i,strike,a,img,br';
+const SIG_TAGS = 'code,strong,em,del,mark,b,i,strike,a,img,br';
 
 function blockSig(el) {
   const ds = el.dataset;
@@ -2393,6 +2395,9 @@ export class WysiwygEditor {
   flush() {
     if (this.silent || this.loading) return;
     if (this._flushTimer) { clearTimeout(this._flushTimer); this._flushTimer = 0; }
+    /* 文档变了，重复块的标记就作废（再标也不对：块已经不是一个字的了）。
+       放在 flush 里而不是 input 里，是因为所有改动路径最后都走这里。 */
+    this.clearDuplicates();
     this._edited = true;
     const md = this.toMarkdown();
     this.pushHistory(md);
@@ -2704,6 +2709,7 @@ export class WysiwygEditor {
       { re: /\*\*([^*\n]+)\*\*$/, tag: 'strong' },
       { re: /__([^_\n]+)__$/, tag: 'strong' },
       { re: /~~([^~\n]+)~~$/, tag: 'del' },
+      { re: /==([^=\n]+)==$/, tag: 'mark' },
       { re: /`([^`\n]+)`$/, tag: 'code' },
       { re: /!\[([^\]\n]*)\]\(([^)\s]+)\)$/, img: true },
       { re: /\[([^\]\n]+)\]\(([^)\s]+)\)$/, link: true },
@@ -3559,6 +3565,85 @@ export class WysiwygEditor {
     }
     this.hCoalesce = false;
     this.flush();
+  }
+
+  /** 高亮：<mark> ↔ `==文字==`。返回 'on' / 'off' / false（没动）。
+   *
+   *  不走 execCommand：它只认 hiliteColor/bgColor，产出的是 <span style="background">，
+   *  而我们的「文件就是纯文本 Markdown」这条底线要求能序列化回 `==文字==`。
+   *  只处理同一段里的选区 —— 跨段取内容会把两段的块结构一起拆散。 */
+  toggleMark() {
+    if (this.currentCell()) return false;          // 表格里不动结构
+    const sel = window.getSelection();
+    if (!sel.rangeCount) return false;
+    const block = this.currentBlock();
+    if (!block) return false;
+    const range = sel.getRangeAt(0);
+    const elOf = (n) => (n.nodeType === 1 ? n : n.parentElement);
+    const from = elOf(range.startContainer);
+    const to = elOf(range.endContainer);
+    if (!from || !to || !block.contains(from) || !block.contains(to)) return false;
+
+    /* 判断「已经在 mark 里」不能只看端点落在哪个元素：拖选一个高亮词时，起点常常
+       停在它前面那个文本节点的末尾，closest('mark') 是空的。改成看选中文字本身
+       和 mark 的文字是否一致 —— 一致就是「整块选中」，脱掉。 */
+    const mark = from.closest('mark') || to.closest('mark');
+    if (mark) {
+      if (mark.textContent.trim() !== String(sel).trim()) return false;  // 只选中半块：不动，免得出 ==== 
+      const text = document.createTextNode(mark.textContent);
+      mark.replaceWith(text);
+      const r = document.createRange();
+      r.setStart(text, 0);
+      r.setEnd(text, text.nodeValue.length);
+      sel.removeAllRanges();
+      sel.addRange(r);
+      this.hCoalesce = false;
+      this.flush();
+      return 'off';
+    }
+    if (range.collapsed) return false;
+    const el = document.createElement('mark');
+    el.appendChild(range.extractContents());
+    range.insertNode(el);
+    const after = document.createRange();
+    after.setStartAfter(el);
+    after.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(after);
+    this.hCoalesce = false;
+    this.flush();
+    return 'on';
+  }
+
+  /* ---------------- 高亮重复行 ---------------- */
+
+  /** 把「内容出现不止一次」的块标出来，返回标了多少块。
+   *
+   *  按块算而不是按行算：代码块是「一个块十行」，行级标记在 DOM 里落不下去；
+   *  而这里的「一块」正是编辑时的一行（代码块 / 表格除外）。
+   *  视口渲染的大文档只标当前可见的那些块 —— 看不见的部分标了也没人看见。 */
+  paintDuplicates() {
+    this.clearDuplicates();
+    const groups = new Map();
+    for (const b of this.root.children) {
+      const t = (b.textContent || '').trim();
+      if (!t) continue;
+      const g = groups.get(t);
+      if (g) g.push(b); else groups.set(t, [b]);
+    }
+    let n = 0;
+    for (const g of groups.values()) {
+      if (g.length < 2) continue;
+      for (const b of g) { b.classList.add('w-dup'); n++; }
+    }
+    this.dupOn = n > 0;
+    return n;
+  }
+
+  clearDuplicates() {
+    if (!this.dupOn) return;
+    for (const b of this.root.querySelectorAll('.w-dup')) b.classList.remove('w-dup');
+    this.dupOn = false;
   }
 
   /** 保留旧接口：菜单里的「加粗/斜体」等通过标记字符串调用 */

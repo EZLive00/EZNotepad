@@ -58,6 +58,12 @@ ok('公式原样留给 KaTeX', inline('$x_1$').includes('$x_1$'));
 ok('公式里的 < 转成实体，DOM 文本仍是原文', inline('$a<b$').includes('$a&lt;b$'));
 ok('块级公式两端保留', inline('$$\\frac{a}{b}$$').includes('$$\\frac{a}{b}$$'));
 
+/* ---------- ==高亮==：中文紧贴也认，行内代码里的不算 ---------- */
+eq('==文字== 变成 mark', inline('==重点=='), '<mark>重点</mark>');
+eq('紧贴中文也认', inline('记住==重点==就好'), '记住<mark>重点</mark>就好');
+eq('行内代码里的 == 原样', inline('`a == b`'), '<code>a == b</code>');
+eq('没成对的不动', inline('a == b'), 'a == b');
+
 /* ---------- 整篇渲染：标题 id 用 slug、块级公式跨越成 div ---------- */
 const html = renderMarkdown('# 快速开始\n\n行内 $x_1$ 结束\n\n$$\na + b\n$$\n');
 ok('标题用 slug 当 id', html.includes('id="快速开始"'));

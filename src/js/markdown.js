@@ -105,6 +105,9 @@ export function inline(text, imgResolver) {
   s = s.replace(/(^|\W)__([^_]+)__(?!_)/g, '$1<strong>$2</strong>');
   s = s.replace(/(^|\W)_([^_\n]+)_(?!\w)/g, '$1<em>$2</em>');
   s = s.replace(/~~([^~]+)~~/g, '<del>$1</del>');
+  /* ==高亮==：行内代码已经被换成占位符，这里不会误伤代码里的 ==。
+     不用 \W 边界：中文紧贴时左边没有非字字符，==重点==在一句话中间也得认。 */
+  s = s.replace(/==([^=\n]+)==/g, '<mark>$1</mark>');
 
   // 还原行内代码
   s = s.replace(/\u0000C(\d+)\u0000/g, (_, i) => `<code>${escapeHtml(codes[+i])}</code>`);

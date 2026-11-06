@@ -17,7 +17,7 @@
 //     Tab 缩进 / 回车继承缩进     → CM6 的 defaultKeymap 自带
 // ============================================================
 import {
-  EditorState, EditorView, Compartment,
+  EditorState, EditorView, Compartment, StateEffect, StateField, Decoration,
   lineNumbers, highlightActiveLine, highlightActiveLineGutter, highlightSpecialChars,
   drawSelection, dropCursor, keymap,
   rectangularSelection, crosshairCursor,
@@ -106,6 +106,30 @@ const CM = {
   objc: stream(objectiveC),
 };
 
+/* ---------------- 高亮重复行（纯装饰） ----------------
+   行级装饰，不动文档：行号只是视图上的标记，文档一改就作废
+   —— 重新映射会让「刚才标的是哪几行」越漂越远，所以 docChanged 直接清空。 */
+const setDupLines = StateEffect.define();
+
+function buildDupLines(nums, state) {
+  const doc = state.doc;
+  const marks = [];
+  for (const n of [...nums].sort((a, b) => a - b)) {
+    if (n < 1 || n > doc.lines) continue;
+    marks.push(Decoration.line({ class: 'cm-dup' }).range(doc.line(n).from));
+  }
+  return marks.length ? Decoration.set(marks) : Decoration.none;
+}
+
+const dupLinesField = StateField.define({
+  create: () => Decoration.none,
+  update(deco, tr) {
+    for (const e of tr.effects) if (e.is(setDupLines)) return buildDupLines(e.value, tr.state);
+    return tr.docChanged ? Decoration.none : deco;
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
+
 export class PlainEditor {
   /**
    * @param {HTMLElement} host 挂载容器（#editor）
@@ -170,6 +194,8 @@ export class PlainEditor {
       syntaxHighlighting(cmHighlight),
       this.langComp.of(this._langExt(this.langKey)),
       this.readOnlyComp.of(this._roExt(this.readOnly)),
+      /* 高亮重复行：默认空集合，等 setDupLines 推一个 effect 进来 */
+      dupLinesField,
       /* 剪贴板里是图片：拦下来交给外层落盘，否则 CM6 会安静地什么都不做 */
       EditorView.domEventHandlers({
         paste: (e) => {
@@ -261,6 +287,20 @@ export class PlainEditor {
   setSelection(from, to = from) {
     const a = this._clamp(from);
     this.view.dispatch({ selection: { anchor: a, head: this._clamp(to) } });
+  }
+
+  /* ---------------- 高亮重复行 ---------------- */
+
+  /** nums 是 1 起的行号；传空数组等于清空 */
+  setDupLines(nums) {
+    this.view.dispatch({ effects: setDupLines.of(nums || []) });
+  }
+
+  clearDupLines() { this.setDupLines([]); }
+
+  /** 现在有没有标亮着（菜单的勾选状态要问它，文档一改它自己就变 false） */
+  get hasDupHighlight() {
+    return this.view.state.field(dupLinesField).size > 0;
   }
 
   /* ---------------- 视图 ---------------- */

@@ -1943,13 +1943,123 @@ function surround(marker) {
   plain.focus();
 }
 
+/* ---------------- 高亮（==文字== / <mark>） ----------------
+   两个方向都要能走：右键点一次标上，再点一次取消。
+   所见即所得交给 wys.toggleMark()（它自己认 <mark>）；编辑模式在源码上加 / 脱
+   两个 `==`，光标按「刚才是脱掉了标记还是加上了标记」重新算。 */
+
+/** 选区是不是已经标亮了 —— 右键菜单据此决定显示「高亮」还是「取消高亮」 */
+function selectionHighlighted() {
+  const t = activeTab();
+  if (!t) return false;
+  if (t.mode === 'wysiwyg') {
+    const s = window.getSelection();
+    if (!s || !s.rangeCount) return false;
+    const elOf = (n) => n && (n.nodeType === 1 ? n : n.parentElement);
+    /* 两端都看：拖选一个高亮词时，起点往往停在前一个文本节点的末尾 */
+    return !!((elOf(s.anchorNode) && elOf(s.anchorNode).closest('mark'))
+      || (elOf(s.focusNode) && elOf(s.focusNode).closest('mark')));
+  }
+  const { from, to } = plain.selection;
+  if (to <= from) return false;
+  const v = plain.value;
+  const sel = v.slice(from, to);
+  return (v.slice(from - 2, from) === '==' && v.slice(to, to + 2) === '==')
+    || (sel.startsWith('==') && sel.endsWith('==') && sel.length > 4);
+}
+
+function toggleHighlight() {
+  const t = activeTab();
+  if (!t) return;
+  if (t.mode === 'wysiwyg') {
+    const r = wys.toggleMark();
+    if (!r) toast(tt('先选中同一段里要标亮的文字'));
+    else toast(r === 'on' ? tt('已高亮') : tt('已取消高亮'));
+    return;
+  }
+  if (t.mode !== 'edit') { toast(tt('预览模式下不能编辑')); return; }
+  const { from, to } = plain.selection;
+  if (to <= from) { toast(tt('先选中要标亮的文字')); return; }
+  const v = plain.value;
+  const sel = v.slice(from, to);
+  /* 三种「已经标过」的情形都要能脱掉：标记在选区里、在选区外两侧、
+     以及选区正好含标记（三击选中整行）。漏掉哪一种都会出现 `====` 四连。 */
+  const inner = sel.startsWith('==') && sel.endsWith('==') && sel.length > 4;
+  const outer = !inner && v.slice(from - 2, from) === '==' && v.slice(to, to + 2) === '==';
+  let next;
+  let at;
+  let len;
+  if (inner) {
+    const core = v.slice(from + 2, to - 2);
+    next = v.slice(0, from) + core + v.slice(to);
+    at = from; len = core.length;
+  } else if (outer) {
+    next = v.slice(0, from - 2) + sel + v.slice(to + 2);
+    at = from - 2; len = sel.length;
+  } else {
+    next = v.slice(0, from) + '==' + sel + '==' + v.slice(to);
+    at = from + 2; len = sel.length;
+  }
+  if (next === v) return;
+  setContent(next);
+  plain.setSelection(at, at + len);
+  plain.focus();
+  toast(inner || outer ? tt('已取消高亮') : tt('已高亮'));
+}
+
+/* ---------------- 高亮重复行 ----------------
+   纯视图动作，不动文档。编辑模式标在「行」上（CM6 的行装饰），所见即所得标在
+   「块」上 —— 代码块是「一个块十行」，行级标记在 DOM 里落不下去。
+   文档一改标记就作废：行号会漂，重新映射只会越标越错。 */
+
+/** 出现不止一次的行的行号（1 起；忽略首尾空白，空行不算重复） */
+function dupLineNumbers(text) {
+  const lines = String(text).split('\n');
+  const count = new Map();
+  for (const l of lines) {
+    const k = l.trim();
+    if (k) count.set(k, (count.get(k) || 0) + 1);
+  }
+  const out = [];
+  lines.forEach((l, i) => {
+    const k = l.trim();
+    if (k && count.get(k) > 1) out.push(i + 1);
+  });
+  return out;
+}
+
+function dupPainted() {
+  const t = activeTab();
+  if (!t) return false;
+  return t.mode === 'wysiwyg' ? !!wys.dupOn : !!plain.hasDupHighlight;
+}
+
+function toggleDupLines() {
+  const t = activeTab();
+  if (!t) return;
+  if (dupPainted()) {
+    if (t.mode === 'wysiwyg') wys.clearDuplicates(); else plain.clearDupLines();
+    toast(tt('已取消重复行高亮'));
+    return;
+  }
+  if (t.mode === 'wysiwyg') {
+    const n = wys.paintDuplicates();
+    toast(n ? tt('已高亮 {n} 处重复内容', { n }) : tt('没有重复内容'));
+    return;
+  }
+  if (t.mode !== 'edit') { toast(tt('请切换到编辑模式（Ctrl+2）再用')); return; }
+  const nums = dupLineNumbers(plain.value);
+  if (!nums.length) { toast(tt('没有重复行')); return; }
+  plain.setDupLines(nums);
+  toast(tt('已高亮 {n} 行重复内容', { n: nums.length }));
+}
+
 function requireEditMode() {
   const t = activeTab();
   if (!t) return false;
   if (t.mode === 'preview') { toast(tt('预览模式下不能编辑，请切换到编辑模式')); return false; }
   return true;
 }
-
 /** 块级格式命令只在「所见即所得」模式下有意义 */
 function wysCmd(fn) {
   const t = activeTab();
@@ -3084,6 +3194,8 @@ const commands = {
   italic: () => surround('_'),
   inlineCode: () => surround('`'),
   strike: () => surround('~~'),
+  highlight: toggleHighlight,
+  dupLines: toggleDupLines,
   format: formatDoc,
 
   /* —— 块级格式（仅所见即所得模式） —— */
@@ -3319,6 +3431,7 @@ const menuTree = () => [
       { id: 'italic', label: tt('斜体'), icon: 'italic', kbd: 'Ctrl+I', disabled: () => !hasTab() },
       { id: 'strike', label: tt('删除线'), icon: 'strikethrough', kbd: 'Ctrl+Shift+X', disabled: () => !hasTab() },
       { id: 'inlineCode', label: tt('行内代码'), icon: 'code', disabled: () => !hasTab() },
+      { id: 'highlight', label: tt('高亮'), disabled: () => !hasTab() },
 
       { head: tt('段落') },
       { id: 'ul', label: tt('无序列表'), icon: 'list', kbd: 'Ctrl+Shift+8', disabled: wysOnly },
@@ -3395,6 +3508,8 @@ const menuTree = () => [
       { id: 'sortAsc', label: tt('按行升序排序'), disabled: () => !hasTab() },
       { id: 'sortDesc', label: tt('按行降序排序'), disabled: () => !hasTab() },
       { id: 'sortNum', label: tt('按数字排序'), disabled: () => !hasTab() },
+      /* 在「去重」上面：一个只是让你先看见重复在哪，一个才是真删 —— 先看后改 */
+      { id: 'dupLines', label: tt('高亮重复行'), checked: dupPainted, disabled: () => !hasTab() },
       { id: 'dedupe', label: tt('去除重复行'), disabled: () => !hasTab() },
       { id: 'removeEmpty', label: tt('删除空行'), disabled: () => !hasTab() },
       { id: 'trimLines', label: tt('去除首尾空白'), disabled: () => !hasTab() },
@@ -3989,6 +4104,10 @@ function bindEvents() {
       { label: tt('转大写'), action: commands.upper },
       { label: tt('转小写'), action: commands.lower },
       { sep: true },
+      /* 高亮两个字跟着选区状态换，和所见即所得那边同一套判断 */
+      { label: selectionHighlighted() ? tt('取消高亮') : tt('高亮'), action: () => commands.highlight() },
+      { label: tt('高亮重复行'), checked: dupPainted, action: () => commands.dupLines() },
+      { sep: true },
       { lead: tt('换行'), row: [
         { label: tt('自动换行'), hint: tt('长行折到下一行显示'), checked: () => settings.wrap !== false, action: () => commands.setWrap(true) },
         { label: tt('不换行'), hint: tt('长行不折行，横向滚动查看'), checked: () => settings.wrap === false, action: () => commands.setWrap(false) },
@@ -4036,6 +4155,9 @@ function bindEvents() {
           { label: tt('行内代码'), hint: tt('行内代码'), icon: 'code', iconOnly: true, action: () => commands.inlineCode() },
           { label: tt('插入链接'), hint: tt('插入链接'), icon: 'link', iconOnly: true, shortcut: 'Ctrl+K', action: () => commands.link() },
         ] },
+        /* 高亮单独一行：它是个开关（标上 / 取消），和上面那排「加了就一直是」的
+           格式不是一类；文案跟着选区当前状态走，省得点一下才知道是加还是撤 */
+        { label: selectionHighlighted() ? tt('取消高亮') : tt('高亮'), hint: tt('把选中的文字标亮（==文字==）'), action: () => commands.highlight() },
 
         { head: tt('段落') },
         { row: [
