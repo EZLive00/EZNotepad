@@ -11,6 +11,8 @@
     "build": "tauri build",
     "build:win": "tauri build --target x86_64-pc-windows-msvc",
     "build:mac": "tauri build --target universal-apple-darwin",
+    "build:mac:arm": "tauri build --target aarch64-apple-darwin",
+    "build:mac:intel": "tauri build --target x86_64-apple-darwin",
     "build:cm6": "node scripts/build-cm6.mjs",
     "build:syntax": "node scripts/build-syntax.mjs",
     "build:mermaid": "node scripts/build-mermaid.mjs",
@@ -23,6 +25,7 @@
     "test:probe": "node test/run-probe.mjs",
     "test:units": "node test/run-units.mjs",
     "test:i18n": "node test/run-i18n.mjs",
+    "test:macos": "node test/run-macos.mjs",
     "build:katex": "node scripts/build-katex.mjs",
     "shot:find": "node test/shot-find.mjs"
   },

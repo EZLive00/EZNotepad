@@ -17,7 +17,9 @@
         "resizable": true,
         "fullscreen": false,
         "center": true,
-        "decorations": false,
+        "decorations": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
         "shadow": true,
         "dragDropEnabled": true,
         "visible": true,
@@ -35,7 +37,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": ["app", "dmg"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -74,21 +76,8 @@
         "role": "Editor"
       }
     ],
-    "windows": {
-      "nsis": {
-        "installMode": "currentUser"
-      },
-      "webviewInstallMode": {
-        "type": "downloadBootstrapper"
-      }
-    },
     "macOS": {
-      "minimumSystemVersion": "10.15"
-    },
-    "linux": {
-      "deb": {
-        "depends": []
-      }
+      "minimumSystemVersion": "11.0"
     }
   }
 }

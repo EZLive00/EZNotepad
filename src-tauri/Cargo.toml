@@ -34,8 +34,12 @@ encoding_rs = "0.8"
 # 跨文件搜索 / 替换的正则支持（可选开启，默认仍是字面匹配）
 regex = "1"
 # 文件变化监听：只监听已打开文档所在目录这一层，靠系统原生的
-# ReadDirectoryChangesW / inotify，空闲时零 CPU。
+# ReadDirectoryChangesW / FSEvents / inotify，空闲时零 CPU。
 notify = "8"
+# 删除进系统废纸篓：Windows 仍用 SHFileOperationW，非 Windows 走这个
+# （macOS 是 NSFileManager.trashItemAtURL，会写好「放回原处」元数据）。
+# 放在通用依赖里，本机 Windows 也能编译验证依赖解析。
+trash = "5"
 
 # 无边框窗口的系统圆角（Win11 DWM）。只在 Windows 上参与编译。
 [target.'cfg(windows)'.dependencies]
