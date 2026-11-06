@@ -4154,10 +4154,11 @@ function bindEvents() {
           { label: tt('删除线'), hint: tt('删除线'), icon: 'strikethrough', iconOnly: true, shortcut: 'Ctrl+Shift+X', action: () => commands.strike() },
           { label: tt('行内代码'), hint: tt('行内代码'), icon: 'code', iconOnly: true, action: () => commands.inlineCode() },
           { label: tt('插入链接'), hint: tt('插入链接'), icon: 'link', iconOnly: true, shortcut: 'Ctrl+K', action: () => commands.link() },
+          /* 高亮放在同一行的末尾，但它是「开关」不是「加了就一直在」：
+             点亮 = 选区已经标过，再点一下取消。文字按钮不用图标 —— 图标集里没有荧光笔，
+             临时画一个比多几像素宽度更容易走样 */
+          { label: tt('高亮'), hint: tt('把选中的文字标亮（==文字==）'), checked: selectionHighlighted, action: () => commands.highlight() },
         ] },
-        /* 高亮单独一行：它是个开关（标上 / 取消），和上面那排「加了就一直是」的
-           格式不是一类；文案跟着选区当前状态走，省得点一下才知道是加还是撤 */
-        { label: selectionHighlighted() ? tt('取消高亮') : tt('高亮'), hint: tt('把选中的文字标亮（==文字==）'), action: () => commands.highlight() },
 
         { head: tt('段落') },
         { row: [
