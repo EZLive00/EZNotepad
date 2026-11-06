@@ -3795,6 +3795,29 @@ function caretOffsetIn(root) {
   return pre.toString().length;
 }
 
+/** 光标在某个块的 `.w-text` 里的字符偏移，**允许光标停在块元素本身**。
+ *
+ *  为什么需要它：把一行里最后一个字删掉之后，Chromium 会把文本节点连同光标一起
+ *  上提到 `.w-block`（`.w-text` 里只剩一个 `<br>`），于是 `caretOffsetIn(t)` 的
+ *  `root.contains(startContainer)` 当场失败、返回 -1 —— 「新行里打了字再删掉，
+ *  接着敲 `/` 唤不出插入面板」就是这么来的（光标根本不在 `.w-text` 里）。
+ *  这里按边界折算：落点在 `.w-text` 之前算 0，之后算末位。 */
+function caretOffsetInBlock(block) {
+  const t = block && block.querySelector('.w-text');
+  if (!t) return -1;
+  const sel = window.getSelection();
+  if (!sel.rangeCount || !sel.isCollapsed) return -1;
+  const r = sel.getRangeAt(0);
+  if (t.contains(r.startContainer)) return caretOffsetIn(t);
+  if (r.startContainer !== block) return -1;
+  /* 块里除了 .w-text 还有可能就是列表符号 / 标题井号这些，按节点序判断前后 */
+  let seen = false;
+  for (let i = 0; i < r.startOffset && i < block.childNodes.length; i++) {
+    if (block.childNodes[i] === t) { seen = true; break; }
+  }
+  return seen ? 0 : t.textContent.length;
+}
+
 /** 把被 "/" 吞掉的那个字符还给用户。只有「面板关了却什么都没选」才走这里。
     插回的是**原偏移**，不是当前光标 —— 点了一下别处再关面板，那个斜杠也该回到
     它本来该在的位置，而不是跟到新光标处。 */
@@ -3810,8 +3833,8 @@ function restoreSlash() {
   const t = block.querySelector('.w-text');
   if (!t) return;
   /* 光标还停在原处（Esc / 打字触发关闭）才把光标推到斜杠后面；
-     已经点到别处的就别抢焦点。 */
-  const stick = caretOffsetIn(t) === s.off;
+     已经点到别处的就别抢焦点。判据和开面板时同一套口径（能认「光标停在块上」）。 */
+  const stick = caretOffsetInBlock(block) === s.off;
   const p = textPosAt(t, s.off);
   const r = document.createRange();
   try { r.setStart(p.node, p.off); } catch { return; }
@@ -3950,7 +3973,9 @@ function setupBlockHandle() {
     if (!/^(p|h[1-6]|li|bq)$/.test(block.dataset.type || '')) return;
     const t = block.querySelector('.w-text');
     if (!t) return;
-    const off = caretOffsetIn(t);
+    /* 用 block 口径读偏移：删空一行之后光标会停在 .w-block 上（不在 .w-text 里），
+       非空口径会直接判 -1 —— 「打了字再删掉就唤不出面板」正是这个原因 */
+    const off = caretOffsetInBlock(block);
     if (off < 0) return;
     const before = t.textContent.slice(0, off).replace(/\u200b/g, '');
     if (!/(^|\s)$/.test(before)) return;
