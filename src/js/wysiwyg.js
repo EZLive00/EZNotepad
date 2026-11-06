@@ -3617,6 +3617,15 @@ export class WysiwygEditor {
 
   /* ---------------- 高亮重复行 ---------------- */
 
+  /** 现在有没有标亮着 —— 直接问 DOM，不另存一份布尔值。
+   *
+   *  标记只存在于块节点上，而**所有重建都会把节点换掉**：切模式走 _render、
+   *  视口搬家走 _windowAt、撤销大文档走 _restoreRecords、整篇替换（大段粘贴）
+   *  也走 _render。另存一份的后果就是它跟 DOM 说两套 —— 用户看到的是
+   *  「切完模式菜单勾还亮着，点第一次只是把这个勾去掉」。从 DOM 读出来就
+   *  永远不会说谎，也不必在每条重建路径上记得补一句复位（漏一条就是同一个 bug）。 */
+  get dupOn() { return !!this.root.querySelector('.w-dup'); }
+
   /** 把「内容出现不止一次」的块标出来，返回标了多少块。
    *
    *  按块算而不是按行算：代码块是「一个块十行」，行级标记在 DOM 里落不下去；
@@ -3636,14 +3645,11 @@ export class WysiwygEditor {
       if (g.length < 2) continue;
       for (const b of g) { b.classList.add('w-dup'); n++; }
     }
-    this.dupOn = n > 0;
     return n;
   }
 
   clearDuplicates() {
-    if (!this.dupOn) return;
     for (const b of this.root.querySelectorAll('.w-dup')) b.classList.remove('w-dup');
-    this.dupOn = false;
   }
 
   /** 保留旧接口：菜单里的「加粗/斜体」等通过标记字符串调用 */

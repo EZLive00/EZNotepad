@@ -319,6 +319,24 @@ try {
     await ev('window.__snp.commands.dupLines(); 0');
     await ev('new Promise(r => setTimeout(r, 200))');
     ok('再点一次清掉标记', (await ev(`document.querySelectorAll('.cm-dup').length`)) === 0);
+
+    /* 切模式（整篇重渲）会把标记连节点一起换掉，菜单的勾必须跟着消失：
+       留一个假「开着」的状态，第一次点击就只是把勾去掉，看着像没反应 */
+    await ev(`window.__snp.newTab('dup2.md', '一\\n二\\n一\\n', null)`);
+    await ev('window.__snp.commands.modeWysiwyg()');
+    await ev('new Promise(r => setTimeout(r, 260))');
+    await ev('window.__snp.commands.dupLines(); 0');
+    await ev('new Promise(r => setTimeout(r, 200))');
+    ok('所见即所得里标出 2 处重复', (await ev(`document.querySelectorAll('.w-dup').length`)) === 2,
+      String(await ev(`document.querySelectorAll('.w-dup').length`)));
+    await ev('window.__snp.commands.modeEdit()');
+    await ev('new Promise(r => setTimeout(r, 260))');
+    await ev('window.__snp.commands.modeWysiwyg()');
+    await ev('new Promise(r => setTimeout(r, 260))');
+    await ev('window.__snp.commands.dupLines(); 0');
+    await ev('new Promise(r => setTimeout(r, 200))');
+    ok('转一圈回来第一次点击就能标亮', (await ev(`document.querySelectorAll('.w-dup').length`)) === 2,
+      String(await ev(`document.querySelectorAll('.w-dup').length`)));
   }
 } catch (e) {
   ok('运行期间没有异常', false, String((e && e.message) || e).slice(0, 300));
