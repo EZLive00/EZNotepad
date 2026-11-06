@@ -26,7 +26,9 @@ export const cmTheme = EditorView.theme({
     overflow: 'auto',
   },
   '.cm-content': {
-    padding: '14px 0 40vh 0',   // 底部留白：最后一行也能滚到视野中间
+    // 顶部 18px：和所见即所得的 32px 不完全一致是故意的 —— 源码行高更大、
+    // 行号槽在左边，再顶 32px 会显得「半天没内容」。18 与预览的视觉起点接近
+    padding: '18px 0 40vh 0',   // 底部留白：最后一行也能滚到视野中间
     caretColor: 'var(--accent)',
   },
   '.cm-line': { padding: '0 16px 0 4px' },
@@ -36,7 +38,8 @@ export const cmTheme = EditorView.theme({
     backgroundColor: 'transparent',
     color: 'var(--fg-faint)',
     border: 'none',
-    paddingLeft: '10px',
+    // 16px 而不是 10px：行号贴着侧栏边缘时会「黏」在分界线上，留一点气口
+    paddingLeft: '16px',
     userSelect: 'none',
   },
   '.cm-lineNumbers .cm-gutterElement': {
