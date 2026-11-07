@@ -3895,31 +3895,42 @@ export class WysiwygEditor {
     return [...table.querySelectorAll('th,td')].indexOf(cell);
   }
 
-  /** 光标在格内第几行 / 这一格共几行。格内换行是 `<br>`（Shift+Enter 打的），
-   *  和序列化同一套口径；光标不在这格里返回 null。 */
-  cellLineOf(cell) {
-    const sel = window.getSelection();
-    if (!sel.rangeCount) return null;
-    const r = sel.getRangeAt(0);
-    if (!cell.contains(r.startContainer)) return null;
-    const pre = document.createRange();
-    pre.selectNodeContents(cell);
-    pre.setEnd(r.startContainer, r.startOffset);
-    return {
-      line: pre.cloneContents().querySelectorAll('br').length,
-      total: cell.querySelectorAll('br').length + 1,
-    };
+  /** 单元格按 `<br>` 切出的「行」区间（字符偏移，左闭右开）。
+   *
+   *  空单元格里的 `<br>` 是 mkCell 放的光标占位，末尾那个 `<br>` 同理 ——
+   *  `tableToMarkdown()` 也是这么判的（没有文字就整格写空）。它们**不算新的一行**：
+   *  算进去的话，空格子里按 ↓ 会被当成「格内还有下一行」而放行给浏览器，
+   *  浏览器在表格里按阅读顺序走，于是 ↓ 变成往右跳一格。
+   *
+   *  偏移口径与 setCaretOffset / Range.toString() 一致：`<br>` 不占字符、
+   *  零宽空位算 1 个字符。内联元素（<strong>/<mark>…）里的文本用 TreeWalker
+   *  按文档顺序累加，不能只看直接子节点。 */
+  cellLines(cell) {
+    const lines = [];
+    let start = 0;
+    let end = 0;
+    const walk = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
+    let n = walk.nextNode();
+    while (n) {
+      if (n.nodeType === 3) end += n.nodeValue.length;
+      else if (n.nodeName === 'BR') { lines.push({ start, end }); start = end; }
+      n = walk.nextNode();
+    }
+    lines.push({ start, end });
+    /* 只丢最后一个空段：连续两个空段说明用户真的按过 Shift+Enter，
+       得留一行给他站。整格只有一个占位 <br> 时丢完也还剩一行。 */
+    const last = lines[lines.length - 1];
+    if (lines.length > 1 && last.start === last.end) lines.pop();
+    return lines;
   }
 
-  /** 光标在格里的字符偏移（`<br>` 不占位，按 textContent 算） */
-  cellCaretOffset(cell) {
-    const sel = window.getSelection();
-    if (!sel.rangeCount) return 0;
-    const r = sel.getRangeAt(0);
-    if (!cell.contains(r.startContainer)) return 0;
+  /** 指定端点在格内的字符偏移。有选区时要读 focus 端（光标所在），
+   *  不能用 range 的 start —— 反向选择时两者不是同一个位置。 */
+  cellOffsetAt(cell, node, offset) {
+    if (!node || !cell.contains(node)) return 0;
     const pre = document.createRange();
     pre.selectNodeContents(cell);
-    pre.setEnd(r.startContainer, r.startOffset);
+    try { pre.setEnd(node, offset); } catch { return 0; }
     return pre.toString().length;
   }
 
@@ -3931,27 +3942,53 @@ export class WysiwygEditor {
     return this.isCaretAtEnd(info.cell);
   }
 
-  /** 表格里的 ↑↓：同一列上下走一格；格内还有行（Shift+Enter 换的）时先走格内。
+  /** 表格里的 ↑↓：**一律自己接管**，绝不交给浏览器默认行为。
    *
-   *  为什么必须自己接管：单元格没有自己的「行」，浏览器把整张表当一溜行内盒子，
-   *  于是 ↓ 落到的是**阅读顺序的下一格**（中间格 ↓ 往右跑），和 → 完全一样。
-   *  到表格边界就停住 —— 除了右下角那一格，那儿 ↓ 是出表（和 → 共用一处判据）。 */
+   *  单元格没有自己的「行」，浏览器把整张表当一溜行内盒子，↑↓ 走的是
+   *  **阅读顺序**（中间格 ↓ 往右跑，和 → 一模一样）。旧版只在「格内没有
+   *  下一行」时才 preventDefault，其余情况放行给浏览器做「格内行移动」——
+   *  可浏览器在表格里根本不做格内行移动。再加上空单元格的占位 `<br>`
+   *  被算成真换行，同一个格子光标在 `<br>` 前 / 后行为还不一样，这就是
+   *  用户看到的「有时候上下、有时候左右」。
+   *
+   *  顺序：格内还有硬换行（Shift+Enter）先走格内那一行；走完了才到同一列的
+   *  相邻表格行 —— `tableInfo().rows` 含 thead，表头是第 0 行，↑↓ 都能进出。
+   *  到上下边界停住；只有右下角那一格 ↓ 出表（和 → 共用判据）。
+   *  Shift+↑/↓ 也走这条纵向路径，用 setBaseAndExtent 把选区扩到目标位置。 */
   arrowInCell(e, info) {
+    /* 这一下不能省、也不能只在某些分支做：浏览器默认在表格里就是横向跳。 */
+    e.preventDefault();
     const down = e.key === 'ArrowDown';
-    const pos = this.cellLineOf(info.cell);
-    if (!pos) return;
-    /* 格内确实还有上/下一行：交给浏览器做纯文本的行移动，它更懂折行 */
-    if (down ? pos.line < pos.total - 1 : pos.line > 0) return;
-    e.preventDefault();                  // 不拦的话浏览器会横向跳到邻格
-    const row = info.rows[info.rowIdx + (down ? 1 : -1)];
-    if (row) {
-      const target = row.children[info.colIdx];
+    const sel = window.getSelection();
+    if (!sel.rangeCount) return;
+    const lines = this.cellLines(info.cell);
+    const off = this.cellOffsetAt(info.cell, sel.focusNode, sel.focusOffset);
+    let li = lines.findIndex((l) => off < l.end);
+    if (li < 0) li = lines.length - 1;
+    const col = off - lines[li].start;
+    const anchor = { node: sel.anchorNode, offset: sel.anchorOffset };
+
+    let target = info.cell;
+    let dst;
+    if (down ? li < lines.length - 1 : li > 0) {
+      dst = lines[li + (down ? 1 : -1)];               // 格内上 / 下一行
+    } else {
+      const row = info.rows[info.rowIdx + (down ? 1 : -1)];
+      if (!row) {
+        if (down && this.atTableExit(info)) this.caretAfterBlock(info.block);
+        return;                                        // 上下边界：停住
+      }
+      target = row.children[info.colIdx];
       if (!target) return;
-      /* 目标格短就停在末尾：这里没有更细的锚点，按字符数对齐已经够稳 */
-      setCaretOffset(target, Math.min(this.cellCaretOffset(info.cell), target.textContent.length));
-      return;
+      const dl = this.cellLines(target);
+      /* 往下进目标格落在它第一行、往上落在最后一行，行内按同一字符列对齐 */
+      dst = dl[down ? 0 : dl.length - 1];
     }
-    if (down && this.atTableExit(info)) this.caretAfterBlock(info.block);
+    setCaretOffset(target, dst.start + Math.min(col, dst.end - dst.start));
+    if (e.shiftKey && anchor.node && anchor.node.isConnected) {
+      const r = sel.getRangeAt(0);
+      sel.setBaseAndExtent(anchor.node, anchor.offset, r.startContainer, r.startOffset);
+    }
   }
 
   focusCell(block, row, col) {
