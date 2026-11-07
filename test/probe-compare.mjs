@@ -1189,9 +1189,16 @@ try {
     await cmp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: atDrag.x, y: atDrag.y + (holdY - atDrag.y) * k / 6, button: 'left', buttons: 1 });
     await sleep(60);
   }
-  for (let k = 0; k < 10; k++) {
+  /* dragTick 是 requestAnimationFrame 驱动的：串跑时前几个探针刚收尾，主线程
+     偶发忙一拍，原来写死的 10×110ms 会采样到「还没滚起来」（top=0、选区只剩
+     一屏那 7 行），接着三条拖选断言一起假红，单跑却又全绿。这里改成轮询等
+     **滚动真正发生**这个客观前置条件：至少推满原先的 ~1.2s，最多 3s；断言
+     本身（top>0 且选区 >40 行）一点没放宽，产品不滚照样红。 */
+  for (let k = 0; k < 30; k++) {
     await cmp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: atDrag.x, y: holdY, button: 'left', buttons: 1 });
-    await sleep(110);
+    await sleep(100);
+    const top = await cmp.ev(`document.getElementById('scrollL').scrollTop`);
+    if (top > 0 && k >= 11) break;
   }
   const dragged = await cmp.ev(`({
     lines: getSelection().toString().split('\\n').filter(Boolean).length,
@@ -1200,8 +1207,9 @@ try {
   })`);
   await cmp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: atDrag.x, y: holdY, button: 'left', clickCount: 1 });
   await sleep(250);
+  const dragEnv = await cmp.ev(`({ vis: document.visibilityState, focus: document.hasFocus() })`);
   ok('拖到视口下缘会继续滚动，选区跟着往下长',
-    dragged.top > 0 && dragged.lines > 40, JSON.stringify({ dragDom0, dragged }));
+    dragged.top > 0 && dragged.lines > 40, JSON.stringify({ dragDom0, dragged, dragEnv }));
   ok('视口外的行会被补进 DOM（否则选区到边缘就断）',
     dragged.dom > dragDom0, `${dragDom0} → ${dragged.dom}`);
   /* 判「没散」而不是「一字不差」：dragTick 每几十毫秒补一屏，采样 dragged
@@ -1625,7 +1633,11 @@ try {
   ok('自动换行时不需要横向滚动',
     wg0.sw <= wg0.cw + 1, JSON.stringify({ sw: wg0.sw, cw: wg0.cw }));
 
-  /* 视口顶部那一行的行号。滚到 1600px：换行态下正好落在第 21 行顶 */
+  /* 视口顶部那一行的行号。⚠️ 别把「滚到 1600px 是第几行」写死：那取决于
+     行高（折几行由栏宽和字号算出来），换 DPI / 字号 / 窗口宽度就变 —— 本机
+     现在折 3 行、rowH=60，1600px 落在第 27 行，而旧断言还盯着早期的 21，
+     于是「切来切去明明都是 27」也判红。真正的契约是：确实滚到了中段，
+     且切换换行前后顶部仍是**同一行**。 */
   const firstLine = () => cmp.ev(`(() => {
     const sc = document.getElementById('scrollL');
     const s = sc.getBoundingClientRect();
@@ -1633,11 +1645,14 @@ try {
       .find((x) => x.getBoundingClientRect().bottom > s.top + 1);
     return r ? r.querySelector('.cmp-ln').textContent : null;
   })()`);
+  const scrollTopL = () => cmp.ev(`document.getElementById('scrollL').scrollTop`);
 
   await cmp.ev(`document.getElementById('scrollL').scrollTop = 1600`);
   await sleep(450);
   const top0 = await firstLine();
-  ok('滚到中段，顶部落在第 21 行', top0 === '21', String(top0));
+  const scroll0 = await scrollTopL();
+  ok('滚到中段，顶部不是开头那几行',
+    top0 && +top0 >= 12 && +top0 <= 60, String(top0));
 
   await cmp.ev(`(() => { const e = document.getElementById('optWrap'); e.checked = false; e.dispatchEvent(new Event('change')); })()`);
   await sleep(700);
@@ -1646,15 +1661,20 @@ try {
   ok('关掉之后长行横向滚起来', wg1.sw > wg1.cw + 100, JSON.stringify({ sw: wg1.sw, cw: wg1.cw }));
   ok('body 上挂着 data-nowrap，白空格规则也回到 pre',
     wg1.nowrap === true && wg1.ws === 'pre', JSON.stringify(wg1));
-  /* 行高从 80 变回 20，scrollTop 那个数字的含义全变了；不补偿的话
-     正在读第 21 行的人会被甩到别处 —— 这是切换时最容易忽略的一处 */
+  /* 行高从 60 变回 20，scrollTop 那个数字的含义全变了；不补偿的话
+     正在读的那一行会被甩到别处 —— 这是切换时最容易忽略的一处。
+     除了行号不变，再验一次 scrollTop 真的按新行高重算过（setWrap 里
+     rowAtY → rowTop 那一对），否则「碰巧行号一样」也会骗过上一条。 */
   const top1 = await firstLine();
-  ok('切换显示模式时视口顶部那一行不跳走', top1 === '21', `${top0} → ${top1}`);
+  const scroll1 = await scrollTopL();
+  ok('切换显示模式时视口顶部那一行不跳走', top1 === top0, `${top0} → ${top1}`);
+  ok('切换时按新行高重算 scrollTop（不是死记像素）',
+    scroll1 > 0 && scroll1 < scroll0 - 100, `${scroll0} → ${scroll1}`);
 
   await cmp.ev(`(() => { const e = document.getElementById('optWrap'); e.checked = true; e.dispatchEvent(new Event('change')); })()`);
   await sleep(700);
   const top2 = await firstLine();
-  ok('切回自动换行，顶部还是同一行', top2 === '21', `${top1} → ${top2}`);
+  ok('切回自动换行，顶部还是同一行', top2 === top0, `${top0} → ${top2}`);
 
   /* 右键：和主窗口一样，换行开关在右键里也要有 —— 只读态也常想「这行太长，折一下」 */
   await cmp.ev(`document.getElementById('scrollL').scrollTop = 0`);
