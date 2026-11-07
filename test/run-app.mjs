@@ -372,6 +372,81 @@ try {
     await press('ArrowDown', 'ArrowDown', 40);
     ok('最后一行按 ↓ 停在原地，不绕回别处', (await cellAt()) === '2,1,辛', String(await cellAt()));
 
+    /* ---- 9b. 空表头 / 空单元格 / 格内换行：↑↓ 永远只上下 ----
+       旧实现把 mkCell 给空格子垫的占位 <br> 算成「格内还有下一行」，于是
+       放行给浏览器；浏览器在 contenteditable 表格里按阅读顺序走，↓ 就变成
+       往右跳。mkTable 的默认表头是空串数组，所以「表头按 ↓」几乎必中。
+       同一个空格子光标在 <br> 前 / 后还会表现不同 —— 正是「有时候上下、
+       有时候左右」。这里全部用真实按键复现，合成事件到不了浏览器默认那一步。 */
+    const TBL2 = ['|  |  |  |', '| --- | --- | --- |', '|  | 戊 |  |', '|  |  |  |', ''].join('\n');
+    await ev(`window.__snp.newTab('tbl-blank.md', ${JSON.stringify(TBL2)}, null)`);
+    await ev('window.__snp.commands.modeWysiwyg()');
+    await ev('new Promise(r => setTimeout(r, 320))');
+    const blankCell = (r, c) => ev(`(() => {
+      const b = document.querySelector('.w-block[data-type=table]');
+      const rows = b.querySelectorAll('tr').length;
+      window.__snp.editor.focusCell(b, ${r}, ${c});
+      return rows;
+    })()`);
+    const rowCount = await blankCell(0, 0);
+    ok('空表头表格渲染出 3 行（表头 + 2 行数据）', rowCount === 3, String(rowCount));
+    ok('起点在空表头 (0,0)', (await cellAt()) === '0,0,', String(await cellAt()));
+    await press('ArrowDown', 'ArrowDown', 40);
+    ok('空表头按 ↓ 只下移一行，不往右跑', (await cellAt()) === '1,0,', String(await cellAt()));
+    await press('ArrowUp', 'ArrowUp', 38);
+    ok('↑ 从首行数据回空表头同一列', (await cellAt()) === '0,0,', String(await cellAt()));
+
+    await blankCell(0, 1);
+    await ev('new Promise(r => setTimeout(r, 140))');
+    await press('ArrowDown', 'ArrowDown', 40);
+    ok('表头中间列 ↓ 到 (1,1)，不是右边一格', (await cellAt()) === '1,1,戊', String(await cellAt()));
+
+    await blankCell(1, 0);
+    await ev('new Promise(r => setTimeout(r, 140))');
+    await press('ArrowDown', 'ArrowDown', 40);
+    ok('空数据格 ↓ 只下移，不往右跑', (await cellAt()) === '2,0,', String(await cellAt()));
+    await press('ArrowDown', 'ArrowDown', 40);
+    ok('末行 ↓ 停在同一列', (await cellAt()) === '2,0,', String(await cellAt()));
+
+    /* 光标停在占位 <br> **之前**（点空格子左侧、或把字删空后 Chromium 的落点）。
+       focusCell 用的是 setCaretOffset，空格子没有文本节点会落到 <br> 之后；
+       两种落点在旧实现里一个接管、一个放行，正是「有时候上下、有时候左右」。 */
+    await ev(`(() => {
+      const b = document.querySelector('.w-block[data-type=table]');
+      const c = b.querySelectorAll('tr')[1].children[0];
+      const r = document.createRange(); r.setStart(c, 0); r.collapse(true);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      return 1;
+    })()`);
+    await ev('new Promise(r => setTimeout(r, 140))');
+    ok('空格子光标确实落在占位 <br> 前', (await cellAt()) === '1,0,', String(await cellAt()));
+    await press('ArrowDown', 'ArrowDown', 40);
+    ok('占位 <br> 前的 ↓ 也只下移，不往右跑', (await cellAt()) === '2,0,', String(await cellAt()));
+    await press('ArrowUp', 'ArrowUp', 38);
+    ok('占位 <br> 前的 ↑ 也只上移', (await cellAt()) === '1,0,', String(await cellAt()));
+
+    /* 格内 Shift+Enter 换过行：↓ 先走格内那一行，走完才跨到下一行同列。
+       设计承诺见《功能设计》表格光标一节，不能为了修横向跳把它删掉。 */
+    await ev(`(() => {
+      const b = document.querySelector('.w-block[data-type=table]');
+      b.querySelectorAll('tr')[1].children[1].innerHTML = '甲<br>乙';
+      window.__snp.editor.focusCell(b, 1, 1);
+      return 1;
+    })()`);
+    await ev('new Promise(r => setTimeout(r, 160))');
+    const inCell = () => ev(`(() => {
+      const i = window.__snp.editor.tableInfo();
+      const pre = document.createRange(); pre.selectNodeContents(i.cell);
+      const r = getSelection().getRangeAt(0);
+      pre.setEnd(r.startContainer, r.startOffset);
+      return i.rowIdx + ',' + i.colIdx + ',' + pre.toString().length;
+    })()`);
+    ok('格内两行起点在第一行', (await inCell()) === '1,1,0', String(await inCell()));
+    await press('ArrowDown', 'ArrowDown', 40);
+    ok('格内两行时 ↓ 先走格内下一行', (await inCell()) === '1,1,1', String(await inCell()));
+    await press('ArrowDown', 'ArrowDown', 40);
+    ok('格内走完 ↓ 才到下一行同一列', (await cellAt()).startsWith('2,1,'), String(await cellAt()));
+
     /* ---- 10. 删空一行之后 "/" 还能唤出插入面板 ----
        真 bug：删掉最后一个字，光标被 Chromium 提到 .w-block 上、.w-text 只剩 <br>，
        严格按 .w-text 读偏移得到 -1，面板那道门直接 return。 */
