@@ -9,7 +9,9 @@
 // ============================================================
 import { readFileSync } from 'node:fs';
 
-const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
+// 统一行尾：core.autocrlf=true 时工作区是 CRLF，而断言里的多行片段是 LF，
+// 内容一致也会判红。读进来先归一化，Linux / CI 上不受影响。
+const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 let pass = 0;
 let fail = 0;
 const ok = (cond, msg) => {
@@ -73,6 +75,30 @@ has(read('src/js/errors.js'), "'recycle.failed': '移入回收站失败（{detai
 const css = read('src/styles.css');
 has(css, 'html[data-os="mac"] .win-ctrl', 'mac 下隐藏自绘窗口按钮');
 has(css, 'html[data-os="mac"] .titlebar', 'mac 下给交通灯留位');
+
+// ---- 从 main 同步的 1.2.0 ----
+// 这个分支永远不会合并回 main，也不会再从 main 自动合过来。共用功能移植完要靠
+// 自检钉住：哪天有人按 Windows 版改配置却漏了这几处，本机立刻红，不用等 Mac 真机。
+const fmt = read('src/js/format.js');
+has(fmt, 'export function externalFileKind', 'PDF 只读格式判定在 format.js');
+const be = read('src/js/backend.js');
+has(be, 'export const openExternal', 'backend.js 暴露「交给系统默认程序」');
+has(be, "{ name: 'PDF', extensions: ['pdf'] }", '打开对话框能选到 PDF');
+has(read('src/js/markdown.js'), 'get label() { return tt(', '提示块标题运行时取词，不在加载时固化');
+has(read('src/js/wysiwyg.js'), 'export function relabelCallouts', '切语言能就地刷新提示块默认标题');
+has(app, 'relabelCallouts(el.wysiwyg)', 'applyLang 真的调用了 relabelCallouts');
+has(app, 'if (externalFileKind(path))', 'openPath 里拦下 PDF，不建标签、不按文本读');
+has(css, 'overflow: visible !important', '打印媒体不再锁死视口高度');
+has(css, 'display: block !important', '打印媒体撤掉 flex 列布局（三条要一起撤）');
+has(read('src/js/i18n-dict-src.js'), '已用系统默认程序打开 PDF：{name}', 'PDF 分流提示词条进了源表');
+
+// 四处版本号必须一致：发版时漏改一个，本机就能发现。
+const pkv = JSON.parse(read('package.json')).version;
+const cfv = JSON.parse(read('src-tauri/tauri.conf.json')).version;
+ok(/^\d+\.\d+\.\d+$/.test(pkv) && cfv === pkv, 'package.json 与 tauri.conf.json 版本一致');
+has(read('src-tauri/Cargo.toml'), `version = "${pkv}"`, 'Cargo.toml 版本与前端一致');
+has(read('src-tauri/Cargo.lock'), `name = "simple-notepad"\nversion = "${pkv}"`,
+  'Cargo.lock 里 simple-notepad 版本与前端一致');
 
 // ---- 构建与 CI ----
 const pack = read('打包-macOS.command');
