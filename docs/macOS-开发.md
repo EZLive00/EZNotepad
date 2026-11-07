@@ -1,6 +1,9 @@
 # macOS 独立分支开发笔记
 
 > **分支**：`platform/macos`，从 `main` 的 1.1.10 切出。
+> **同步**：2026-11-07 把 `main` 的 1.2.0（多页 PDF 打印样式、PDF 分流、
+> 提示块 i18n、对比窗口假红清理、文档与版本号）逐条 cherry-pick 到本分支，
+> **没有合并、也不会合并回 `main`**；版本同为 1.2.0，清单见 §二 M7。
 > **定位**：独立产品线，**不回合并 main**。业务需求与 Windows 版一致，
 > 但允许为平台差异改动配置与外壳，不必顾虑对 main 的兼容。
 > 这份文件是**分支工作笔记**，不参与「四份正式文档各司其职」的约束；
@@ -85,6 +88,20 @@ macOS-only 的 Rust 分支、Tauri 配置、前端依赖与打包链路第一次
   工作区补偿专用。给它们加 `#[cfg(target_os = "windows")]`，两条平台各建一次窗；
   Windows 行为完全等价，macOS target 编译零告警。
 
+### M7：与 main 1.2.0 对齐（2026-11-07）
+
+| 项 | 移植情况 |
+|---|---|
+| 导出 PDF 多页 | `@media print` 三条屏幕布局一起撤；但本平台的 `export_pdf` 仍返回 `pdf.unsupported`（见下 M4）—— **共用 CSS 修好了不等于本平台已支持导出** |
+| 打开 PDF | `externalFileKind()` 唯一白名单 + `openPath()` 分流到 `tauri-plugin-opener` 的系统默认阅读器，`fileFilters()` 加 PDF 项；不建标签、不按文本读 |
+| 提示块标题 | `CALLOUT_TYPES.label` 改 getter，`applyLang()` 调 `relabelCallouts()` 就地刷新；用户自定义标题不翻，预览与所见即所得都跟随语言 |
+| 对比窗口假红 | 几何断言改用实测顶部行 + 按新行高重算 `scrollTop`；拖选等待客观前置条件而非固定 sleep；六条假红清零 |
+| 表格 ↑/↓ | 早前已同步：占位 `<br>` 不算真实换行，↑/↓ 无条件接管且只走同一列（含表头） |
+| 版本 | 四处统一 `1.2.0`；本分支不打 `v1.2.0` tag（那是 `main` 的 Windows 发版） |
+
+`test/run-macos.mjs` 新增一组断言，把这些共用功能与四处版本号钉住。这个分支
+不会再自动收到 `main` 的改动，漏件靠它在本机报警，别等 Mac 真机。
+
 ## 三、未完成（别当成已支持）
 
 ### M4：导出 PDF —— **目前返回「这个平台还不支持导出 PDF」**
@@ -108,6 +125,12 @@ macOS-only 的 Rust 分支、Tauri 配置、前端依赖与打包链路第一次
 
 ⛔ 不要用「命令返回成功但没生成文件」或「改成导出 HTML」来假装支持。
 宁可明确说不支持，也不给用户一个空文件或名不副实的菜单项。
+
+ℹ️ 1.2.0 把 Windows 那边「长文档只出第一页」的打印 CSS 修复同步了过来
+（`@media print` 里 `height:auto` / `overflow:visible` / `display:block` 三条一起撤），
+但本分支的 `export_pdf` 仍是上面的 `pdf.unsupported` 桩：**共用前端对齐了，
+macOS 导出 PDF 依旧没做**。反过来，1.2.0 的「打开 PDF」在本平台是可用的：
+它走 `tauri-plugin-opener` 的 `open_path`，交给系统默认阅读器，与导出是两条独立的路。
 
 ### M3 真机回归（本轮只能写方案，不能验）
 
@@ -158,6 +181,9 @@ WebView2 error: WindowsError(HRESULT(0x8007139F), "组或资源的状态不是�
 [ ] ⌘S / ⌘O / ⌘P 菜单里显示的是 ⌘ 而不是 Ctrl，按下去有效
 [ ] 标题栏：交通灯不被品牌标挡住、拖标题栏能移动、双击最大化、四边能缩放
 [ ] /Users/me/a.png 这类绝对路径图片能显示
+[ ] 打开 .pdf：交给系统默认阅读器，本程序不建标签、不报 binary 错
+[ ] 切到英文后，已画出的提示块默认标题变 Warning（自定义标题不变）
+[ ] 导出 PDF 仍明确提示「这个平台还不支持」，不给空文件、不假成功
 [ ] 拖文档开标签、拖图片落 assets/
 [ ] 文本对比 / 文件夹对比窗口：出生是最大化、按钮图标与实际状态一致
 [ ] pnpm exec tauri build --target aarch64-apple-darwin --bundles app,dmg 出包
@@ -168,6 +194,7 @@ WebView2 error: WindowsError(HRESULT(0x8007139F), "组或资源的状态不是�
 ```bash
 # 本机（Windows）：只验证共用代码没被改坏
 cargo check
+node test/run-macos.mjs   # 分支自检：配置 / 平台分支 / 1.2.0 同步件 / 四处版本
 node test/run.mjs && node test/run-app.mjs && node test/run-probe.mjs
 
 # 本机（Windows）：交叉类型检查 macOS 分支（不链接，不需要 Xcode）
