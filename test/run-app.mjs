@@ -469,6 +469,66 @@ try {
     ok('…斜杠没有落进正文', !(await ev('window.__snp.editor.toMarkdown()')).includes('/'),
       JSON.stringify(await ev('window.__snp.editor.toMarkdown()')));
   }
+
+  /* ---- 11. 提示块标题跟随界面语言 ----
+     真 bug：CALLOUT_TYPES.label 在模块加载时把 tt() 算成中文固定住了，
+     换语言后所见即所得里「警告」还是中文。自定义标题是用户正文，不许被翻。 */
+  {
+    const coMd = '> [!warning]\n> 注意内容\n\n> [!danger] 我自己的标题\n> 内容';
+    await ev(`window.__snp.newTab('co.md', ${JSON.stringify(coMd)}, null)`);
+    await ev('window.__snp.commands.modeWysiwyg()');
+    await ev('new Promise(r => setTimeout(r, 320))');
+    const heads = () => ev(`[...document.querySelectorAll('.wysiwyg .w-co-head span')].map(s => s.textContent)`);
+    const zh = await heads();
+    ok('中文下默认标题是「警告」，自定义标题原样保留',
+      zh[0] === '警告' && zh[1] === '我自己的标题', JSON.stringify(zh));
+
+    await ev('window.__snp.commands.settings()');
+    await ev(`(() => { const s = document.getElementById('setLang'); s.value = 'en'; s.dispatchEvent(new Event('change')); })()`);
+    await ev('new Promise(r => setTimeout(r, 320))');
+    const en = await heads();
+    ok('切到英文：所见即所得提示块标题变成 Warning', en[0] === 'Warning', JSON.stringify(en));
+    ok('切语言不会把用户自己写的标题翻掉', en[1] === '我自己的标题', JSON.stringify(en));
+
+    await ev('window.__snp.commands.modePreview()');
+    await ev('new Promise(r => setTimeout(r, 320))');
+    const pv = await ev(`[...document.querySelectorAll('#preview .co-head')].map(s => s.textContent.trim())`);
+    ok('预览侧的提示块标题同样跟着语言走',
+      pv[0] === 'Warning' && pv[1] === '我自己的标题', JSON.stringify(pv));
+
+    /* harness 的 profile 按 cdpPort 复用：留着 en 会污染下一轮，务必还原 */
+    await ev(`(() => { const s = document.getElementById('setLang'); s.value = 'zh-CN'; s.dispatchEvent(new Event('change')); })()`);
+    await click('#dlgClose');
+    const dlgState = await ev(`(() => {
+      const o = document.getElementById('dlgOverlay');
+      return { hiddenAttr: o.hidden, hiddenCls: o.classList.contains('hidden') };
+    })()`);
+    /* dialog() 收起时是给 overlay 加 .hidden（CSS 里 display:none），不是设
+       hidden 属性；两种都认，别把「其实关好了」判成没关 */
+    ok('设置面板收起来了', dlgState.hiddenCls || dlgState.hiddenAttr, JSON.stringify(dlgState));
+  }
+
+  /* ---- 12. PDF 交给系统默认阅读器，不进文本标签模型 ----
+     二进制塞进 t.content 会连带污染草稿 / localStorage、保存、格式化、
+     查找和外部改动重载；入口分流是成本最低且不会串档的做法。 */
+  {
+    ok('只有 PDF 被认成外部只读格式',
+      (await ev(`window.__snp.externalFileKind('手册.PDF')`)) === 'pdf'
+      && (await ev(`window.__snp.externalFileKind('手册.md')`)) === '');
+
+    const tabsBefore = await ev(`document.querySelectorAll('.tab').length`);
+    await ev('window.__calls.length = 0');
+    await ev(`window.__snp.openPath('C:/tmp/手册.PDF')`);
+    const calls = await ev(`window.__calls.slice()`);
+    const tabsAfter = await ev(`document.querySelectorAll('.tab').length`);
+    ok('打开 PDF 不建标签、也不去按文本读取',
+      tabsAfter === tabsBefore && !calls.includes('read_text_file'),
+      JSON.stringify({ tabsBefore, tabsAfter, calls }));
+    ok('打开 PDF 调的是系统默认程序',
+      calls.includes('plugin:opener|open_path'), JSON.stringify(calls));
+    ok('给了明确提示，不会以为点了没反应',
+      (await ev(`[...document.querySelectorAll('.toast')].map(t => t.textContent).join('|')`)).includes('手册.PDF'));
+  }
 } catch (e) {
   ok('运行期间没有异常', false, String((e && e.message) || e).slice(0, 300));
 } finally {

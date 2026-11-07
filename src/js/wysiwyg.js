@@ -226,6 +226,20 @@ function mkCalloutHead(callout, title = '') {
   return head;
 }
 
+/** 切换界面语言后，把**已经画在屏幕上**的提示块默认标题一起翻掉。
+ *  预览会在 applyLang() 里重渲染，所见即所得却不能整篇重画 —— 那会丢光标
+ *  和撤销栈，所以只改这一处文本节点。用户自己写的标题存在
+ *  data-callout-title 里，是正文不是界面文案，不能碰。 */
+export function relabelCallouts(root) {
+  if (!root) return;
+  for (const b of root.querySelectorAll('.w-block[data-callout]')) {
+    if (b.dataset.calloutTitle) continue;
+    const span = b.querySelector('.w-co-head > span');
+    const def = CALLOUT_TYPES[b.dataset.callout];
+    if (span && def) span.textContent = def.label;
+  }
+}
+
 export function mkQuote(text = '', level = 0, callout = '', title = '') {
   const b = blockEl('bq', 'w-bq');
   b.dataset.indent = String(level);

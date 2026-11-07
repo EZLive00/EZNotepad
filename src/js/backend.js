@@ -5,6 +5,7 @@
 import { invoke as rawInvoke } from '../vendor/api/core.js';
 import { getVersion } from '../vendor/api/app.js';
 import { open as openDialog, save as saveDialog } from '../vendor/plugin-dialog/dist-js/index.js';
+import { openPath as openWithDefault } from '../vendor/plugin-opener/dist-js/index.js';
 import { tt } from './i18n.js';
 import { localizeError } from './errors.js';
 
@@ -13,6 +14,9 @@ const fileFilters = () => [
   { name: tt('文本与代码'), extensions: ['md', 'markdown', 'txt', 'json', 'log', 'csv', 'js', 'ts', 'py', 'html', 'css', 'xml', 'yml', 'yaml', 'ini', 'sh', 'sql', 'rs', 'go', 'java', 'c', 'cpp'] },
   { name: 'Markdown', extensions: ['md', 'markdown'] },
   { name: 'JSON', extensions: ['json'] },
+  /* PDF 不是文本：选中后会交给系统默认阅读器（见 app.js::openPath）。
+     没有这一项的话，「打开文件」对话框里根本点不到 PDF。 */
+  { name: 'PDF', extensions: ['pdf'] },
   { name: tt('所有文件'), extensions: ['*'] },
 ];
 
@@ -33,6 +37,10 @@ export async function pickFile(title = tt('打开文件')) {
   const r = await openDialog({ title, multiple: false, directory: false, filters: fileFilters() });
   return typeof r === 'string' ? r : (r && r.path) || null;
 }
+
+/** 用系统关联程序打开一个文件。权限已由 capabilities 的 opener:allow-open-path 给出；
+ *  调用方必须先把路径限制在白名单（见 externalFileKind），别拿它当任意启动器。 */
+export const openExternal = (path) => openWithDefault(path);
 
 export async function pickFolder(title = tt('选择文件夹')) {
   const r = await openDialog({ title, directory: true, multiple: false });

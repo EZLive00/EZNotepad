@@ -4,11 +4,11 @@
 // ============================================================
 import { createTab, tabs, settings, saveSettings, LS, isDirty, activeTab, setActive, removeTab, DEFAULTS } from './state.js';
 import * as be from './backend.js';
-import { detectKind, kindLabel, modesFor, formatByKind, lineOps, caseOps } from './format.js';
+import { detectKind, kindLabel, modesFor, formatByKind, lineOps, caseOps, externalFileKind } from './format.js';
 import { newDocTypes } from './langs.js';
 import { renderPreview, extractOutline } from './preview.js';
 import { outlineFromMarkdown, headingSlugs } from './markdown.js';
-import { WysiwygEditor } from './wysiwyg.js';
+import { WysiwygEditor, relabelCallouts } from './wysiwyg.js';
 import { PlainEditor } from './editor/plain-editor.js';
 import { toast, dialog, confirmBox, contextMenu } from './ui.js';
 import { MergeWizard } from './mergewizard.js';
@@ -1021,6 +1021,9 @@ function applyLang() {
   refreshStats();   // 状态栏「N 字 · N 字符」同属动态区
   updateStatus();
   tree.render();
+  /* 所见即所得的提示块标题是建 DOM 时写死的文本节点，schedulePreview()
+     只重画预览那一侧。这里就地改默认标题，不动正文、不动撤销栈。 */
+  relabelCallouts(el.wysiwyg);
   schedulePreview();
   refreshTitle();
 }
@@ -1531,6 +1534,21 @@ export async function openPath(path) {
      两个标签写同一个文件，后保存的会把先保存的盖掉。 */
   const qp = quickPath || await quickFile().catch(() => null);
   if (qp && path === qp) return openQuickNote();
+
+  /* PDF 这类二进制只读格式：在点开文件的入口就交给系统默认阅读器，本程序
+     不建标签。按文本读会直接报 file.binary；就算硬塞进标签，草稿/localStorage、
+     保存、格式化、查找、外部改动重载都会把它当文本处理，改动面大且容易串档。
+     文件树 / 拖放 / 命令行 / 最近打开都汇到 openPath，这一处分流全部覆盖。 */
+  if (externalFileKind(path)) {
+    try {
+      await be.openExternal(path);
+      addRecent(path);
+      toast(tt('已用系统默认程序打开 PDF：{name}', { name: be.baseName(path) }));
+    } catch (e) {
+      dialog({ title: tt('无法打开'), body: errText(e) });
+    }
+    return null;
+  }
 
   const existing = tabs.find((t) => t.path === path);
   if (existing) {
@@ -4787,6 +4805,7 @@ window.__snp = {
   capture: persistCurrentView,
   openCompare: (l, r) => be.openCompareWindow(l, r),
   exportPdfTo: (p) => exportPdfTo(p),   // 探针：绕开系统保存框跑完整导出
+  externalFileKind: (p) => externalFileKind(p),
 };
 window.__merge = merge;
 

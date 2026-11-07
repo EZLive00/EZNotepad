@@ -217,18 +217,24 @@ function uniqueSlug(text, opts) {
  * 提示块（callout / alert，Obsidian 与 GitHub alerts 同款语法）：
  *   > [!info]  可选标题
  *   > 正文……
- * 键是语法标记（小写），value 的 label 是中文默认标题、icon 对应图标精灵里的 id。
- * note/tip/important/caution 是 GitHub alerts 的命名，收编为别名。
+ * 键是语法标记（小写），value 的 label 是默认标题（中文原文走词条表）、
+ * icon 对应图标精灵里的 id。note/tip/important/caution 是 GitHub alerts
+ * 的命名，收编为别名。
+ *
+ * ⚠️ label 必须是 getter：写成 `label: tt('警告')` 会在**模块加载时**把译文
+ * 固化下来，之后 setLang() 再切语言，预览和所见即所得里还是中文（用户报
+ * 「所见即所得模式下提示上面的文字还是中文，比如警告」）。每次读 def.label
+ * 都重新查一次当前语言，调用方不用改。别把整个对象 spread/序列化缓存。
  */
 export const CALLOUT_TYPES = {
-  info:    { label: tt('信息'), icon: 'info' },
-  warning: { label: tt('警告'), icon: 'triangle-alert' },
-  danger:  { label: tt('危险'), icon: 'octagon-alert' },
-  success: { label: tt('成功'), icon: 'circle-check' },
-  note:      { label: tt('信息'), icon: 'info', aliasOf: 'info' },
-  tip:       { label: tt('成功'), icon: 'circle-check', aliasOf: 'success' },
-  important: { label: tt('警告'), icon: 'triangle-alert', aliasOf: 'warning' },
-  caution:   { label: tt('危险'), icon: 'octagon-alert', aliasOf: 'danger' },
+  info:    { get label() { return tt('信息'); }, icon: 'info' },
+  warning: { get label() { return tt('警告'); }, icon: 'triangle-alert' },
+  danger:  { get label() { return tt('危险'); }, icon: 'octagon-alert' },
+  success: { get label() { return tt('成功'); }, icon: 'circle-check' },
+  note:      { get label() { return tt('信息'); }, icon: 'info', aliasOf: 'info' },
+  tip:       { get label() { return tt('成功'); }, icon: 'circle-check', aliasOf: 'success' },
+  important: { get label() { return tt('警告'); }, icon: 'triangle-alert', aliasOf: 'warning' },
+  caution:   { get label() { return tt('危险'); }, icon: 'octagon-alert', aliasOf: 'danger' },
 };
 
 export const RE_CALLOUT = /^\[!(info|warning|danger|success|note|tip|important|caution)\]\s*(.*)$/i;

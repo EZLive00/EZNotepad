@@ -1657,9 +1657,20 @@ body:not([data-nowrap]) .wysiwyg { overflow-wrap: break-word; }
      两处都给会把正文挤成窄条 */
   @page { size: A4; margin: 16mm 15mm; }
 
+  /* 屏幕布局是「一屏铺满」：html/body 固定 100% 高 + overflow:hidden，body 还是
+     flex 列。打印媒体下照搬会**把整篇文档裁在第一个视口高度里** —— 用户看到的
+     就是「只能导出一页，后面内容没了」。打印必须让文档流自己撑开、允许分页。
+     ⚠️ 别只改 overflow：height:100% 和 flex 都会把分页高度锁死，三条要一起撤。 */
+  html, body {
+    height: auto !important;
+    min-height: 0 !important;
+    width: auto !important;
+    overflow: visible !important;
+    display: block !important;
+  }
   html, body { background: #fff !important; }
   body > *:not(#printRoot) { display: none !important; }
-  #printRoot { display: block !important; }
+  #printRoot { display: block !important; width: auto !important; }
 
   #printRoot .md { max-width: none; font-size: 13.5px; }
   #printRoot .md h1, #printRoot .md h2 { page-break-after: avoid; }
