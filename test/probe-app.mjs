@@ -984,6 +984,35 @@ try {
       after.theme === before && !after.busy && after.print === 0, JSON.stringify(after));
   }
 
+  /* ---------- 导出 PDF 必须分页，不能只剩第一页 ----------
+     2026-11-07 用户报「只能导出一页，后面内容没了」。根因是屏幕布局
+     html/body{height:100%;overflow:hidden;display:flex} 在 @media print 下
+     没解除，整篇文档被裁进第一个视口高度。两条断言一条量布局、一条量
+     真实 PDF 的 /Type /Page 对象数，只改 CSS 不真的导出是抓不到的。 */
+  {
+    await send('Emulation.setEmulatedMedia', { media: 'print' });
+    const pm = await ev(`(() => {
+      const s = getComputedStyle(document.body);
+      const h = getComputedStyle(document.documentElement);
+      return { h: s.height, ov: s.overflow, d: s.display, htmlOv: h.overflow };
+    })()`);
+    await send('Emulation.setEmulatedMedia', { media: '' });   // 空串 = 取消模拟
+    ok('打印媒体下不再锁死视口高度 / 隐藏溢出',
+      pm.ov === 'visible' && pm.htmlOv === 'visible' && pm.d === 'block', JSON.stringify(pm));
+
+    const out = path.join(os.tmpdir(), 'eznotepad-probe', 'probe-export-long.pdf');
+    const md = Array.from({ length: 90 }, (_, i) =>
+      `## 第 ${i + 1} 节\n\n这是第 ${i + 1} 段的正文内容，用来把版面撑过好几页 A4 纸，检查分页是否完整。`).join('\n\n');
+    await ev(`window.__snp.newTab('long.md', ${JSON.stringify(md)}, null)`);
+    await ev(`window.__snp.commands.modePreview()`);
+    await ev(`window.__snp.exportPdfTo(${JSON.stringify(out)})`);
+    await sleep(300);
+    const txt = fs.existsSync(out) ? fs.readFileSync(out).toString('latin1') : '';
+    const pages = (txt.match(/\/Type\s*\/Page\b/g) || []).length;
+    ok('长文档导出成多页 PDF（不是只留第一页）', pages >= 3,
+      `页数 ${pages} / ${txt.length} 字节`);
+  }
+
   /* ---------- 切标签 / 关标签不许串档 ----------
      2026-11-05 的真机 bug：编辑器 DOM 属于上一个标签，而 activeTab() 已经是新标签，
      于是「把 DOM 序列化回 content」这一步把上一篇写进了下一篇。

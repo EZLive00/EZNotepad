@@ -20,6 +20,17 @@ export function detectKind(fileName = '') {
   return id ? LANGS[id].kind : 'txt';
 }
 
+/** 不能按文本打开的只读格式（目前只有 PDF）。
+ *
+ *  为什么不当成一个新 kind 塞进编辑器：PDF 是二进制，t.content 里没有文本，
+ *  而标签模型会把 content 写进草稿 / localStorage、参与保存、格式化、查找、
+ *  外部改动重载 —— 每一条都得为它开特例，改动面大且容易串档。成本最低又
+ *  不撒谎的做法是：在点开文件的那个入口就转给系统默认阅读器，本程序不建标签。
+ *  白名单只在这一处定义，文件树 / 拖放 / 命令行 / 最近打开都走 openPath()。 */
+export function externalFileKind(fileName = '') {
+  return /\.pdf$/i.test(String(fileName)) ? 'pdf' : '';
+}
+
 export function kindLabel(kind) {
   return { md: 'Markdown', json: 'JSON', code: tt('代码'), txt: tt('纯文本'), data: tt('表格文本') }[kind] || tt('文本');
 }
