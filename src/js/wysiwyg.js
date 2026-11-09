@@ -2974,7 +2974,19 @@ export class WysiwygEditor {
     if (!prev) { e.preventDefault(); return; }
     e.preventDefault();
     if (prev.dataset.type === 'hr') { prev.remove(); this.hCoalesce = false; this.flush(); return; }
-    if (prev.dataset.type === 'table' || prev.dataset.type === 'code') { this.placeCaretEnd(prev); return; }
+    if (this.needsLineBelow(prev)) {
+      /* 表格 / 代码块 / 公式块后面那个空段落是给它们垫的落脚行。行首退格应该
+         把它删掉、光标退回块末 —— 原来只 placeCaretEnd 不删块，那一行永远删不掉。
+         非空行仍只送光标：先把字删完，再按一次才轮到删这一行。 */
+      if (this.isEmptyBlock(block)) {
+        block.remove();
+        this.renumber();
+        this.hCoalesce = false;
+        this.flush();
+      }
+      this.placeCaretEnd(prev);
+      return;
+    }
     this.mergeBack(block, prev);
   }
 
@@ -3388,6 +3400,11 @@ export class WysiwygEditor {
       pt.appendChild(n);
     }
     block.remove();
+    /* 两个空段落合并时，双方的占位 <br> 都被上面的循环跳过了，pt 会一个子节点
+       都不剩 —— .w-text 没有行盒就塌成 0 高。视觉上像「一次删了两行」，下一次
+       退格还会因为光标无处落脚而甩进更前面那个块（标题里就表现为光标跑到标题
+       前面、还亮出 ###）。空块必须留一个占位 <br> 撑住行高与落点。 */
+    ensurePlaceholder(pt);
     setCaretOffset(pt, joinAt);
     this.renumber();
     this.hCoalesce = false;
@@ -3418,6 +3435,50 @@ export class WysiwygEditor {
     if (prev) this.placeCaretEnd(prev);
     else this.root.appendChild(mkPara(''));
     this.renumber();   // 删块可能改变相邻引用的 data-bq-tail（编号同理）
+    this.hCoalesce = false;
+    this.flush();
+  }
+
+  /**
+   * 引用整组是一个逻辑块：从组首一路到下一个「空行断出的独立引用」或别的块之前。
+   * 别的类型就是自己一块。bqStart 只打在独立引用上（parseMarkdown / buildRecords
+   * 两处判据相同），所以「前一块是 bq 且自己没有 bqStart」就是续行。
+   *
+   * 一行文字仍可各自编辑，但手柄、转换、删除都拿整组当操作单元 —— 组内某一行
+   * 不许再被单独改类型或删成半截引用。序列化与虚拟滚动记录保持一行一块不动。
+   */
+  bqGroupOf(block) {
+    if (!block) return [];
+    if (block.dataset.type !== 'bq' || !this.root.contains(block)) return [block];
+    let first = block;
+    while (!first.dataset.bqStart) {
+      const p = first.previousElementSibling;
+      if (!p || p.dataset.type !== 'bq') break;
+      first = p;
+    }
+    const group = [first];
+    let b = first;
+    while (b.nextElementSibling && b.nextElementSibling.dataset.type === 'bq'
+      && !b.nextElementSibling.dataset.bqStart) {
+      b = b.nextElementSibling;
+      group.push(b);
+    }
+    return group;
+  }
+
+  /** 块级删除：普通块删一块，引用删整组，表格 / 代码块删整块。
+   *  光标落到相邻块末尾；删光了就补一个空段落并站进去。 */
+  deleteBlock(block = null) {
+    if (!block) block = this.currentBlock();
+    if (!block || !this.root.contains(block)) return;
+    const group = this.bqGroupOf(block);
+    const first = group[0];
+    const last = group[group.length - 1];
+    const prev = first.previousElementSibling || last.nextElementSibling;
+    for (const b of group) b.remove();
+    if (prev && prev.isConnected) this.placeCaretEnd(prev);
+    else this.placeCaretStart(this.root.appendChild(mkPara('')));
+    this.renumber();
     this.hCoalesce = false;
     this.flush();
   }
@@ -3776,13 +3837,18 @@ export class WysiwygEditor {
    * 压成一行才是真丢内容。
    */
   convertBlock(type, opts = {}) {
-    const block = this.currentBlock();
-    if (!block) return false;
+    const cur = this.currentBlock();
+    if (!cur) return false;
+    /* 引用整组是一个逻辑块：光标落在续行上也要连组首一起转，否则第二行会被
+       单独改成标题、留下半截引用。别的类型 group 就只有自己，下面与原来等价。 */
+    const group = this.bqGroupOf(cur);
+    const block = group[0];
+    const last = group[group.length - 1];
     const from = block.dataset.type || 'p';
     if (from === 'table' || from === 'hr') return false;
     if (from === type) return false;
 
-    const src = blockMarkdownText(block);
+    const src = group.map((b) => blockMarkdownText(b)).join('\n');
     /* 只有代码/公式能把多行塞进一个块；其余类型一行一块。
        末尾的空行是代码块那个"空末行"的产物，搬过去只会多出一行空白 */
     let lines;
@@ -3804,10 +3870,12 @@ export class WysiwygEditor {
       }
     });
 
-    /* 换掉之后邻居就找不回来了，先记下原块后面的那块（提示块续行清理要用） */
-    const next0 = block.nextElementSibling;
+    /* 换掉之后邻居就找不回来了，先记下整组后面的那块（提示块续行清理要用） */
+    const next0 = last.nextElementSibling;
     block.replaceWith(nodes[0]);
     for (let i = 1; i < nodes.length; i++) nodes[i - 1].after(nodes[i]);
+    /* 组内其余行一起摘掉：它们是同一个逻辑块的正文，不能留下来当独立块 */
+    for (let i = 1; i < group.length; i++) group[i].remove();
 
     /* 引用组的边界不能因为换类型就凭空消失。原来这两块之间隔着别的东西，
        转成引用后不该被紧凑规则吸进旁边的框 —— 那等于顺手改了另一块的语义。

@@ -3217,6 +3217,9 @@ const commands = {
   format: formatDoc,
 
   /* —— 块级格式（仅所见即所得模式） —— */
+  /* 块级删除：引用整组一起删，表格 / 代码块删整块。块内续行的退格仍按行并回
+     上一行，两条路互不干扰 —— 这里删的是块，那里删的是字与软换行。 */
+  deleteBlock: () => wysCmd((w) => w.deleteBlock()),
   body: () => wysCmd((w) => w.toggleHeading(0)),
   h1: () => wysCmd((w) => w.toggleHeading(1)),
   h2: () => wysCmd((w) => w.toggleHeading(2)),
@@ -3677,6 +3680,13 @@ function kindOfBlock(b) {
 function placeHandle(block) {
   if (!block || !block.isConnected || !block.classList.contains('w-block')) return hideHandle();
   if (block.dataset.type === 'hr') return hideHandle();
+  /* 引用整组是一个逻辑块，只该有一个 ⋮⋮，钉在组首。续行上若再冒一个手柄，
+     第二行看着就是可独立修改的块 —— 转换 / 删除会只作用在半截引用上。
+     锚点一并归一，菜单与键盘操作就都落在同一个块上。 */
+  if (block.dataset.type === 'bq') {
+    const first = wys.bqGroupOf(block)[0];
+    if (first && first !== block) block = first;
+  }
   const host = el.editWrap.getBoundingClientRect();
   const r = block.getBoundingClientRect();
   /* 块滚出视野：只把元素藏起来，锚点留着 —— 滚回来还是它，不要重新按光标猜 */
@@ -3737,7 +3747,7 @@ function openBlockMenu(mode, fromSlash = false) {
   const item = (it, checked) => {
     const b = document.createElement('button');
     b.type = 'button';
-    b.className = 'bm-item' + (checked ? ' checked' : '');
+    b.className = 'bm-item' + (checked ? ' checked' : '') + (it.danger ? ' danger' : '');
     b.setAttribute('role', 'menuitem');
     if (checked) b.setAttribute('aria-checked', 'true');
     /* 右侧固定显示面板内的**选择键**：一次按键就到位，这才是这张面板的主交互。
@@ -3767,6 +3777,11 @@ function openBlockMenu(mode, fromSlash = false) {
     sep();
     head(tt('插入'));
     blockInserts().forEach((it) => item(it, false));
+  } else {
+    sep();
+    /* 转换面板底部补上块级删除：和「改类型」同属块操作。故意不给选择键 ——
+       面板里 0~9 / w / d / s 都是盲打键，误按一个字母就删掉一块太危险。 */
+    item({ id: 'deleteBlock', label: tt('删除这一块'), icon: 'trash-2', danger: true }, false);
   }
 
   // 贴着按钮展开；右边放不下就翻到左边，下边放不下就往上收
@@ -4220,13 +4235,17 @@ function bindEvents() {
             { label: tt('引用'), hint: tt('引用块'), icon: 'text-quote', iconOnly: true, shortcut: 'Ctrl+Shift+Q', action: () => commands.quote() },
           ]),
         ] },
-        ...(tbl ? [] : [{ lead: tt('引用'), row: [
-          { label: tt('普通'), hint: tt('普通引用'), checked: () => bqCallout() === '', action: () => commands.plainQuote() },
-          { label: tt('信息'), hint: tt('信息提示块'), checked: () => bqCallout() === 'info', action: () => commands.calloutInfo() },
-          { label: tt('警告'), hint: tt('警告提示块'), checked: () => bqCallout() === 'warning', action: () => commands.calloutWarning() },
-          { label: tt('危险'), hint: tt('危险提示块'), checked: () => bqCallout() === 'danger', action: () => commands.calloutDanger() },
-          { label: tt('成功'), hint: tt('成功提示块'), checked: () => bqCallout() === 'success', action: () => commands.calloutSuccess() },
-        ] }]),
+        ...(tbl ? [] : [
+          { lead: tt('引用'), row: [
+            { label: tt('普通'), hint: tt('普通引用'), checked: () => bqCallout() === '', action: () => commands.plainQuote() },
+            { label: tt('信息'), hint: tt('信息提示块'), checked: () => bqCallout() === 'info', action: () => commands.calloutInfo() },
+            { label: tt('警告'), hint: tt('警告提示块'), checked: () => bqCallout() === 'warning', action: () => commands.calloutWarning() },
+            { label: tt('危险'), hint: tt('危险提示块'), checked: () => bqCallout() === 'danger', action: () => commands.calloutDanger() },
+            { label: tt('成功'), hint: tt('成功提示块'), checked: () => bqCallout() === 'success', action: () => commands.calloutSuccess() },
+          ] },
+          /* 块级删除：引用整组一起删；表格里已有「整表」项，不重复摆 */
+          { label: tt('删除这一块'), danger: true, action: () => commands.deleteBlock() },
+        ]),
       ];
       if (tbl) {
         items.push(

@@ -298,6 +298,7 @@ export const SRC = {
   '表格（3 × 3）': ["Table (3 × 3)", "表（3 × 3）", "표(3 × 3)", "Tableau (3 × 3)", "Tabelle (3 × 3)", "Tabla (3 × 3)", "Tabela (3 × 3)"],
   '在下方插入': ["Insert Below", "下に挿入", "아래에 삽입", "Insérer en dessous", "Darunter einfügen", "Insertar debajo", "Inserir abaixo"],
   '转换这一块': ["Convert Block", "このブロックを変換", "이 블록 변환", "Convertir ce bloc", "Block umwandeln", "Convertir este bloque", "Converter este bloco"],
+  '删除这一块': ["Delete This Block", "このブロックを削除", "이 블록 삭제", "Supprimer ce bloc", "Diesen Block löschen", "Eliminar este bloque", "Excluir este bloco"],
   '还原': ["Restore", "元に戻す", "복원", "Restaurer", "Wiederherstellen", "Restaurar", "Restaurar"],
   '最大化': ["Maximize", "最大化", "최대화", "Agrandir", "Maximieren", "Maximizar", "Maximizar"],
   '当前文件类型不支持该模式': ["This file type does not support that mode", "このファイル形式ではそのモードを使えません", "이 파일 형식은 해당 모드를 지원하지 않습니다", "Ce type de fichier ne prend pas en charge ce mode", "Dieser Dateityp unterstützt diesen Modus nicht", "Este tipo de archivo no admite ese modo", "Este tipo de arquivo não suporta esse modo"],
