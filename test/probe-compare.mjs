@@ -409,6 +409,14 @@ try {
     await sleep(1600);
     if (cmp) cmp.close();
     cmp = await connect((await compareTarget()).webSocketDebuggerUrl);
+    /* openCompare 复用同一个窗口：上一轮留下的脏数据会让关窗守卫把确认条
+       弹出来，而确认条是模态的，会把后面每一条键盘用例都吞掉。每次连上先
+       按「取消」收掉，别把这份状态留给下一段。 */
+    await cmp.ev(`(() => {
+      const c = document.getElementById('confirm');
+      if (c && !c.hidden) document.getElementById('confirmCancel').click();
+      return 1;
+    })()`);
     await setFold(fold);
   };
 
@@ -1532,6 +1540,51 @@ try {
   ok('「保存并关闭」把窗口关掉', !(await alive()));
   const onDisk = fs.readFileSync(p('edit-a.txt'), 'utf8');
   ok('「保存并关闭」把改动写回了磁盘', onDisk.includes('Q'), onDisk.split('\n')[1] || '');
+
+  /* ---------- 18b. 关窗确认条的 Y / N / Esc（真实按键） ----------
+     确认条是独立窗口自己的 DOM，不走主窗口 dialog()，键盘分支得单独验。 */
+  {
+    const cmpKey = async (key, code, vk) => {
+      const base = { key, code, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk };
+      await cmp.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...base });
+      await cmp.send('Input.dispatchKeyEvent', { type: 'keyUp', ...base });
+      await sleep(340);
+    };
+    await openPair(p('edit-a.txt'), p('edit-a2.txt'));
+    await enterEdit();
+    await clickRow('l', 0);
+    await cmp.send('Input.insertText', { text: 'K' });
+    await sleep(500);
+    await cmp.ev(`document.getElementById('wclose').click()`);
+    await sleep(900);
+    const caps = await cmp.ev(`['confirmCancel','confirmDrop','confirmSave'].map(id => document.getElementById(id).dataset.key)`);
+    ok('对比窗口确认条三个按钮带 Esc / N / Y 键帽', caps.join(',') === 'Esc,N,Y', JSON.stringify(caps));
+
+    await cmpKey('Escape', 'Escape', 27);
+    const afterEsc = await cmp.ev(`({ shown: !document.getElementById('confirm').hidden, alive: !!document.getElementById('rowsL') })`)
+      .catch(() => ({ shown: true, alive: false }));
+    ok('对比窗口 Esc 取消关窗：确认条收起而窗口还在',
+      !afterEsc.shown && afterEsc.alive, JSON.stringify(afterEsc));
+
+    await cmp.ev(`document.getElementById('wclose').click()`);
+    await sleep(700);
+    await cmpKey('n', 'KeyN', 78);
+    await sleep(900);
+    ok('对比窗口 N 不保存，窗口真的关掉', !(await alive()));
+
+    await openPair(p('edit-a.txt'), p('edit-a2.txt'));
+    await enterEdit();
+    await clickRow('l', 1);
+    await cmp.send('Input.insertText', { text: 'H' });
+    await sleep(500);
+    await cmp.ev(`document.getElementById('wclose').click()`);
+    await sleep(800);
+    await cmpKey('y', 'KeyY', 89);
+    await sleep(1400);
+    ok('对比窗口 Y 保存并关闭窗口', !(await alive()));
+    const diskY = fs.readFileSync(p('edit-a.txt'), 'utf8');
+    ok('对比窗口 Y 把改动写回了磁盘', diskY.includes('H'), diskY.split('\n')[1] || '');
+  }
   /* ---------- 19. 窗口落在主程序那一块屏上 ----------
      以前铺满用的是 SPI_GETWORKAREA，那个 API 只认主屏：主程序在副屏时，
      对比窗口照样开在主屏，拖到副屏再点最大化又被打回主屏。

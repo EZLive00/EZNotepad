@@ -683,6 +683,90 @@ try {
     ok('右键从续行删除仍是块级',
       !/第一行|第二行|第三行/.test(afterCtx) && afterCtx.includes('尾段'), JSON.stringify(afterCtx));
   }
+
+  /* ---- 关闭提示：Y 保存 / N 不保存 / Esc 取消 ----
+     三个按钮过去只能靠鼠标点，键盘用户除了 Esc 没有别的出路。 */
+  {
+    const dlgHidden = () => ev(`document.getElementById('dlgOverlay').classList.contains('hidden')`);
+    const tabCount = () => ev(`document.querySelectorAll('.tab[data-id]').length`);
+    const keys = () => ev(`[...document.querySelectorAll('#dlgFoot button')].map(b => [b.dataset.key, b.getAttribute('aria-keyshortcuts')])`);
+    const openDirty = async (name) => {
+      await ev(`(() => {
+        window.__snp.newTab(${JSON.stringify(name)}, '原文', 'C:/tmp/' + ${JSON.stringify(name)});
+        window.__snp.setContent('改过的正文');
+        window.__snp.commands.closeTab();
+        return 1;
+      })()`);
+      await ev('new Promise(r => setTimeout(r, 140))');
+    };
+    const before = await tabCount();
+
+    await openDirty('key-esc.md');
+    const k1 = await keys();
+    ok('关标签提示三个按钮标出 Y / N / Esc',
+      k1.length === 3 && k1[0][0] === 'Y' && k1[1][0] === 'N' && k1[2][0] === 'Esc'
+      && k1[2][1] === 'Escape', JSON.stringify(k1));
+
+    /* 弹层里带输入框时，字母键归输入框自己，别把弹层关掉 */
+    await ev(`(() => { const i = document.createElement('input'); i.id = 'probeDlgInput'; document.getElementById('dlgBody').appendChild(i); i.focus(); return 1; })()`);
+    await keyIn('#probeDlgInput', 'y');
+    ok('弹层输入框里按 Y 不会误关对话框', !(await dlgHidden()));
+    await ev(`document.getElementById('probeDlgInput').remove()`);
+
+    await keyIn('#dlgOverlay', 'Escape');
+    await ev('new Promise(r => setTimeout(r, 140))');
+    const afterEsc = await ev(`(() => ({ hidden: document.getElementById('dlgOverlay').classList.contains('hidden'), name: window.__snp.getActiveTab().name }))()`);
+    ok('Esc 取消关闭，标签还在',
+      afterEsc.hidden && afterEsc.name === 'key-esc.md' && (await tabCount()) === before + 1,
+      JSON.stringify(afterEsc));
+
+    await openDirty('key-n.md');
+    await keyIn('#dlgOverlay', 'n');
+    await ev('new Promise(r => setTimeout(r, 160))');
+    ok('N 不保存，直接关掉标签', (await dlgHidden()) && (await tabCount()) === before + 1,
+      `tabs=${await tabCount()} hidden=${await dlgHidden()}`);
+
+    await openDirty('key-y.md');
+    const callsBefore = await ev(`window.__calls.filter(c => c === 'save_text_file').length`);
+    await keyIn('#dlgOverlay', 'Y');   // 大写也要认（按住 Shift 敲 Y 是常态）
+    await ev('new Promise(r => setTimeout(r, 260))');
+    const afterY = await ev(`(() => ({ hidden: document.getElementById('dlgOverlay').classList.contains('hidden'), calls: window.__calls.filter(c => c === 'save_text_file').length }))()`);
+    ok('Y 保存并关掉标签，保存确实落到了后端',
+      afterY.hidden && (await tabCount()) === before + 1 && afterY.calls === callsBefore + 1,
+      JSON.stringify(afterY));
+
+    /* 退出守卫走同一个 dialog，键帽不能被落下。
+       quit() 的 Promise 要等用户按完键才 resolve，ev 又开了 awaitPromise，
+       直接把它返回出去会死锁在这一行 —— 用 IIFE 吞掉 Promise。 */
+    await ev(`(() => { window.__snp.commands.quit(); return 1; })()`);
+    await ev('new Promise(r => setTimeout(r, 180))');
+    const kq = await keys();
+    ok('退出守卫三个按钮同样标出 Y / N / Esc',
+      kq.length === 3 && kq[0][0] === 'Y' && kq[1][0] === 'N' && kq[2][0] === 'Esc',
+      JSON.stringify(kq));
+    await keyIn('#dlgOverlay', 'Escape');
+    await ev('new Promise(r => setTimeout(r, 140))');
+    ok('Esc 取消退出，脏标签还在', (await dlgHidden()) && (await tabCount()) === before + 1,
+      `tabs=${await tabCount()}`);
+
+    /* 幽灵菜单回归：旧实现换菜单只 remove DOM，document 上的 capture keydown
+       监听泄漏；连开两次菜单后每一次 Esc 都会被它吞掉，未保存提示的
+       「Esc 取消」正是这么失效的。事件必须派给浮层**内的按钮**（会经过
+       document capture），直接派给 overlay 会绕过 capture，什么也测不到。 */
+    await ev(`(async () => {
+      const ui = await import('/src/js/ui.js');
+      ui.contextMenu(100, 100, [{ label: '甲', action() {} }]);
+      ui.contextMenu(100, 100, [{ label: '乙', action() {} }]);
+      return 1;
+    })()`);
+    await ev('new Promise(r => setTimeout(r, 90))');
+    await ev(`(() => { document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true })); return 1; })()`);
+    await openDirty('key-ghost.md', null);
+    await keyIn('#dlgFoot button.primary', 'Escape');
+    await ev('new Promise(r => setTimeout(r, 140))');
+    ok('连开两次浮层菜单后，Esc 仍能取消对话框（幽灵监听已清）', await dlgHidden(),
+      String(await ev(`document.getElementById('dlgTitle').textContent`)));
+  }
 } catch (e) {
   ok('运行期间没有异常', false, String((e && e.message) || e).slice(0, 300));
 } finally {

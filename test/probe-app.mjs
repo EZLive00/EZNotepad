@@ -479,7 +479,10 @@ try {
     })()`);
     ok('编辑区右键里有换行开关',
       ctx.some((t) => t.includes('自动换行')) && ctx.some((t) => t.includes('不换行')), JSON.stringify(ctx));
-    await ev(`(() => { const m = document.querySelector('.ctx-menu'); if (m) m.remove(); })()`);
+    /* 走菜单自己的关闭路径。直接 remove DOM 会把 document 上的 capture
+       keydown 监听留在页面里，后面每一次 Esc 都被这个幽灵菜单吞掉。 */
+    await ev(`(() => { document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true })); return 1; })()`);
+    await sleep(120);
 
     /* 复原：后面可能还有别的断言依赖默认值 */
     await ev(`window.__snp.commands.wrapSoft()`);
@@ -1057,6 +1060,60 @@ try {
     await send('Input.insertText', { text: 'x' });
     ok('真机：代码文档也不用先点一下', (await ev('window.__snp.getEditorText()')) === 'x',
       JSON.stringify(await ev('window.__snp.getEditorText()')));
+  }
+
+  /* ---------- 关闭提示：Y 保存 / N 不保存 / Esc 取消（真实按键） ---------- */
+  {
+    const dlgHidden = () => ev(`document.getElementById('dlgOverlay').classList.contains('hidden')`);
+    const tabCount = () => ev(`document.querySelectorAll('.tab[data-id]').length`);
+    const realKey = async (key, code, vk) => {
+      const base = { key, code, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk };
+      await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...base });
+      await send('Input.dispatchKeyEvent', { type: 'keyUp', ...base });
+      await sleep(240);
+    };
+    const openDirty = async (name, filePath) => {
+      await ev(`(() => {
+        window.__snp.newTab(${JSON.stringify(name)}, '原文', ${JSON.stringify(filePath)});
+        window.__snp.setContent('改过的正文');
+        window.__snp.commands.closeTab();
+        return 1;
+      })()`);
+      await sleep(240);
+    };
+    const before = await tabCount();
+
+    await openDirty('key-esc.md', null);
+    const caps = await ev(`[...document.querySelectorAll('#dlgFoot button')].map(b => b.dataset.key)`);
+    ok('真机：关闭提示三个按钮带 Y / N / Esc 键帽', caps.join(',') === 'Y,N,Esc', JSON.stringify(caps));
+    await realKey('Escape', 'Escape', 27);
+    const escState = await ev(`(() => ({
+      hidden: document.getElementById('dlgOverlay').classList.contains('hidden'),
+      title: document.getElementById('dlgTitle').textContent,
+      keys: [...document.querySelectorAll('#dlgFoot button')].map(b => b.dataset.key || null),
+      active: document.activeElement && (document.activeElement.id || document.activeElement.className),
+    }))()`);
+    ok('真机：Esc 取消关闭，标签还在',
+      escState.hidden && (await tabCount()) === before + 1,
+      JSON.stringify({ ...escState, tabs: await tabCount(), before }));
+
+    await openDirty('key-n.md', null);
+    await realKey('n', 'KeyN', 78);
+    ok('真机：N 不保存，直接关掉标签',
+      (await dlgHidden()) && (await tabCount()) === before + 1,
+      `tabs=${await tabCount()} hidden=${await dlgHidden()}`);
+
+    /* Y 会给没有路径的标签弹系统保存框（CDP 关不掉），所以给它一个真实文件 */
+    const yPath = path.resolve('node_modules/.tmp/probe-keys.md').replace(/\\/g, '/');
+    fs.mkdirSync(path.dirname(yPath), { recursive: true });
+    fs.writeFileSync(yPath, '原文', 'utf8');
+    await openDirty('key-y.md', yPath);
+    await realKey('y', 'KeyY', 89);
+    await sleep(450);
+    const disk = fs.readFileSync(yPath, 'utf8');
+    ok('真机：Y 保存并关掉标签，改动真的落盘',
+      (await dlgHidden()) && (await tabCount()) === before + 1 && disk.includes('改过的正文'),
+      JSON.stringify({ disk: disk.slice(0, 40), tabs: await tabCount(), hidden: await dlgHidden() }));
   }
 
   /* ---------- 格式化走 prettier（懒加载） ---------- */
