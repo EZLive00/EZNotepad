@@ -564,6 +564,17 @@ try {
     ok('转换面板底部有「删除这一块」', bmOpen && bmLabels.includes('删除这一块'),
       JSON.stringify({ bmOpen, tail: bmLabels.slice(-2) }));
     ok('删除项没有盲打选择键', delKey === '', JSON.stringify(delKey));
+    const navSafe = await ev(`(() => {
+      const items = [...document.querySelectorAll('#wBlockMenu .bm-item')];
+      const del = items.find(e => e.textContent.includes('删除这一块'));
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true }));
+      return { hotOnDel: !!del?.classList.contains('hot'),
+               hotIdx: items.findIndex(b => b.classList.contains('hot')),
+               delIdx: items.indexOf(del), total: items.length };
+    })()`);
+    ok('删除项不进键盘导航（End 不会落在它上面）',
+      !navSafe.hotOnDel && navSafe.hotIdx >= 0 && navSafe.hotIdx !== navSafe.delIdx,
+      JSON.stringify(navSafe));
     await ev(`(() => { const b = [...document.querySelectorAll('#wBlockMenu .bm-item')].find(e => e.textContent.includes('删除这一块')); if (b) b.click(); return 1; })()`);
     const afterBm = await ev(`window.__snp.editor.toMarkdown()`);
     ok('转换面板删除是块级：引用整组一起没',

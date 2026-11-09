@@ -403,6 +403,35 @@ try {
     ok('切到不换行：编辑区能横向滚了', !!d1.cm && d1.cm.sw > d1.cm.cw + 200, JSON.stringify(d1.cm));
     ok('切到不换行：body 上挂 data-nowrap', d1.nowrap === true);
 
+    /* 1.2.1：横向滚动时长行不能从行号槽底下透出来。CM6 的 .cm-gutters 是
+       sticky + zIndex 200，背景透明就等于没挡住；判据取 computed style：
+       不透明、与编辑区纸面同色、挡板仍在正文之上。 */
+    await ev(`(() => { const s = document.querySelector('#editor .cm-scroller'); if (s) s.scrollLeft = 260; return 1; })()`);
+    await sleep(250);
+    const gut = await ev(`(() => {
+      const s = document.querySelector('#editor .cm-scroller');
+      const g = document.querySelector('#editor .cm-gutters');
+      const pane = document.querySelector('.editor-pane');
+      if (!s || !g || !pane) return null;
+      const cs = getComputedStyle(g);
+      const bg = cs.backgroundColor;
+      const parts = bg.includes('(')
+        ? bg.slice(bg.indexOf('(') + 1, bg.lastIndexOf(')')).split(',').map(Number) : [];
+      return {
+        scrollLeft: s.scrollLeft,
+        bg, alpha: parts.length === 4 ? parts[3] : (parts.length === 3 ? 1 : 0),
+        paneBg: getComputedStyle(pane).backgroundColor,
+        pos: cs.position, z: +cs.zIndex,
+      };
+    })()`);
+    ok('真机：不换行确实横向滚起来了', !!gut && gut.scrollLeft > 100, JSON.stringify(gut));
+    ok('真机：行号槽是不透明纸面，长行不会透到行号左边',
+      !!gut && gut.alpha === 1 && gut.bg === gut.paneBg && gut.pos === 'sticky' && gut.z >= 200,
+      JSON.stringify(gut));
+    /* 横滚位置别留给后面的右键：它按 .cm-line 的可见坐标算落点，滚着的时候
+       那个点会落到视口外，右键菜单根本弹不出来。 */
+    await ev(`(() => { const s = document.querySelector('#editor .cm-scroller'); if (s) s.scrollLeft = 0; return 1; })()`);
+
     /* 菜单里的勾选：状态是每次展开时求值的，不是建菜单那一刻定死的 */
     await ev(`(() => { [...document.querySelectorAll('.am-btn')].find((b) => b.textContent.trim() === '视图')?.click(); })()`);
     await sleep(200);

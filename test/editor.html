@@ -40,6 +40,27 @@
       R.push(ok('折叠槽存在', !!q('.cm-foldGutter')));
       R.push(ok('当前行高亮元素存在', !!q('.cm-activeLine')));
 
+      /* ---- 1.5 行号槽必须是不透明的纸面 ----
+         CM6 把 .cm-gutters 做成 sticky + zIndex 200：不换行横向滚动时长行会从
+         它底下经过。背景透明就把文字透出来，看着像正文跑到行号左边去了。 */
+      const gut = q('.cm-gutters');
+      const gcs = gut && getComputedStyle(gut);
+      const bgProbe = document.createElement('div');
+      bgProbe.style.backgroundColor = 'var(--bg-panel)';
+      document.body.appendChild(bgProbe);
+      const panelBg = getComputedStyle(bgProbe).backgroundColor;
+      bgProbe.remove();
+      const bg = gcs ? gcs.backgroundColor : '';
+      const bgParts = bg.includes('(') ? bg.slice(bg.indexOf('(') + 1, bg.lastIndexOf(')')).split(',').map(Number) : [];
+      const gutAlpha = bgParts.length === 4 ? bgParts[3] : (bgParts.length === 3 ? 1 : 0);
+      R.push(ok('行号槽背景不透明（横向滚动时正文不会透出来）', gutAlpha === 1, bg));
+      R.push(eq('行号槽用编辑区纸面 --bg-panel', bg, panelBg));
+      const gr = gut && gut.getBoundingClientRect();
+      const hit = gr && document.elementFromPoint(gr.left + gr.width - 4, gr.top + 30);
+      R.push(ok('行号槽盖在正文之上（sticky 挡板还在）',
+        !!hit && !!hit.closest('.cm-gutters') && gcs.position === 'sticky' && +gcs.zIndex >= 200,
+        hit && (hit.className || hit.tagName)));
+
       /* ---- 2. 内容读写 ---- */
       const src = 'const a = 1;\nfunction f() { return "x"; }\n// 注释\nlet flag = true;';
       plain.load(src, 'js');

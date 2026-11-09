@@ -268,23 +268,36 @@ const hotIdx = () => ev(`[...document.querySelectorAll('#wBlockMenu .bm-item')].
 await click(grip.x, grip.y);
 await sleep(320);
 const total = await ev(`document.querySelectorAll('#wBlockMenu .bm-item').length`);
+const navTotal = await ev(`document.querySelectorAll('#wBlockMenu .bm-item:not(.danger)').length`);
+const dangerHot = () => ev(`!!document.querySelector('#wBlockMenu .bm-item.danger.hot')`);
 ok('键盘：每一项都有 menuitem 角色', (await ev(`document.querySelectorAll('#wBlockMenu [role=menuitem]').length`)) === total);
+/* 1.2.1：面板底部多了「删除这一块」。它是破坏性操作，只能鼠标点，
+   不该被 ↑↓ / Home / End 选中 —— 否则 End + Enter 会平白删掉整块。 */
+ok('键盘：底部删除项在面板里但不进导航序列', total === navTotal + 1, `${total} / ${navTotal}`);
 ok('键盘：打开时不预选（和顶栏菜单一致）', (await hotIdx()) === -1);
 await key('ArrowDown'); await sleep(80);
 ok('键盘：↓ 选中第一项', (await hotIdx()) === 0);
 await key('ArrowDown'); await sleep(80);
 ok('键盘：再 ↓ 到第二项', (await hotIdx()) === 1);
 await key('ArrowUp'); await key('ArrowUp'); await sleep(100);
-ok('键盘：首项再 ↑ 环绕到末项', (await hotIdx()) === total - 1, `${await hotIdx()} / ${total}`);
+ok('键盘：首项再 ↑ 环绕到最后一个可导航项', (await hotIdx()) === navTotal - 1,
+  `${await hotIdx()} / ${navTotal}`);
+ok('键盘：环绕没落到破坏性项上', !(await dangerHot()));
 await key('Home'); await sleep(80);
 ok('键盘：Home 回到首项', (await hotIdx()) === 0);
 await key('End'); await sleep(80);
-ok('键盘：End 到末项', (await hotIdx()) === total - 1);
+ok('键盘：End 到最后一个可导航项（不是删除）', (await hotIdx()) === navTotal - 1,
+  `${await hotIdx()} / ${navTotal}`);
+ok('键盘：删除项始终没被键盘高亮', !(await dangerHot()));
 
-/* 末项是「成功提示块」：Enter 之后这一块必须真的转换过去 */
+/* 最后一个可导航项是「成功提示块」：Enter 之后这一块必须真的转换过去，
+   绝不能因为底部多了个删除项就把整块删掉 */
+const blocksBefore = await ev(`document.querySelectorAll('.wysiwyg > .w-block').length`);
 await key('Enter'); await sleep(450);
 ok('键盘：Enter 执行末项（块变成成功提示块）',
   !(await state()).menuOpen && (await ev(`!!document.querySelector('.w-block[data-callout=success]')`)));
+const blocksAfter = await ev(`document.querySelectorAll('.wysiwyg > .w-block').length`);
+ok('键盘：Enter 没有误删当前块', blocksAfter === blocksBefore, `${blocksBefore} → ${blocksAfter}`);
 
 await click(grip.x, grip.y);
 await sleep(320);
