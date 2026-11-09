@@ -3654,7 +3654,8 @@ let bmFromSlash = false;
    跟 wysiwyg 的 offsetIn 同一套口径（忽略 <br>，零宽空格算一个字符）。 */
 let slashAt = null;
 /* 键盘高亮：焦点始终留在编辑区（菜单一抢焦点，正文选区就没了），所以「当前项」
-   用 .hot 类表达，而不是真焦点。bmRows 只收可执行项，head / sep 不在里面。 */
+   用 .hot 类表达，而不是真焦点。bmRows 只收**可键盘导航**的可执行项：
+   head / sep 不收，破坏性的「删除这一块」也不收（见 openBlockMenu）。 */
 let bmHot = -1;
 let bmRows = [];
 
@@ -3744,7 +3745,7 @@ function openBlockMenu(mode, fromSlash = false) {
     d.className = 'bm-sep';
     box.appendChild(d);
   };
-  const item = (it, checked) => {
+  const item = (it, checked, navigable = true) => {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'bm-item' + (checked ? ' checked' : '') + (it.danger ? ' danger' : '');
@@ -3758,9 +3759,17 @@ function openBlockMenu(mode, fromSlash = false) {
       + (it.key ? `<kbd class="bm-kbd">${it.key}</kbd>` : '');
     if (it.kbd) { b.title = it.kbd; b.setAttribute('aria-keyshortcuts', it.kbd); }
     b.addEventListener('mousedown', (e) => e.preventDefault());   // 保住编辑区选区
-    /* 鼠标停在谁身上，Enter 就作用在谁身上 —— 键盘和鼠标混着用也不会错位 */
-    const idx = bmRows.push(b) - 1;
-    b.addEventListener('mouseenter', () => { bmHot = idx; });
+    /* 鼠标停在谁身上，Enter 就作用在谁身上 —— 键盘和鼠标混着用也不会错位。
+       破坏性项不进 bmRows：它仍可鼠标点、hover 也有反馈，但 ↑↓ / Home / End
+       的循环里永远不会有它，盲按到末项再 Enter 不会平白少一块。 */
+    if (navigable) {
+      const idx = bmRows.push(b) - 1;
+      b.addEventListener('mouseenter', () => { bmHot = idx; });
+    } else {
+      /* 鼠标挪到删除项上时把键盘高亮清掉：否则别处还留着 .hot，
+         这一刻按 Enter 会执行那个「别处的项」，用户却以为点在删除上。 */
+      b.addEventListener('mouseenter', () => bmHover(-1));
+    }
     b.onclick = () => bmRun(it.id);
     box.appendChild(b);
   };
@@ -3779,9 +3788,10 @@ function openBlockMenu(mode, fromSlash = false) {
     blockInserts().forEach((it) => item(it, false));
   } else {
     sep();
-    /* 转换面板底部补上块级删除：和「改类型」同属块操作。故意不给选择键 ——
-       面板里 0~9 / w / d / s 都是盲打键，误按一个字母就删掉一块太危险。 */
-    item({ id: 'deleteBlock', label: tt('删除这一块'), icon: 'trash-2', danger: true }, false);
+    /* 转换面板底部补上块级删除：和「改类型」同属块操作。故意不给选择键、
+       也不进键盘导航 —— 面板里 0~9 / w / d / s 是盲打键，↑↓ / End + Enter
+       同样是盲按；破坏性操作只留鼠标这条明确路径。 */
+    item({ id: 'deleteBlock', label: tt('删除这一块'), icon: 'trash-2', danger: true }, false, false);
   }
 
   // 贴着按钮展开；右边放不下就翻到左边，下边放不下就往上收

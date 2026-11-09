@@ -31,9 +31,12 @@ export const cmTheme = EditorView.theme({
   },
   '.cm-line': { padding: '0 16px 0 4px' },
 
-  /* 行号槽：透明底、右对齐、淡色，和原来的 .linegutter 观感一致 */
+  /* 行号槽：和编辑区同一张纸面（--bg-panel），右对齐、淡色。
+     ⚠️ 不能透明：CM6 把它做成 sticky + zIndex 200，不换行横向滚动时长行会从
+     它底下经过，透明底就把文字透出来，看着像正文跑到行号左边去了。用不透明
+     纸面盖住这一条，明暗主题跟着 CSS 变量自动切，不写死色值。 */
   '.cm-gutters': {
-    backgroundColor: 'transparent',
+    backgroundColor: 'var(--bg-panel)',
     color: 'var(--fg-faint)',
     border: 'none',
     paddingLeft: '10px',
