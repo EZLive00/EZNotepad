@@ -38,7 +38,11 @@ export function dialog({ title = tt('提示'), body = '', buttons = [{ id: 'ok',
     if (typeof body === 'string') bodyEl.innerHTML = `<div class="dlg-text">${body}</div>`;
     else { bodyEl.innerHTML = ''; bodyEl.appendChild(body); }
     footEl.innerHTML = '';
-    const close = (val) => { overlay.classList.add('hidden'); resolve(val); };
+    /* 初始焦点是延时设的。对话框可能在 30ms 内就被回车关掉（新建文档走键盘
+       时正是这条路径），那时定时器还没跑 —— 关窗一并作废，别让已关闭的弹层
+       再回头动焦点：对隐藏元素调 focus 的结果各版本并不一致。 */
+    let focusTimer = 0;
+    const close = (val) => { clearTimeout(focusTimer); overlay.classList.add('hidden'); resolve(val); };
     buttons.forEach((b) => {
       const btn = document.createElement('button');
       btn.className = 'mini' + (b.primary ? ' primary' : ' ghost');
@@ -48,7 +52,7 @@ export function dialog({ title = tt('提示'), body = '', buttons = [{ id: 'ok',
     });
     // 初始焦点只设一次：给了 focus 就听它的，否则落在主按钮（没有主按钮时落最后一个）
     const first = focus || footEl.querySelector('.primary') || footEl.lastElementChild;
-    if (first) setTimeout(() => first.focus(), 30);
+    if (first) focusTimer = setTimeout(() => first.focus(), 30);
     // body 里带 data-dialog-close 的元素点一下就关闭并把它的值交回去
     // （「新建文档」的类型网格用这个，省得自建一套弹层）
     bodyEl.onclick = (e) => {

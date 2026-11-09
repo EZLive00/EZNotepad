@@ -419,7 +419,38 @@ export function newTab(name = tt('未命名.md'), content = '', path = null, opt
   tabs.push(t);
   activate(t.id);
   syncWatches();
+  focusNewTab(t);
   return t;
+}
+
+/**
+ * 新标签一上台，就把焦点交给编辑区；空文档（新建出来的那种）还要把光标
+ * 钉在第一个位置 —— 否则新建完直接打字是没反应的，得先点一下正文。
+ *
+ * 对话框关闭时焦点还留在已经 display:none 的弹层按钮上，浏览器不会自动
+ * 把它转交给编辑区（ui.js 里那个 30ms 的初始焦点定时器也已随关窗作废）。
+ *
+ * 非空文档只给焦点、不重新摆光标：打开文件、恢复草稿、历史版本都可能带着
+ * scrollTop / caret。实测新建流程里聚焦不会把 setMode 刚恢复的滚动位置拽走，
+ * 硬把选区挪到第一块反而会把它拽回顶部。速记自己会在 newTab 之后调
+ * focusQuickEnd() 落到末尾，不受这里影响。
+ */
+function focusNewTab(t) {
+  if (!t || activeTab() !== t) return;
+  /* 模态框还开着时别抢：它的 Enter / Esc 是绑在浮层上的 */
+  const dlg = document.getElementById('dlgOverlay');
+  if (dlg && !dlg.classList.contains('hidden')) return;
+  if (t.mode === 'wysiwyg') {
+    if (!t.content) {
+      const first = wys.root.firstElementChild;   // 空文档解析出来就是一个空段落
+      if (first) wys.focusBlock(first, false);
+      else wys.root.focus();
+    } else {
+      wys.root.focus();
+    }
+  } else if (t.mode === 'edit') {
+    plain.focus();
+  }
 }
 
 function activate(id) {
