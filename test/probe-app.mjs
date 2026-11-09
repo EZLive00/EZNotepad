@@ -984,6 +984,81 @@ try {
     ok('自定义类型建出 未命名.kt', made.name === '未命名.kt', made.name);
   }
 
+  /* ---------- 新建完光标与焦点：不用先点一下正文 ---------- */
+  {
+    /* 对话框关闭时焦点留在隐藏的弹层按钮上，新建完曾经得先点一下才能打字。
+       这里走真实面板点 Markdown，再用 CDP 真输入验证，而不是只查 activeElement。 */
+    await ev(`window.__snp.commands.new(); 0`);
+    await sleep(260);
+    await ev(`(() => {
+      const c = document.querySelector('.new-types .new-type[data-dialog-close="md"]');
+      c.focus();
+      c.click();
+      return 1;
+    })()`);
+    await sleep(320);
+    /* 新建 md 的默认模式跟着 lastMode 走，真机探针跑到这里时它常被前面的用例
+       留在 edit。断言按「当前模式对应的编辑区」分派，两种模式都得能直接打字。 */
+    const f = await ev(`(() => {
+      const root = window.__snp.editor.root;
+      const sel = window.getSelection();
+      const r = sel.rangeCount ? sel.getRangeAt(0) : null;
+      const first = root.firstElementChild;
+      const mode = window.__snp.getActiveTab().mode;
+      const focused = mode === 'wysiwyg'
+        ? document.activeElement === root
+        : document.activeElement === document.querySelector('.cm-content');
+      const atFirst = mode === 'wysiwyg'
+        ? !!(r && first && r.collapsed && r.startOffset === 0 &&
+             (r.startContainer === first || first.contains(r.startContainer)))
+        : window.__snp.plain.selection.from === 0;
+      return { name: window.__snp.getActiveTab().name, mode, focused, atFirst };
+    })()`);
+    ok('真机：面板新建空文档后焦点就在当前模式的编辑区', f.focused, JSON.stringify(f));
+    ok('真机：空文档光标在第一个位置', f.atFirst, JSON.stringify(f));
+    await send('Input.insertText', { text: '甲' });
+    await sleep(160);
+    const got = await ev(`(() => {
+      const t = window.__snp.getActiveTab();
+      return t.mode === 'wysiwyg' ? window.__snp.editor.toMarkdown() : window.__snp.getEditorText();
+    })()`);
+    ok('真机：不点正文直接打字就进了文档', String(got).includes('甲'), JSON.stringify(got));
+
+    /* 显式钉成所见即所得：不管 lastMode 被环境改成什么，这条路径都要真机覆盖 */
+    await ev(`window.__snp.newTab('focus-wys.md', '', null, { mode: 'wysiwyg' })`);
+    await sleep(220);
+    const w = await ev(`(() => {
+      const root = window.__snp.editor.root;
+      const r = window.getSelection().rangeCount ? window.getSelection().getRangeAt(0) : null;
+      const first = root.firstElementChild;
+      return {
+        mode: window.__snp.getActiveTab().mode,
+        focused: document.activeElement === root,
+        atFirst: !!(r && first && r.collapsed && r.startOffset === 0 &&
+                    (r.startContainer === first || first.contains(r.startContainer))),
+      };
+    })()`);
+    ok('真机：所见即所得新建空文档，焦点与首块光标都到位', w.mode === 'wysiwyg' && w.focused && w.atFirst,
+      JSON.stringify(w));
+    await send('Input.insertText', { text: '乙' });
+    await sleep(140);
+    ok('真机：所见即所得下不点正文直接打字就进第一块',
+      (await ev('window.__snp.editor.toMarkdown()')) === '乙',
+      JSON.stringify(await ev('window.__snp.editor.toMarkdown()')));
+
+    /* 文件树新建空文件 / 打开空文件走的是 newTab 的普通编辑器那条路 */
+    await ev(`window.__snp.newTab('focus-tree.py', '', null)`);
+    await sleep(220);
+    const p = await ev(`(() => ({
+      mode: window.__snp.getActiveTab().mode,
+      focused: document.activeElement === document.querySelector('.cm-content'),
+    }))()`);
+    ok('真机：新建代码文档焦点在纯文本编辑区', p.mode === 'edit' && p.focused, JSON.stringify(p));
+    await send('Input.insertText', { text: 'x' });
+    ok('真机：代码文档也不用先点一下', (await ev('window.__snp.getEditorText()')) === 'x',
+      JSON.stringify(await ev('window.__snp.getEditorText()')));
+  }
+
   /* ---------- 格式化走 prettier（懒加载） ---------- */
   {
     /* 第一次按会现拉 2 MB 的引擎，等久一点 */

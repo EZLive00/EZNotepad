@@ -259,6 +259,93 @@ try {
       new RegExp('^未命名.*\\.' + pick.ext + '$').test(await ev('window.__snp.getActiveTab().name')),
       `${pick.ext} → ${await ev('window.__snp.getActiveTab().name')}`);
 
+    // ---- 6b. 新建完不用先点一下正文 ----
+    /* 对话框关闭时焦点还留在隐藏的弹层按钮上，初始焦点另有一个 30ms 的定时器。
+       修好之后：焦点在编辑区、空文档光标钉在第一块首位、直接打字就进正文。 */
+    await ev('window.__snp.commands.new(); 0');
+    await ev('new Promise(r => setTimeout(r, 140))');
+    await ev(`(() => {
+      const c = document.querySelector('.new-types .new-type[data-dialog-close="md"]');
+      c.focus();
+      c.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+      return 1;
+    })()`);
+    await ev('new Promise(r => setTimeout(r, 220))');
+    /* 新建 md 的默认模式跟着 lastMode 走（profile 是复用的，可能被上一轮留在
+       edit），所以焦点/光标的判据一律按当前模式分派，两种都得能直接打字。 */
+    const focusedNow = `(() => {
+      const mode = window.__snp.getActiveTab().mode;
+      return mode === 'wysiwyg'
+        ? document.activeElement === window.__snp.editor.root
+        : document.activeElement === document.querySelector('.cm-content');
+    })()`;
+    const fresh = await ev(`(() => {
+      const root = window.__snp.editor.root;
+      const sel = window.getSelection();
+      const r = sel.rangeCount ? sel.getRangeAt(0) : null;
+      const first = root.firstElementChild;
+      const mode = window.__snp.getActiveTab().mode;
+      return {
+        mode,
+        name: window.__snp.getActiveTab().name,
+        focused: mode === 'wysiwyg'
+          ? document.activeElement === root
+          : document.activeElement === document.querySelector('.cm-content'),
+        atFirst: mode === 'wysiwyg'
+          ? !!(r && first && r.collapsed && r.startOffset === 0 &&
+               (r.startContainer === first || first.contains(r.startContainer)))
+          : window.__snp.plain.selection.from === 0,
+        blocks: root.children.length,
+      };
+    })()`);
+    ok('面板新建空 md 落在可编辑模式', /\.md$/.test(fresh.name) && ['wysiwyg', 'edit'].includes(fresh.mode),
+      JSON.stringify(fresh));
+    ok('新建后焦点就在编辑区，不用先点一下', fresh.focused, JSON.stringify(fresh));
+    ok('空文档光标钉在第一个位置', fresh.atFirst && (fresh.mode !== 'wysiwyg' || fresh.blocks === 1),
+      JSON.stringify(fresh));
+    /* 等过对话框那个 30ms 的初始焦点定时器，焦点应当稳稳留在编辑区 */
+    await ev('new Promise(r => setTimeout(r, 140))');
+    ok('等过弹层的初始焦点延时，焦点仍在编辑区', (await ev(focusedNow)) === true,
+      String(await ev('document.activeElement && document.activeElement.className')));
+    await send('Input.insertText', { text: '甲' });
+    await ev('new Promise(r => setTimeout(r, 120))');
+    const typedNow = await ev(`(() => {
+      const t = window.__snp.getActiveTab();
+      return t.mode === 'wysiwyg' ? window.__snp.editor.toMarkdown() : window.__snp.getEditorText();
+    })()`);
+    ok('不点正文直接打字就进了正文', typedNow === '甲', JSON.stringify(typedNow));
+    /* 只在所见即所得下 flush：编辑模式下 wys 的 DOM 属于别处，冲一次会串档 */
+    const syncedNow = await ev(`(() => {
+      if (window.__snp.getActiveTab().mode === 'wysiwyg') window.__snp.editor.flush();
+      return window.__snp.getEditorText();
+    })()`);
+    ok('打的字同步进了标签内容', syncedNow === '甲', JSON.stringify(syncedNow));
+
+    /* 非 Markdown 走 CM6：同样一出现就能直接打字 */
+    await ev(`window.__snp.newTab('focus.py', '', null)`);
+    await ev('new Promise(r => setTimeout(r, 140))');
+    const freshPlain = await ev(`(() => {
+      const ce = document.querySelector('.cm-content');
+      return { mode: window.__snp.getActiveTab().mode, focused: document.activeElement === ce };
+    })()`);
+    ok('新建代码文档焦点在纯文本编辑区', freshPlain.mode === 'edit' && freshPlain.focused, JSON.stringify(freshPlain));
+    await send('Input.insertText', { text: 'x' });
+    ok('代码文档也不用先点一下', (await ev('window.__snp.getEditorText()')) === 'x',
+      JSON.stringify(await ev('window.__snp.getEditorText()')));
+
+    /* 极快回车：对话框那个 30ms 的「初始焦点」定时器还没跑就被关掉了，
+       不能让它事后再把焦点塞回已经隐藏的格子。 */
+    await ev('window.__snp.commands.new(); 0');
+    await ev(`(() => {
+      const c = document.querySelector('.new-types .new-type[data-dialog-close="md"]');
+      c.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+      return 1;
+    })()`);
+    await ev('new Promise(r => setTimeout(r, 180))');
+    ok('极快回车关掉面板，新建后焦点仍落在编辑区',
+      (await ev(focusedNow)) === true,
+      String(await ev('document.activeElement && document.activeElement.className')));
+
     // ---- 7. ==高亮==：同一个命令能标上，也能撤掉 ----
     /* 按「第几个字符」选：块里的文字可能已经被拆成 文本 + <mark> + 文本 三个节点，
        直接拿 firstChild 当文本节点第二次就选不动了 */
