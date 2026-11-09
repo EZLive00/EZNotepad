@@ -662,6 +662,60 @@ try {
       JSON.stringify(await bl()) === '["p:前文","hr:","p:"]', JSON.stringify(await bl()));
     ok('穿过分割线后光标在普通段落里', (await caretBlock()) === 'p', await caretBlock());
 
+    /* ---- I3. 块级删除与两处退格：真 WebView2 下用真实按键复验 ----
+       离线内核跑的是 headless Chrome，这里是真应用。四件事都要在真机上站得住：
+       引用整组当一个块、面板能删块、多空行退格不塌行、边界块后空行删得掉。 */
+    const bksp = async () => {
+      await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', windowsVirtualKeyCode: 8, code: 'Backspace', key: 'Backspace' });
+      await send('Input.dispatchKeyEvent', { type: 'keyUp', windowsVirtualKeyCode: 8, code: 'Backspace', key: 'Backspace' });
+      await sleep(320);
+    };
+    const caretStart = (i) => ev(`(() => {
+      const b = [...document.querySelectorAll('.wysiwyg > .w-block')][${i}];
+      const t = b.querySelector('.w-text') || b;
+      const r = document.createRange(); r.setStart(t, 0); r.collapse(true);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      document.querySelector('.wysiwyg').focus();
+    })()`);
+    const firstHeight = () => ev(`(() => { const b = [...document.querySelectorAll('.wysiwyg > .w-block')][1]; return b ? b.getBoundingClientRect().height : -1; })()`);
+
+    /* 引用整组：鼠标挪到续行，从「转换这一块」面板删除，整组一起没 */
+    await load('blk-del.md', '> 第一行\n> 第二行\n> 第三行\n\n尾段\n');
+    await ev(`(() => {
+      const b = [...document.querySelectorAll('.wysiwyg > .w-block')][2];
+      const r = b.getBoundingClientRect();
+      b.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: r.left + 20, clientY: r.top + 6 }));
+      return 1;
+    })()`);
+    await ev(`document.getElementById('whMenu').click()`);
+    const bmDel = await ev(`[...document.querySelectorAll('#wBlockMenu .bm-item')].map(b => b.textContent.trim())`);
+    ok('真机：转换面板底部有「删除这一块」', bmDel.includes('删除这一块'), JSON.stringify(bmDel.slice(-2)));
+    await ev(`(() => { const b = [...document.querySelectorAll('#wBlockMenu .bm-item')].find(e => e.textContent.includes('删除这一块')); if (b) b.click(); return 1; })()`);
+    await sleep(320);
+    const afterDel = await bl();
+    ok('真机：从续行删是块级，引用整组一起没',
+      !afterDel.some((s) => /第一行|第二行|第三行/.test(s)) && afterDel.some((s) => s.includes('尾段')),
+      JSON.stringify(afterDel));
+
+    /* 标题后多空行：一次只少一行，留下的空块还得有一行高（不塌成 0） */
+    await load('blk-blank.md', '# 标题\n\n\n\n正文\n');
+    await caretStart(2);
+    await bksp();
+    const blankBlocks = await bl();
+    const blankH = await firstHeight();
+    ok('真机：多空行退格一次只少一行', blankBlocks.length === 3, JSON.stringify(blankBlocks));
+    ok('真机：留下的空块没塌成 0 高', blankH >= 12, String(blankH));
+
+    /* 边界块后那个空段落：退格要真删掉 */
+    await load('blk-code.md', '```js\nlet a = 1;\n```\n\n');
+    await caretStart(1);
+    await bksp();
+    ok('真机：代码块后空行退格能删掉', (await bl()).length === 1, JSON.stringify(await bl()));
+    await load('blk-table.md', '| A | B |\n| --- | --- |\n| 1 | 2 |\n\n');
+    await caretStart(1);
+    await bksp();
+    ok('真机：表格后空行退格能删掉', (await bl()).length === 1, JSON.stringify(await bl()));
+
     /* ---- J. 菜单栏：速记与对比放在最右边 ----
        它们原来分别在「文件」的第二位和「工具」的中段 —— 天天点的东西不该让人
        在菜单栏上找。两个都是一级项：速记是动作（点一次直接打开，没有下拉），

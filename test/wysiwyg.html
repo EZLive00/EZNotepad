@@ -1000,11 +1000,14 @@ window.__run = () => {
     ed.insertBlock('quote');
     eq('转出来的引用不与后面的引用并框', T.out(), '> 代码一行\n\n> 后面这句');
 
-    /* 提示块的标题只存在 data-callout-title 里，换类型/取消都得把字带上 */
+    /* 提示块的标题只存在 data-callout-title 里，换类型/取消都得把字带上。
+       引用整组是一个逻辑块：转代码块时组内的续行一起搬过去，不能留在原地
+       变成两行没有 [!x] 头的半截引用（那正是「可以独立修改」的病根）。 */
     T.reset('> [!info] 提示标题\n> 续行一\n> 续行二');
     ed.restoreCaret({ blockIndex: 0, offset: 0 });
     ed.insertBlock('code');
-    eq('提示块转代码块：标题文字跟过去', T.out(), '```\n提示标题\n```\n\n> 续行一\n> 续行二');
+    eq('提示块转代码块：整组文字都跟过去', T.out(), '```\n提示标题\n续行一\n续行二\n```');
+    has('提示块转代码块：没留下半截引用', !root.querySelector('.w-bq'));
     has('提示块转代码块：续行不再染色', !root.querySelector('[data-co-follow]'));
 
     T.reset('> [!info] 提示标题\n> 续行');
@@ -1494,6 +1497,65 @@ window.__run = () => {
     }
 
     has('视口: 载入耗时在可接受范围', loadMs < 5000);
+  }
+
+  /* ---- 35. 块级操作：引用整组是一个逻辑块 ----
+     真 bug：引用里回车后第二行也带自己的 ⋮⋮，能被单独转成标题、单独删掉，
+     看着像两个独立块。手柄 / 转换 / 删除都得以「组」为单位；组内续行行首的
+     退格仍按行并回上一行，块级语义不许把手伸进块内去。 */
+  {
+    /* 组边界：组首与续行同组，空行断出的独立引用另起一组，普通段落自成一块 */
+    T.reset('> 第一行\n> 第二行\n> 第三行\n\n> 另一组\n> 续行');
+    const all = [...root.children];
+    eq('引用组：从续行回溯到组首', all.indexOf(ed.bqGroupOf(all[2])[0]), 0);
+    eq('引用组：整组三行', ed.bqGroupOf(all[2]).length, 3);
+    /* 空行本身不生成块：parse 跳过它，只给下一条引用打 bqStart，所以 all[3]
+       才是独立组的组首、all[4] 是它的续行 */
+    eq('引用组：独立引用另起一组', all.indexOf(ed.bqGroupOf(all[4])[0]), 3);
+    eq('引用组：独立组两行', ed.bqGroupOf(all[4]).length, 2);
+    T.reset('段落甲');
+    eq('引用组：普通段落自成一块', ed.bqGroupOf(root.children[0]).length, 1);
+
+    /* 转换：光标落在续行上也要整组一起转，不许留下半截引用 */
+    T.reset('> 第一行\n> 第二行\n> 第三行');
+    T.caret(2, 0);
+    ed.convertBlock('h2');
+    eq('引用续行上转标题：整组一起转', T.out(), '## 第一行\n\n## 第二行\n\n## 第三行');
+    eq('引用续行上转标题：没有半截引用', root.querySelectorAll('.w-bq').length, 0);
+
+    /* 块级删除：从续行删，整组一起没；块内退格仍按行并回上一行 */
+    T.reset('> 第一行\n> 第二行\n> 第三行\n\n尾段');
+    ed.deleteBlock(root.children[2]);
+    eq('块级删除：引用整组一起删', T.blocks().join(','), 'p=尾段');
+    T.reset('> 第一行\n> 第二行');
+    T.caret(1, 0);
+    T.key('Backspace');
+    eq('块内退格仍按行：续行并回上一行', T.out(), '> 第一行第二行');
+
+    /* 标题后多空行退格：一次只少一行，留下的空块必须撑住行高，光标不进标题 */
+    T.reset('# 标题\n\n\n\n正文');
+    T.caret(2, 0);
+    T.key('Backspace');
+    eq('多空行退格：一次只少一行', T.blocks().join(','), 'h1=标题,p=,p=正文');
+    has('多空行退格：空块留了占位 br，不塌成 0 高',
+      !!root.children[1].querySelector('.w-text br'));
+    /* 用户看到的「一次删两行」是行盒塌成 0 高的视觉症状，DOM 结构看不出来
+       （块还在、只是没高度）。必须量真实高度，否则换回旧实现断言不会红。 */
+    has('多空行退格：空块仍占一行高，不会一次看着少两行',
+      root.children[1].getBoundingClientRect().height >= 12);
+    eq('多空行退格：光标留在空块里，没跑进标题', ed.caretState().blockIndex, 1);
+
+    /* 边界块（代码块 / 表格）后面那个空段落行首退格要真删掉 */
+    T.reset('```js\nlet a = 1;\n```\n\n');
+    T.caret(1, 0);
+    T.key('Backspace');
+    eq('代码块后空行退格：空行被删掉', T.blocks().length, 1);
+    has('代码块后空行退格：剩下的是代码块', T.blocks()[0].startsWith('code='));
+    T.reset('| A | B |\n| --- | --- |\n| 1 | 2 |\n\n');
+    T.caret(1, 0);
+    T.key('Backspace');
+    eq('表格后空行退格：空行被删掉', T.blocks().length, 1);
+    has('表格后空行退格：剩下的是表格', T.blocks()[0].startsWith('table='));
   }
 
   /* ---- 正文光标：自绘工字 ---- 系统 I-beam 只有 1px，且 Chromium 会按背景

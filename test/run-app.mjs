@@ -529,6 +529,62 @@ try {
     ok('给了明确提示，不会以为点了没反应',
       (await ev(`[...document.querySelectorAll('.toast')].map(t => t.textContent).join('|')`)).includes('手册.PDF'));
   }
+
+  /* ---- 13. 块级删除入口：转换面板与右键菜单 ----
+     「转换这个块的面板」底部要能删块。删除是块级的：引用整组一起删，
+     不是删光标所在那一行；组内续行的退格仍按行合并，两条路互不干扰。 */
+  {
+    const md = '> 第一行\n> 第二行\n> 第三行\n\n尾段';
+    const fresh = async (name) => {
+      await ev(`window.__snp.newTab(${JSON.stringify(name)}, ${JSON.stringify(md)}, null)`);
+      await ev('window.__snp.commands.modeWysiwyg()');
+      await ev('new Promise(r => setTimeout(r, 320))');
+      /* 上一段可能留着插入面板：bmMode 还记着 insert，先收掉免得点 whMenu 被当成收起 */
+      await ev(`(() => { document.getElementById('wBlockMenu').classList.add('hidden'); document.querySelectorAll('.ctx-menu').forEach(m => m.remove()); return 1; })()`);
+    };
+
+    /* 手柄归一：鼠标挪到续行上，⋮⋮ 仍钉在组首（位置与挪到组首时一致） */
+    await fresh('blocks-handle.md');
+    const topAt = async (idx) => ev(`(() => {
+      const b = document.querySelectorAll('.wysiwyg > .w-block')[${idx}];
+      const r = b.getBoundingClientRect();
+      b.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: r.left + 20, clientY: r.top + 6 }));
+      return document.getElementById('wHandle').style.top;
+    })()`);
+    const topFirst = await topAt(0);
+    const topCont = await topAt(2);
+    ok('引用续行不再单独出手柄：⋮⋮ 始终钉在组首',
+      !!topFirst && topFirst === topCont, JSON.stringify({ topFirst, topCont }));
+
+    /* 转换面板：底部有删除项，且不给盲打键（误按一个字母不该删掉一块） */
+    await click('#whMenu');
+    const bmOpen = await ev(`!document.getElementById('wBlockMenu').classList.contains('hidden')`);
+    const bmLabels = await ev(`[...document.querySelectorAll('#wBlockMenu .bm-item span')].map(e => e.textContent)`);
+    const delKey = await ev(`(() => { const b = [...document.querySelectorAll('#wBlockMenu .bm-item')].find(e => e.textContent.includes('删除这一块')); return b ? b.dataset.key : 'missing'; })()`);
+    ok('转换面板底部有「删除这一块」', bmOpen && bmLabels.includes('删除这一块'),
+      JSON.stringify({ bmOpen, tail: bmLabels.slice(-2) }));
+    ok('删除项没有盲打选择键', delKey === '', JSON.stringify(delKey));
+    await ev(`(() => { const b = [...document.querySelectorAll('#wBlockMenu .bm-item')].find(e => e.textContent.includes('删除这一块')); if (b) b.click(); return 1; })()`);
+    const afterBm = await ev(`window.__snp.editor.toMarkdown()`);
+    ok('转换面板删除是块级：引用整组一起没',
+      !/第一行|第二行|第三行/.test(afterBm) && afterBm.includes('尾段'), JSON.stringify(afterBm));
+
+    /* 右键菜单：同一项，光标落在续行上也要回溯到组首 */
+    await fresh('blocks-ctx.md');
+    await ev(`(() => {
+      const b = document.querySelectorAll('.wysiwyg > .w-block')[2];
+      window.__snp.editor.focusBlock(b, true);
+      b.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 240, clientY: 240 }));
+      return 1;
+    })()`);
+    const ctxLabels = await ev(`[...document.querySelectorAll('.ctx-menu .ctx-label')].map(e => e.textContent)`);
+    ok('所见即所得右键也有「删除这一块」', ctxLabels.includes('删除这一块'),
+      JSON.stringify(ctxLabels.slice(-4)));
+    await ev(`(() => { const b = [...document.querySelectorAll('.ctx-menu .ctx-item')].find(e => e.textContent.includes('删除这一块')); if (b) b.click(); return 1; })()`);
+    const afterCtx = await ev(`window.__snp.editor.toMarkdown()`);
+    ok('右键从续行删除仍是块级',
+      !/第一行|第二行|第三行/.test(afterCtx) && afterCtx.includes('尾段'), JSON.stringify(afterCtx));
+  }
 } catch (e) {
   ok('运行期间没有异常', false, String((e && e.message) || e).slice(0, 300));
 } finally {
