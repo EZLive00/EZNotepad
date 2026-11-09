@@ -43,10 +43,21 @@ export function dialog({ title = tt('提示'), body = '', buttons = [{ id: 'ok',
        再回头动焦点：对隐藏元素调 focus 的结果各版本并不一致。 */
     let focusTimer = 0;
     const close = (val) => { clearTimeout(focusTimer); overlay.classList.add('hidden'); resolve(val); };
+    /* 按钮可以声明单键快捷键（b.key：'Y' / 'N' / 'Esc'）。键帽直接画在按钮上，
+       不用猜；「未保存」那类三选一对话框靠它才能全程键盘走完。 */
+    const keyMap = new Map();
     buttons.forEach((b) => {
       const btn = document.createElement('button');
       btn.className = 'mini' + (b.primary ? ' primary' : ' ghost');
       btn.textContent = b.label;
+      if (b.key) {
+        const k = String(b.key).toLowerCase();
+        const isEsc = k === 'esc' || k === 'escape';
+        keyMap.set(isEsc ? 'escape' : k, b.id);
+        btn.dataset.key = isEsc ? 'Esc' : b.key;
+        btn.classList.add('btn-key');
+        btn.setAttribute('aria-keyshortcuts', isEsc ? 'Escape' : b.key);
+      }
       btn.onclick = () => close(b.id);
       footEl.appendChild(btn);
     });
@@ -64,6 +75,19 @@ export function dialog({ title = tt('提示'), body = '', buttons = [{ id: 'ok',
     document.getElementById('dlgClose').onclick = () => close('cancel');
     overlay.classList.remove('hidden');
     overlay.onkeydown = (e) => {
+      const k = (e.key || '').toLowerCase();
+      const hit = keyMap.get(k);
+      /* 字母键归输入框自己：弹层里带输入框时敲 y 不该把弹层关掉。组字中、
+         带 Ctrl/Alt/Meta 的键也不接管；Escape 例外，它本来就是取消。 */
+      const typing = !!(e.target && (e.target.isContentEditable
+        || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName || '')));
+      if (hit && !e.isComposing && !e.ctrlKey && !e.altKey && !e.metaKey
+          && (k === 'escape' || !typing)) {
+        e.preventDefault();
+        e.stopPropagation();
+        close(hit);
+        return;
+      }
       if (e.key === 'Escape') { e.stopPropagation(); close('cancel'); }
       if (e.key === 'Enter') {
         /* 焦点停在「点了会返回某个值」的元素上（新建文档的类型格子），
@@ -98,7 +122,14 @@ export const confirmBox = (title, text, okLabel = tt('确定'), cancelLabel = tt
  * 第四个参数 `{ stayOnScroll }`：锚点是固定控件（不随内容滚动而移动）时传 true，
  * 否则页面里任何一处滚动都会把菜单收掉。
  */
+/* 当前浮层菜单的关闭函数。换菜单时必须走它自己的 close()：
+   Escape / mousedown 的监听挂在 document 的 capture 上，不跟着 DOM 一起消失，
+   只 remove 节点会留下「幽灵菜单」，把之后每一次 Esc 都吞掉 —— 未保存提示的
+   「Esc 取消」就是这么失效的。 */
+let openMenuClose = null;
+
 export function contextMenu(x, y, items, { stayOnScroll = false } = {}) {
+  if (openMenuClose) openMenuClose();
   document.querySelectorAll('.ctx-menu').forEach((m) => m.remove());
   const menu = document.createElement('div');
   menu.className = 'ctx-menu';
@@ -205,15 +236,21 @@ export function contextMenu(x, y, items, { stayOnScroll = false } = {}) {
   menu.style.top = Math.round(top) + 'px';
   menu.style.visibility = '';
 
+  /* 别拿 menu.isConnected 当「已经关过了」：外部（或下一份菜单）直接摘掉
+     DOM 时它同样为 false，那时监听还得清。用显式标志，且重复调用是安全的。 */
+  let closed = false;
   function close() {
-    if (!menu.isConnected) return;
-    menu.remove();
+    if (closed) return;
+    closed = true;
     document.removeEventListener('mousedown', off, true);
     document.removeEventListener('keydown', onKey, true);
     window.removeEventListener('scroll', close, true);
     window.removeEventListener('resize', close);
     window.removeEventListener('blur', close);
+    menu.remove();
+    if (openMenuClose === close) openMenuClose = null;
   }
+  openMenuClose = close;
 
   const off = (e) => { if (!menu.contains(e.target)) close(); };
   const onKey = (e) => {
@@ -221,6 +258,9 @@ export function contextMenu(x, y, items, { stayOnScroll = false } = {}) {
   };
 
   setTimeout(() => {
+    /* 菜单可能在注册监听之前就被下一份菜单顶掉了（同一帧里连开两次）。
+       那时 close() 已经跑过，别再把已关菜单的监听挂回 document。 */
+    if (closed) return;
     document.addEventListener('mousedown', off, true);
     document.addEventListener('keydown', onKey, true);
     /* 滚动会让菜单和它指向的那个格子错位，直接收掉。

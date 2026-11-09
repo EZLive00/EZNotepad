@@ -1111,6 +1111,22 @@ body[data-zen="1"] .win-title { color: var(--fg-faint); }
 .mini.ghost { background: transparent; border-color: transparent; }
 .mini.ghost:hover { background: var(--bg-hover); }
 
+/* 对话框按钮上的单键快捷键帽。用 ::after + data-key 而不是内嵌 <kbd>：
+   静态按钮（对比窗口的关窗确认条）带 data-i18n，切语言时会被整体覆写成
+   textContent，内嵌的键帽会当场消失，属性不会。 */
+.btn-key::after {
+  content: attr(data-key);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1;
+  min-width: 13px;
+  padding: 2px 4px;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  opacity: .55;
+  text-align: center;
+}
+
 /* 预览区的空态（没打开文件 / 启动失败） */
 .diff-empty { padding: 60px; text-align: center; color: var(--fg-faint); font-family: var(--font-ui); font-size: 13px; }
 

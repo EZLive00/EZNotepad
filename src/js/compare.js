@@ -2475,12 +2475,46 @@ function showCloseConfirm() {
   /* 粘进来的文本没有磁盘目标，没有「保存」这条出路 —— 别给一个按了也没用的按钮 */
   $('confirmSave').hidden = !files;
   $('confirm').hidden = false;
+  document.addEventListener('keydown', onConfirmKey, true);
   $('confirmCancel').focus();
+}
+
+/* 关窗确认条是模态的：Y 保存并关闭 / N 不保存 / Esc 取消。
+   键盘监听只在确认条显示期间挂在 document 的 capture 上，收起就摘 ——
+   挂在常驻的全局 keydown 里靠 hidden 判断，状态一旦没复位就会把正文的
+   Ctrl+A / Ctrl+Z / Alt+→ 一起吞掉（真机实测过一整批键盘断言集体变红）。 */
+function onConfirmKey(e) {
+  /* 监听的生命周期与确认条的显示状态解耦：即使某次收起没走到
+     hideCloseConfirm()，确认条已经隐藏时也绝不许碰正文的按键。 */
+  if ($('confirm').hidden) return;
+  e.preventDefault();
+  e.stopPropagation();
+  if (e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
+  const k = (e.key || '').toLowerCase();
+  if (k === 'escape') cancelClose();
+  else if (k === 'y' && !$('confirmSave').hidden) void saveAndClose();
+  else if (k === 'n') dropAndClose();
+}
+
+function hideCloseConfirm() {
+  $('confirm').hidden = true;
+  document.removeEventListener('keydown', onConfirmKey, true);
+}
+
+/* 鼠标与 Y / N / Esc 共用同一组动作，不另写一份保存分支 */
+const cancelClose = () => hideCloseConfirm();
+const dropAndClose = () => { void closeForReal(); };
+async function saveAndClose() {
+  await save();
+  /* 还有没落盘的（保存失败、或者粘贴文本本来就没有目标文件）：留在原地，
+     别把确认条也收掉 —— 那条是用户唯一的出口。 */
+  if (dirtySides().length) return;
+  await closeForReal();
 }
 
 async function closeForReal() {
   forceClosing = true;
-  $('confirm').hidden = true;
+  hideCloseConfirm();
   const w = (() => { try { return getCurrentWindow(); } catch { return null; } })();
   if (!w) return;
   try { await w.close(); } catch { forceClosing = false; }
@@ -2584,15 +2618,10 @@ function bind() {
     }
   }
 
-  $('confirmCancel').onclick = () => { $('confirm').hidden = true; };
-  $('confirmDrop').onclick = () => { void closeForReal(); };
-  $('confirmSave').onclick = async () => {
-    await save();
-    /* 还有没落盘的（保存失败、或者粘贴文本本来就没有目标文件）：留在原地，
-       别把确认条也收掉 —— 那条是用户唯一的出口。 */
-    if (dirtySides().length) return;
-    await closeForReal();
-  };
+  /* 三个出口与键盘共用关窗守卫段里那组模块级函数 */
+  $('confirmCancel').onclick = cancelClose;
+  $('confirmDrop').onclick = dropAndClose;
+  $('confirmSave').onclick = () => { void saveAndClose(); };
 
   $('slotL').onclick = pickSide('l');
   $('slotR').onclick = pickSide('r');

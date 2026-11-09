@@ -1849,9 +1849,9 @@ async function confirmQuit() {
       + (noPath ? tt('<br><br>其中 {n} 个还没保存过文件：「全部保存并退出」会把它们存成草稿，下次启动可恢复；「不保存退出」则连同丢弃。', { n: noPath }) : '')
       + tt('<br><br>要如何处理？'),
     buttons: [
-      { id: 'save', label: tt('全部保存并退出'), primary: true },
-      { id: 'discard', label: tt('不保存退出') },
-      { id: 'cancel', label: tt('取消') },
+      { id: 'save', label: tt('全部保存并退出'), primary: true, key: 'Y' },
+      { id: 'discard', label: tt('不保存退出'), key: 'N' },
+      { id: 'cancel', label: tt('取消'), key: 'Esc' },
     ],
   });
   if (r === 'cancel') return false;
@@ -1900,9 +1900,9 @@ async function closeTab(id) {
       title: tt('未保存的修改'),
       body: tt('<b>{name}</b> 有未保存的修改，要保存吗？', { name: t.name }),
       buttons: [
-        { id: 'save', label: tt('保存'), primary: true },
-        { id: 'discard', label: tt('不保存') },
-        { id: 'cancel', label: tt('取消') },
+        { id: 'save', label: tt('保存'), primary: true, key: 'Y' },
+        { id: 'discard', label: tt('不保存'), key: 'N' },
+        { id: 'cancel', label: tt('取消'), key: 'Esc' },
       ],
     });
     if (r === 'cancel') return;
