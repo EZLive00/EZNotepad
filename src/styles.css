@@ -152,13 +152,15 @@ body[data-theme="light"] {
      不加对比晕：实测会显成白框，浅底上反而脏。
      用 PNG 而不是 SVG——cursor 对 SVG 的支持不可靠（解析得过却渲染不出时，
      光标直接消失，比 1px 更糟） */
+  /* 高分屏（125%/150% 缩放）换 2x 图，否则光标被系统放大后发糊。
+     ⚠️ 2x 图**必须**用 image-set 声明密度：直接写 url() 时浏览器把它按 1x
+     渲染，光标整整大一倍（用户报的「深色下光标特别大」就是这张图）。
+     不支持 image-set 的引擎丢弃第二行、退回上面那张 1x，光标不会消失。 */
   --cur-text: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAA4AAAAYCAYAAADKx8xXAAAAJklEQVR42mNgGLrA1jngPzZMO43oBpDt5FGNoxqHncaBy4+DDwAAH69eDUbf5XAAAAAASUVORK5CYII=") 7 12;
-}
-/* 高分屏（125%/150% 缩放）换 2x 图，否则光标会被系统放大发糊。本机 100% DPI 走上面那张 */
-@media (min-resolution: 1.5dppx) {
-  :root {
-    --cur-text: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABwAAAAwCAYAAAACYxrZAAAAQklEQVR42u3XsQ0AIAgAQRazcgH3X0ZHMDREzH1CfRQ0REjtG3PtzADfA28LlB8REAgEAoFAIBAIbAl61/77D6XyDkl3eEAKjpLaAAAAAElFTkSuQmCC") 7 12;
-  }
+  --cur-text: image-set(
+    url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAA4AAAAYCAYAAADKx8xXAAAAJklEQVR42mNgGLrA1jngPzZMO43oBpDt5FGNoxqHncaBy4+DDwAAH69eDUbf5XAAAAAASUVORK5CYII=") 1x,
+    url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABwAAAAwCAYAAAACYxrZAAAAQklEQVR42u3XsQ0AIAgAQRazcgH3X0ZHMDREzH1CfRQ0REjtG3PtzADfA28LlB8REAgEAoFAIBAIbAl61/77D6XyDkl3eEAKjpLaAAAAAElFTkSuQmCC") 2x
+  ) 7 12;
 }
 
 /* ================= 暗色 =================
@@ -248,13 +250,12 @@ body[data-theme="dark"] {
   --tok-comment: var(--gray-10);
   --tok-punc: var(--gray-11);
 
-  /* 深底反过来：浅灰工字，同样不加晕 */
+  /* 深底反过来：浅灰工字，同样不加晕。密度声明与浅色那份同理（见文件顶部） */
   --cur-text: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAA4AAAAYCAYAAADKx8xXAAAAJklEQVR42mNgGLrg0PFL/7Fh2mlEN4BsJ49qHNU47DQOXH4cfAAAtUOuSWTbew0AAAAASUVORK5CYII=") 7 12;
-}
-@media (min-resolution: 1.5dppx) {
-  body[data-theme="dark"] {
-    --cur-text: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABwAAAAwCAYAAAACYxrZAAAAQklEQVR42u3XsQ0AIAgAQfYfy8behXQEQ0PE3CfUR0FDhNS+MdfODPA98LZA+REBgUAgEAgEAoHAlqB37b//UCrvAKImuT/aYZR/AAAAAElFTkSuQmCC") 7 12;
-  }
+  --cur-text: image-set(
+    url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAA4AAAAYCAYAAADKx8xXAAAAJklEQVR42mNgGLrg0PFL/7Fh2mlEN4BsJ49qHNU47DQOXH4cfAAAtUOuSWTbew0AAAAASUVORK5CYII=") 1x,
+    url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABwAAAAwCAYAAAACYxrZAAAAQklEQVR42u3XsQ0AIAgAQfYfy8behXQEQ0PE3CfUR0FDhNS+MdfODPA98LZA+REBgUAgEAgEAoHAlqB37b//UCrvAKImuT/aYZR/AAAAAElFTkSuQmCC") 2x
+  ) 7 12;
 }
 
 * { box-sizing: border-box; }
@@ -600,9 +601,11 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
 /* 下拉菜单 */
 .dropdown { position: relative; }
 .menu-panel {
-  /* 工具行现在贴右边缘，面板改成右对齐展开，否则 250px 宽的菜单会溢出窗口 */
+  /* 工具行贴右边缘，面板右对齐展开，否则会溢出窗口。
+     只有「模式」这一个下拉用它，三项都是两三字的短词 —— 250px 里有一半是空白，
+     收到 140 刚好一行放下并留出勾选位 */
   position: absolute; top: 32px; right: 0; left: auto; z-index: 50;
-  min-width: 250px; padding: 6px;
+  min-width: 140px; padding: 6px;
   background: var(--bg-float); border-radius: var(--r-2);
   box-shadow: var(--shadow-float); display: none;
 }
@@ -650,6 +653,17 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
 }
 .side-tab:hover { background: var(--bg-hover); color: var(--fg-soft); }
 .side-tab.active { background: var(--bg-panel); color: var(--fg); }
+/* 「在文件列表中定位」：页签右边一个圆圈准星，靠右收起。
+   图标是 Lucide 的 locate（圆圈 + 四向刻度），和菜单栏其它图标同源 */
+.side-locate {
+  margin-left: auto;
+  width: 24px; height: 24px; flex: none;
+  display: grid; place-items: center;
+  border: none; border-radius: var(--r-1);
+  background: transparent; color: var(--fg-faint); cursor: pointer;
+}
+.side-locate:hover { background: var(--bg-hover); color: var(--fg); }
+.side-locate .ico { width: 14px; height: 14px; }
 .side-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 
 /* ---- 文件树 ---- */
@@ -709,6 +723,13 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
 }
 .ft-row:hover { background: var(--bg-hover); color: var(--fg); }
 .ft-row.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+/* 定位时的三下闪烁：只改背景，不动尺寸与位置（一抖就说明改错了属性）。
+   行本来就已经是当前文件时也要闪 —— 那正是「知道是它，但想看清它在树的哪儿」的场景 */
+@keyframes ft-flash {
+  0%, 100% { background: transparent; }
+  35% { background: var(--accent-soft); box-shadow: inset 0 0 0 var(--bw) var(--accent); }
+}
+.ft-row.ft-flash { animation: ft-flash 320ms var(--ease-out) 3; }
 /* 多选（挑两个文件做比较）：和「当前打开」区分开 —— 打开是实底强调，
    多选只加一圈细描边，两个状态同时存在时仍看得出哪个是编辑区里的那一个 */
 .ft-row.sel { background: var(--bg-hover); box-shadow: inset 0 0 0 var(--bw) var(--accent); color: var(--fg); }
@@ -959,11 +980,11 @@ input[type="search"] { cursor: var(--cur-text), text; }
   box-shadow: inset 0 0 0 var(--bw) var(--line);
 }
 .md pre code { background: none; padding: 0; font-size: var(--fs-2); }
-/* 引用 = 缩进 + 一条中性细线。不铺底色、不染强调色：
-   左边一条橙色粗条是「卡片带彩边」的做法，既抢标题的注意力，
-   又和真正需要颜色的提示块撞车 */
+/* 引用 = 一块比纸面浅一档的底色（与代码块同属 --bg-soft 那一类） + 内缩。
+   不铺左边条：底色已经说明「这段被引用」，再叠一条彩边就是两层装饰 */
 .md blockquote {
-  margin: 1.1em 0; padding: .1em 0 .1em 1em; border-left: var(--bw) solid var(--line-strong);
+  margin: 1.1em 0; padding: .55em 1em;
+  background: var(--bg-soft); border-radius: var(--r-2);
   color: var(--fg-soft);
 }
 /* 提示块（callout）：> [!info] 这类标记升级出来的染色引用。
@@ -1225,17 +1246,16 @@ body[data-zen="1"] .win-title { color: var(--fg-faint); }
 /* 对话框按钮上的单键快捷键帽。用 ::after + data-key 而不是内嵌 <kbd>：
    静态按钮（对比窗口的关窗确认条）带 data-i18n，切语言时会被整体覆写成
    textContent，内嵌的键帽会当场消失，属性不会。 */
+/* 快捷键写成括号跟在按钮文字后，例如「保存(Y)」。
+   ⛔ 不画键帽：那个描边框在 26px 高、12px 字号的按钮里会撑起一个更高的行盒，
+   中文的视觉重心本来就偏低，叠上去整排按钮看着「文字往下掉」。
+   括号是同一段文字，天然同基线、同字号，也少一层装饰。
+   gap 归零：否则 flex 会在「保存」和「(Y)」之间塞 5px，变成「保存 (Y)」 */
+.btn-key { gap: 0; }
 .btn-key::after {
-  content: attr(data-key);
-  font-family: var(--font-mono);
+  content: "(" attr(data-key) ")";
   font-size: var(--fs-1);
-  line-height: 1;
-  min-width: 15px;
-  padding: 1px 4px;
-  border: var(--bw) solid currentColor;
-  border-radius: var(--r-1);
-  opacity: .7;
-  text-align: center;
+  opacity: .65;
 }
 
 /* 预览区的空态（没打开文件 / 启动失败） */
@@ -1594,11 +1614,13 @@ body[data-zen="1"] .win-title { color: var(--fg-faint); }
   accent-color: var(--accent); cursor: pointer; position: relative; top: 1px;
 }
 .wysiwyg .w-task[data-checked="1"] > .w-text { color: var(--fg-faint); text-decoration: line-through; }
-/* 引用 = 一条中性细线：线只说明「这段被引用」，不负责好看。
-   ⛔ 不再染强调色的粗边 + 浅橙底 —— 那是「卡片带彩边」，抢标题注意力，
-   而且和需要真颜色的提示块撞在一起 */
+/* 引用 = 一块比纸面浅一档的底色（--bg-soft，与代码块、表格头同一类「纸面坑」）。
+   ⛔ 不再画左边条：底色已经说明「这段被引用」，再叠一条彩边就是两层装饰，
+   也正是最容易被读成「卡片」的那种造型。
+   底色只比纸面暗/亮一档 —— 引用是正文的一部分，不能跳出来抢标题的位置 */
 .wysiwyg .w-bq {
-  border-left: var(--bw) solid var(--line-strong);
+  background: var(--bg-soft);
+  border-radius: var(--r-2);
   margin: .95em 0 .95em calc(var(--bq-indent, 0) * 1.55em);
   padding: .5em 1em; color: var(--fg-soft);
 }
@@ -1609,10 +1631,12 @@ body[data-zen="1"] .win-title { color: var(--fg-faint); }
    Chromium 对 :has 的失效判定是插入时沿兄弟链重算，万块级文档分块载入时
    每次 append 都触发全量重算，实测每批 2500 块从 4ms 恶化到 4s+（O(n²) 载入） */
 .wysiwyg .w-bq + .w-bq { margin-top: 0; }
-.wysiwyg .w-bq[data-bq-tail] { margin-bottom: 0; border-bottom-right-radius: 0; padding-bottom: 0; }
-/* 组内续行把上下 padding 也清掉：每块自带 .5em，叠两份就是「两个块」的行距。
+/* 组内续行：上下 padding 清掉、内外两侧圆角抹平，否则每行自带 .5em + 圆角，
+   整段会变成一串小胶囊 */
+.wysiwyg .w-bq[data-bq-tail] { margin-bottom: 0; padding-bottom: 0; border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+/* 组内续行把上 padding 也清掉：每块自带 .5em，叠两份就是「两个块」的行距。
    清掉后行距与普通段落完全一致 */
-.wysiwyg .w-bq + .w-bq:not([data-bq-start]) { padding-top: 0; }
+.wysiwyg .w-bq + .w-bq:not([data-bq-start]) { padding-top: 0; border-top-left-radius: 0; border-top-right-radius: 0; }
 /* data-bq-start = 空行断出来的独立引用：恢复与上一条的间距，两个框各自完整
    （不需要专门恢复 margin-bottom/padding-bottom —— 那正是基础值，
    前行没打 data-bq-tail 时自然就是它们） */
