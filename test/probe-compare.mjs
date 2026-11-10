@@ -420,7 +420,20 @@ try {
     await setFold(fold);
   };
 
+  /* 视口尺寸是若干断言的**前提**，不是被测对象。探针可能跑在没有物理显示器的
+     会话里（本机就是 640×432 的虚拟屏）：那种尺寸下「一行 20px」「一屏 40 行」
+     「工具栏一排放得下」全不成立，断言成片变红 —— 看着像程序坏了，其实是没有宽屏。
+     CDP 的 Emulation 是**会话级**的，openPair 每重连一次就失效，所以不能用一次
+     了事，必须在使用点之前重新下发。与真实窗口有关的断言（第 19 节读 outerWidth /
+     screenX / 铺满工作区）那边单独 clear，不能带这套模拟值。 */
+  const WIDE = { width: 1400, height: 900, deviceScaleFactor: 1, mobile: false };
+  const useWide = async () => {
+    await cmp.send('Emulation.setDeviceMetricsOverride', WIDE);
+    await sleep(350);
+  };
+
   await openPair(p('edit-a.txt'), p('edit-a2.txt'));
+  await useWide();
   /* 默认就该是可写的：打开两份文件却不让人改，用户的第一反应是「坏了」。
      只读是用户主动切过去的状态，不是打开时的默认值。 */
   ok('打开一对文件就已经是可写状态',
@@ -636,6 +649,7 @@ try {
   })()`);
 
   await openPair(p('big-a.txt'), p('big-b.txt'));
+  await useWide();
   await enterEdit();
   await cmp.ev(`(() => {
     const sc = document.getElementById('scrollL');
@@ -747,15 +761,16 @@ try {
     dot: document.getElementById('dotL').classList.contains('on'),
     save: document.getElementById('save').disabled === false,
     meta: document.getElementById('metaL').textContent,
+    title: document.getElementById('nameL').title,
   })`);
   await openPair(p('edit-a.txt'), p('edit-a2.txt'));
   await enterEdit();
   const clean0 = await dirtyState();
-  ok('刚打开的对比是干净的', !clean0.dot && !clean0.save && !/未保存/.test(clean0.meta), JSON.stringify(clean0));
+  ok('刚打开的对比是干净的', !clean0.dot && !clean0.save && !/未保存/.test(clean0.title), JSON.stringify(clean0));
 
   await typeIn('l', 0, 'ZZ');
   const dirty1 = await dirtyState();
-  ok('改过之后标脏、保存可点', dirty1.dot && dirty1.save && /未保存/.test(dirty1.meta), JSON.stringify(dirty1));
+  ok('改过之后标脏、保存可点', dirty1.dot && dirty1.save && /未保存/.test(dirty1.title), JSON.stringify(dirty1));
 
   await pressKey(90, 'z', 'KeyZ', 2);
   await sleep(800);
@@ -844,7 +859,7 @@ try {
     };
   })()`);
 
-  const wide = await barFit();
+  const wide = await (async () => { await useWide(); return barFit(); })();
   ok('宽窗口下工具栏不溢出、按钮都完整',
     wide.over <= 1 && !wide.clipped.length && !wide.zero.length && !wide.tight, JSON.stringify(wide));
 
@@ -856,7 +871,9 @@ try {
     ok(`${w}px 宽时没有按钮被裁掉`, f.over <= 1 && !f.clipped.length && !f.zero.length, JSON.stringify(f));
   }
 
-  await cmp.send('Emulation.clearDeviceMetricsOverride', {});
+  /* 回到标准宽视口，测「变宽之后折叠不粘住」——不能用 clear，那会掉回宿主的
+     虚拟小屏，宽度比这里的窄档还小 */
+  await cmp.send('Emulation.setDeviceMetricsOverride', WIDE);
   await sleep(500);
   const back = await barFit();
   ok('窗口变宽后按钮文字回来（折叠不粘住）',
@@ -1185,6 +1202,7 @@ try {
   /* 拖到视口下缘：行不够时先补 DOM，指针跨出行之后选区由自己接管
      （Blink 的选区不许跨出编辑宿主，见 compare.js 的 dragMove） */
   await openPair(p('sel-a.txt'), p('sel-b.txt'), false);    // 重新打开：DOM 回到一屏
+  await useWide();
   await enterEdit();
   const dragDom0 = await cmp.ev(`document.querySelectorAll('#rowsL .cmp-row').length`);
   const atDrag = await rowBox('L', 1);
@@ -1596,6 +1614,10 @@ try {
     ow: window.outerWidth, oh: window.outerHeight,
   })`);
   await openPair(p('push-a.txt'), p('push-b.txt'));
+  /* 这一节验的是**真实窗口**（outerWidth / screenX / 铺满工作区），
+     前面固定的视口必须撤掉，否则 screen 是被模拟出来的值，断言就失去意义 */
+  await cmp.send('Emulation.clearDeviceMetricsOverride', {});
+  await sleep(600);
   const ms = await scr(main);
   const cs = await scr(cmp);
   ok('对比窗口和主窗口在同一块屏上',
@@ -1618,10 +1640,13 @@ try {
   await cmp.ev(`document.getElementById('wmax').click()`);   // 还原
   await sleep(800);
   const rs = await scr(cmp);
+  /* 「不再是铺满」的基准取**铺满时自己的宽度**，不是屏幕宽：小屏上
+     `屏幕宽 - 100` 可能比系统允许的最小窗口还小，这条断言就成了必然失败。
+     实际窗口最小 760（min_inner_size），640 宽的虚拟屏上根本达不到。 */
   ok('还原后仍在同一块屏里，而且不再是铺满',
-    rs.left === cs.left && rs.ow < rs.w - 100
+    rs.left === cs.left && rs.ow < cs.ow - 10
       && rs.x >= rs.left - 2 && rs.x + rs.ow <= rs.left + rs.w + 16,
-    JSON.stringify(rs));
+    JSON.stringify(rs) + ' vs full ' + JSON.stringify(cs));
 
   const icoSmall = await ico();
   ok('还原后图标和提示都切成「最大化」',
@@ -1658,6 +1683,7 @@ try {
   fs.writeFileSync(p('wrap-a.txt'), longText('A'), 'utf8');
   fs.writeFileSync(p('wrap-b.txt'), longText('B'), 'utf8');
   await openPair(p('wrap-a.txt'), p('wrap-b.txt'));
+  await useWide();
 
   const wrapGeo = () => cmp.ev(`(() => {
     const sc = document.getElementById('scrollL');

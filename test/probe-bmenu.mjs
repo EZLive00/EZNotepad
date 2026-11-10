@@ -105,12 +105,21 @@ const state = () => ev(`(() => {
   };
 })()`);
 
+/** 块内的一个内点：按块自身宽度取，不用固定 120px。
+ *  侧栏展不展开会把正文列压得很窄（实测窄到 110px、一段折成五行），
+ *  固定偏移会落到段落右边的留白里 —— 那里按设计「不属于任何块」，手柄当然不动。
+ *  这类假红最难查：症状与「手柄不会跟着挪」一模一样。 */
+const inPara = (r, dx = 40) => Math.round(r.left + Math.min(dx, Math.max(8, (r.right - r.left) / 2)));
+
 /** 段落中心坐标 */
 const paraCenter = () => ev(`(() => {
   const b = [...document.querySelectorAll('.w-block')].find((n) => n.dataset.type === 'p');
   if (!b) return null;
   const r = b.getBoundingClientRect();
-  return { x: r.left + 40, y: r.top + r.height / 2, right: r.right, left: r.left };
+  return {
+    x: r.left + Math.min(40, Math.max(8, (r.right - r.left) / 2)),
+    y: r.top + r.height / 2, right: r.right, left: r.left,
+  };
 })()`);
 const btnCenter = (id) => ev(`(() => {
   const r = document.getElementById(${JSON.stringify(id)}).getBoundingClientRect();
@@ -163,11 +172,26 @@ const paraRects = await ev(`(() => {
 })()`);
 const handleTop = () => ev(`document.getElementById('wHandle').getBoundingClientRect().top`);
 const shown = () => ev(`!document.getElementById('wHandle').classList.contains('hidden')`);
+/** 手柄当前贴着哪一段（按 y 最近）。断言认「贴着谁」，不认某个绝对像素 ——
+ *  窗口大小、DPI、前面的组留下的滚动位置都会改绝对坐标，那是环境不是行为 */
+const handleAnchor = () => ev(`(() => {
+  const h = document.getElementById('wHandle');
+  if (h.classList.contains('hidden')) return '(隐藏)';
+  const y = h.getBoundingClientRect().top;
+  const ps = [...document.querySelectorAll('.w-block')].filter((n) => n.dataset.type === 'p');
+  let best = null;
+  for (const b of ps) {
+    const t = b.getBoundingClientRect().top;
+    if (!best || Math.abs(t - y) < Math.abs(best.t - y)) best = { t, text: (b.textContent || '').slice(0, 4) };
+  }
+  return best ? best.text : '(没有段落)';
+})()`);
 const topAfterFirst = await handleTop();
+ok('手柄一开始贴在第一段', (await handleAnchor()) === '第一个段', await handleAnchor());
 
 /* a. 两段之间的空隙：既不属于上一块也不属于下一块 */
 const paraGapY = (paraRects[0].bottom + paraRects[1].top) / 2;
-await moveTo(paraRects[0].left + 120, paraGapY);
+await moveTo(inPara(paraRects[0]), paraGapY);
 await sleep(320);
 ok('鼠标停在两段之间的空隙，手柄没消失', await shown());
 ok('…而且还钉在原处（没有被挪到别的行）', Math.abs((await handleTop()) - topAfterFirst) < 2,
@@ -183,12 +207,15 @@ await moveTo(300, 8);
 await sleep(320);
 ok('鼠标离开编辑区，手柄仍留在最后那一行', await shown());
 
-/* d. 真的换到下一段，才跟着挪 */
-await moveTo(paraRects[1].left + 120, paraRects[1].cy);
-await sleep(320);
+/* d. 真的换到下一段，才跟着挪。
+   按真实手的轨迹分段移过去：从标题栏一步瞬移到段落中心，是一次 mousemove 跨过
+   整个编辑区，事件会不会被丢取决于当时的合成时序 —— 这不属于被测行为。 */
+await dragTo(inPara(paraRects[1]), paraRects[1].cy, { x: 300, y: 8 }, 8);
+await sleep(340);
 const topAfterSecond = await handleTop();
 ok('鼠标换到下一段，手柄跟着挪过去', topAfterSecond > topAfterFirst + 5,
   `${Math.round(topAfterSecond)} vs ${Math.round(topAfterFirst)}`);
+ok('…而且贴的是第二段', (await handleAnchor()) === '第二个段', await handleAnchor());
 
 /* ---------- 2. 点 + 打开菜单 ---------- */
 ok('点击 + 弹出块菜单', await openMenu());

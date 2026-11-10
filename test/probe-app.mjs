@@ -723,6 +723,9 @@ try {
     await load('dirq2.md', '> 甲\n> 乙\n\n后文\n');
     await caretAt(1);
     await right();
+    /* → 和 ↓ 在块末做同一件事：出块、落到下一块开头。
+       方向键不许改文档（插一行 = 多一条撤销记录 + 标签变脏），
+       「落进后文开头」本身就已经满足「往后写一行」 */
     ok('引用组末行 → 落进后面那一段',
       JSON.stringify(await bl()) === '["bq:甲","bq:乙","p:后文"]', JSON.stringify(await bl()));
 
@@ -1317,6 +1320,129 @@ try {
     const after = await ev(`window.__snp.getEditorText()`);
     ok('关掉另一个标签后，当前标签的内容原样',
       String(after).includes('A 的内容') && !String(after).includes('B 的内容'), JSON.stringify(after));
+  }
+
+  /* ---------- 表格单元格里的行内格式 ----------
+     用户原话：「表格中的内容，无法选中高亮」。选中是好的（拖选、跨格都通），
+     坏的是「选中之后加不了格式」：toggleMark / toggleInline 见到单元格就整条返回。
+     现在只拦跨格选区，单格里的加粗 / 高亮照常写回 `==…==`。 */
+  {
+    await ev(`window.__snp.newTab('cell-mark.md', '', null, { mode: 'wysiwyg' })`);
+    await sleep(400);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(300);
+    await ev(`window.__snp.setContent('| 姓名 | 城市 |\\n| --- | --- |\\n| 张三 | 北京 |\\n')`);
+    await sleep(700);
+
+    /* 程序化选区（不依赖鼠标轨迹）：第一格里「张三」两个字 */
+    await ev(`(() => {
+      const td = document.querySelector('.w-block[data-type="table"] td');
+      const tn = [...td.childNodes].find((n) => n.nodeType === 3);
+      const r = document.createRange(); r.setStart(tn, 0); r.setEnd(tn, 2);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+    })()`);
+    await sleep(140);
+    await ev(`window.__snp.commands.highlight()`);
+    await sleep(320);
+    const one = await ev(`(() => ({
+      hasMark: !!document.querySelector('.w-block[data-type="table"] td mark'),
+      md: window.__snp.getEditorText(),
+    }))()`);
+    ok('单元格里选中后能加高亮', one.hasMark, JSON.stringify(one.md));
+    ok('单元格里的高亮写回 ==…==', /==张三==/.test(one.md), JSON.stringify(one.md));
+
+    await ev(`(() => {
+      const tn = document.querySelector('.w-block[data-type="table"] mark').firstChild;
+      const r = document.createRange(); r.setStart(tn, 0); r.setEnd(tn, tn.nodeValue.length);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+    })()`);
+    await sleep(140);
+    await ev(`window.__snp.commands.highlight()`);
+    await sleep(320);
+    const off = await ev(`(() => ({
+      hasMark: !!document.querySelector('.w-block[data-type="table"] td mark'),
+      md: window.__snp.getEditorText(),
+    }))()`);
+    ok('单元格里再点一次取消高亮', !off.hasMark && !/==/.test(off.md), JSON.stringify(off.md));
+
+    /* 跨格：不许动结构（会把 <td> 搬进 <mark>） */
+    await ev(`(() => {
+      const tds = document.querySelectorAll('.w-block[data-type="table"] td');
+      const a = [...tds[0].childNodes].find((n) => n.nodeType === 3);
+      const b = [...tds[1].childNodes].find((n) => n.nodeType === 3);
+      const r = document.createRange(); r.setStart(a, 0); r.setEnd(b, b.nodeValue.length);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+    })()`);
+    await sleep(140);
+    await ev(`window.__snp.commands.highlight()`);
+    await sleep(320);
+    const cross = await ev(`window.__snp.getEditorText()`);
+    ok('跨格选区不改表格结构', !/==/.test(cross) && /张三 \| 北京/.test(cross), JSON.stringify(cross));
+  }
+
+  /* ---------- 侧栏：在文件列表中定位当前文件 ----------
+     照 IDEA 的 Select Opened File：展开父目录 → 滚到可见 → 闪三下。
+     这里用三层深的真文件，且先把侧栏切到大纲页，模拟「用户不知道文件在哪」。 */
+  {
+    const root = path.join(os.tmpdir(), 'eznotepad-probe', 'locate-demo');
+    const deep = path.join(root, 'a', 'b');
+    fs.mkdirSync(deep, { recursive: true });
+    for (const f of ['top.md', 'a/one.md', 'a/b/two.md']) {
+      const fp = path.join(root, f);
+      if (!fs.existsSync(fp)) fs.writeFileSync(fp, '# ' + f + '\n\n正文\n', 'utf8');
+    }
+    const win = (x) => x.replace(/\//g, '\\');
+    const target = win(path.join(deep, 'two.md'));
+
+    const btn = await ev(`(() => {
+      const b = document.getElementById('sideLocate');
+      if (!b) return { exists: false };
+      const r = b.getBoundingClientRect();
+      const tr = document.querySelector('.side-tabs').getBoundingClientRect();
+      return { exists: true, visible: r.width > 0, icon: b.querySelector('use').getAttribute('href'),
+        rightOfTabs: r.left >= tr.right - 1 };
+    })()`);
+    ok('侧栏页签右边有定位按钮', btn.exists && btn.visible && btn.rightOfTabs, JSON.stringify(btn));
+    ok('定位按钮用的是 locate 准星图标', btn.icon === '#i-locate', String(btn.icon));
+
+    await ev(`window.__snp.openPath(${JSON.stringify(target)})`);
+    await sleep(800);
+    await ev(`(async () => { await window.__snp.setFolder(${JSON.stringify(win(root))}); return 1; })()`);
+    await sleep(500);
+    await ev(`document.querySelector('[data-side="outline"]').click()`);
+    await sleep(250);
+    const before = await ev(`(() => ({
+      onFiles: !document.getElementById('sideFiles').classList.contains('hidden'),
+      hasRow: [...document.querySelectorAll('#ftBody .ft-row')].some((r) => r.dataset.path === ${JSON.stringify(target)}),
+    }))()`);
+    ok('前置：停在大纲页，深层那一行还没展开', !before.onFiles && !before.hasRow, JSON.stringify(before));
+
+    await ev(`document.getElementById('sideLocate').click()`);
+    await sleep(650);
+    const after = await ev(`(() => {
+      const row = [...document.querySelectorAll('#ftBody .ft-row')].find((r) => r.dataset.path === ${JSON.stringify(target)});
+      const body = document.getElementById('ftBody').getBoundingClientRect();
+      const rr = row ? row.getBoundingClientRect() : null;
+      return {
+        onFiles: !document.getElementById('sideFiles').classList.contains('hidden'),
+        found: !!row,
+        active: !!(row && row.classList.contains('active')),
+        flash: !!(row && row.classList.contains('ft-flash')),
+        inView: !!(rr && rr.top >= body.top - 2 && rr.bottom <= body.bottom + 2),
+      };
+    })()`);
+    ok('点定位后切到文件页并展开到那一行', after.onFiles && after.found, JSON.stringify(after));
+    ok('定位到的那一行点亮、在视野里、正在闪',
+      after.active && after.inView && after.flash, JSON.stringify(after));
+
+    await sleep(1200);
+    await ev(`document.getElementById('sideLocate').click()`);
+    await sleep(260);
+    const again = await ev(`(() => {
+      const row = [...document.querySelectorAll('#ftBody .ft-row')].find((r) => r.dataset.path === ${JSON.stringify(target)});
+      return !!(row && row.classList.contains('ft-flash'));
+    })()`);
+    ok('已经是当前文件时仍然闪一下', again, String(again));
   }
 
   /* ---------- 菜单文案：不弹框的项后面不该有省略号 ----------
