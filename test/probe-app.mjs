@@ -46,6 +46,17 @@ const ev = (expr) => new Promise((res, rej) => {
 const out = [];
 const ok = (name, pass, extra = '') => out.push({ name, pass: !!pass, extra });
 const sleep = (ms) => ev(`new Promise(r => setTimeout(r, ${ms}))`);
+/* 等一个条件成立（上限 timeout）。点击大纲项后编辑区是 smooth 滚动，
+   滚多远取决于窗口高度 —— 固定 sleep 迟早碰运气，宁可轮询到点上为止。 */
+const waitUntil = async (fn, timeout = 2500) => {
+  const t0 = Date.now();
+  while (Date.now() - t0 < timeout) {
+    if (await fn()) return true;
+    await sleep(80);
+  }
+  return false;
+};
+const outlineActiveText = () => ev(`document.querySelector('.outline-item.active')?.textContent || null`);
 /* 需要真实鼠标事件的断言（右键菜单）走这个：合成事件测不到浏览器默认行为 */
 const send = (method, params) => new Promise((res, rej) => {
   const id = ++seq;
@@ -211,12 +222,20 @@ try {
   }
 
   // ---- E. 大纲跟随滚动 ----
+  /* A 段把侧栏切到了文件页再没切回来。隐藏容器里的列表 clientHeight 是 0，
+     既滚不动也滚不了 scrollTop，点击跳转虽然生效却永远点不亮 —— 这一整段
+     必须在「大纲页真的在前台」的前提下跑。 */
+  await ev(`document.querySelector('[data-side="outline"]').click()`);
+  await sleep(250);
   const doc = Array.from({ length: 30 }, (_, i) => `## 第 ${i + 1} 节\n\n这一段是第 ${i + 1} 节的内容，用来把页面撑长。\n`).join('\n');
   await ev(`window.__snp.newTab('outline.md', ${JSON.stringify(doc)}, null)`);
   await sleep(150);
   await ev(`window.__snp.commands.modeWysiwyg()`);
   await sleep(250);
-  ok('大纲生成了 30 项', (await ev(`document.querySelectorAll('.outline-item').length`)) === 30);
+  /* 数真实条目，不数 DOM：大纲是窗口化渲染的，`.outline-item` 只有视口那一段，
+     矮窗口下数到 25 不代表少收录（见 __snp.outlineCount 的说明） */
+  const outlineTotal = await ev(`window.__snp.outlineCount()`);
+  ok('大纲收录了全部 30 节', outlineTotal === 30, String(outlineTotal));
   ok('初始高亮在第一项', (await ev(`document.querySelector('.outline-item.active')?.textContent`)) === '第 1 节');
 
   await ev(`(() => {
@@ -225,7 +244,18 @@ try {
   })()`);
   await sleep(400);
   const lastActive = await ev(`document.querySelector('.outline-item.active')?.textContent`);
-  ok('滚到底部后高亮跟着走', lastActive && lastActive !== '第 1 节', lastActive);
+  ok('滚到底部后高亮跟着走', lastActive && lastActive !== '第 1 节',
+    JSON.stringify({
+      active: lastActive || null,
+      idx: await ev(`window.__snp.outlineActive()`),
+      st: await ev(`document.getElementById('wysiwyg').scrollTop`),
+      listTop: await ev(`Math.round(document.getElementById('outlineList').scrollTop)`),
+    }));
+  /* 高亮项必须真的被铺出来 —— 窗口化之后「算对了但没渲染」是一种独立的坏法 */
+  ok('滚到底部后高亮项在 DOM 里', lastActive === '第 30 节', JSON.stringify({
+    active: lastActive || null,
+    items: await ev(`document.querySelectorAll('.outline-item').length`),
+  }));
 
   // 编辑模式也要跟（走的是 CM6 的行号，不是 DOM）
   await ev(`window.__snp.commands.modeEdit()`);
@@ -244,23 +274,22 @@ try {
   await ev(`window.__snp.commands.modeWysiwyg()`);
   await sleep(300);
   await clickOutline('第 15 节');
-  await sleep(900);
-  ok('wysiwyg 点击大纲项，滚完该项点亮',
-    (await ev(`document.querySelector('.outline-item.active')?.textContent`)) === '第 15 节');
+  await waitUntil(async () => (await outlineActiveText()) === '第 15 节');
+  ok('wysiwyg 点击大纲项，滚完该项点亮', (await outlineActiveText()) === '第 15 节');
 
   await ev(`window.__snp.commands.modePreview()`);
   await sleep(300);
   await clickOutline('第 8 节');
-  await sleep(900);
-  ok('预览模式点击大纲项，滚完该项点亮',
-    (await ev(`document.querySelector('.outline-item.active')?.textContent`)) === '第 8 节');
+  await waitUntil(async () => (await outlineActiveText()) === '第 8 节');
+  ok('预览模式点击大纲项，滚完该项点亮', (await outlineActiveText()) === '第 8 节');
 
   await ev(`window.__snp.commands.modeEdit()`);
   await sleep(300);
   await clickOutline('第 22 节');
-  await sleep(900);
-  ok('编辑模式点击大纲项，滚完该项点亮',
-    (await ev(`document.querySelector('.outline-item.active')?.textContent`)) === '第 22 节');
+  await waitUntil(async () => (await outlineActiveText()) === '第 22 节');
+  ok('编辑模式点击大纲项，滚完该项点亮', (await outlineActiveText()) === '第 22 节',
+    JSON.stringify({ now: await outlineActiveText(),
+      top: await ev(`document.querySelector('#editor .cm-scroller')?.scrollTop`) }));
 
   /* 纯文本大纲只认结构标记。这里守的是那个真实 bug：`1. 2. 3.` 连续编号逐行进面板，
      而且全被压成同一级 —— 用户看到的是「txt 每行都是大纲」 */
@@ -268,7 +297,10 @@ try {
   await ev(`window.__snp.newTab('清单.txt', '1. 买菜\\n2. 做饭\\n3. 洗碗', null)`);
   await sleep(400);
   ok('txt 连续编号不逐行成大纲', (await outlineRows()).length === 0, JSON.stringify(await outlineRows()));
-  ok('txt 空态说明缺什么', /章节标记/.test(await ev(`document.querySelector('#outlineList .outline-empty')?.textContent || ''`)));
+  ok('txt 空态说明缺什么', /章节标记/.test(await ev(`document.querySelector('#outlineList .outline-empty')?.textContent || ''`)),
+    await ev(`JSON.stringify({ empty: document.querySelector('#outlineList .outline-empty')?.textContent || null,
+      kids: document.getElementById('outlineList').children.length,
+      paneHidden: document.getElementById('outlinePane').classList.contains('hidden') })`));
   await ev(`window.__snp.setContent('1. 总论\\n1.1 背景\\n1.1.1 细节\\n2. 方法')`);
   await sleep(400);
   ok('多级编号按点号段数分级',
@@ -509,11 +541,21 @@ try {
     await ev(`(() => { const b = document.getElementById('findClose'); if (b && !document.getElementById('findbar').classList.contains('hidden')) b.click(); })()`);
     await sleep(150);
 
-    const pts = await ev(`(() => [...document.querySelectorAll('.wysiwyg > .w-block')].map((b) => {
-      const t = b.querySelector('.w-text') || b;
-      const r = t.getBoundingClientRect();
-      return { x: Math.round(r.left + 20), y: Math.round(r.top + Math.round(r.height / 2)) };
-    }))()`);
+    /* 起止点要真的落在段首。原来取 getBoundingClientRect().left + 20 —— 窗口一窄，
+       20px 就跨过好几个汉字，选区跟着变，于是「第一段整段被删掉」必然红：
+       不是删除错了，是压根没从段首开始选。用 Range 把字符位置算成坐标。 */
+    const pts = await ev(`(() => {
+      const atStart = (blk) => {
+        const t = blk.querySelector('.w-text') || blk;
+        const node = t.firstChild;
+        if (!node) return null;
+        const r = document.createRange();
+        r.setStart(node, 0); r.setEnd(node, 0);
+        const b = r.getBoundingClientRect();
+        return { x: Math.round(b.left + 1), y: Math.round(b.top + Math.round(b.height / 2)) };
+      };
+      return [...document.querySelectorAll('.wysiwyg > .w-block')].map(atStart);
+    })()`);
     const a = pts[0], z = pts[2];
     await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: a.x, y: a.y, buttons: 0 });
     await sleep(60);
