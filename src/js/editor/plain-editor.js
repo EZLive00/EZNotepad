@@ -336,9 +336,17 @@ export class PlainEditor {
     this.view.dispatch({ selection: { anchor: from, head: this._clamp(end) } });
     if (opt.atTop) {
       const view = this.view;
-      const curY = view.documentTop + view.lineBlockAt(from).top;   // 行顶的窗口坐标
       const target = this.rectTop + (opt.yMargin ?? 96) - 8;
-      view.scrollDOM.scrollTop += curY - target;
+      /* 行顶的窗口坐标 → 把这一行顶到 target 上 */
+      const fix = () => {
+        view.scrollDOM.scrollTop += view.documentTop + view.lineBlockAt(from).top - target;
+      };
+      fix();
+      /* CM6 首屏量的是估算行高，滚一次才把视口外的行测出来：120 行的文档
+         实测会长高近 500px。只按第一次的量算落点，目标行会停在基准线下方
+         一整行的位置 —— 大纲点「第 22 节」，高亮却停在第 21 节。
+         下一帧按新布局再校一次，落点才真的贴到基准线上。 */
+      requestAnimationFrame(fix);
     } else {
       this.view.dispatch({ effects: EditorView.scrollIntoView(from, { y: 'center' }) });
     }

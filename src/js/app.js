@@ -757,7 +757,13 @@ function renderOutlineWindow(force) {
   all.appendChild(top);
   all.appendChild(frag);
   all.appendChild(bottom);
+  /* replaceChildren 先把子节点全摘掉，容器高度瞬间归零，浏览器顺手把 scrollTop
+     夹到 0 —— 再把内容插回来也不会自己复原。不保这一手，列表只要重铺一次
+     （跟随高亮、切标签、标题增减）用户刚滚到的位置就跳回顶部；跟随高亮时
+     表现为「索引算到了第 30 节，却永远亮在第一屏」。 */
+  const keepTop = list.scrollTop;
   list.replaceChildren(all);
+  if (keepTop && list.scrollTop !== keepTop) list.scrollTop = keepTop;
 }
 
 /** 当前章节高亮：只动「旧 → 新」两个节点，且只在它们被铺出来时动手 */
@@ -770,6 +776,17 @@ function paintOutlineActive(cur) {
   const at = (i) => (i >= outlineStart && i < outlineEnd ? outlineNodes[i - outlineStart] : null);
   const oldNode = at(prev);
   if (oldNode) oldNode.classList.remove('active');
+  /* 当前项落在已铺窗口之外：先把大纲列表滚过去，再点亮。
+     窗口化之后，长文档在矮窗口里只铺得下二十来行，滚到后面章节时这一项
+     根本不在 DOM 里 —— 只「加类」等于给 null 加类，用户看到的是整个大纲
+     没有任何高亮，跟随直接失效。落点取视口 1/4 处，上方留出前文，
+     与编辑区那条基准线的观感一致。 */
+  if (cur >= 0 && !at(cur)) {
+    const list = el.outlineList;
+    const h = outlineViewH || list.clientHeight || 600;
+    list.scrollTop = Math.max(0, cur * OUTLINE_ROW - h * 0.25);
+    renderOutlineWindow(true);
+  }
   const newNode = at(cur);
   if (newNode) newNode.classList.add('active');
 }
@@ -4864,6 +4881,11 @@ window.__snp = {
   openCompare: (l, r) => be.openCompareWindow(l, r),
   exportPdfTo: (p) => exportPdfTo(p),   // 探针：绕开系统保存框跑完整导出
   externalFileKind: (p) => externalFileKind(p),
+  /* 大纲是窗口化渲染的：DOM 里只有视口那一段（含上下各 12 行），
+     `.outline-item` 的数量随侧栏高度变化。探针要验「30 个标题都进了大纲」
+     只能问这个，不能数 DOM 节点 —— 矮窗口下那样数到的是 25。 */
+  outlineCount: () => outlineItems.length,
+  outlineActive: () => outlineActive,
 };
 window.__merge = merge;
 
