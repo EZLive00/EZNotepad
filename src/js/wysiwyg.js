@@ -2217,25 +2217,29 @@ export class WysiwygEditor {
     return p;
   }
 
-  isCaretAtStart(block) { return offsetIn(textEl(block)) === 0; }
-  isCaretAtEnd(block) {
-    const t = textEl(block);
-    return offsetIn(t) >= t.textContent.length;
+  /** 在指定块之前插一个空段落并返回它（出块要「插在块与下一块中间」） */
+  insertEmptyBefore(block) {
+    const p = mkPara('');
+    block.before(p);
+    return p;
   }
 
-  /* 光标是否停在「空末行」：isCaretAtEnd 且最后一个 <br> 之后没有可见文字
-     （零宽空格不算 —— codeNewline 垫的那个正是它的藏身处）。
-     代码/公式块用它决定 Enter 是换行还是出块 */
-  caretOnEmptyLastLine(block) {
-    if (!this.isCaretAtEnd(block)) return false;
-    const kids = textEl(block).childNodes;
-    let lastBr = -1;
-    for (let i = kids.length - 1; i >= 0; i--) {
-      if (kids[i].nodeName === 'BR') { lastBr = i; break; }
-    }
-    let txt = '';
-    for (let j = lastBr + 1; j < kids.length; j++) txt += kids[j].textContent || '';
-    return txt.replace(/\u200b/g, '').trim() === '';
+  isCaretAtStart(block) { return offsetIn(textEl(block)) === 0; }
+
+  /**
+   * 光标是不是停在**看得见的最后一个字符之后**。
+   *
+   * 尾部垫的零宽空格不算内容：代码块末行、空单元格都会垫一个当落脚点，
+   * 若按 `textContent.length` 判，光标停在「abc」之后时 offset 是 3、长度是 4，
+   * 判定为「还没到头」—— 于是 → 交给浏览器，它只是跨过那个看不见的字符，
+   * 用户看到的是「按一下没反应，得按两下才出块」。
+   */
+  isCaretAtEnd(block) {
+    const t = textEl(block);
+    const raw = t.textContent;
+    let end = raw.length;
+    while (end > 0 && raw[end - 1] === ZWSP) end--;
+    return offsetIn(t) >= end;
   }
 
   isEmptyBlock(block) { return isEmptyText(textEl(block)); }
@@ -2888,15 +2892,9 @@ export class WysiwygEditor {
     }
     e.preventDefault();
     if (type === 'code' || type === 'math') {
-      // 块内回车 = 换行；只有停在「空末行」时回车才是离开块（Typora 约定：
-      // 连按两次 Enter —— 第一下开空行，第二下出块）。↓ 方向键也可出块。
-      // 之前「末尾回车直接出块」是错的：写完一行想换行就被弹出去
-      if (this.caretOnEmptyLastLine(block)) {
-        const p = this.insertEmptyAfter(block);
-        this.placeCaretStart(p);
-        this.flush();
-        return;
-      }
+      /* 块内回车**永远**是换行。曾经按 Typora 的约定「停在空末行再按一次就出块」，
+         结果是：写完一行顺手回车想空一行，第二下就被弹出去，还要按退格把块收回来。
+         出块已经有专门的路 —— → / ↓ 在块末把光标送到块后面（见 handleArrow）。 */
       this.codeNewline();
       return;
     }
@@ -3017,15 +3015,34 @@ export class WysiwygEditor {
     const off = r.startOffset;
     const v = node.nodeValue;
 
+    /* 光标停在整块的末尾、前一个字符是换行：那是「末尾空行」。
+       浏览器对这种位置的退格会跳过末尾的换行，直接删掉上一行最后一个字
+       （实测 `line1\nline2\n` 末尾退格删掉的是 `2`）。自己删这个换行。 */
+    if (off === v.length && off > 0 && v[off - 1] === '\n') {
+      node.nodeValue = v.slice(0, off - 1);
+      const rng = document.createRange();
+      rng.setStart(node, off - 1);
+      rng.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(rng);
+      this.hCoalesce = false;
+      return true;
+    }
+
     // 前一个字符是零宽空格（行首垫片）：删掉它并接回上一行
     if (off > 0 && v[off - 1] === ZWSP) {
       const atLineStart = off === 1 && (!v.slice(0, off - 1).length);
       node.nodeValue = v.slice(0, off - 1) + v.slice(off);
       const br = atLineStart ? node.previousSibling : null;
       if (atLineStart && br && br.nodeName === 'BR') {
+        /* 先把 br 之前的节点取出来再动手：两边都 remove 之后
+           node.previousSibling 是 null、node.parentNode 也是 null，
+           caretToPrevLine 两个分支都落空，光标会被甩到整块开头的
+           「块外」位置 —— 用户看到的就是「退格一下跑上面去了」。 */
+        const prevNode = br.previousSibling;
         br.remove();
         if (!node.nodeValue) node.remove();
-        this.caretToPrevLine(node.previousSibling, r.startContainer);
+        this.caretToPrevLine(prevNode, r.startContainer);
       } else {
         const rng = document.createRange();
         rng.setStart(node, off - 1);
@@ -3066,8 +3083,10 @@ export class WysiwygEditor {
    * ↓ 与 → 把光标送到块外（表格最后一格、代码块 / 公式块末行、引用与提示块末行、
    * 列表最后一项）。没有这条路的话，这些块只能靠鼠标点击才能离开。
    *
-   * → 和 ↓ 在这里做同一件事，因为「块内已经没有更靠后的位置了」——
-   * 往右走到头的下一步就是出块，用户不会预期它反而在原地打转。
+   * 两者落点不同，按用户对这两个键的预期分：
+   *   → 「在这块后面接着写」—— 一定落在块与下一块之间的空行（下一块自带内容
+   *      就插一行，不跳进去把人家的段落劈开）；
+   *   ↓ 「到下一个东西去」—— 下一块是什么就进什么，没有才新开一行。
    */
   handleArrow(e, block, cell) {
     const exit = e.key === 'ArrowDown' || e.key === 'ArrowRight';
@@ -3133,6 +3152,9 @@ export class WysiwygEditor {
    *
    * 第 1 条里「空段落就停进去」是关键：以前不管三七二十一先 insertEmptyAfter，
    * 于是表格后面已经有一个空行时按 ↓ 又冒一个，文档末尾越按越长。
+   *
+   * ⛔ 不要为了「方便回车加一行」在这里先插一个空段落：方向键让文档变脏（还多一条
+   * 撤销记录）是不可接受的。落在下一块开头时按回车，本来就是「在这块后面加一行」。
    */
   caretAfterBlock(block) {
     const next = block.nextElementSibling;
@@ -3337,17 +3359,20 @@ export class WysiwygEditor {
   splitBlock(block, batch = false) {
     const type = block.dataset.type;
 
-    // 空列表项 / 空引用 / 空标题：退出结构（在空标题里回车 = 我要写正文）
+    // 空标题：在空白标题里回车 = 我要写正文
     if (/^h[1-6]$/.test(type) && this.isEmptyBlock(block)) {
       this.toParagraph(block, 0);
       return;
     }
+    // 空列表项：退出列表，同理
+    // 空引用 / 空提示块**不退出**：回车是在下面继续写一行引用，块本身不该
+    // 静悄悄变成段落（提示块的类型、配色会跟着一起丢）。退出引用有两条现成的路：
+    // 行首退格、→ 在块末出块。
     if ((type === 'li' || type === 'bq') && this.isEmptyBlock(block)) {
       const ind = +block.dataset.indent || 0;
       if (type === 'li' && ind > 0) { this.setIndent(block, ind - 1); return; }
       if (type === 'bq' && ind > 0) { this.setQuoteLevel(block, ind - 1); return; }
-      this.toParagraph(block, 0);
-      return;
+      if (type === 'li') { this.toParagraph(block, 0); return; }
     }
 
     const t = textEl(block);
@@ -3592,9 +3617,28 @@ export class WysiwygEditor {
 
   /* ---------------- 行内格式 ---------------- */
 
+  /** 选区是否老老实实待在某一个单元格里。是就返回那个单元格，否则 null。
+   *
+   *  行内格式**可以**在单元格里套（`**张三**`、`==张三==` 在 Markdown 表格里合法，
+   *  解析与序列化两头都认），但只能在**同一格**里：跨格 extractContents 会把
+   *  `<td>` 一起搬进 `<mark>`，表格当场散架。以前这里一刀切全禁，结果是
+   *  「表格里的字选得中、却加不了粗也高亮不了」。 */
+  selInOneCell() {
+    const cell = this.currentCell();
+    if (!cell) return null;
+    const sel = window.getSelection();
+    if (!sel.rangeCount) return null;
+    const r = sel.getRangeAt(0);
+    const elOf = (n) => (n.nodeType === 1 ? n : n.parentElement);
+    const from = elOf(r.startContainer);
+    const to = elOf(r.endContainer);
+    if (!from || !to || !cell.contains(from) || !cell.contains(to)) return null;
+    return cell;
+  }
+
   /** 行内切换：有选区就包一层，没有就插入零宽占位继续输入 */
   toggleInline(kind) {
-    if (this.currentCell()) return;              // 表格里交给浏览器原生行为
+    if (this.currentCell() && !this.selInOneCell()) return;   // 跨格不套格式
     const sel = window.getSelection();
     if (!sel.rangeCount || !this.currentBlock()) return;
 
@@ -3648,10 +3692,12 @@ export class WysiwygEditor {
    *  而我们的「文件就是纯文本 Markdown」这条底线要求能序列化回 `==文字==`。
    *  只处理同一段里的选区 —— 跨段取内容会把两段的块结构一起拆散。 */
   toggleMark() {
-    if (this.currentCell()) return false;          // 表格里不动结构
+    /* 单元格里也能高亮，但只限单格内 —— 跨格会把表格结构拆散（同 toggleInline） */
+    const cell = this.currentCell();
+    if (cell && !this.selInOneCell()) return false;
     const sel = window.getSelection();
     if (!sel.rangeCount) return false;
-    const block = this.currentBlock();
+    const block = cell || this.currentBlock();
     if (!block) return false;
     const range = sel.getRangeAt(0);
     const elOf = (n) => (n.nodeType === 1 ? n : n.parentElement);

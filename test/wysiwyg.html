@@ -105,6 +105,23 @@ window.__run = () => {
     s.addRange(r);
     root.focus();
   };
+  /* 和上面一样，但如果末尾垫着零宽空格就退回一个字符 —— 这才是用户眼睛看到的
+     「最后一个字符之后」。caretEndOf 落在零宽空格之后，测不出「要按两次」那个坑 */
+  const caretBeforeTrailingZWSP = (sel) => {
+    const all = [...root.querySelectorAll(sel)];
+    const el = all[all.length - 1];
+    if (!el) return;
+    const r = document.createRange();
+    r.selectNodeContents(el);
+    r.collapse(false);
+    const s = getSelection();
+    s.removeAllRanges();
+    s.addRange(r);
+    if (s.focusNode && s.focusNode.nodeType === 3 && s.focusNode.nodeValue[s.focusOffset - 1] === '\u200b') {
+      s.collapse(s.focusNode, s.focusOffset - 1);
+    }
+    root.focus();
+  };
 
   // 增量序列化：flush 的结果必须与全量现算完全一致（缓存脏块判定不能漏）
   T.reset('# 甲\n\n段落 **加粗** 与 `代码`。\n\n- 列表项\n- 第二项\n\n> 引用\n\n| A | B |\n| --- | --- |\n| 1 | 2 |');
@@ -513,7 +530,9 @@ window.__run = () => {
   T.paste('A\nB');
   eq('提示块里粘多行不重写 [!info]', T.out(), '> [!info] 标题\n> 正文A\n> B');
 
-  // 19. 代码块内回车：永远块内换行；空末行再回车才出块（Typora 约定）
+  // 19. 代码块内回车：**永远**块内换行。出块只有两条路 —— → / ↓ 在块末
+  //     （曾经按 Typora 的「空末行再回车就出块」做，结果写完一行想空一行，
+  //      第二下就被弹出去，还得按退格把块收回来。用户报的就是这个）
   T.reset('```js\nconst a = 1;\n```');
   ed.restoreCaret({ blockIndex: 0, offset: 5 });
   T.key('Enter');
@@ -522,9 +541,8 @@ window.__run = () => {
   ed.restoreCaret({ blockIndex: 0, offset: 12 });
   T.key('Enter');          // 末尾回车 = 开空行，留在块内
   eq('代码块末尾回车换行', T.out(), '```js\nconst a = 1;\n\n```');
-  T.key('Enter');          // 空末行回车 = 出块
-  T.type('const b = 2;');
-  eq('代码块空末行回车出块', T.out(), '```js\nconst a = 1;\n\n```\n\nconst b = 2;');
+  T.key('Enter');          // 空末行再回车 = 再来一个空行，仍在块内
+  eq('代码块空末行再回车不出块', T.out(), '```js\nconst a = 1;\n\n\n```');
 
   // 19b. 代码块换行后行首退格：一次删掉换行（零宽空格垫片不许白按一次）
   T.reset('```js\nab\n```');
@@ -734,6 +752,15 @@ window.__run = () => {
   T.key('ArrowDown');
   eq('代码块后面已空一行时 ↓ 不再加行', T.blocks().length, 2);
 
+  /* 19e6. 光标停在「看得见的最后一个字符」之后，末尾还垫着零宽空格：
+     按一次 → 就该出块。判据若用 textContent.length，那个看不见的字符会被算成内容，
+     第一下只是跨过它 —— 用户读到的就是「→ 没反应，得按两下」。 */
+  T.reset(['```', '甲', '乙', '```'].join('\n'));
+  caretBeforeTrailingZWSP('.w-code');
+  T.key('ArrowRight');
+  eq('代码块可见末尾按一次 → 就出块', T.blocks().length, 2);
+  eq('代码块出块后 Markdown 不变', T.out(), ['```', '甲', '乙', '```'].join('\n'));
+
   /* 19e5. 引用 / 提示块 / 列表也是「带范围的块」：末行 ↓、→ 都出块。
      它们一行一块，所以「组内还有下一行」时必须让浏览器自己走，
      别替它跳 —— 折行的那几行会被跳过 */
@@ -762,11 +789,18 @@ window.__run = () => {
   T.key('ArrowRight');
   eq('引用组内还有下一行时 → 也不多开块', T.blocks().length, 2);
 
-  /* 组末行后面跟着正文：落进那一段开头，不插空行 */
+  /* 组末行后面跟着正文：↓ 落进那一段开头，不插空行 */
   T.reset('> 甲\n> 乙\n\n后文');
   T.caret(1, 1);
   T.key('ArrowDown');
   eq('引用组末行 ↓ 落进后文', T.blocks().join(','), 'bq@0=甲,bq@0=乙,p=后文');
+
+  /* 同样是组末行，→ 也是出块（落进后文开头），不许在块内「往下挪一行」 */
+  T.reset('> 甲\n> 乙\n\n后文');
+  T.caret(1, 1);
+  T.key('ArrowRight');
+  eq('引用组末行 → 落在后文开头，不多开块', T.blocks().join(','), 'bq@0=甲,bq@0=乙,p=后文');
+  eq('引用组末行 → 不改 Markdown', T.out(), '> 甲\n> 乙\n\n后文');
 
   /* 提示块同理：末行出去，别把 [ !info ] 那行一起带走 */
   T.reset('> [!info] 标题\n> 正文');
@@ -1563,7 +1597,10 @@ window.__run = () => {
      必须是 PNG：cursor 对 SVG 的支持不可靠（解析得过却渲染不出时，光标直接消失） */
   {
     const cur = getComputedStyle(document.getElementById('wysiwyg')).cursor;
-    has('光标: 正文用自绘工字', cur.startsWith('url(') && cur.includes('data:image/png'));
+    /* 两种合法形态：老引擎只认 url()，新引擎是 image-set()（2x 图必须靠它
+       声明密度，直接写 url() 会被按 1x 渲染 —— 高分屏上光标整整大一倍）。
+       两者共同点：内嵌 PNG 图，且后面留着系统 text 光标兜底 */
+    has('光标: 正文用自绘工字', /^(url|image-set)\(/.test(cur) && cur.includes('data:image/png'));
     has('光标: 热区在竖线正中', /7\s*12/.test(cur));
     has('光标: 保留 text 兜底', /,\s*text\s*$/.test(cur));
 
