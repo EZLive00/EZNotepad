@@ -18,7 +18,7 @@
      「各写各的」。这条背景线按可视区高度铺，不跟着内容滚 */
   background-image: linear-gradient(var(--line), var(--line));
   background-repeat: no-repeat;
-  background-size: 1px 100%;
+  background-size: var(--bw) 100%;
   background-position: 50% 0;
 }
 
@@ -29,24 +29,24 @@
   z-index: 2;
   display: grid;
   grid-template-columns: 1fr 1fr;
-  background: var(--bg-panel);
-  border-bottom: 1px solid var(--line-strong);
+  background: var(--bg-side);
+  border-bottom: var(--bw) solid var(--line-strong);
 }
 .fcmp-head .fcmp-c {
   padding: 6px 12px;
-  font-size: 11.5px;
+  font-size: var(--fs-1);
   font-weight: 600;
   color: var(--fg-soft);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.fcmp-head .fcmp-c + .fcmp-c { border-left: 1px solid var(--line); }
+.fcmp-head .fcmp-c + .fcmp-c { border-left: var(--bw) solid var(--line); }
 
 .fcmp-rows { display: block; }
 
 /* 一行 = 左右各一格。中间那道 1px 竖线一直画到底，眼睛才不会串行 */
-.fcmp-row { display: grid; grid-template-columns: 1fr 1fr; box-shadow: inset 0 -1px 0 var(--line); }
+.fcmp-row { display: grid; grid-template-columns: 1fr 1fr; box-shadow: inset 0 calc(var(--bw) * -1) 0 var(--line); }
 .fcmp-row:hover { background: var(--bg-hover); }
 .fcmp-row.sel { background: var(--accent-soft); }
 
@@ -56,11 +56,11 @@
   gap: 8px;
   min-width: 0;
   padding: 3px 12px;
-  font-size: 12.5px;
+  font-size: var(--fs-1);
   line-height: 1.5;
   white-space: nowrap;
 }
-.fcmp-c + .fcmp-c { border-left: 1px solid var(--line); }
+.fcmp-c + .fcmp-c { border-left: var(--bw) solid var(--line); }
 
 .fcmp-nm {
   flex: 1;
@@ -73,7 +73,7 @@
 .fcmp-dir { color: var(--fg-faint); }
 .fcmp-sz {
   flex: none;
-  font-size: 11px;
+  font-size: var(--fs-1);
   color: var(--fg-faint);
   font-variant-numeric: tabular-nums;
 }
@@ -97,7 +97,7 @@
 .fcmp-empty {
   padding: 40px 16px;
   text-align: center;
-  font-size: 12.5px;
+  font-size: var(--fs-1);
   color: var(--fg-faint);
 }
 .fcmp-empty.hidden { display: none; }

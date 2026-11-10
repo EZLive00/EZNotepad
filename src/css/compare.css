@@ -8,16 +8,17 @@
 body {
   /* 行高要和方法里的 ROW_H 严格一致，虚拟滚动靠它算位置 */
   --cmp-row: 20px;
-  --cmp-fs: 12.5px;
-  --cmp-red: #d92b2b;
-  --cmp-wash-2: rgba(217, 43, 43, .12);
+  --cmp-fs: 13px;
+  /* 差异红直接借主窗口的危险色，两种主题各取一次，不再各写一份 hex */
+  --cmp-red: var(--del-fg);
+  --cmp-wash-2: var(--del-bg);
   --cmp-ln-w: 54px;
   /* 命中高亮用黄，不用主题橙红：这一页的差异是红字（--cmp-red），
      再来一层橙底就分不清「找到的」和「不一样的」。黄底红字是荧光笔，
      色相和明度都隔得开。 */
-  --cmp-hit: rgba(202, 138, 0, .18);
-  --cmp-hit-2: rgba(202, 138, 0, .30);
-  --cmp-void-band: rgba(0, 0, 0, .075);
+  --cmp-hit: color-mix(in srgb, var(--amber-9) 20%, transparent);
+  --cmp-hit-2: color-mix(in srgb, var(--amber-9) 32%, transparent);
+  --cmp-void-band: color-mix(in srgb, var(--gray-9) 18%, transparent);
   /* 中间那道缝的宽度。箭头要在这里常驻，1px 的缝放不下可点的东西，
      所以给它一条 26px 的车道 —— 两侧正文各让 13px */
   --cmp-gut: 26px;
@@ -26,14 +27,6 @@ body {
      22px 也只到「能看见」的程度 —— 点起来还像瞄靶。34px 给轨道留 22px，
      三段各有位置，点击也稳。丢给正文的 12px 换这些是值得的。 */
   --cmp-ruler-w: 34px;
-}
-
-body[data-theme="dark"] {
-  --cmp-red: #ff6b6b;
-  --cmp-wash-2: rgba(255, 107, 107, .16);
-  --cmp-hit: rgba(255, 196, 84, .18);
-  --cmp-hit-2: rgba(255, 196, 84, .32);
-  --cmp-void-band: rgba(255, 255, 255, .07);
 }
 
 .cmp {
@@ -53,13 +46,14 @@ body[data-theme="dark"] {
   align-items: center;
   gap: 10px;
   padding-left: 12px;
+  background: var(--bg-side);
 }
 
 .cmp-brand {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--fs-1);
   font-weight: 600;
   color: var(--fg-soft);
   white-space: nowrap;
@@ -102,9 +96,9 @@ body[data-theme="dark"] {
   background: var(--bg-soft);
   color: var(--fg-soft);
   border: 0;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-1);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--fs-1);
   cursor: pointer;
 }
 
@@ -165,7 +159,7 @@ body[data-theme="dark"] {
 }
 
 .cmp-wbtn:hover { background: var(--bg-hover); color: var(--fg); }
-.cmp-wbtn.danger:hover { background: #e03b3b; color: #fff; }
+.cmp-wbtn.danger:hover { background: var(--danger-solid); color: var(--danger-fg); }
 
 /* 最大化按钮的两张脸：铺满时显示「还原」（两个叠起来的方框），
    还原后显示「最大化」（一个方框）。不放两张脸的话，点了没有任何反馈 ——
@@ -183,10 +177,12 @@ body[data-theme="dark"] {
   gap: 8px;
   padding: 0 12px;
   overflow: hidden;
+  background: var(--bg-side);
+  border-bottom: var(--bw) solid var(--line-strong);
 }
 
 .cmp-stat {
-  font-size: 12px;
+  font-size: var(--fs-1);
   color: var(--fg-soft);
   white-space: nowrap;
   /* 窄窗口下先让统计文字让位（可收缩 + 省略号），别去挤按钮：
@@ -198,7 +194,7 @@ body[data-theme="dark"] {
 }
 
 .cmp-cur {
-  font-size: 12px;
+  font-size: var(--fs-1);
   color: var(--fg-faint);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -214,7 +210,7 @@ body[data-theme="dark"] {
   display: flex;
   align-items: center;
   gap: 5px;
-  font-size: 12px;
+  font-size: var(--fs-1);
   color: var(--fg-soft);
   white-space: nowrap;
   cursor: pointer;
@@ -240,9 +236,9 @@ body[data-theme="dark"] {
   background: var(--bg-soft);
   color: var(--fg-soft);
   border: 0;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-1);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--fs-1);
   white-space: nowrap;
   cursor: pointer;
 }
@@ -262,7 +258,7 @@ body[data-theme="dark"] {
 .cmp-btn.on {
   background: var(--accent-soft);
   color: var(--accent);
-  box-shadow: inset 0 0 0 1px var(--accent);
+  box-shadow: inset 0 0 0 var(--bw) var(--accent);
 }
 
 /* ---------- 窄窗口：工具栏降级 ----------
@@ -306,8 +302,8 @@ body[data-theme="dark"] {
   left: 50%;
   top: 0;
   bottom: 0;
-  width: 1px;
-  margin-left: -.5px;
+  width: var(--bw);
+  margin-left: calc(var(--bw) / -2);
   background: var(--line-strong);
 }
 
@@ -332,15 +328,15 @@ body[data-theme="dark"] {
   place-items: center;
   padding: 0;
   border: 0;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-1);
   background: var(--bg-float);
   color: var(--fg-soft);
-  box-shadow: 0 0 0 1px var(--line-strong);
+  border: var(--bw) solid var(--line-strong);
   cursor: pointer;
 }
 
-.cmp-arrow:hover { background: var(--accent-soft); color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
-.cmp-arrow:disabled { opacity: .45; cursor: default; background: var(--bg-float); color: var(--fg-soft); box-shadow: 0 0 0 1px var(--line-strong); }
+.cmp-arrow:hover { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+.cmp-arrow:disabled { opacity: .45; cursor: default; background: var(--bg-float); color: var(--fg-soft); border-color: var(--line-strong); }
 .cmp-arrow .cmp-ico { width: 12px; height: 12px; stroke-width: 2; }
 
 /* 每栏顶部的文件名条：滚动时钉住，长文件翻到下面也知道自己在看谁 */
@@ -351,8 +347,9 @@ body[data-theme="dark"] {
   align-items: center;
   gap: 8px;
   padding: 0 10px 0 12px;
-  background: var(--bg);
-  font-size: 11.5px;
+  background: var(--bg-side);
+  border-bottom: var(--bw) solid var(--line);
+  font-size: var(--fs-1);
   color: var(--fg-soft);
 }
 
@@ -404,7 +401,7 @@ body[data-theme="dark"] {
   flex: none;
   padding-right: 9px;
   text-align: right;
-  font-size: 11px;
+  font-size: var(--fs-1);
   color: var(--fg-faint);
   user-select: none;
   font-variant-numeric: tabular-nums;
@@ -447,7 +444,7 @@ body[data-nowrap] .cmp-tx {
 }
 .cmp-pane.editing .cmp-row.void:hover { background-color: var(--bg-soft); }
 .cmp-pane.editing .cmp-row.void .cmp-ln::after {
-  content: '·';
+  content: '–';
   color: var(--fg-faint);
   font-weight: 400;
 }
@@ -469,7 +466,7 @@ body[data-nowrap] .cmp-tx {
   left: 0;
   right: 0;
   top: 0;
-  height: 1px;
+  height: var(--bw);
   background: repeating-linear-gradient(90deg, var(--line-strong) 0 4px, transparent 4px 8px);
   pointer-events: none;
 }
@@ -481,16 +478,16 @@ body[data-nowrap] .cmp-tx {
   position: absolute;
   left: 5px;
   top: -3px;
-  font-size: 10px;
+  font-size: var(--fs-1);
   line-height: 1;
   color: var(--fg-faint);
 }
 
-/* 查找命中：整行淡蓝，当前这一条再压一条左侧竖线。
+/* 查找命中：整行琥珀，当前这一条再深一档。
    刻意和差异红分开 —— 「哪里不一样」和「你找的那个词在哪」是两件事，
    同一行可以既是差异又是命中。 */
 .cmp-row.hit { background: var(--cmp-hit); }
-.cmp-row.hit-cur { background: var(--cmp-hit-2); box-shadow: inset 2px 0 0 var(--accent); }
+.cmp-row.hit-cur { background: var(--cmp-hit-2); }
 
 /* ---------- 查找条 ----------
    浮在正文右上角、避开预览条。用浮层而不是占一行：查找是「临时用一下」，
@@ -510,8 +507,8 @@ body[data-nowrap] .cmp-tx {
   height: 25px;
   box-sizing: border-box;
   background: var(--bg-float);
-  border-radius: var(--r-md);
-  box-shadow: var(--shadow);
+  border-radius: var(--r-2);
+  box-shadow: var(--shadow-float);
 }
 
 .cmp-find[hidden] { display: none; }
@@ -520,12 +517,12 @@ body[data-nowrap] .cmp-tx {
   width: 168px;
   height: 21px;
   padding: 0 6px;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--r-md);
+  border: var(--bw) solid var(--line-strong);
+  border-radius: var(--r-2);
   background: transparent;
   color: var(--fg);
   font-family: inherit;
-  font-size: 12.5px;
+  font-size: var(--fs-1);
   outline: none;
 }
 
@@ -535,7 +532,7 @@ body[data-nowrap] .cmp-tx {
 .cmp-find-n {
   min-width: 44px;
   text-align: center;
-  font-size: 11.5px;
+  font-size: var(--fs-1);
   color: var(--fg-soft);
   font-variant-numeric: tabular-nums;
 }
@@ -552,7 +549,7 @@ body[data-nowrap] .cmp-tx {
   flex: none;
   padding: 0;
   border: 0;
-  border-radius: var(--r-md);
+  border-radius: var(--r-2);
   background: transparent;
   color: var(--fg-soft);
   cursor: pointer;
@@ -596,7 +593,7 @@ body[data-nowrap] .cmp-tx {
   height: 0;
 }
 
-.cmp-ruler:hover { background: rgba(127, 127, 127, .07); }
+.cmp-ruler:hover { background: color-mix(in srgb, var(--gray-9) 8%, transparent); }
 
 .cmp-ruler canvas { display: block; width: 100%; height: 100%; }
 
@@ -608,9 +605,9 @@ body[data-nowrap] .cmp-tx {
   padding: 4px 8px;
   background: var(--bg-float);
   color: var(--fg);
-  border-radius: var(--r-md);
-  box-shadow: var(--shadow);
-  font-size: 11.5px;
+  border-radius: var(--r-2);
+  box-shadow: var(--shadow-float);
+  font-size: var(--fs-1);
   line-height: 1.45;
   white-space: nowrap;
   pointer-events: none;
@@ -632,8 +629,8 @@ body[data-nowrap] .cmp-tx {
   padding: 6px 8px 6px 10px;
   background: var(--cmp-wash-2);
   color: var(--fg);
-  font-size: 12px;
-  border-radius: var(--r-md);
+  font-size: var(--fs-1);
+  border-radius: var(--r-2);
 }
 
 .cmp-confirm[hidden] { display: none; }
@@ -652,8 +649,8 @@ body[data-nowrap] .cmp-tx {
   padding: 7px 8px 7px 10px;
   background: var(--cmp-wash-2);
   color: var(--fg);
-  font-size: 12px;
-  border-radius: var(--r-md);
+  font-size: var(--fs-1);
+  border-radius: var(--r-2);
 }
 
 .cmp-warn[hidden] { display: none; }
@@ -671,7 +668,7 @@ body[data-nowrap] .cmp-tx {
   border: 0;
   color: var(--fg-soft);
   cursor: pointer;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-1);
 }
 
 .cmp-warn-x:hover,
@@ -698,8 +695,8 @@ body[data-nowrap] .cmp-tx {
   display: flex;
   flex-direction: column;
   background: var(--bg-float);
-  border-radius: var(--r-lg);
-  box-shadow: var(--shadow);
+  border-radius: var(--r-2);
+  box-shadow: var(--shadow-float);
   z-index: 7;
   overflow: hidden;
 }
@@ -715,8 +712,8 @@ body[data-nowrap] .cmp-tx {
   padding: 0 8px 0 12px;
 }
 
-.cmp-list-t { font-size: 12.5px; font-weight: 600; color: var(--fg); }
-.cmp-list-n { font-size: 11.5px; color: var(--fg-faint); font-variant-numeric: tabular-nums; margin-right: auto; }
+.cmp-list-t { font-size: var(--fs-1); font-weight: 600; color: var(--fg); }
+.cmp-list-n { font-size: var(--fs-1); color: var(--fg-faint); font-variant-numeric: tabular-nums; margin-right: auto; }
 
 .cmp-list-ft {
   flex: none;
@@ -730,10 +727,10 @@ body[data-nowrap] .cmp-tx {
   padding: 0 9px;
   background: var(--bg-soft);
   border: 0;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-1);
   color: var(--fg-soft);
   font: inherit;
-  font-size: 11.5px;
+  font-size: var(--fs-1);
   cursor: pointer;
 }
 
@@ -750,7 +747,7 @@ body[data-nowrap] .cmp-tx {
   height: 24px;
   align-items: center;
   background: var(--bg-soft);
-  font-size: 11px;
+  font-size: var(--fs-1);
   color: var(--fg-faint);
 }
 
@@ -787,30 +784,30 @@ body[data-nowrap] .cmp-tx {
   border: 0;
   color: var(--fg-soft);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--fs-1);
   text-align: left;
   cursor: pointer;
 }
 
 .cmp-li:hover { background: var(--bg-hover); color: var(--fg); }
-.cmp-li.cur { background: var(--accent-soft); color: var(--fg); box-shadow: inset 2px 0 0 var(--accent); }
+.cmp-li.cur { background: var(--accent-soft); color: var(--fg); }
 
-.cmp-li-pos { font-variant-numeric: tabular-nums; color: var(--fg-faint); font-size: 11px; }
+.cmp-li-pos { font-variant-numeric: tabular-nums; color: var(--fg-faint); font-size: var(--fs-1); }
 .cmp-li.cur .cmp-li-pos { color: var(--accent); }
-.cmp-li-kind { color: var(--cmp-red); font-size: 11px; }
-.cmp-li-n { font-variant-numeric: tabular-nums; color: var(--fg-faint); font-size: 11px; text-align: right; }
+.cmp-li-kind { color: var(--cmp-red); font-size: var(--fs-1); }
+.cmp-li-n { font-variant-numeric: tabular-nums; color: var(--fg-faint); font-size: var(--fs-1); text-align: right; }
 .cmp-li-tx { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .cmp-list-empty {
   padding: 18px 12px;
   text-align: center;
-  font-size: 12px;
+  font-size: var(--fs-1);
   color: var(--fg-faint);
 }
 
 .cmp-list-more {
   padding: 8px 12px 4px;
-  font-size: 11px;
+  font-size: var(--fs-1);
   color: var(--fg-faint);
 }
 
