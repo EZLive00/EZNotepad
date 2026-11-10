@@ -105,6 +105,20 @@ window.__run = () => {
     s.addRange(r);
     root.focus();
   };
+  /* 两张表相邻时 caretEndOf 会选到第二张表的最后一格；这里只摆到第一张表 */
+  const caretEndOfFirstTable = () => {
+    const t = root.querySelector('.w-table');
+    if (!t) return;
+    const cells = [...t.querySelectorAll('td')];
+    const el = cells[cells.length - 1];
+    const r = document.createRange();
+    r.selectNodeContents(el);
+    r.collapse(false);
+    const s = getSelection();
+    s.removeAllRanges();
+    s.addRange(r);
+    root.focus();
+  };
   /* 和上面一样，但如果末尾垫着零宽空格就退回一个字符 —— 这才是用户眼睛看到的
      「最后一个字符之后」。caretEndOf 落在零宽空格之后，测不出「要按两次」那个坑 */
   const caretBeforeTrailingZWSP = (sel) => {
@@ -734,11 +748,54 @@ window.__run = () => {
   T.key('ArrowRight');
   eq('下面已经空了，→ 也不加行', T.blocks().join(','), 'table=1,p=');
 
-  /* 19e3. 后面跟着正文：落进那一段开头，不插空行把它顶下去 */
+  /* 19e3. 后面跟着正文：在表格与后文之间开一行，光标站在**块后那一行**。
+     落进后文开头时直接打字会写成 `新后一段`，等于把字塞进人家段落里。 */
   T.reset('| a | b |\n|---|---|\n| 1 | 2 |\n\n后一段');
   caretEndOf('.w-table td');
   T.key('ArrowDown');
-  eq('表格后面有正文时 ↓ 落进那一段', T.blocks().join(','), 'table=1,p=后一段');
+  eq('表格后面有正文时在块后开一行', T.blocks().join(','), 'table=1,p=,p=后一段');
+  eq('光标站在块后的空行里', ed.caretState().blockIndex, 1);
+  T.type('新');
+  eq('出块后打字不写进后文', T.out(), '| a | b |\n| --- | --- |\n| 1 | 2 |\n\n新\n\n后一段');
+
+  /* 19e3b. 下一块也是「带边界的块」：出块必须落在块与它之间的空行里。
+     跳进下一块开头时按回车只会在那个块**内部**加行（表格加一行、代码块内换行），
+     用户要的「回车插一个空行」根本做不到。→ 与 ↓ 都必须一样。 */
+  const TB_A = '| a | b |\n|---|---|\n| 1 | 2 |';
+  const TB_B = '| c | d |\n|---|---|\n| 3 | 4 |';
+  const CB_B = ['```', '甲', '乙', '```'].join('\n');
+  for (const [kn, k] of [['→', 'ArrowRight'], ['↓', 'ArrowDown']]) {
+    T.reset(TB_A + '\n\n' + TB_B);
+    caretEndOfFirstTable();
+    T.key(k);
+    eq(`表格+表格 ${kn} 在两块之间开一行`, T.blocks().join(','), 'table=1,p=,table=3');
+    eq(`表格+表格 ${kn} 光标站在块后空行`, ed.caretState().blockIndex, 1);
+    T.key('Enter');
+    eq(`表格+表格 ${kn} 回车插出新空行`, T.blocks().join(','), 'table=1,p=,p=,table=3');
+    eq(`表格+表格 ${kn} 回车后光标在新行`, ed.caretState().blockIndex, 2);
+
+    T.reset(TB_A + '\n\n' + TB_B);
+    caretEndOfFirstTable();
+    T.key(k);
+    T.type('新');
+    eq(`表格+表格 ${kn} 只写进块后空行`, T.blocks().join(','), 'table=1,p=新,table=3');
+  }
+  T.reset(CB_B + '\n\n' + TB_A);
+  caretEndOf('.w-code');
+  T.key('ArrowRight');
+  eq('代码块+表格 → 在两块之间开一行', T.blocks().length, 3);
+  eq('代码块+表格 空行在中间', T.blocks()[1], 'p=');
+  T.key('Enter');
+  eq('代码块+表格 回车能插出空行', T.blocks().length, 4);
+  eq('代码块+表格 表格原样在最后', T.blocks()[3], 'table=1');
+
+  T.reset('> 甲\n> 乙\n\n' + CB_B);
+  T.caret(1, 1);
+  T.key('ArrowRight');
+  eq('引用+代码块 → 在两块之间开一行', T.blocks().length, 4);
+  eq('引用+代码块 空行在组末之后', T.blocks()[2], 'p=');
+  T.key('Enter');
+  eq('引用+代码块 回车能插出空行', T.blocks().length, 5);
 
   /* 19e4. 代码块是同一类「带范围的块」：末行 → / ↓ 都出块，后面有空行则复用 */
   T.reset(['```', '甲', '乙', '```'].join('\n'));
@@ -789,18 +846,31 @@ window.__run = () => {
   T.key('ArrowRight');
   eq('引用组内还有下一行时 → 也不多开块', T.blocks().length, 2);
 
-  /* 组末行后面跟着正文：↓ 落进那一段开头，不插空行 */
+  /* 组末行后面跟着正文：↓ / → 都在块与后文之间开一行，光标站在那一行里。
+     出块 = 「在这块后面接着写」，落脚点必须属于块后，不能是后文的段首。 */
   T.reset('> 甲\n> 乙\n\n后文');
   T.caret(1, 1);
   T.key('ArrowDown');
-  eq('引用组末行 ↓ 落进后文', T.blocks().join(','), 'bq@0=甲,bq@0=乙,p=后文');
+  eq('引用组末行 ↓ 在块后开一行', T.blocks().join(','), 'bq@0=甲,bq@0=乙,p=,p=后文');
+  eq('↓ 光标站在空行里', ed.caretState().blockIndex, 2);
 
-  /* 同样是组末行，→ 也是出块（落进后文开头），不许在块内「往下挪一行」 */
   T.reset('> 甲\n> 乙\n\n后文');
   T.caret(1, 1);
   T.key('ArrowRight');
-  eq('引用组末行 → 落在后文开头，不多开块', T.blocks().join(','), 'bq@0=甲,bq@0=乙,p=后文');
-  eq('引用组末行 → 不改 Markdown', T.out(), '> 甲\n> 乙\n\n后文');
+  eq('引用组末行 → 在块后开一行', T.blocks().join(','), 'bq@0=甲,bq@0=乙,p=,p=后文');
+  eq('→ 光标站在空行里', ed.caretState().blockIndex, 2);
+  eq('出块只插一个空行，后文原样', T.out(), '> 甲\n> 乙\n\n\n后文');
+  T.type('新');
+  eq('出块后打字不污染后文', T.out(), '> 甲\n> 乙\n\n新\n\n后文');
+
+  /* 出块后按回车：在块后再加一行，光标落到新开的空行里，不跑回后文 */
+  T.reset('> 甲\n> 乙\n\n后文');
+  T.caret(1, 1);
+  T.key('ArrowRight');
+  T.key('Enter');
+  eq('出块后回车把光标带到新开的那一行', ed.caretState().blockIndex, 3);
+  eq('新开的行是空段落', T.blocks()[3], 'p=');
+  eq('回车后后文原样保留', T.blocks().join(','), 'bq@0=甲,bq@0=乙,p=,p=,p=后文');
 
   /* 提示块同理：末行出去，别把 [ !info ] 那行一起带走 */
   T.reset('> [!info] 标题\n> 正文');

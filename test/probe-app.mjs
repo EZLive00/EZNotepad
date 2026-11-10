@@ -632,6 +632,13 @@ try {
        老实现无条件插一个空段落，于是「下面本来就空着」时按一下多一行、越按越长。 */
     const TB = ['| 甲 | 乙 |', '| --- | --- |', '| 丙 | 丁 |', ''].join('\n');
     const bl = () => ev(`(() => [...document.querySelectorAll('.wysiwyg > .w-block')].map((b) => (b.dataset.type || 'p') + ':' + (b.textContent || '').replace(/\\u200b/g, '')))()`);
+    const caretWhere = () => ev(`(() => {
+      const n = getSelection().anchorNode;
+      const el = n && (n.nodeType === 1 ? n : n.parentElement);
+      const b = el && el.closest ? el.closest('.wysiwyg > .w-block') : null;
+      return b ? JSON.stringify({ idx: [...b.parentElement.children].indexOf(b),
+        type: b.dataset.type || 'p', text: (b.textContent || '').split('\u200b').join('') }) : null;
+    })()`).then((s) => s ? JSON.parse(s) : null);
     const caretEndOf = (sel) => ev(`(() => {
       const all = [...document.querySelectorAll(${JSON.stringify(sel)})];
       const el = all[all.length - 1];
@@ -647,6 +654,20 @@ try {
     };
     const down = () => arrow('ArrowDown', 'ArrowDown', 40);
     const right = () => arrow('ArrowRight', 'ArrowRight', 39);
+    const enter = async () => {
+      await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r', unmodifiedText: '\r' });
+      await send('Input.dispatchKeyEvent', { type: 'char', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r', unmodifiedText: '\r' });
+      await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+      await sleep(360);
+    };
+    /* 两张表相邻时 caretEndOf 会选到第二张表的最后一格；这里只摆到第一张表 */
+    const caretEndOfFirstTable = () => ev(`(() => {
+      const t = document.querySelector('.w-table');
+      const td = [...t.querySelectorAll('td')].pop();
+      const r = document.createRange(); r.selectNodeContents(td); r.collapse(false);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      document.querySelector('.wysiwyg').focus();
+    })()`);
 
     await ev(`window.__snp.newTab('dir.md', ${JSON.stringify(TB)}, null)`);
     await sleep(400);
@@ -663,15 +684,21 @@ try {
     await right();
     ok('表格末格 → 也出表，不多开一行', (await bl()).length === 2, JSON.stringify(await bl()));
 
-    /* 表格后面已有正文：落进那一段开头，而不是插一个空行把它顶下去 */
+    /* 表格后面已有正文：在表格与后文之间开一行，光标站在块后那一行。
+       落进后文开头时直接打字会写成 `新后一段`，等于把字塞进人家段落里。 */
     await ev(`window.__snp.newTab('dir2.md', ${JSON.stringify(TB + '\n后一段')}, null)`);
     await sleep(400);
     await ev(`window.__snp.commands.modeWysiwyg()`);
     await sleep(500);
     await caretEndOf('.w-table td');
     await down();
-    ok('表格后面有正文时 ↓ 落进那一段', JSON.stringify(await bl()) === '["table:甲乙丙丁","p:后一段"]', JSON.stringify(await bl()));
-    ok('落进正文没有改动文档', (await ev(`window.__snp.getEditorText()`)) === TB + '\n后一段', JSON.stringify(await ev(`window.__snp.getEditorText()`)));
+    ok('表格后面有正文时在块后开一行', JSON.stringify(await bl()) === '["table:甲乙丙丁","p:","p:后一段"]', JSON.stringify(await bl()));
+    const where = await caretWhere();
+    ok('光标站在块后的空行里', !!where && where.idx === 1 && where.text === '', JSON.stringify(where));
+    ok('后一段没被改动', (await ev(`window.__snp.getEditorText()`)) === TB + '\n\n后一段', JSON.stringify(await ev(`window.__snp.getEditorText()`)));
+    await send('Input.insertText', { text: '新' });
+    await sleep(420);
+    ok('出块后打字不污染后文', (await ev(`window.__snp.getEditorText()`)) === TB + '\n新\n\n后一段', JSON.stringify(await ev(`window.__snp.getEditorText()`)));
 
     /* 代码块是同一类：末行 → 出块，后面空着就复用 */
     const CB2 = ['```', '甲', '乙', '```', ''].join('\n');
@@ -710,6 +737,45 @@ try {
       await sleep(500);
     };
 
+    /* 下一块也是「带边界的块」：出块必须落在两块之间的空行里。
+       跳进下一块开头时按回车只会在那个块**内部**加行（表格加一行、代码块内换行），
+       「回车插一个空行」做不到。→ 与 ↓ 都必须一样。 */
+    const TB2 = ['| 戊 | 己 |', '| --- | --- |', '| 庚 | 辛 |', ''].join('\n');
+    for (const [kn, kf] of [['→', right], ['↓', down]]) {
+      await load('dirb-t.md', TB + '\n' + TB2);
+      await caretEndOfFirstTable();
+      await kf();
+      ok(`表格+表格 ${kn} 在两块之间开一行`,
+        JSON.stringify(await bl()) === '["table:甲乙丙丁","p:","table:戊己庚辛"]', JSON.stringify(await bl()));
+      const bw = await caretWhere();
+      ok(`表格+表格 ${kn} 光标站在块后空行`, !!bw && bw.idx === 1 && bw.text === '', JSON.stringify(bw));
+      await enter();
+      ok(`表格+表格 ${kn} 回车插出新空行`,
+        JSON.stringify(await bl()) === '["table:甲乙丙丁","p:","p:","table:戊己庚辛"]', JSON.stringify(await bl()));
+      const bw2 = await caretWhere();
+      ok(`表格+表格 ${kn} 回车后光标在新行`, !!bw2 && bw2.idx === 2 && bw2.text === '', JSON.stringify(bw2));
+    }
+    await load('dirb-c.md', CB2 + '\n' + TB);
+    await caretEndOf('.w-code');
+    await right();
+    const cb1 = await bl();
+    ok('代码块+表格 → 在两块之间开一行',
+      cb1.length === 3 && cb1[1] === 'p:' && cb1[2].startsWith('table:'), JSON.stringify(cb1));
+    await enter();
+    const cb2 = await bl();
+    ok('代码块+表格 回车能插出空行',
+      cb2.length === 4 && cb2[1] === 'p:' && cb2[2] === 'p:' && cb2[3].startsWith('table:'), JSON.stringify(cb2));
+    await load('dirb-q.md', '> 甲\n> 乙\n\n' + CB2);
+    await caretAt(1);
+    await right();
+    const qb1 = await bl();
+    ok('引用+代码块 → 在两块之间开一行',
+      qb1.length === 4 && qb1[2] === 'p:' && qb1[3].startsWith('code:'), JSON.stringify(qb1));
+    await enter();
+    const qb2 = await bl();
+    ok('引用+代码块 回车能插出空行',
+      qb2.length === 5 && qb2[2] === 'p:' && qb2[3] === 'p:' && qb2[4].startsWith('code:'), JSON.stringify(qb2));
+
     await load('dirq.md', '> 甲\n> 乙\n');
     await caretAt(1);
     await down();
@@ -723,11 +789,12 @@ try {
     await load('dirq2.md', '> 甲\n> 乙\n\n后文\n');
     await caretAt(1);
     await right();
-    /* → 和 ↓ 在块末做同一件事：出块、落到下一块开头。
-       方向键不许改文档（插一行 = 多一条撤销记录 + 标签变脏），
-       「落进后文开头」本身就已经满足「往后写一行」 */
-    ok('引用组末行 → 落进后面那一段',
-      JSON.stringify(await bl()) === '["bq:甲","bq:乙","p:后文"]', JSON.stringify(await bl()));
+    /* → 和 ↓ 在块末做同一件事：在块与后文之间开一行，光标站在那一行里。
+       落进后文开头时直接打字会变成 `新后文`，等于把字塞进人家段落里。 */
+    ok('引用组末行 → 在块后开一行',
+      JSON.stringify(await bl()) === '["bq:甲","bq:乙","p:","p:后文"]', JSON.stringify(await bl()));
+    const qWhere = await caretWhere();
+    ok('引用出块后光标站在空行里', !!qWhere && qWhere.idx === 2 && qWhere.text === '', JSON.stringify(qWhere));
 
     await load('dirc.md', '> [!info] 标题\n> 正文\n');
     await caretAt(1);
