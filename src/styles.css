@@ -359,7 +359,6 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
   padding: 0 10px;
   text-align: center; font-size: var(--fs-1); color: var(--fg-soft);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  letter-spacing: .01em;
   pointer-events: auto;
 }
 /* 窗口窄时菜单先保证完整，标题让位 */
@@ -507,7 +506,7 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
   /* 上间距给足（12px ≈ 一个 item 的一半高），分组才立得起来；
      不加分隔线，靠空白分段比靠线干净 */
   padding: 12px 10px 5px;
-  font-size: var(--fs-1); font-weight: 600; letter-spacing: .05em;
+  font-size: var(--fs-1); font-weight: 600;
   color: var(--fg-faint);
 }
 .am-head:first-child { padding-top: 7px; }
@@ -633,8 +632,8 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
 }
 .pane-head {
   height: 34px; display: flex; align-items: center; padding: 0 14px;
-  /* 中文不要用大 letter-spacing（会散架），只靠小字号 + 600 字重 + 淡色压住 */
-  font-size: var(--fs-1); font-weight: 600; letter-spacing: .02em; color: var(--fg-faint);
+  /* 中文不加字距（会散架），只靠小字号 + 600 字重 + 淡色压住 */
+  font-size: var(--fs-1); font-weight: 600; color: var(--fg-faint);
   flex: none;
 }
 
@@ -647,7 +646,7 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
 .side-tab {
   height: 24px; padding: 0 8px; border: none; border-radius: var(--r-1); cursor: pointer;
   background: transparent; color: var(--fg-faint);
-  font-size: var(--fs-1); font-weight: 600; letter-spacing: .02em;
+  font-size: var(--fs-1); font-weight: 600;
 }
 .side-tab:hover { background: var(--bg-hover); color: var(--fg-soft); }
 .side-tab.active { background: var(--bg-panel); color: var(--fg); }
@@ -902,7 +901,6 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
   padding-left: max(var(--read-gutter), calc((100% - var(--read-measure)) / 2));
   padding-right: max(var(--read-gutter), calc((100% - var(--read-measure)) / 2));
   font-family: var(--font-read); font-size: var(--fs-3); line-height: 1.75;
-  letter-spacing: .008em;   /* 中文加一点点字距更透气，西文几乎看不出来 */
   outline: none; user-select: text;
 }
 .wysiwyg:empty::before { content: "开始输入…"; color: var(--fg-faint); }
@@ -1487,7 +1485,7 @@ body[data-zen="1"] .win-title { color: var(--fg-faint); }
 }
 .w-bmenu.hidden { display: none; }
 .w-bmenu .bm-head {
-  padding: 5px 8px 2px; font-size: var(--fs-1); font-weight: 600; letter-spacing: .07em;
+  padding: 5px 8px 2px; font-size: var(--fs-1); font-weight: 600;
   color: var(--fg-faint); text-transform: uppercase;
 }
 .w-bmenu .bm-item {
