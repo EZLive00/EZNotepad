@@ -627,9 +627,11 @@ try {
     ok('粘贴内容进了代码块（没有跑到块外变成段落）',
       saved === '前一段\n\n```json\n{\n  "b": 2,\n  "c": [1, 2]\n}\n```\n\n后一段\n', JSON.stringify(saved));
 
-    /* ---- I. 带范围的块末尾：↓ / → 都要能出块，且不重复开空行 ----
-       表格和代码块内部没有「更靠后的光标位」，走到头就得走出去；而出去要有地方站，
-       老实现无条件插一个空段落，于是「下面本来就空着」时按一下多一行、越按越长。 */
+    /* ---- I. 带范围的块末尾：↓ / → 只移动光标，绝不改文档 ----
+       表格和代码块内部没有「更靠后的光标位」，走到头就得走出去。但方向键只是
+       移动光标：出块时若后面已有空行就停进去，否则把光标送到下一块开头（文末
+       保持原位）并记下一次性的「块后待插入」；用户按回车 / 打字 / 粘贴时才真的
+       在块后插一个空段落。1.2.6 之前是出块即插行，按一下方向键文档就变脏。 */
     const TB = ['| 甲 | 乙 |', '| --- | --- |', '| 丙 | 丁 |', ''].join('\n');
     const bl = () => ev(`(() => [...document.querySelectorAll('.wysiwyg > .w-block')].map((b) => (b.dataset.type || 'p') + ':' + (b.textContent || '').replace(/\\u200b/g, '')))()`);
     const caretWhere = () => ev(`(() => {
@@ -668,6 +670,23 @@ try {
       const s = getSelection(); s.removeAllRanges(); s.addRange(r);
       document.querySelector('.wysiwyg').focus();
     })()`);
+    /* 代码块正文末尾带换行时，那个 \n 在 pre-wrap 下不生成可点击的行，真实点击
+       只会把光标落在它**前面**。模拟用户点最后一行末尾：退回所有尾部 \n / ZWSP。 */
+    const caretBeforeTrailingNewline = () => ev(`(() => {
+      const el = document.querySelector('.w-code');
+      if (!el) return;
+      const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+      let n, last = null;
+      while ((n = w.nextNode())) last = n;
+      if (!last) return;
+      let off = last.nodeValue.length;
+      while (off > 0 && (last.nodeValue[off - 1] === '\\n' || last.nodeValue[off - 1] === '\\u200b')) off--;
+      const r = document.createRange(); r.setStart(last, off); r.collapse(true);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      document.querySelector('.wysiwyg').focus();
+    })()`);
+    const gapPending = () => ev(`!!window.__snp.editor.gapAfter`);
+    const isAtEnd = () => ev(`(() => { const b = document.querySelector('.w-block[data-type="code"]'); return b ? window.__snp.editor.isCaretAtEnd(b) : null; })()`);
 
     await ev(`window.__snp.newTab('dir.md', ${JSON.stringify(TB)}, null)`);
     await sleep(400);
@@ -676,31 +695,52 @@ try {
 
     await caretEndOf('.w-table td');
     await down();
-    ok('表格末格 ↓ 在表格后开一行', (await bl()).length === 2, JSON.stringify(await bl()));
+    ok('表格末格 ↓ 出表但文档不变', (await bl()).length === 1, JSON.stringify(await bl()));
+    ok('↓ 只记下「块后待插入」', await gapPending(), true);
+    await enter();
+    ok('回车才在表格后开一个空行', (await bl()).length === 2, JSON.stringify(await bl()));
     await caretEndOf('.w-table td');
     await down();
-    ok('表格下面已经空着一行，再按 ↓ 不再加行', (await bl()).length === 2, JSON.stringify(await bl()));
+    ok('表格下面已经空着一行，再按 ↓ 不改文档', (await bl()).length === 2, JSON.stringify(await bl()));
     await caretEndOf('.w-table td');
     await right();
-    ok('表格末格 → 也出表，不多开一行', (await bl()).length === 2, JSON.stringify(await bl()));
+    ok('表格末格 → 出表但文档不变', (await bl()).length === 2, JSON.stringify(await bl()));
+    await caretEndOf('.w-table td');
+    await down();
+    await down();
+    ok('连按方向键不攒空行', (await bl()).length === 2, JSON.stringify(await bl()));
 
-    /* 表格后面已有正文：在表格与后文之间开一行，光标站在块后那一行。
-       落进后文开头时直接打字会写成 `新后一段`，等于把字塞进人家段落里。 */
+    /* 表格后面已有正文：方向键只把光标送到后文开头，文档一动不动；
+       回车 / 打字时才在表格与后文之间补出那个空行。 */
     await ev(`window.__snp.newTab('dir2.md', ${JSON.stringify(TB + '\n后一段')}, null)`);
     await sleep(400);
     await ev(`window.__snp.commands.modeWysiwyg()`);
     await sleep(500);
     await caretEndOf('.w-table td');
     await down();
-    ok('表格后面有正文时在块后开一行', JSON.stringify(await bl()) === '["table:甲乙丙丁","p:","p:后一段"]', JSON.stringify(await bl()));
+    ok('表格后面有正文时 ↓ 不改文档', JSON.stringify(await bl()) === '["table:甲乙丙丁","p:后一段"]', JSON.stringify(await bl()));
     const where = await caretWhere();
-    ok('光标站在块后的空行里', !!where && where.idx === 1 && where.text === '', JSON.stringify(where));
-    ok('后一段没被改动', (await ev(`window.__snp.getEditorText()`)) === TB + '\n\n后一段', JSON.stringify(await ev(`window.__snp.getEditorText()`)));
+    ok('↓ 光标只是落到后文开头', !!where && where.idx === 1 && where.text === '后一段', JSON.stringify(where));
+    ok('↓ 记下块后待插入', await gapPending(), true);
+    ok('↓ 不改 Markdown', (await ev(`window.__snp.getEditorText()`)) === TB + '\n后一段', JSON.stringify(await ev(`window.__snp.getEditorText()`)));
+    await enter();
+    ok('回车才在表格与后文之间开一行', JSON.stringify(await bl()) === '["table:甲乙丙丁","p:","p:后一段"]', JSON.stringify(await bl()));
+    ok('回车后光标站在新空行', (await caretWhere()).idx === 1, JSON.stringify(await caretWhere()));
     await send('Input.insertText', { text: '新' });
     await sleep(420);
-    ok('出块后打字不污染后文', (await ev(`window.__snp.getEditorText()`)) === TB + '\n新\n\n后一段', JSON.stringify(await ev(`window.__snp.getEditorText()`)));
+    ok('出块后打字写进块后新行', (await ev(`window.__snp.getEditorText()`)) === TB + '\n新\n\n后一段', JSON.stringify(await ev(`window.__snp.getEditorText()`)));
 
-    /* 代码块是同一类：末行 → 出块，后面空着就复用 */
+    await ev(`window.__snp.newTab('dir2b.md', ${JSON.stringify(TB + '\n后一段')}, null)`);
+    await sleep(400);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(500);
+    await caretEndOf('.w-table td');
+    await right();
+    await send('Input.insertText', { text: '新' });
+    await sleep(420);
+    ok('→ 出块后打字不污染后文', (await ev(`window.__snp.getEditorText()`)) === TB + '\n新\n\n后一段', JSON.stringify(await ev(`window.__snp.getEditorText()`)));
+
+    /* 代码块是同一类：文末没有可落脚的下一块，出块时保持光标不动、只记状态 */
     const CB2 = ['```', '甲', '乙', '```', ''].join('\n');
     await ev(`window.__snp.newTab('dir3.md', ${JSON.stringify(CB2)}, null)`);
     await sleep(400);
@@ -708,10 +748,13 @@ try {
     await sleep(500);
     await caretEndOf('.w-code');
     await right();
-    ok('代码块末行 → 出块', (await bl()).length === 2, JSON.stringify(await bl()));
+    ok('代码块末行 → 出块但文档不变', (await bl()).length === 1, JSON.stringify(await bl()));
+    ok('→ 记下块后待插入', await gapPending(), true);
+    await enter();
+    ok('回车才在代码块后开一行', (await bl()).length === 2, JSON.stringify(await bl()));
     await caretEndOf('.w-code');
     await right();
-    ok('代码块后面已经空着一行，→ 不再加行', (await bl()).length === 2, JSON.stringify(await bl()));
+    ok('代码块后面已经空着一行，→ 不改文档', (await bl()).length === 2, JSON.stringify(await bl()));
 
     /* ---- I2. 引用 / 提示块 / 列表也是「带范围的块」 ----
        它们一行一块：只有「这一组的最后一行」归我们管，组内还有下一行时交给
@@ -737,49 +780,89 @@ try {
       await sleep(500);
     };
 
-    /* 下一块也是「带边界的块」：出块必须落在两块之间的空行里。
+    /* 下一块也是「带边界的块」：方向键零改动，回车才在两块之间开行。
        跳进下一块开头时按回车只会在那个块**内部**加行（表格加一行、代码块内换行），
-       「回车插一个空行」做不到。→ 与 ↓ 都必须一样。 */
+       所以「块后待插入」必须把这一下回车接管过来。→ 与 ↓ 都必须一样。 */
     const TB2 = ['| 戊 | 己 |', '| --- | --- |', '| 庚 | 辛 |', ''].join('\n');
     for (const [kn, kf] of [['→', right], ['↓', down]]) {
       await load('dirb-t.md', TB + '\n' + TB2);
       await caretEndOfFirstTable();
       await kf();
-      ok(`表格+表格 ${kn} 在两块之间开一行`,
+      ok(`表格+表格 ${kn} 出块不改文档`,
+        JSON.stringify(await bl()) === '["table:甲乙丙丁","table:戊己庚辛"]', JSON.stringify(await bl()));
+      const bw0 = await caretWhere();
+      ok(`表格+表格 ${kn} 光标落到下一块开头`, !!bw0 && bw0.idx === 1, JSON.stringify(bw0));
+      ok(`表格+表格 ${kn} 记下待插入`, await gapPending(), true);
+      await enter();
+      ok(`表格+表格 ${kn} 回车才在两块之间开一行`,
         JSON.stringify(await bl()) === '["table:甲乙丙丁","p:","table:戊己庚辛"]', JSON.stringify(await bl()));
       const bw = await caretWhere();
-      ok(`表格+表格 ${kn} 光标站在块后空行`, !!bw && bw.idx === 1 && bw.text === '', JSON.stringify(bw));
+      ok(`表格+表格 ${kn} 回车后光标在空行`, !!bw && bw.idx === 1 && bw.text === '', JSON.stringify(bw));
       await enter();
-      ok(`表格+表格 ${kn} 回车插出新空行`,
+      ok(`表格+表格 ${kn} 再按回车才加第二行（状态一次性）`,
         JSON.stringify(await bl()) === '["table:甲乙丙丁","p:","p:","table:戊己庚辛"]', JSON.stringify(await bl()));
-      const bw2 = await caretWhere();
-      ok(`表格+表格 ${kn} 回车后光标在新行`, !!bw2 && bw2.idx === 2 && bw2.text === '', JSON.stringify(bw2));
     }
     await load('dirb-c.md', CB2 + '\n' + TB);
     await caretEndOf('.w-code');
     await right();
     const cb1 = await bl();
-    ok('代码块+表格 → 在两块之间开一行',
-      cb1.length === 3 && cb1[1] === 'p:' && cb1[2].startsWith('table:'), JSON.stringify(cb1));
+    ok('代码块+表格 → 不改文档', cb1.length === 2 && cb1[1].startsWith('table:'), JSON.stringify(cb1));
+    ok('代码块+表格 → 记下待插入', await gapPending(), true);
     await enter();
     const cb2 = await bl();
-    ok('代码块+表格 回车能插出空行',
-      cb2.length === 4 && cb2[1] === 'p:' && cb2[2] === 'p:' && cb2[3].startsWith('table:'), JSON.stringify(cb2));
+    ok('代码块+表格 回车才在中间开一行',
+      cb2.length === 3 && cb2[1] === 'p:' && cb2[2].startsWith('table:'), JSON.stringify(cb2));
     await load('dirb-q.md', '> 甲\n> 乙\n\n' + CB2);
     await caretAt(1);
     await right();
     const qb1 = await bl();
-    ok('引用+代码块 → 在两块之间开一行',
-      qb1.length === 4 && qb1[2] === 'p:' && qb1[3].startsWith('code:'), JSON.stringify(qb1));
+    ok('引用+代码块 → 不改文档', qb1.length === 3 && qb1[2].startsWith('code:'), JSON.stringify(qb1));
+    ok('引用+代码块 → 记下待插入', await gapPending(), true);
     await enter();
     const qb2 = await bl();
-    ok('引用+代码块 回车能插出空行',
-      qb2.length === 5 && qb2[2] === 'p:' && qb2[3] === 'p:' && qb2[4].startsWith('code:'), JSON.stringify(qb2));
+    ok('引用+代码块 回车才在中间开一行',
+      qb2.length === 4 && qb2[2] === 'p:' && qb2[3].startsWith('code:'), JSON.stringify(qb2));
+
+    /* 代码块正文末尾带一个换行（写完顺手回车 / 粘贴带尾部换行）：1.2.6 里
+       末尾判据把它算进 end，光标永远被判成「不在末尾」，→ / ↓ 不接管、浏览器
+       把光标直接甩进下一块 —— 用户看到的「代码块后面有内容时出不了块」。
+       后面接引用 / 表格 / 另一个代码块 / 正文都要一样能出块、能回车插行。 */
+    const CB_NL = ['```', '甲', '乙', '', '```'].join('\n');
+    let nlN = 0;
+    for (const [nm, tail, pre] of [
+      ['引用', '> 引用一行', 'bq:'],
+      ['表格', TB, 'table:'],
+      ['代码块', CB2, 'code:'],
+      ['正文', '后一段', 'p:后一段'],
+    ]) {
+      for (const [kn, kf] of [['→', right], ['↓', down]]) {
+        await load(`dirn-${++nlN}.md`, CB_NL + '\n\n' + tail);
+        await caretBeforeTrailingNewline();
+        ok(`末尾换行的代码块+${nm} ${kn} 光标算在末尾`, await isAtEnd(), true);
+        await kf();
+        ok(`末尾换行的代码块+${nm} ${kn} 出块不改文档`, (await bl()).length === 2, JSON.stringify(await bl()));
+        ok(`末尾换行的代码块+${nm} ${kn} 记下待插入`, await gapPending(), true);
+        await enter();
+        const nr = await bl();
+        ok(`末尾换行的代码块+${nm} ${kn} 回车才在两块之间开行`,
+          nr.length === 3 && nr[1] === 'p:' && nr[2].startsWith(pre), JSON.stringify(nr));
+      }
+      await load(`dirn-${++nlN}.md`, CB_NL + '\n\n' + tail);
+      await caretBeforeTrailingNewline();
+      await right();
+      await send('Input.insertText', { text: '新' });
+      await sleep(420);
+      const tr = await bl();
+      ok(`末尾换行的代码块+${nm} 打字写进块后新行`, tr[1] === 'p:新', JSON.stringify(tr));
+    }
 
     await load('dirq.md', '> 甲\n> 乙\n');
     await caretAt(1);
     await down();
-    ok('引用末行 ↓ 在下面开一行', (await bl()).length === 3, JSON.stringify(await bl()));
+    ok('引用末行 ↓ 不改文档', (await bl()).length === 2, JSON.stringify(await bl()));
+    ok('引用末行 ↓ 记下待插入', await gapPending(), true);
+    await enter();
+    ok('引用末行回车才在下面开一行', (await bl()).length === 3, JSON.stringify(await bl()));
     ok('引用出块后光标在普通段落里', (await caretBlock()) === 'p', await caretBlock());
     await caretAt(0);
     await down();
@@ -789,9 +872,13 @@ try {
     await load('dirq2.md', '> 甲\n> 乙\n\n后文\n');
     await caretAt(1);
     await right();
-    /* → 和 ↓ 在块末做同一件事：在块与后文之间开一行，光标站在那一行里。
-       落进后文开头时直接打字会变成 `新后文`，等于把字塞进人家段落里。 */
-    ok('引用组末行 → 在块后开一行',
+    /* → 和 ↓ 在块末做同一件事：只把光标送到后文开头；回车 / 打字才在
+       引用与后文之间补出空行。落进后文开头直接打字会变成 `新后文`。 */
+    ok('引用组末行 → 不改文档',
+      JSON.stringify(await bl()) === '["bq:甲","bq:乙","p:后文"]', JSON.stringify(await bl()));
+    ok('引用组末行 → 记下待插入', await gapPending(), true);
+    await enter();
+    ok('回车才在引用与后文之间开一行',
       JSON.stringify(await bl()) === '["bq:甲","bq:乙","p:","p:后文"]', JSON.stringify(await bl()));
     const qWhere = await caretWhere();
     ok('引用出块后光标站在空行里', !!qWhere && qWhere.idx === 2 && qWhere.text === '', JSON.stringify(qWhere));
@@ -799,23 +886,32 @@ try {
     await load('dirc.md', '> [!info] 标题\n> 正文\n');
     await caretAt(1);
     await down();
-    ok('提示块末行 ↓ 出块（不把标题行一起带走）', (await bl()).length === 3, JSON.stringify(await bl()));
+    ok('提示块末行 ↓ 不改文档', (await bl()).length === 2, JSON.stringify(await bl()));
+    await enter();
+    ok('提示块末行回车才开一行（不把标题行一起带走）', (await bl()).length === 3, JSON.stringify(await bl()));
     ok('提示块出块后光标在普通段落里', (await caretBlock()) === 'p', await caretBlock());
 
     await load('dirl.md', '- 甲\n- 乙\n');
     await caretAt(1);
     await down();
-    ok('列表末项 ↓ 在列表外开一行', (await bl()).length === 3, JSON.stringify(await bl()));
+    ok('列表末项 ↓ 不改文档', (await bl()).length === 2, JSON.stringify(await bl()));
+    await enter();
+    ok('列表末项回车才在列表外开一行', (await bl()).length === 3, JSON.stringify(await bl()));
     ok('列表出块后光标在普通段落里', (await caretBlock()) === 'p', await caretBlock());
     await caretAt(0);
     await right();
     ok('列表中间项 → 不多开块', (await bl()).length === 3, JSON.stringify(await bl()));
 
-    /* 分割线本身放不了光标：它落在文末时，光标停在上面那行末尾按 ↓ 得能穿过去 */
+    /* 分割线本身放不了光标：它落在文末时，光标停在上面那行末尾按 ↓
+       只记下「线后待插入」，回车才在线下开一行 */
     await load('dirh.md', '前文\n\n---\n');
     await caretAt(0);
     await down();
-    ok('分割线在文末时 ↓ 在线下开一行',
+    ok('分割线在文末时 ↓ 不改文档',
+      JSON.stringify(await bl()) === '["p:前文","hr:"]', JSON.stringify(await bl()));
+    ok('分割线在文末时 ↓ 记下待插入', await gapPending(), true);
+    await enter();
+    ok('回车才在线下开一行',
       JSON.stringify(await bl()) === '["p:前文","hr:","p:"]', JSON.stringify(await bl()));
     ok('穿过分割线后光标在普通段落里', (await caretBlock()) === 'p', await caretBlock());
 
