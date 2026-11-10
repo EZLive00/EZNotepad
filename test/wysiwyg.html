@@ -90,6 +90,14 @@ window.__run = () => {
   const R = [];
   const eq = (name, got, want) => R.push({ name, ok: String(got) === String(want), got: String(got), want: String(want) });
   const has = (name, ok) => R.push({ name, ok: !!ok, got: String(!!ok), want: 'true' });
+  /* headless 里 execCommand('insertText') 不派发 beforeinput，真实浏览器会。
+     补这一下，打字路径才和真机一致（beforeinput 是「要写入了」的兜底口子）。 */
+  const typeReal = (s) => {
+    root.dispatchEvent(new InputEvent('beforeinput', {
+      inputType: 'insertText', data: s, bubbles: true, cancelable: true,
+    }));
+    return T.type(s);
+  };
   /* 把光标摆到「整个块的最后一个字符之后」：表格取最后一格，代码块取末行。
      表格的 textContent 是各格拼起来的，restoreCaret 的块内偏移量落不进格子，
      所以这里直接按 DOM 摆 */
@@ -114,6 +122,26 @@ window.__run = () => {
     const r = document.createRange();
     r.selectNodeContents(el);
     r.collapse(false);
+    const s = getSelection();
+    s.removeAllRanges();
+    s.addRange(r);
+    root.focus();
+  };
+  /* 代码块正文末尾那个换行（写完代码顺手回车、或粘贴带尾部换行）在
+     pre-wrap 下不生成可点击的行，浏览器只会把行尾点击映射到它**前面**。
+     模拟真实落点：把光标放在最后一个 \n 之前，而不是 textContent 末尾。 */
+  const caretBeforeTrailingNewline = () => {
+    const el = root.querySelector('.w-code');
+    if (!el) return;
+    const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    let n, last = null;
+    while ((n = w.nextNode())) last = n;
+    if (!last) return;
+    let off = last.nodeValue.length;
+    while (off > 0 && (last.nodeValue[off - 1] === '\n' || last.nodeValue[off - 1] === '\u200b')) off--;
+    const r = document.createRange();
+    r.setStart(last, off);
+    r.collapse(true);
     const s = getSelection();
     s.removeAllRanges();
     s.addRange(r);
@@ -565,11 +593,14 @@ window.__run = () => {
   T.key('Backspace');
   eq('代码块行首退格接行', T.out(), '```js\nab\n```');
 
-  // 19c. 代码块底部 ↓ 方向键出块；点空白在代码块后开段落
+  // 19c. 代码块底部 ↓ 方向键出块（零改动），回车才在后面开段落
   T.reset('```js\nx\n```');
   ed.restoreCaret({ blockIndex: 0, offset: 1 });
   T.key('ArrowDown');
-  eq('代码块底方向键出块', T.blocks().join(','), 'code=x,p=');
+  eq('代码块底方向键出块不改文档', T.blocks().join(','), 'code=x');
+  eq('出块只记下待插入', !!ed.gapAfter, true);
+  T.key('Enter');
+  eq('回车才在代码块后开一行', T.blocks().join(','), 'code=x,p=');
 
   /* 19c2. 点末块下方空白：光标送回文末。只有末块是「带边界的块」
      （代码 / 公式 / 表格 / 分割线：块内没有可写的尾位）才补一行 ——
@@ -726,41 +757,83 @@ window.__run = () => {
     const s3 = getSelection();
     s3.removeAllRanges(); s3.addRange(r3);
   }
+  const out0 = out;
+  const hist0 = ed.history.length;
   T.key('ArrowDown');
-  eq('表格末格方向键出表', T.blocks().join(','), 'table=1,p=');
+  eq('表格末格 ↓ 出表但文档不变', T.blocks().join(','), 'table=1');
+  eq('出表不触发 onChange', out, out0);
+  eq('出表不产生撤销记录', ed.history.length, hist0);
+  eq('出表只记下「块后待插入」', !!ed.gapAfter, true);
+  T.key('Enter');
+  eq('回车才在表格后开一个空行', T.blocks().join(','), 'table=1,p=');
+  eq('回车后光标站在新行', ed.caretState().blockIndex, 1);
 
   /* 19e1. → 走到表格右下角也是出表 —— 「右边没有更靠后的位置」和
      「下面没有」是同一件事，不能一个出得去一个原地打转 */
   T.reset('| a | b |\n|---|---|\n| 1 | 2 |');
   caretEndOf('.w-table td');
   T.key('ArrowRight');
-  eq('表格末格 → 也出表', T.blocks().join(','), 'table=1,p=');
+  eq('表格末格 → 出表但文档不变', T.blocks().join(','), 'table=1');
+  eq('→ 也只记下待插入', !!ed.gapAfter, true);
 
-  /* 19e2. 后面已经空着一行：两个键都复用那一行。
-     旧实现无条件 insertEmptyAfter，按一下多一个空行，文档末尾越按越长 */
+  /* 19e2. 连按方向键不许长行；其它方向键会让一次性状态作废 */
   T.reset('| a | b |\n|---|---|\n| 1 | 2 |');
   caretEndOf('.w-table td');
   T.key('ArrowDown');
   caretEndOf('.w-table td');
   T.key('ArrowDown');
-  eq('下面已经空了，↓ 不再加行', T.blocks().join(','), 'table=1,p=');
+  eq('连按 ↓ 不加行', T.blocks().join(','), 'table=1');
   caretEndOf('.w-table td');
   T.key('ArrowRight');
-  eq('下面已经空了，→ 也不加行', T.blocks().join(','), 'table=1,p=');
+  eq('再按 → 也不加行', T.blocks().join(','), 'table=1');
+  eq('方向键没改 Markdown', T.out(), '| a | b |\n| --- | --- |\n| 1 | 2 |');
+  T.key('ArrowLeft');
+  eq('其它方向键把待插入状态清掉', !!ed.gapAfter, false);
+  T.key('Enter');
+  eq('状态作废后回车不再插行', T.blocks().length, 1);
 
-  /* 19e3. 后面跟着正文：在表格与后文之间开一行，光标站在**块后那一行**。
-     落进后文开头时直接打字会写成 `新后一段`，等于把字塞进人家段落里。 */
+  /* 19e3. 后面跟着正文：方向键只把光标送到后文开头，文档一动不动；
+     回车 / 打字时才在表格与后文之间补出那个空行。 */
   T.reset('| a | b |\n|---|---|\n| 1 | 2 |\n\n后一段');
   caretEndOf('.w-table td');
+  const out1 = out;
   T.key('ArrowDown');
-  eq('表格后面有正文时在块后开一行', T.blocks().join(','), 'table=1,p=,p=后一段');
-  eq('光标站在块后的空行里', ed.caretState().blockIndex, 1);
-  T.type('新');
+  eq('表格后面有正文时 ↓ 不改文档', T.blocks().join(','), 'table=1,p=后一段');
+  eq('↓ 不触发 onChange', out, out1);
+  eq('光标只是移到后文开头', ed.caretState().blockIndex, 1);
+  eq('记下块后待插入', !!ed.gapAfter, true);
+  T.key('Enter');
+  eq('回车才在表格与后文之间开一行', T.blocks().join(','), 'table=1,p=,p=后一段');
+  eq('回车后光标站在新空行', ed.caretState().blockIndex, 1);
+  eq('后文原样', T.out(), '| a | b |\n| --- | --- |\n| 1 | 2 |\n\n\n后一段');
+  T.key('Enter');
+  eq('再按回车才多出第二行（状态一次性）', T.blocks().join(','), 'table=1,p=,p=,p=后一段');
+
+  T.reset('| a | b |\n|---|---|\n| 1 | 2 |\n\n后一段');
+  caretEndOf('.w-table td');
+  T.key('ArrowRight');
+  typeReal('新');
   eq('出块后打字不写进后文', T.out(), '| a | b |\n| --- | --- |\n| 1 | 2 |\n\n新\n\n后一段');
 
-  /* 19e3b. 下一块也是「带边界的块」：出块必须落在块与它之间的空行里。
+  /* 可打印键在 keydown 里就兑现待插入：合成事件不带默认输入，
+     但空段落必须已经建好，真实浏览器随后会把这个字符输进去。 */
+  T.reset('| a | b |\n|---|---|\n| 1 | 2 |\n\n后一段');
+  caretEndOf('.w-table td');
+  T.key('ArrowRight');
+  T.key('新');
+  eq('可打印键也只建一个空段落', T.blocks().join(','), 'table=1,p=,p=后一段');
+  eq('可打印键后状态已消费', !!ed.gapAfter, false);
+
+  /* 粘贴同样先建行再按宿主分派，文本不落进后文 */
+  T.reset('| a | b |\n|---|---|\n| 1 | 2 |\n\n后一段');
+  caretEndOf('.w-table td');
+  T.key('ArrowRight');
+  T.paste('粘');
+  eq('出块后粘贴写进块后新行', T.out(), '| a | b |\n| --- | --- |\n| 1 | 2 |\n\n粘\n\n后一段');
+
+  /* 19e3b. 下一块也是「带边界的块」：出块零改动，回车才在两块之间开行。
      跳进下一块开头时按回车只会在那个块**内部**加行（表格加一行、代码块内换行），
-     用户要的「回车插一个空行」根本做不到。→ 与 ↓ 都必须一样。 */
+     所以必须由「块后待插入」把这一下回车接管过来。→ 与 ↓ 都一样。 */
   const TB_A = '| a | b |\n|---|---|\n| 1 | 2 |';
   const TB_B = '| c | d |\n|---|---|\n| 3 | 4 |';
   const CB_B = ['```', '甲', '乙', '```'].join('\n');
@@ -768,46 +841,56 @@ window.__run = () => {
     T.reset(TB_A + '\n\n' + TB_B);
     caretEndOfFirstTable();
     T.key(k);
-    eq(`表格+表格 ${kn} 在两块之间开一行`, T.blocks().join(','), 'table=1,p=,table=3');
-    eq(`表格+表格 ${kn} 光标站在块后空行`, ed.caretState().blockIndex, 1);
+    eq(`表格+表格 ${kn} 出块不改文档`, T.blocks().join(','), 'table=1,table=3');
+    eq(`表格+表格 ${kn} 光标落到下一块开头`, ed.caretState().blockIndex, 1);
+    eq(`表格+表格 ${kn} 记下待插入`, !!ed.gapAfter, true);
     T.key('Enter');
-    eq(`表格+表格 ${kn} 回车插出新空行`, T.blocks().join(','), 'table=1,p=,p=,table=3');
-    eq(`表格+表格 ${kn} 回车后光标在新行`, ed.caretState().blockIndex, 2);
+    eq(`表格+表格 ${kn} 回车才在两块之间开一行`, T.blocks().join(','), 'table=1,p=,table=3');
+    eq(`表格+表格 ${kn} 回车后光标在空行`, ed.caretState().blockIndex, 1);
 
     T.reset(TB_A + '\n\n' + TB_B);
     caretEndOfFirstTable();
     T.key(k);
-    T.type('新');
-    eq(`表格+表格 ${kn} 只写进块后空行`, T.blocks().join(','), 'table=1,p=新,table=3');
+    typeReal('新');
+    eq(`表格+表格 ${kn} 打字只写进块后新行`, T.blocks().join(','), 'table=1,p=新,table=3');
   }
   T.reset(CB_B + '\n\n' + TB_A);
   caretEndOf('.w-code');
   T.key('ArrowRight');
-  eq('代码块+表格 → 在两块之间开一行', T.blocks().length, 3);
-  eq('代码块+表格 空行在中间', T.blocks()[1], 'p=');
+  eq('代码块+表格 → 不改文档', T.blocks().length, 2);
   T.key('Enter');
-  eq('代码块+表格 回车能插出空行', T.blocks().length, 4);
-  eq('代码块+表格 表格原样在最后', T.blocks()[3], 'table=1');
+  eq('代码块+表格 回车才在中间开一行', T.blocks().length, 3);
+  eq('代码块+表格 空行在中间', T.blocks()[1], 'p=');
+  eq('代码块+表格 表格原样在最后', T.blocks()[2], 'table=1');
 
   T.reset('> 甲\n> 乙\n\n' + CB_B);
   T.caret(1, 1);
   T.key('ArrowRight');
-  eq('引用+代码块 → 在两块之间开一行', T.blocks().length, 4);
-  eq('引用+代码块 空行在组末之后', T.blocks()[2], 'p=');
+  eq('引用+代码块 → 不改文档', T.blocks().length, 3);
   T.key('Enter');
-  eq('引用+代码块 回车能插出空行', T.blocks().length, 5);
+  eq('引用+代码块 回车才在中间开一行', T.blocks().length, 4);
+  eq('引用+代码块 空行在组末之后', T.blocks()[2], 'p=');
 
-  /* 19e4. 代码块是同一类「带范围的块」：末行 → / ↓ 都出块，后面有空行则复用 */
+  /* 19e4. 代码块同类：文末没有可落脚的下一块，出块时保持光标不动、只记状态，
+     按回车才在代码块后开一行。连按方向键不许攒出多行。 */
   T.reset(['```', '甲', '乙', '```'].join('\n'));
   caretEndOf('.w-code');
+  const out2 = out;
   T.key('ArrowRight');
-  eq('代码块末行 → 出块', T.blocks().length, 2);
-  caretEndOf('.w-code');
-  T.key('ArrowRight');
-  eq('代码块后面已空一行时 → 不再加行', T.blocks().length, 2);
+  eq('代码块末行 → 不改文档', T.blocks().length, 1);
+  eq('→ 不触发 onChange', out, out2);
+  eq('文末出块光标保持原位', ed.caretState().blockIndex, 0);
+  eq('记下块后待插入', !!ed.gapAfter, true);
+  T.key('Enter');
+  eq('回车才在代码块后开一行', T.blocks().length, 2);
+  eq('回车后光标在新段落', ed.caretState().blockIndex, 1);
+
+  T.reset(['```', '甲', '乙', '```'].join('\n'));
   caretEndOf('.w-code');
   T.key('ArrowDown');
-  eq('代码块后面已空一行时 ↓ 不再加行', T.blocks().length, 2);
+  caretEndOf('.w-code');
+  T.key('ArrowRight');
+  eq('代码块连按方向键不加行', T.blocks().length, 1);
 
   /* 19e6. 光标停在「看得见的最后一个字符」之后，末尾还垫着零宽空格：
      按一次 → 就该出块。判据若用 textContent.length，那个看不见的字符会被算成内容，
@@ -815,8 +898,55 @@ window.__run = () => {
   T.reset(['```', '甲', '乙', '```'].join('\n'));
   caretBeforeTrailingZWSP('.w-code');
   T.key('ArrowRight');
-  eq('代码块可见末尾按一次 → 就出块', T.blocks().length, 2);
+  eq('代码块可见末尾按一次 → 就记下出块', !!ed.gapAfter, true);
   eq('代码块出块后 Markdown 不变', T.out(), ['```', '甲', '乙', '```'].join('\n'));
+  T.key('Enter');
+  eq('可见末尾回车也能在块后开行', T.blocks().length, 2);
+
+  /* 19e7. 代码块正文末尾留了一个换行（写完代码顺手回车 / 粘贴带尾部换行）：
+     那个 \n 在 pre-wrap 下不生成可点击的行，浏览器把行尾点击映射到它**前面**。
+     判据若拿 textContent.length 当 end，就永远判成「光标不在末尾」：→ / ↓ 不接管，
+     浏览器原生把光标甩进下一块 —— 1.2.6 里「代码块后面有内容时出不了块、
+     别的块都行」正是这个。表格 / 引用 / 列表的正文没有裸 \n，所以不受影响。 */
+  const CB_NL = ['```', '甲', '乙', '', '```'].join('\n');
+  for (const [nm, tail] of [
+    ['引用', '> 引用一行'],
+    ['表格', TB_A],
+    ['代码块', CB_B],
+    ['正文', '后一段'],
+  ]) {
+    for (const [kn, k] of [['→', 'ArrowRight'], ['↓', 'ArrowDown']]) {
+      T.reset(CB_NL + '\n\n' + tail);
+      caretBeforeTrailingNewline();
+      eq(`末尾换行的代码块+${nm} ${kn} 光标算在末尾`,
+        ed.isCaretAtEnd(root.querySelector('.w-block[data-type="code"]')), true);
+      T.key(k);
+      eq(`末尾换行的代码块+${nm} ${kn} 出块不改文档`, T.blocks().length, 2);
+      eq(`末尾换行的代码块+${nm} ${kn} 记下待插入`, !!ed.gapAfter, true);
+      T.key('Enter');
+      eq(`末尾换行的代码块+${nm} ${kn} 回车才在两块之间开行`, T.blocks().length, 3);
+      eq(`末尾换行的代码块+${nm} ${kn} 空行在中间`, T.blocks()[1], 'p=');
+    }
+    T.reset(CB_NL + '\n\n' + tail);
+    caretBeforeTrailingNewline();
+    T.key('ArrowRight');
+    typeReal('新');
+    eq(`末尾换行的代码块+${nm} 打字不写进下一块`, T.blocks()[1], 'p=新');
+  }
+  /* 反向约束：只忽略末尾那一个 \n。倒数第二行（还有一条看得见的空行）按 →
+     不该被判成「已经在末尾」，否则用户还在块内就被弹出去了。 */
+  T.reset(['```', '甲', '乙', '', '', '```'].join('\n'));
+  {
+    const el = root.querySelector('.w-code');
+    const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    let n, last = null;
+    while ((n = w.nextNode())) last = n;
+    const off = last.nodeValue.lastIndexOf('乙') + 1;
+    const r = document.createRange(); r.setStart(last, off); r.collapse(true);
+    const s = getSelection(); s.removeAllRanges(); s.addRange(r); root.focus();
+  }
+  T.key('ArrowRight');
+  eq('代码块内倒数第二行 → 不出块', !!ed.gapAfter, false);
 
   /* 19e5. 引用 / 提示块 / 列表也是「带范围的块」：末行 ↓、→ 都出块。
      它们一行一块，所以「组内还有下一行」时必须让浏览器自己走，
@@ -824,18 +954,22 @@ window.__run = () => {
   T.reset('> 引用一行');
   caretEndOf('.w-bq .w-text');
   T.key('ArrowDown');
-  eq('引用末行 ↓ 出块', T.blocks().join(','), 'bq@0=引用一行,p=');
+  eq('引用末行 ↓ 出块不改文档', T.blocks().join(','), 'bq@0=引用一行');
+  eq('↓ 记下待插入', !!ed.gapAfter, true);
+  T.key('Enter');
+  eq('引用末行回车才开一行', T.blocks().join(','), 'bq@0=引用一行,p=');
 
   T.reset('> 引用一行');
   caretEndOf('.w-bq .w-text');
   T.key('ArrowRight');
-  eq('引用末行 → 出块', T.blocks().join(','), 'bq@0=引用一行,p=');
+  eq('引用末行 → 出块不改文档', T.blocks().join(','), 'bq@0=引用一行');
+  eq('→ 记下待插入', !!ed.gapAfter, true);
 
   T.reset('> 引用一行');
   caretEndOf('.w-bq .w-text');
   T.key('ArrowDown');
   T.key('ArrowDown');
-  eq('引用出块后 ↓ 停在新段落，不再加行', T.blocks().length, 2);
+  eq('引用出块后连按 ↓ 不加行', T.blocks().length, 1);
 
   /* 组内（还有下一行引用）：不新开块，交给浏览器在组内移动 */
   T.reset('> 甲\n> 乙');
@@ -846,47 +980,54 @@ window.__run = () => {
   T.key('ArrowRight');
   eq('引用组内还有下一行时 → 也不多开块', T.blocks().length, 2);
 
-  /* 组末行后面跟着正文：↓ / → 都在块与后文之间开一行，光标站在那一行里。
-     出块 = 「在这块后面接着写」，落脚点必须属于块后，不能是后文的段首。 */
+  /* 组末行后面跟着正文：方向键零改动，回车 / 打字才在块与后文之间开行。
+     出块时落进后文开头只是「移动光标」，插入点仍由 gapAfter 记在块后。 */
   T.reset('> 甲\n> 乙\n\n后文');
   T.caret(1, 1);
   T.key('ArrowDown');
-  eq('引用组末行 ↓ 在块后开一行', T.blocks().join(','), 'bq@0=甲,bq@0=乙,p=,p=后文');
-  eq('↓ 光标站在空行里', ed.caretState().blockIndex, 2);
+  eq('引用组末行 ↓ 不改文档', T.blocks().join(','), 'bq@0=甲,bq@0=乙,p=后文');
+  eq('↓ 光标只是移到后文开头', ed.caretState().blockIndex, 2);
+  eq('↓ 记下待插入', !!ed.gapAfter, true);
+  T.key('Enter');
+  eq('↓ 回车在引用与后文之间开一行', T.blocks().join(','), 'bq@0=甲,bq@0=乙,p=,p=后文');
+  eq('↓ 回车后光标在新空行', ed.caretState().blockIndex, 2);
 
   T.reset('> 甲\n> 乙\n\n后文');
   T.caret(1, 1);
   T.key('ArrowRight');
-  eq('引用组末行 → 在块后开一行', T.blocks().join(','), 'bq@0=甲,bq@0=乙,p=,p=后文');
-  eq('→ 光标站在空行里', ed.caretState().blockIndex, 2);
-  eq('出块只插一个空行，后文原样', T.out(), '> 甲\n> 乙\n\n\n后文');
-  T.type('新');
+  eq('引用组末行 → 不改文档', T.blocks().join(','), 'bq@0=甲,bq@0=乙,p=后文');
+  eq('→ 光标只是移到后文开头', ed.caretState().blockIndex, 2);
+  eq('→ 不改 Markdown', T.out(), '> 甲\n> 乙\n\n后文');
+  typeReal('新');
   eq('出块后打字不污染后文', T.out(), '> 甲\n> 乙\n\n新\n\n后文');
 
-  /* 出块后按回车：在块后再加一行，光标落到新开的空行里，不跑回后文 */
+  /* 出块后按回车：空行落在引用与后文之间，光标进新行 */
   T.reset('> 甲\n> 乙\n\n后文');
   T.caret(1, 1);
   T.key('ArrowRight');
   T.key('Enter');
-  eq('出块后回车把光标带到新开的那一行', ed.caretState().blockIndex, 3);
-  eq('新开的行是空段落', T.blocks()[3], 'p=');
-  eq('回车后后文原样保留', T.blocks().join(','), 'bq@0=甲,bq@0=乙,p=,p=,p=后文');
+  eq('出块后回车把光标带到新开的那一行', ed.caretState().blockIndex, 2);
+  eq('新开的行是空段落', T.blocks()[2], 'p=');
+  eq('回车后后文原样保留', T.blocks().join(','), 'bq@0=甲,bq@0=乙,p=,p=后文');
 
-  /* 提示块同理：末行出去，别把 [ !info ] 那行一起带走 */
+  /* 提示块同理：末行出去不改文档，回车才补行 */
   T.reset('> [!info] 标题\n> 正文');
   T.caret(1, 2);
   T.key('ArrowDown');
-  eq('提示块末行 ↓ 出块', T.blocks().length, 3);
-  eq('提示块出块后落在普通段落', T.blocks()[2].startsWith('p'), true);
+  eq('提示块末行 ↓ 不改文档', T.blocks().length, 2);
   eq('提示块出块后 Markdown 不变', T.out(), '> [!info] 标题\n> 正文');
+  T.key('Enter');
+  eq('提示块回车才开一行', T.blocks().length, 3);
 
-  /* 列表：最后一项出去，中间项不动（浏览器走下一项） */
+  /* 列表：最后一项出去不改文档，中间项交给浏览器走下一项 */
   T.reset('- 甲\n- 乙');
   T.caret(1, 1);
   T.key('ArrowDown');
-  eq('列表末项 ↓ 出块', T.blocks().length, 3);
-  eq('列表末项出块后是普通段落', T.blocks()[2].startsWith('p'), true);
+  eq('列表末项 ↓ 不改文档', T.blocks().length, 2);
   eq('列表出块后 Markdown 不变', T.out(), '- 甲\n- 乙');
+  T.key('Enter');
+  eq('列表末项回车才开一行', T.blocks().length, 3);
+  eq('新行是普通段落', T.blocks()[2].startsWith('p'), true);
 
   T.reset('- 甲\n- 乙\n- 丙');
   T.caret(0, 1);
@@ -904,7 +1045,10 @@ window.__run = () => {
   T.reset('前文\n\n---');
   T.caret(0, 2);
   T.key('ArrowDown');
-  eq('分割线在文末时 ↓ 在线下开一行', T.blocks().join(','), 'p=前文,hr=,p=');
+  eq('分割线在文末时 ↓ 不改文档', T.blocks().join(','), 'p=前文,hr=');
+  eq('线后待插入已记下', !!ed.gapAfter, true);
+  T.key('Enter');
+  eq('回车才在线下开一行', T.blocks().join(','), 'p=前文,hr=,p=');
 
   T.reset('前文\n\n---\n\n后文');
   T.caret(0, 2);
