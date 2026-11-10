@@ -709,9 +709,14 @@ function renderOutlineWindow(force) {
   const list = el.outlineList;
   const n = outlineItems.length;
   if (!n) {
+    /* 空态的那句话是 updateOutline 写的，这里一个节点都不许动。
+       曾经这里写的是 replaceChildren()：切标签时列表内容一变短，浏览器把
+       scrollTop 从 498 夹回 0，顺手触发一次 scroll，那个 rAF 正好走进来，
+       把刚写好的「未发现章节标记」当场抹掉 —— 面板剩一块空白，用户分不清
+       是「这个文件没有结构」还是大纲坏了。既然 outlineItems 只有 updateOutline
+       能改，它为空时 DOM 一定已经是空态，这里只负责把窗口化游标归零。 */
     outlineNodes = [];
     outlineStart = outlineEnd = 0;
-    list.replaceChildren();
     return;
   }
   if (!outlineViewH) {

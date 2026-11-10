@@ -225,6 +225,20 @@ ok('语言表：新建类型够多', newDocTypes().length >= 24);
     at('earlyOpen.push') < iRestore && APP.includes('for (const p of earlyOpen) openPath(p)'));
 }
 
+/* ---------- 大纲空态：只有 updateOutline 有权写，重铺不许清 ----------
+   `replaceChildren()` 曾经写在 renderOutlineWindow 的空分支里。切到一个没有结构的
+   文件时，列表内容变短、scrollTop 从 498 被夹回 0，浏览器补一个 scroll，那个 rAF
+   里的重铺把刚写好的「未发现章节标记」当场抹掉 —— 面板剩一块空白。真机探针只能
+   靠「切换后恰好有 scroll」撞上它，所以这里再钉一条源码级的不变量。 */
+{
+  const APP = fs.readFileSync(new URL('../src/js/app.js', import.meta.url), 'utf8');
+  const at = APP.indexOf('function renderOutlineWindow(force)');
+  const emptyBranch = at < 0 ? '' : APP.slice(at, APP.indexOf('if (!outlineViewH)', at))
+    .replace(/\/\*[\s\S]*?\*\//g, '');   // 注释里提到了旧写法，判据只看真代码
+  ok('大纲空态不会被重铺清掉', at >= 0 && emptyBranch.length > 0 && !emptyBranch.includes('replaceChildren'),
+    { at, branchLen: emptyBranch.length, hasReplaceChildren: emptyBranch.includes('replaceChildren') });
+}
+
 /* ---------- 汇总 ---------- */
 const fail = out.filter((r) => !r.ok);
 out.forEach((r) => {

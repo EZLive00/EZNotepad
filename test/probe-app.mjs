@@ -301,6 +301,19 @@ try {
     await ev(`JSON.stringify({ empty: document.querySelector('#outlineList .outline-empty')?.textContent || null,
       kids: document.getElementById('outlineList').children.length,
       paneHidden: document.getElementById('outlinePane').classList.contains('hidden') })`));
+  /* 空态说明会被「列表自己滚一下」抹掉：上一份文档的大纲滚到 498，换成没有结构的
+     文件后内容变短、scrollTop 被夹回 0 → 浏览器补一个 scroll → 那个 rAF 里的重铺
+     把刚写的说明清成空白面板。这条曾经是一条假绿：靠「切换后 400ms 内恰好没有
+     scroll」才通过。这里显式补一次 scroll 事件，把时序钉死。 */
+  await ev(`document.getElementById('outlineList').dispatchEvent(new Event('scroll'))`);
+  await sleep(120);
+  ok('列表自己滚过一次，空态说明还在', /章节标记/.test(await ev(`document.querySelector('#outlineList .outline-empty')?.textContent || ''`)),
+    await ev(`JSON.stringify({ kids: document.getElementById('outlineList').children.length,
+      html: document.getElementById('outlineList').innerHTML.slice(0, 80) })`));
+  await ev(`window.dispatchEvent(new Event('resize'))`);
+  await sleep(120);
+  ok('窗口 resize 重铺后，空态说明还在', /章节标记/.test(await ev(`document.querySelector('#outlineList .outline-empty')?.textContent || ''`)),
+    await ev(`JSON.stringify({ kids: document.getElementById('outlineList').children.length })`));
   await ev(`window.__snp.setContent('1. 总论\\n1.1 背景\\n1.1.1 细节\\n2. 方法')`);
   await sleep(400);
   ok('多级编号按点号段数分级',
