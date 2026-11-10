@@ -1043,29 +1043,23 @@ function updateMeta() {
     const st = S.sides[side];
     const k = sideKey(side);
     const nameEl = $('name' + k);
-    const phEl = $('ph' + k);
     const metaEl = $('meta' + k);
     if (st.loaded) {
-      /* 没有文件的那一侧是用户粘进来的文本：槽位和栏头都不能写成「未选择」 */
+      /* 没有文件的那一侧是用户粘进来的文本：槽位不能写成「未选择」 */
       nameEl.textContent = st.path ? st.name : (side === 'l' ? tt('左侧文本') : tt('右侧文本'));
-      nameEl.title = st.path || '';
-      phEl.textContent = nameEl.textContent;
-      /* 空白的一侧不报「1 行 · 未保存」：一个字都没写，「未保存」既不是事实
-         也没有下一步可做，只是噪声 */
-      if (isBlankSide(side)) {
-        metaEl.textContent = '';
-        continue;
-      }
-      const n = st.lines.length;
-      /* 编码和换行符是技术元信息，用空格分组就够：这一行里没有需要「读成句子」的东西，
-         任何标点都是多余的 */
-      metaEl.textContent = tt('{n} 行', { n }) + (st.path ? '  ' + st.enc + (st.eol === '\r\n' ? '  CRLF' : '') : '');
-      /* 文本侧（无文件）永远存不进磁盘，标脏时也只是提醒「还没落盘过」 */
-      if (st.dirty) metaEl.textContent += '  ' + tt('未保存');
+      /* 槽位里只留行数：原先每栏顶上还有一条 26px 的栏头，名字与这里重复、
+         行数 / 编码 / 换行符才是它独有的；现在栏头删了，行数并进来，
+         编码与换行符落进 title —— 这两样要查的时候才要，不配常驻占宽。
+         未保存另有槽位左边的红点，不必再用文字说一遍。
+         空白的一侧不报「1 行」：一个字都没写，行数既不是事实也没有下一步可做 */
+      metaEl.textContent = isBlankSide(side) ? '' : tt('{n} 行', { n: st.lines.length });
+      const extra = [];
+      if (st.path) extra.push(st.enc + (st.eol === '\r\n' ? ' CRLF' : ''));
+      if (st.dirty) extra.push(tt('未保存'));
+      nameEl.title = (st.path ? st.path + '\n' : '') + extra.join('  ');
     } else {
       nameEl.textContent = (side === 'l' ? tt('左侧') : tt('右侧')) + tt('未选择');
       nameEl.title = '';
-      phEl.textContent = side === 'l' ? tt('左侧') : tt('右侧');
       metaEl.textContent = '';
     }
   }

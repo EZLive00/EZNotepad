@@ -339,32 +339,15 @@ body {
 .cmp-arrow:disabled { opacity: .45; cursor: default; background: var(--bg-float); color: var(--fg-soft); border-color: var(--line-strong); }
 .cmp-arrow .cmp-ico { width: 12px; height: 12px; stroke-width: 2; }
 
-/* 每栏顶部的文件名条：滚动时钉住，长文件翻到下面也知道自己在看谁 */
-.cmp-ph {
-  height: 26px;
+/* 行数贴在文件名后面。原先它单独占一条 26px 的栏头，可栏头里的文件名与顶部
+   槽位显示的是同一份、而顶部那行常驻不滚动 —— 整条栏头只是把同一件事说了两遍。
+   现在名字只留一份，行数并到槽位里；窄窗时先缩文件名（截断了还能靠标题看全），
+   行数不缩（截断就没意义了）。 */
+.cmp-slot-meta {
   flex: none;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 10px 0 12px;
-  background: var(--bg-side);
-  border-bottom: var(--bw) solid var(--line);
-  font-size: var(--fs-1);
-  color: var(--fg-soft);
-}
-
-.cmp-ph-name {
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.cmp-ph-meta {
   color: var(--fg-faint);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-  margin-left: auto;
 }
 
 .cmp-sc {
@@ -502,7 +485,8 @@ body[data-nowrap] .cmp-tx {
   display: flex;
   align-items: center;
   gap: 3px;
-  /* 整条压到文件名条的 26px 以内，正文一行都不遮 */
+  /* 浮在正文右上角，只占右边一小段：它只在 Ctrl+F 期间存在，收起来就还原，
+     为它永久让出一条空白不值得 */
   padding: 1px 6px;
   height: 25px;
   box-sizing: border-box;
@@ -580,8 +564,9 @@ body[data-nowrap] .cmp-tx {
 .cmp-pane.editing .cmp-row:hover { background: var(--bg-soft); }
 
 /* ---------- 预览条 ----------
-   高度由 JS 设成「内容高度」（不超过可视高度），并向下让开每栏 26px 的
-   文件名条：文档只有五行时，预览条就只有五行那么高，不会比正文还长。
+   高度由 JS 设成「内容高度」（不超过可视高度）：文档只有五行时，预览条就只有
+   五行那么高，不会比正文还长。起点直接贴正文顶部 —— 原先要让开每栏 26px 的
+   文件名条，那条已经删了。
    轨道本身由 drawRuler 画，这里只管宽度与交互。 */
 .cmp-ruler {
   background: transparent;
@@ -589,7 +574,6 @@ body[data-nowrap] .cmp-tx {
   cursor: pointer;
   touch-action: none;
   align-self: start;
-  margin-top: 26px;
   height: 0;
 }
 
