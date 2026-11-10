@@ -14,7 +14,6 @@
 // ============================================================
 import fs from 'node:fs';
 import path from 'node:path';
-import { execSync } from 'node:child_process';
 import { ensureApp } from './lib/appctl.mjs';
 
 const PORT = process.env.CDP_PORT || 9333;
@@ -1318,15 +1317,30 @@ try {
 
   /* 剪贴板：WebView2 里 navigator.clipboard.writeText 在无用户激活时 NotAllowedError，
      而 paste 事件的 clipboardData 读的是系统剪贴板（不需要权限）。用系统那一份
-     最接近用户真实操作 —— 这个探针要验的也正是「按键 → paste 事件」这条链路。 */
-  const clipFile = p('clip.txt');
-  const setClip = (text) => {
-    fs.writeFileSync(clipFile, text, 'utf8');
-    execSync(`powershell -NoProfile -Command "Get-Content -Raw '${clipFile}' | Set-Clipboard"`, { stdio: 'ignore' });
+     最接近用户真实操作 —— 这个探针要验的也正是「按键 → paste 事件」这条链路。
+
+     写剪贴板走页面里的 textarea + execCommand('copy')，全程只经 CDP：以前用
+     `execSync('powershell … Set-Clipboard')`，子进程会被沙箱策略拦（在受限环境里
+     整组探针直接崩），而且这是 Windows 专属依赖。现在不碰外部进程，也不碰磁盘夹具。 */
+  const setClip = async (text) => {
+    const done = await cmp.ev(`(() => {
+      const ta = document.createElement('textarea');
+      ta.value = ${JSON.stringify(text)};
+      ta.setAttribute('readonly', '');
+      ta.style.cssText = 'position:fixed;left:-99999px;top:0;width:1px;height:1px;opacity:0';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      let done = false;
+      try { done = document.execCommand('copy'); } catch (e) { done = false; }
+      ta.remove();
+      return done;
+    })()`);
+    if (!done) throw new Error('execCommand(copy) 写系统剪贴板失败');
   };
   const sideRows = (s) => cmp.ev(`[...document.querySelectorAll('#rows${s} .cmp-tx')].map((e) => e.textContent.replace(/\\u200b/g, ''))`);
 
-  setClip('L-1\nL-2');
+  await setClip('L-1\nL-2');
   await clickXY(s0.x, s0.y);
   await pressKey(65, 'a', 'KeyA', 2);
   await pressKey(86, 'v', 'KeyV', 2);
@@ -1336,7 +1350,7 @@ try {
     leftP[0] === 'L-1' && leftP[1] === 'L-2', JSON.stringify(leftP.slice(0, 4)));
 
   /* 用户报的就是这一步：左边改完，右边再全选粘贴就没反应了 */
-  setClip('R-1\nR-2');
+  await setClip('R-1\nR-2');
   const r0 = await rowBox('R', 0);
   await clickXY(r0.x, r0.y);
   await pressKey(65, 'a', 'KeyA', 2);
@@ -1347,7 +1361,7 @@ try {
     rightP[0] === 'R-1' && rightP[1] === 'R-2', JSON.stringify(rightP.slice(0, 4)));
 
   /* 再回到左边粘一次：状态不能残留（strippedHosts / pendingPaste 都得干净） */
-  setClip('L-9');
+  await setClip('L-9');
   const l0 = await rowBox('L', 0);
   await clickXY(l0.x, l0.y);
   await pressKey(65, 'a', 'KeyA', 2);
@@ -1365,7 +1379,7 @@ try {
   await openPair(p('grow-a.txt'), p('grow-b.txt'), false);
   await enterEdit();
 
-  setClip(TEN.join('\n'));
+  await setClip(TEN.join('\n'));
   const ga = await rowBox('L', 0);
   await clickXY(ga.x, ga.y);
   await pressKey(65, 'a', 'KeyA', 2);
@@ -1375,7 +1389,7 @@ try {
   ok('粘 10 行进 5 行的一侧：左侧变成 10 行',
     grownL.length >= 10 && grownL[9] === 'new-10', `len=${grownL.length} ${JSON.stringify(grownL.slice(0, 3))}`);
 
-  setClip(TEN.map((x) => x.replace('new', 'R')).join('\n'));
+  await setClip(TEN.map((x) => x.replace('new', 'R')).join('\n'));
   const gb = await rowBox('R', 0);
   await clickXY(gb.x, gb.y);
   await pressKey(65, 'a', 'KeyA', 2);
@@ -1392,7 +1406,7 @@ try {
   fs.writeFileSync(p('lead-b.txt'), TEN2.slice(5).join('\n') + '\n', 'utf8');
   await openPair(p('lead-a.txt'), p('lead-b.txt'), false);
   await enterEdit();
-  setClip('head-1\nhead-2\nhead-3');
+  await setClip('head-1\nhead-2\nhead-3');
   const lead0 = await rowBox('R', 0);
   await clickXY(lead0.x, lead0.y);
   await pressKey(65, 'a', 'KeyA', 2);
