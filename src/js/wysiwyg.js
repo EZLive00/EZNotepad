@@ -1252,6 +1252,12 @@ export class WysiwygEditor {
        只看 activeTab() 会把上一个文件的内容灌进刚打开的那个。 */
     this.ownerTabId = null;
 
+    /* 「块后待插入」：带边界的块末尾按 → / ↓ 出块时，方向键**不改文档**，
+       只把「这一块后面还缺一行」记在这里。等用户真的按回车或开始输入，
+       才把那个空段落建出来（见 materializeGap）。一次性：任何光标移动、
+       快捷键、失焦、重渲染都把它清掉，绝不残留到别的操作上。 */
+    this.gapAfter = null;
+
     /* ---- 视口渲染（仅超大文档启用，见 _render 的分流） ----
        records 是块的唯一真相（每项存 md 原文切片），root.children 只是
        视口附近那一小段窗口。滚动时窗口搬家，剩余高度用 padding 顶出来。 */
@@ -1284,13 +1290,18 @@ export class WysiwygEditor {
     root.addEventListener('beforeinput', (e) => this.onBeforeInput(e));
     root.addEventListener('copy', (e) => this.onCopy(e, false));
     root.addEventListener('cut', (e) => this.onCopy(e, true));
-    root.addEventListener('compositionstart', () => { this.composing = true; });
+    root.addEventListener('compositionstart', () => {
+      this.composing = true;
+      /* 中文输入法起手也是「要输入了」：先把块后那一行建出来，组字文本
+         才会落在它里面，而不是写进下一块的正文。 */
+      if (this.gapAfter) this.materializeGap();
+    });
     root.addEventListener('compositionend', () => { this.composing = false; this.onInput(); });
     root.addEventListener('paste', (e) => this.handlePaste(e));
     /* 失焦只在真有未落账的编辑时才 flush。没编辑过也 flush 的话，序列化的
        规范化写法（* → - 之类）会经 onChange 写进 tab.content —— 用户一个字
        没动，标签却亮脏标记，只能靠保存一次才消掉。 */
-    root.addEventListener('blur', () => { if (this.pending()) this.flush(); });
+    root.addEventListener('blur', () => { this.gapAfter = null; if (this.pending()) this.flush(); });
     root.addEventListener('click', (e) => this.handleClick(e));
     root.addEventListener('pointerdown', (e) => this.handlePointerDown(e));
     root.addEventListener('pointermove', (e) => this.hoverImgCorner(e));
@@ -1342,6 +1353,7 @@ export class WysiwygEditor {
   setDocDir(dir) { docDir = dir || ''; }
 
   render(md, restore) {
+    this.gapAfter = null;          // 整篇换掉，旧的「块后」位置已经没有意义
     this._render(md, restore);
     /* 撤销基线先用「源文本」顶上 —— 它就是盘上的真状态，不必为了基线把
        整篇 DOM 再序列化一遍（万行文档下那是秒级的无谓开销）。之后空闲时
@@ -2239,6 +2251,17 @@ export class WysiwygEditor {
     const raw = t.textContent;
     let end = raw.length;
     while (end > 0 && raw[end - 1] === ZWSP) end--;
+    /* 代码块 / 公式块的正文是带真换行的文本（white-space: pre-wrap）。末尾那个
+       `\n` 不生成可点击的行：光标最多停在它前面（end - 1），浏览器也只肯把
+       行尾点击映射到那里。把它算进 end，则「末尾留过一次回车」的代码块永远
+       被判成「光标不在末尾」，→ / ↓ 不接管、浏览器把光标直接甩进下一块 ——
+       表现就是「代码块后面有内容时出不了块，别的块都行」。
+
+       只忽略一个：再往前的每个 \n 都对应一条看得见的空行，光标能站上去，
+       全剥掉会让用户在倒数第二行按 → 也出块。表格 / 引用 / 列表的换行是
+       <br> 或单元格边界，textContent 里没有裸 \n，不受影响。 */
+    const type = block.dataset.type;
+    if ((type === 'code' || type === 'math') && end > 0 && raw[end - 1] === '\n') end--;
     return offsetIn(t) >= end;
   }
 
@@ -2373,6 +2396,18 @@ export class WysiwygEditor {
   }
 
   onBeforeInput(e) {
+    /* beforeinput 是「真的要写入了」的最后一道口子：IME 组字、粘贴、
+       以及不经过 keydown 的输入都从这里进。此时才把块后那一行建出来。 */
+    if (this.gapAfter) {
+      const t = e.inputType || '';
+      if (t === 'insertParagraph' || t === 'insertLineBreak') {
+        e.preventDefault();
+        this.materializeGap();
+        return;
+      }
+      if (t.startsWith('insert')) this.materializeGap();
+      else this.gapAfter = null;
+    }
     if (!this._selAll) return;
     if (!this._selAllHeld()) { this._selAll = false; return; }
     const t = e.inputType || '';
@@ -2792,6 +2827,24 @@ export class WysiwygEditor {
   handleKey(e) {
     if (this.loading) { e.preventDefault(); return; }   // 大文档分块载入期间不响应
     if (e.isComposing) return;
+
+    /* 出块时记下的「块后还缺一行」，只在用户真的要写入时才兑现。
+       方向键 / 退格 / Tab / 快捷键一律让它失效 —— 移动光标不该改文档。 */
+    if (this.gapAfter) {
+      const plain = !e.ctrlKey && !e.metaKey && !e.altKey;
+      if (plain && e.key === 'Enter') {
+        const p = this.materializeGap();
+        if (p) { e.preventDefault(); return; }   // 这一下回车就是「插一个空行」
+      } else if (plain && e.key.length === 1) {
+        /* 不 preventDefault：先把空段落和光标放好，浏览器随后把这个字符
+           输进刚放好的位置，不会写进下一块的正文。 */
+        this.materializeGap();
+      } else if (e.key === 'Process' || e.key === 'Unidentified' || e.key === 'Dead') {
+        /* IME 起手键：状态留给 compositionstart，那里才是组字的起点 */
+      } else {
+        this.gapAfter = null;
+      }
+    }
     const sel = window.getSelection();
     if (!sel.rangeCount) return;
     const block = this.currentBlock();
@@ -3083,10 +3136,10 @@ export class WysiwygEditor {
    * ↓ 与 → 把光标送到块外（表格最后一格、代码块 / 公式块末行、引用与提示块末行、
    * 列表最后一项）。没有这条路的话，这些块只能靠鼠标点击才能离开。
    *
-   * ↓ 与 → 共用同一个落点（caretAfterBlock）：光标要停在**属于块后的那一行**上，
-   * 而不是「下一块的开头」。跳进后文开头时，直接打字会把字写进人家段落里
-   * （实测 `后一段` → `新后一段`），按回车虽然插出了空行，光标却还留在后文里 ——
-   * 两种写法都不像「在这块后面接着写」。
+   * ↓ 与 → 共用同一个出口（caretAfterBlock）。**方向键绝不改文档**：块后已经有
+   * 空段落就停进去，没有就只记一个一次性的「块后待插入」状态，等用户按回车
+   * 或开始输入时才把空行建出来。出块就先插一行会让标签变脏、撤销栈凭空多一条，
+   * 用户只是移动光标而已。
    */
   handleArrow(e, block, cell) {
     const exit = e.key === 'ArrowDown' || e.key === 'ArrowRight';
@@ -3105,9 +3158,9 @@ export class WysiwygEditor {
     if (!exit || !block) return;
     if (!this.endsBounded(block)) {
       /* 紧跟着一条分割线：它本身没有光标位，光标停在上面那一行的末尾按 ↓
-         就再也没有下文（分割线落在文末时尤其明显）。这里只是「穿过一条线」，
-         不是「在线后面接着写」—— 线下面有正文就直接落进去，别为此插空行把
-         后文顶下去；确实什么都没有，才和出块一样在线下开一行。 */
+         就再也没有下文（分割线落在文末时尤其明显）。这里只是「穿过一条线」：
+         线下面有正文就直接落进去；线在文末则保持光标不动、只记下「线后待插入」，
+         等用户真的按回车才在线下开一行。 */
       const after = block.nextElementSibling;
       if (e.key === 'ArrowDown' && after && after.dataset.type === 'hr'
         && this.isCaretAtEnd(block)) {
@@ -3147,30 +3200,50 @@ export class WysiwygEditor {
   }
 
   /**
-   * 从「带范围的块」里走出来的落点。表格 / 代码块 / 公式块 / 引用 / 列表
-   * 的末尾都不长光标位，出块就得在块后找一个**属于这一行的落脚点**：
+   * 带范围的块（表格 / 代码块 / 公式块 / 引用 / 列表）的末尾不长光标位，
+   * → / ↓ 得把人送出去。**但方向键只是移动光标，绝不改文档**：
    *
-   *   1. 块后已经是空段落 —— 直接停进去，绝不重复开行（反复按方向键不许越按越长）；
-   *   2. 块后是正文，或者什么都没有 —— 在块与它之间插一个空段落，停进去。
+   *   1. 块后已经是空段落 —— 直接停进去，本来就有落脚点；
+   *   2. 块后还有能站人的块 —— 落到它开头（光标确实离开了块），同时记下
+   *      「块后还缺一行」；
+   *   3. 块后什么都没有，或紧跟着没有光标位的分割线 —— 光标保持不动，
+   *      同样只记下「块后还缺一行」。
    *
-   * 第 2 条会真的改文档：多一个空行、标签变脏、撤销栈多一条（后续打字在 700ms
-   * 内会合并进同一条）。这是有意的取舍：出块 = 「在这块后面接着写」，光标必须先
-   * 站在空行上，用户打字或回车才不会碰到后面的内容。曾经为了「方向键不许改文档」
-   * 让光标落进下一块开头，实测直接打字写成 `新后一段`、按回车插了空行但光标仍留在
-   * 后文里 —— 两个直觉动作都落空，省下的那一点脏标记不值这个代价。
+   * 第 2/3 条的 `gapAfter` 是一次性状态：用户按回车或开始输入时，
+   * `materializeGap()` 才在块与下一块之间插入真段落。这样既保住了
+   * 「出块后回车就能加一个空行」，又不会让按一下方向键就多一个空行、
+   * 标签变脏、撤销栈凭空多一条。
    *
-   * 插的是**真段落**并走 flush：records、序列化、撤销、脏标记一起对齐，不用
-   * 「临时占位块」绕过模型（那种块会在窗口化重铺或切标签时悄悄消失）。
+   * ⛔ 别用「临时占位块」或把 Range 悬在子节点间隙来假装有一行：前者会在
+   * 窗口化重铺 / 切标签时消失，后者在 WebView2 里回车会被吞、打字会被
+   * 吸回表格最后一格。要落脚点就建真段落，且只在该建的时候建。
    */
   caretAfterBlock(block) {
     const next = block.nextElementSibling;
     if (next && (next.dataset.type || 'p') === 'p' && this.isEmptyBlock(next)) {
+      this.gapAfter = null;
       this.placeCaretStart(next);
       return;
     }
+    this.gapAfter = { block };
+    if (next && next.dataset.type !== 'hr') this.placeCaretStart(next);
+  }
+
+  /**
+   * 兑现「块后待插入」：插一个真段落、把光标放进去、flush 对齐
+   * records / 序列化 / 撤销 / 脏标记。只在用户真的要写入时调用。
+   * 返回 null 表示状态已失效（块被重铺掉了），调用方按常规处理这次按键。
+   */
+  materializeGap() {
+    const gap = this.gapAfter;
+    this.gapAfter = null;
+    if (!gap) return null;
+    const block = gap.block;
+    if (!block || !block.isConnected || block.parentElement !== this.root) return null;
     const p = this.insertEmptyAfter(block);
     this.placeCaretStart(p);
     this.flush();
+    return p;
   }
 
   /* ---------------- 结构操作 ---------------- */
@@ -4395,6 +4468,7 @@ export class WysiwygEditor {
   }
 
   handlePointerDown(e) {
+    this.gapAfter = null;      // 鼠标重新摆了光标，「块后待插入」立刻作废
     /* 复制按钮按下的那一下别把编辑区的光标/选区抢走 */
     if (e.target && e.target.closest && e.target.closest('.cc-copy')) { e.preventDefault(); return; }
     const img = e.target;
@@ -4434,6 +4508,9 @@ export class WysiwygEditor {
     e.preventDefault();
     const text = (e.clipboardData || window.clipboardData).getData('text/plain');
     if (!text) return;
+    /* 粘贴也是「要写入了」：先把块后那一行建出来，下面按宿主分派时
+       currentBlock() 才会是那个新空段落，而不是下一块的正文。 */
+    if (this.gapAfter) this.materializeGap();
     const cell = this.currentCell();
     if (cell) {
       // 单元格里只取第一行，避免把表格结构塞进单元格
@@ -4514,6 +4591,7 @@ export class WysiwygEditor {
   }
 
   handleClick(e) {
+    this.gapAfter = null;
     if (this.loading) return;
     /* 代码块右上角的「复制」：整块代码直接进剪贴板，不需要先选中。
        必须待在选区判断之前 —— 用户常常是先选了一段、再想起来复制整块，
