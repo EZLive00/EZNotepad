@@ -85,6 +85,47 @@ export class FileTree {
     if (row) row.classList.add('active');
   }
 
+  /**
+   * 在树里定位一个文件：把从根到它父目录的每一层都展开、滚到看得见的地方，再闪三下。
+   * 照 IDEA 的 Select Opened File：用户要的是「它在目录里的哪儿」，不是「打开它」。
+   *
+   * 返回：
+   *   'revealed' 展开并定位到了
+   *   'already'  本来就在眼前（行已是当前文件）—— 仍然闪，闪本身就是回答
+   *   'outside'  这个文件不在当前打开的文件夹下（或压根没打开文件夹）
+   *   'gone'     路径在根目录下，但树里没有这一行（文件可能已被删/改名）
+   *
+   * 展开状态只认 `expanded` 这一份真相，所以这里只往集合里加、然后重画一遍 ——
+   * 自己拼 DOM 会和 render 的那套（按层级深浅补开目录）漂移。
+   */
+  async reveal(path) {
+    if (!this.root || !path) return 'outside';
+    const root = this.root.replace(/[\\/]+$/, '');
+    /* 前缀相同不算在里面：C:\a 与 C:\ab 是两棵不同的树 */
+    const p = String(path);
+    if (p !== root && !p.startsWith(root + '\\') && !p.startsWith(root + '/')) return 'outside';
+
+    const dirs = [];
+    for (let d = parentOf(p); d && d.length > root.length; d = parentOf(d)) dirs.unshift(d);
+    let opened = false;
+    for (const d of dirs) if (!this.expanded.has(d)) { this.expanded.add(d); opened = true; }
+    /* 搜索状态下 body 里是命中列表，不是树 —— 重画一次才会回到树上 */
+    if (opened || !this.body.querySelector('.ft-row')) await this.render();
+
+    const row = this._rowOf(p);
+    if (!row) return 'gone';
+    const wasActive = row.classList.contains('active');
+    row.classList.add('active');
+    row.scrollIntoView({ block: 'nearest' });
+    /* 先摘再加强制回流，动画才会从头播 —— 连按两次定位时第二次也得闪 */
+    row.classList.remove('ft-flash');
+    void row.offsetWidth;
+    row.classList.add('ft-flash');
+    clearTimeout(row._flashTimer);
+    row._flashTimer = setTimeout(() => row.classList.remove('ft-flash'), 1100);
+    return wasActive ? 'already' : 'revealed';
+  }
+
   async render() {
     this.token++;
     this.body.innerHTML = '';

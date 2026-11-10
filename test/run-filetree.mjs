@@ -68,6 +68,35 @@ try {
   ok('目录在前、文件在后', first[0] === 'assets', first.join(','));
   ok('目录行带 dir 样式', await ev(`document.querySelectorAll('.ft-row.dir').length === 1`));
 
+  // ---- 定位当前文件（reveal） ----
+  /* 树是懒加载 + 折叠的：目标在三层下面，必须一路展开才能找到那一行。
+     断言认「返回码 + 行真的在 DOM 里 + 闪了 + 点亮了」，不认像素。 */
+  const revealState = (p) => ev(`(async () => {
+    const r = await window.__tree.reveal(${JSON.stringify(p)});
+    const row = [...document.querySelectorAll('.ft-row')]
+      .find((x) => x.dataset.path === ${JSON.stringify(p)}) || null;
+    return { code: r, row: !!row, flash: !!(row && row.classList.contains('ft-flash')),
+      active: !!(row && row.classList.contains('active')) };
+  })()`);
+
+  const rv1 = await revealState('C:/demo/assets/deep/deep.md');
+  ok('reveal 会一路展开到深层文件', rv1.code === 'revealed' && rv1.row, JSON.stringify(rv1));
+  ok('reveal 之后那一行是点亮的', rv1.active, JSON.stringify(rv1));
+  ok('reveal 之后那一行会闪', rv1.flash, JSON.stringify(rv1));
+
+  const rv2 = await revealState('C:/demo/assets/deep/deep.md');
+  ok('已经就在眼前时返回 already，但照样闪', rv2.code === 'already' && rv2.flash, JSON.stringify(rv2));
+
+  const rv3 = await revealState('C:/other/x.md');
+  ok('不在根目录下返回 outside', rv3.code === 'outside', JSON.stringify(rv3));
+
+  const rv4 = await revealState('C:/demo/ghost.md');
+  ok('根目录下但树里没有这一行返回 gone', rv4.code === 'gone', JSON.stringify(rv4));
+
+  /* 收回到根目录折叠态，后面的右键 / 新建用例按原样跑 */
+  await ev(`(async () => { window.__tree.expanded.clear(); await window.__tree.render(); return 1; })()`);
+  await new Promise((r) => setTimeout(r, 120));
+
   // ---- 右键菜单 ----
   ok('右键文件弹菜单', await rightClick('笔记.md'));
   const fileMenu = await labels();
