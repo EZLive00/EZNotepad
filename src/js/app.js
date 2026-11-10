@@ -48,7 +48,6 @@ const el = {
   modeLabel: $('modeLabel'),
   modeIcon: $('modeIcon'),
   modeMenu: $('modeMenu'),
-  modeNote: $('modeNote'),
   fmtBadge: $('fmtBadge'),
   btnSave: $('btnSave'),
   btnUndo: $('btnUndo'),
@@ -56,9 +55,9 @@ const el = {
   stPos: $('stPos'),
   stLines: $('stLines'),
   stWords: $('stWords'),
+  stChars: $('stChars'),
   stEOL: $('stEOL'),
   stEncoding: $('stEncoding'),
-  stDraft: $('stDraft'),
   findbar: $('findbar'),
   workspace: $('workspace'),
   winTitle: $('winTitle'),
@@ -100,7 +99,7 @@ const plain = new PlainEditor(el.editor, {
 const modeMeta = () => ({
   // short 用于工具栏/标题栏这类横向空间紧张的地方
   wysiwyg: { label: tt('所见即所得'), short: tt('所见即所得'), icon: 'type' },
-  edit: { label: tt('编辑模式'), short: tt('编辑'), icon: 'code' },
+  edit: { label: tt('源码模式'), short: tt('源码'), icon: 'code' },
   preview: { label: tt('预览模式'), short: tt('预览'), icon: 'eye' },
 });
 
@@ -338,7 +337,7 @@ function showTabList() {
   const btn = $('tabMore');
   const r = btn ? btn.getBoundingClientRect() : { left: 120, bottom: 60 };
   const cur = activeTab();
-  const items = [{ head: `${tt('全部标签')} · ${tabs.length}` }];
+  const items = [{ head: tt('{a}（{b}）', { a: tt('全部标签'), b: tabs.length }) }];
   for (const t of tabs) {
     items.push({
       label: (cur && t.id === cur.id ? '✓ ' : '   ') + tabLabel(t) + (isDirty(t) ? ' ●' : ''),
@@ -586,14 +585,6 @@ function updateModeMenu(kind, allowed) {
     b.classList.toggle('checked', activeTab() && activeTab().mode === m);
     b.classList.toggle('disabled', !allowed.includes(m));
   });
-  const notes = {
-    md: tt('支持全部三种模式'),
-    json: tt('JSON 支持：编辑 / 预览（校验 + 高亮）'),
-    code: tt('代码支持：编辑 / 预览（语法高亮）'),
-    txt: tt('纯文本支持：编辑 / 预览（只读）'),
-    data: tt('表格文本支持：编辑 / 预览（只读）'),
-  };
-  el.modeNote.textContent = tt('当前格式：{kind} · {note}', { kind: kindLabel(kind), note: notes[kind] || '' });
 }
 
 function setLayout(layout) {
@@ -1049,7 +1040,7 @@ function applyLang() {
     updateModeMenu(kind, modesFor(kind));
   }
   updateOutline();
-  refreshStats();   // 状态栏「N 字 · N 字符」同属动态区
+  refreshStats();   // 状态栏「N 字」「N 字符」同属动态区
   updateStatus();
   tree.render();
   /* 所见即所得的提示块标题是建 DOM 时写死的文本节点，schedulePreview()
@@ -1096,19 +1087,18 @@ function showSettings() {
             <button type="button" class="set-step" data-zoom="-1" title="缩小" data-i18n-title="缩小">−</button>
             <span class="set-value" id="setFontSize">${settings.fontSize} px</span>
             <button type="button" class="set-step" data-zoom="1" title="放大" data-i18n-title="放大">+</button>
-            <button type="button" class="set-link" id="setFontReset" data-i18n="实际大小">实际大小</button>
+            <button type="button" class="set-link" id="setFontReset" data-i18n="重置">重置</button>
           </div>
         </div>
 
         <div class="set-group">
           <div class="set-label" data-i18n="正文宽度">正文宽度</div>
           <div class="set-zoom">
-            <button type="button" class="set-step" data-rw="-1" title="窄一点" data-i18n-title="窄一点">−</button>
+            <button type="button" class="set-step" data-rw="-1" title="变窄" data-i18n-title="变窄">−</button>
             <span class="set-value" id="setReadWidth">${settings.readWidth} px</span>
-            <button type="button" class="set-step" data-rw="1" title="宽一点" data-i18n-title="宽一点">+</button>
-            <button type="button" class="set-link" id="setReadReset" data-i18n="默认">默认</button>
+            <button type="button" class="set-step" data-rw="1" title="变宽" data-i18n-title="变宽">+</button>
+            <button type="button" class="set-link" id="setReadReset" data-i18n="重置">重置</button>
           </div>
-          <div class="set-hint" data-i18n="Markdown 正文在宽窗口下居中的最大宽度（编辑与预览都按这个来）。窗口或分栏不够宽时自动收回到两侧留白，专注模式在此基础上再收 8%。">Markdown 正文在宽窗口下居中的最大宽度（编辑与预览都按这个来）。窗口或分栏不够宽时自动收回到两侧留白，专注模式在此基础上再收 8%。</div>
         </div>
       </section>
 
@@ -1116,21 +1106,20 @@ function showSettings() {
         <div class="set-group">
           <div class="set-label" data-i18n="语言">语言</div>
           <select class="set-select" id="setLang">${langOpts}</select>
-          <div class="set-hint" data-i18n="「跟随系统」按系统语言自动选择，切换后立即生效。">「跟随系统」按系统语言自动选择，切换后立即生效。</div>
         </div>
 
         <div class="set-group">
           <div class="set-label" data-i18n="布局">布局</div>
-          <label class="set-row"><input type="checkbox" id="setOutline" ${settings.outlineVisible ? 'checked' : ''} /> <span data-i18n="显示大纲 / 文件栏">显示大纲 / 文件栏</span></label>
-          <label class="set-row"><input type="checkbox" id="setSplit" ${settings.layout === 'split' ? 'checked' : ''} /> <span data-i18n="双栏（编辑 + 预览）">双栏（编辑 + 预览）</span></label>
+          <label class="set-row"><input type="checkbox" id="setOutline" ${settings.outlineVisible ? 'checked' : ''} /> <span data-i18n="显示侧栏">显示侧栏</span></label>
+          <label class="set-row"><input type="checkbox" id="setSplit" ${settings.layout === 'split' ? 'checked' : ''} /> <span data-i18n="双栏">双栏</span></label>
         </div>
       </section>
 
       <section class="set-page hidden" data-page="file">
         <div class="set-group">
           <div class="set-label" data-i18n="写入">写入</div>
-          <label class="set-row"><input type="checkbox" id="setAutoSave" ${settings.autoSave ? 'checked' : ''} /> <span data-i18n="自动保存（停手约 1 秒写盘）">自动保存（停手约 1 秒写盘）</span></label>
-          <label class="set-row"><input type="checkbox" id="setWatch" ${settings.watchFiles !== false ? 'checked' : ''} /> <span data-i18n="监听磁盘改动（别的程序改了文件时提示）">监听磁盘改动（别的程序改了文件时提示）</span></label>
+          <label class="set-row"><input type="checkbox" id="setAutoSave" ${settings.autoSave ? 'checked' : ''} /> <span data-i18n="自动保存">自动保存</span></label>
+          <label class="set-row"><input type="checkbox" id="setWatch" ${settings.watchFiles !== false ? 'checked' : ''} /> <span data-i18n="监听外部修改">监听外部修改</span></label>
         </div>
 
         <div class="set-group">
@@ -1140,15 +1129,15 @@ function showSettings() {
             <button type="button" class="mini" id="setPickFolder" data-i18n="选择…">选择…</button>
             <button type="button" class="mini ghost" id="setClearFolder" data-i18n="清除">清除</button>
           </div>
-          <div class="set-hint" data-i18n="当前打开的文件夹，用于左侧「文件」页浏览与搜索。">当前打开的文件夹，用于左侧「文件」页浏览与搜索。</div>
         </div>
       </section>
 
       <section class="set-page hidden" data-page="keys">
         <div class="set-group">
           <div class="set-label" data-i18n="快捷键">快捷键</div>
+          <!-- 说明放在列表上方：列表要滚，放在下面就永远在视野之外 -->
+          <div class="set-hint" data-i18n="按下新组合键即生效，Esc 取消。">按下新组合键即生效，Esc 取消。</div>
           <div class="keys-list" id="setKeysList"></div>
-          <div class="set-hint" data-i18n="点「改」后直接按新的组合键（要带 Ctrl / Alt，或单用 F1–F12），Esc 取消。自定义优先于默认键位。">点「改」后直接按新组合键（要带 Ctrl / Alt，或单用 F1–F12），Esc 取消。自定义优先于默认键位。</div>
         </div>
       </section>
     </div>
@@ -1315,7 +1304,8 @@ function refreshStats() {
   if (wys.loading) return;
   const { lines, words, chars } = countStats(t.content);
   el.stLines.textContent = tt('{n} 行', { n: lines });
-  el.stWords.textContent = tt('{w} 字 · {c} 字符', { w: words, c: chars });
+  el.stWords.textContent = tt('{n} 字', { n: words });
+  el.stChars.textContent = tt('{n} 字符', { n: chars });
 }
 
 /**
@@ -1329,8 +1319,13 @@ function updateCursorPos() {
   if (t.mode === 'edit') {
     const c = plain.cursor;
     el.stPos.textContent = tt('行 {line}，列 {col}', { line: c.line, col: c.col });
+    el.stPos.hidden = false;
   } else {
-    el.stPos.textContent = '—';
+    /* 另外两种模式没有「行/列」这回事，整条收起来。
+       以前在这里写一个「—」，等于在状态栏最左边摆一个问号：
+       用户得先判断这个横杠是什么，才能判断它重不重要 */
+    el.stPos.textContent = '';
+    el.stPos.hidden = true;
   }
 }
 
@@ -1341,8 +1336,6 @@ function updateStatus() {
   el.stEncoding.textContent = t.encoding;
   el.fmtBadge.textContent = kindLabel(detectKind(t.name));
   updateCursorPos();
-  el.stDraft.textContent = isDirty(t) ? tt('未保存') : tt('已保存');
-  el.stDraft.classList.toggle('dirty', isDirty(t));
   renderTabs();
   syncHist();
 }
@@ -1846,8 +1839,9 @@ async function confirmQuit() {
   const r = await dialog({
     title: tt('还有未保存的内容'),
     body: tt('{n} 个标签有未保存的修改：{names}。', { n: dirty.length, names })
-      + (noPath ? tt('<br><br>其中 {n} 个还没保存过文件：「全部保存并退出」会把它们存成草稿，下次启动可恢复；「不保存退出」则连同丢弃。', { n: noPath }) : '')
-      + tt('<br><br>要如何处理？'),
+      /* 不再补一句「要如何处理？」：下面三个按钮就是三个答案，
+         再问一遍等于让用户把同一件事读两遍 */
+      + (noPath ? tt('<br><br>其中 {n} 个还没保存过文件：「全部保存并退出」会把它们存成草稿，下次启动还能恢复；「不保存退出」会一并丢弃。', { n: noPath }) : ''),
     buttons: [
       { id: 'save', label: tt('全部保存并退出'), primary: true, key: 'Y' },
       { id: 'discard', label: tt('不保存退出'), key: 'N' },
@@ -1898,7 +1892,7 @@ async function closeTab(id) {
     persistCurrentView();
     const r = await dialog({
       title: tt('未保存的修改'),
-      body: tt('<b>{name}</b> 有未保存的修改，要保存吗？', { name: t.name }),
+      body: tt('<b>{name}</b> 有未保存的修改。', { name: t.name }),
       buttons: [
         { id: 'save', label: tt('保存'), primary: true, key: 'Y' },
         { id: 'discard', label: tt('不保存'), key: 'N' },
@@ -2096,7 +2090,7 @@ function toggleDupLines() {
     toast(n ? tt('已高亮 {n} 处重复内容', { n }) : tt('没有重复内容'));
     return;
   }
-  if (t.mode !== 'edit') { toast(tt('请切换到编辑模式（Ctrl+2）再用')); return; }
+  if (t.mode !== 'edit') { toast(tt('请切换到源码模式（Ctrl+2）再用')); return; }
   const nums = dupLineNumbers(plain.value);
   if (!nums.length) { toast(tt('没有重复行')); return; }
   plain.setDupLines(nums);
@@ -2106,7 +2100,7 @@ function toggleDupLines() {
 function requireEditMode() {
   const t = activeTab();
   if (!t) return false;
-  if (t.mode === 'preview') { toast(tt('预览模式下不能编辑，请切换到编辑模式')); return false; }
+  if (t.mode === 'preview') { toast(tt('预览模式下不能编辑，请切换到源码模式')); return false; }
   return true;
 }
 /** 块级格式命令只在「所见即所得」模式下有意义 */
@@ -2371,7 +2365,7 @@ async function newFilePrompt() {
     b.type = 'button';
     b.className = 'new-type' + (ty.ext === last ? ' active' : '');
     b.dataset.dialogClose = ty.ext;
-    b.innerHTML = `<b>${ty.name}</b><small>.${ty.ext}${ty.desc ? ' · ' + ty.desc : ''}</small>`;
+    b.innerHTML = `<b>${ty.name}</b><small>.${ty.ext}</small>`;
     box.appendChild(b);
     cells.push(b);
   });
@@ -2530,7 +2524,7 @@ function undoToast(msg, backup) {
   span.textContent = msg;
   const btn = document.createElement('button');
   btn.textContent = tt('撤销');
-  btn.style.cssText = 'border:none;background:var(--accent);color:#fff;border-radius:0;padding:2px 10px;font-size:11.5px;cursor:pointer';
+  btn.style.cssText = 'border:none;background:var(--accent-solid);color:var(--accent-fg);border-radius:var(--r-1);padding:2px 8px;font-size:var(--fs-1);cursor:pointer';
   btn.onclick = () => { setContent(backup); box.remove(); toast(tt('已撤销')); };
   box.append(span, btn);
   wrap.appendChild(box);
@@ -2723,8 +2717,8 @@ async function switchToEditForReplace() {
   const t = activeTab();
   if (!t || t.mode !== 'wysiwyg') return true;
   const go = await confirmBox(
-    tt('替换需要编辑模式'),
-    tt('这一处匹配跨越了加粗、链接这类格式，在所见即所得里直接改会把它们弄乱。<br><br>切到编辑模式（Ctrl+2）继续替换？'),
+    tt('替换需要源码模式'),
+    tt('这一处匹配跨越了加粗、链接这类格式，在所见即所得里直接改会把它们弄乱。<br><br>切到源码模式（Ctrl+2）继续替换？'),
     tt('切换并替换'), tt('取消')
   );
   if (!go) return false;
@@ -2787,7 +2781,7 @@ async function replaceAll() {
     }
     const rest = list.length - ok;
     if (!list.length) { toast(tt('没有找到匹配项')); return; }
-    if (rest) toast(tt('已替换 {ok} 处；另有 {rest} 处跨越了格式，请切到编辑模式处理', { ok, rest }));
+    if (rest) toast(tt('已替换 {ok} 处；另有 {rest} 处跨越了格式，请切到源码模式处理', { ok, rest }));
     else toast(tt('已替换 {n} 处', { n: ok }));
     return;
   }
@@ -2999,7 +2993,7 @@ function showHistoryPanel() {
       const d = new Date(time);
       const stamp = `${d.getMonth() + 1}-${String(d.getDate()).padStart(2, '0')} `
         + `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-      newTab(tt('历史 · {name}', { name: t.name }), text, null);
+      newTab(tt('历史版本：{name}', { name: t.name }), text, null);
       toast(tt('已打开 {when} 的版本，要留下就「另存为」', { when: stamp }));
     },
     onApply: (text) => {
@@ -3103,7 +3097,7 @@ async function showAbout() {
   dialog({
     title: tt('关于 EZNotepad'),
     body: `<div class="dlg-text">
-      <p style="margin-top:0"><b>EZNotepad</b> · ${tt('版本 {v}', { v })}</p>
+      <p style="margin-top:0"><b>EZNotepad</b> ${tt('版本 {v}', { v })}</p>
       <p>${tt('把 Markdown 预览、文本对比、记事本读写，做成一个 10MB 以内、免安装、不联网的小工具。')}</p>
       <p style="color:var(--fg-faint);font-size:12px">${tt('文件只在本机读写，不向任何服务器发送内容。')}</p>
     </div>`,
@@ -3523,7 +3517,7 @@ const menuTree = () => [
     label: tt('视图'),
     items: [
       { id: 'modeWysiwyg', label: tt('所见即所得'), kbd: 'Ctrl+1', checked: markMode('wysiwyg'), disabled: () => !hasTab() },
-      { id: 'modeEdit', label: tt('编辑模式'), kbd: 'Ctrl+2', checked: markMode('edit'), disabled: () => !hasTab() },
+      { id: 'modeEdit', label: tt('源码模式'), kbd: 'Ctrl+2', checked: markMode('edit'), disabled: () => !hasTab() },
       { id: 'modePreview', label: tt('预览模式'), kbd: 'Ctrl+3', checked: markMode('preview'), disabled: () => !hasTab() },
       { sep: true },
       { id: 'layoutSingle', label: tt('单栏'), kbd: 'Ctrl+Shift+L', checked: () => settings.layout === 'single' },
@@ -3534,7 +3528,7 @@ const menuTree = () => [
       { id: 'wrapSoft', label: tt('自动换行'), checked: () => settings.wrap !== false },
       { id: 'wrapNone', label: tt('不换行'), checked: () => settings.wrap === false },
       { sep: true },
-      { id: 'toggleOutline', label: tt('显示大纲'), kbd: 'Ctrl+Shift+O', checked: () => settings.outlineVisible },
+      { id: 'toggleOutline', label: tt('显示侧栏'), kbd: 'Ctrl+Shift+O', checked: () => settings.outlineVisible },
       { id: 'toggleToolbar', label: tt('显示快捷按钮'), checked: () => settings.showToolbar !== false },
       { id: 'toggleWinTitle', label: tt('标题栏显示文件名'), checked: () => settings.showWinTitle !== false },
       { sep: true },
@@ -4459,7 +4453,7 @@ function openPalette() {
   const wrap = document.createElement('div');
   wrap.className = 'palette';
   wrap.innerHTML = `<div class="palette-box" role="dialog" aria-label="${tt('命令面板')}">
-      <input class="palette-input" placeholder="${tt('输入命令名…（↑↓ 选择，Enter 执行，Esc 关闭）')}" spellcheck="false">
+      <input class="palette-input" placeholder="${tt('输入命令名…')}" spellcheck="false">
       <div class="palette-list"></div>
     </div>`;
   const input = wrap.querySelector('.palette-input');
@@ -4605,12 +4599,12 @@ function paintKeyList(list) {
     const rec = document.createElement('button');
     rec.type = 'button';
     rec.className = 'mini';
-    rec.textContent = tt('改');
+    rec.textContent = tt('更改');
     rec.onclick = () => {
       rec.textContent = tt('按键…');
       rec.classList.add('waiting');
       recordCombo((combo) => {
-        rec.textContent = tt('改');
+        rec.textContent = tt('更改');
         rec.classList.remove('waiting');
         if (!combo) return;
         /* 一个命令只留一个自定义键；新键若被别的命令占着，直接接管 */
@@ -4626,7 +4620,11 @@ function paintKeyList(list) {
     reset.type = 'button';
     reset.className = 'mini ghost';
     reset.textContent = tt('恢复');
+    /* 没有自定义键时整格留白而不是画一个灰掉的按钮：几十行灰按钮就是一片
+       噪声，而「这里将来会长出一个按钮」这件事对用户没有价值。
+       留格（而不是删掉）是为了让每一行的「修改」竖着对齐。 */
     reset.disabled = !mine.length;
+    reset.style.visibility = mine.length ? '' : 'hidden';
     reset.onclick = () => {
       for (const c of customKeysOf(r.id)) delete keymap()[c];
       saveSettings();

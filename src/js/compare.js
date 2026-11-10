@@ -503,7 +503,7 @@ function rowHtml(row, i, side, vi) {
   /* 折叠掉的那些行在视觉上没有任何位置，只能在上方画一条缝告诉读者
      「行号在这里跳过了一段」—— 不然行号从 12 直接跳到 47，看着像丢内容 */
   const gap = vi > 0 && S.view[vi - 1] !== i - 1 ? ' gap' : '';
-  /* 查找命中的行：整行淡蓝，当前这一条再压一条左侧竖线。
+  /* 查找命中的行：整行琥珀，当前这一条再深一档。
      不做字符级 mark —— 差异行的 inner 是 inlineDiff 生成的高亮 HTML，
      再往里插 <mark> 会把两边的高亮互相踩掉。 */
   let hit = '';
@@ -935,7 +935,7 @@ function updateStats() {
   /* 两侧都还是空的：说清楚下一步做什么，别报「完全一致」——
      那是「比过了，一样」，而这里根本还没有内容可比 */
   if (isBlankSide('l') && isBlankSide('r')) {
-    $('stat').textContent = tt('把两段文本分别粘到左右两侧，或者点上面的文件名打开文件');
+    $('stat').textContent = tt('把两段文本分别粘到左右两侧，或点上方文件名打开文件');
     $('curInfo').textContent = '';
     $('prev').disabled = true;
     $('next').disabled = true;
@@ -956,7 +956,7 @@ function updateStats() {
   }
   $('stat').textContent = same
     ? (hidden ? tt('忽略空白/大小写后一致，逐字并不相同') : tt('两侧内容完全一致'))
-    : tt('修改 {chg} 行 · 仅左 {del} 行 · 仅右 {add} 行 · 差异 {n} 处', { chg: st.chg, del: st.del, add: st.add, n: S.blocks.length });
+    : tt('修改 {chg} 行，仅左 {del} 行，仅右 {add} 行，差异 {n} 处', { chg: st.chg, del: st.del, add: st.add, n: S.blocks.length });
   $('curInfo').textContent = S.blocks.length ? tt('第 {i} / {n} 处', { i: S.cur + 1, n: S.blocks.length }) : '';
   $('prev').disabled = !S.blocks.length;
   $('next').disabled = !S.blocks.length;
@@ -1057,9 +1057,11 @@ function updateMeta() {
         continue;
       }
       const n = st.lines.length;
-      metaEl.textContent = tt('{n} 行', { n }) + (st.path ? ' · ' + st.enc + (st.eol === '\r\n' ? ' · CRLF' : '') : '');
+      /* 编码和换行符是技术元信息，用空格分组就够：这一行里没有需要「读成句子」的东西，
+         任何标点都是多余的 */
+      metaEl.textContent = tt('{n} 行', { n }) + (st.path ? '  ' + st.enc + (st.eol === '\r\n' ? '  CRLF' : '') : '');
       /* 文本侧（无文件）永远存不进磁盘，标脏时也只是提醒「还没落盘过」 */
-      if (st.dirty) metaEl.textContent += ' · ' + tt('未保存');
+      if (st.dirty) metaEl.textContent += '  ' + tt('未保存');
     } else {
       nameEl.textContent = (side === 'l' ? tt('左侧') : tt('右侧')) + tt('未选择');
       nameEl.title = '';
@@ -1091,7 +1093,7 @@ function syncTitle() {
   };
   const l = one('l'), r = one('r');
   const pair = l && r ? `${l} ⇄ ${r}` : (l || r);
-  const title = pair ? `${pair} · ${tt('文本对比')}` : tt('文本对比');
+  const title = pair ? `${pair} - ${tt('文本对比')}` : tt('文本对比');
   if (title === lastTitle) return;
   lastTitle = title;
   titleWin.setTitle(title).catch(() => {});
@@ -1393,7 +1395,7 @@ function rulerHover(e) {
   const pos = r.l && r.r
     ? `${r.l.no} ⇄ ${r.r.no}`
     : (r.l ? tt('仅左') + ' ' + r.l.no : tt('仅右') + ' ' + r.r.no);
-  const kind = r.kind === 'same' ? '' : ' · ' + (r.kind === 'chg' ? tt('修改') : (r.kind === 'add' ? tt('仅右') : tt('仅左')));
+  const kind = r.kind === 'same' ? '' : '  ' + (r.kind === 'chg' ? tt('修改') : (r.kind === 'add' ? tt('仅右') : tt('仅左')));
   tip.textContent = pos + kind;
   tip.hidden = false;
   tip.style.top = clamp(e.clientY - gg.rb.top, 14, gg.rb.height - 14) + 'px';
@@ -2571,7 +2573,7 @@ h1{font-size:20px;margin:0 0 6px}.meta{color:#6b7280;font-size:12.5px;margin-bot
 mark{background:rgba(217,43,43,.2);color:inherit}mark.rem{background:rgba(217,43,43,.32)}
 </style>
 <h1>${tt('文本对比报告')}</h1>
-<div class="meta">${esc(S.sides.l.name || tt('空'))} ⇄ ${esc(S.sides.r.name || tt('空'))} · ${new Date().toLocaleString()}</div>
+<div class="meta">${esc(S.sides.l.name || tt('空'))} ⇄ ${esc(S.sides.r.name || tt('空'))}　${new Date().toLocaleString()}</div>
 <div class="bar"><span>${tt('修改 {n} 行', { n: st.chg })}</span><span>${tt('仅左 {n} 行', { n: st.del })}</span><span>${tt('仅右 {n} 行', { n: st.add })}</span><span>${tt('差异 {n} 处', { n: S.blocks.length })}</span></div>
 <div class="grid"><div class="col"><div class="head">${esc(S.sides.l.name || tt('左'))}</div>${rowHtml('l')}</div>
 <div class="col"><div class="head">${esc(S.sides.r.name || tt('右'))}</div>${rowHtml('r')}</div></div>`;
@@ -2954,7 +2956,7 @@ function pickSide(side) {
   /* 对比窗口是独立页面，自己把语言定一次 —— 读的是同一份设置，和主窗口一致 */
   setLang(resolveLang(settings.lang));
   applyDom();
-  document.title = 'EZNotepad · ' + tt('对比');
+  document.title = 'EZNotepad - ' + tt('对比');
   /* 两侧槽位在没选文件时显示占位文字；这两处是按文件动态写的，只能在这里给初值 */
   document.getElementById('nameL').textContent = tt('左侧未选择');
   document.getElementById('nameR').textContent = tt('右侧未选择');

@@ -34,7 +34,10 @@ export class MergeWizard {
         try {
           const r = await be.readText(p);
           this.files[side] = r;
-          $(`mergeName${side === 'base' ? 'Base' : side === 'a' ? 'A' : 'B'}`).textContent = `${r.name} · ${r.path}`;
+          /* 只写路径：文件名本来就是路径的末尾，拼两遍等于同一件事说两次 */
+          const nameEl = $(`mergeName${side === 'base' ? 'Base' : side === 'a' ? 'A' : 'B'}`);
+          nameEl.textContent = r.path;
+          nameEl.title = r.path;
           $('mergeResult').textContent = '';
         } catch (e) { toast(errText(e)); }
       };

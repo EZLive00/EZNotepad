@@ -11,12 +11,12 @@
 const DOCS = {
   'zh-CN': `# 欢迎使用 EZNotepad
 
-安装包不到 10MB、免安装、不联网：把 **Markdown 写作**、**纯文本编辑**、**文件对比** 收在一个窗口里。
+安装包不到 10MB、免安装、不联网：把 **Markdown 写作**、**纯文本编辑**、**文件对比**收在一个窗口里。
 
 ## 三种模式
 
 - **所见即所得**：输入 # 加空格立刻变标题，**粗体**马上加粗
-- **编辑模式**：显示原始 Markdown，带行号、语法着色、代码折叠
+- **源码模式**：编辑 Markdown 原文，带行号、语法着色、代码折叠
 - **预览模式**：只读渲染
 
 用工具栏的「模式」下拉切换，或按 Ctrl+1 / Ctrl+2 / Ctrl+3。
@@ -40,12 +40,12 @@ const DOCS = {
 
   'zh-TW': `# 歡迎使用 EZNotepad
 
-安裝包不到 10MB、免安裝、不聯網：把 **Markdown 寫作**、**純文字編輯**、**檔案對比** 收在一個視窗裡。
+安裝包不到 10MB、免安裝、不聯網：把 **Markdown 寫作**、**純文字編輯**、**檔案對比**收在一個視窗裡。
 
 ## 三種模式
 
 - **所見即所得**：輸入 # 加空格立刻變標題，**粗體**馬上加粗
-- **編輯模式**：顯示原始 Markdown，帶行號、語法著色、程式碼摺疊
+- **原始碼模式**：編輯 Markdown 原文，帶行號、語法著色、程式碼摺疊
 - **預覽模式**：只讀渲染
 
 用工具列的「模式」下拉切換，或按 Ctrl+1 / Ctrl+2 / Ctrl+3。
@@ -74,7 +74,7 @@ Under 10 MB, no installation, no network: **Markdown writing**, **plain-text edi
 ## Three modes
 
 - **WYSIWYG**: type # and a space to get a heading; **bold** turns bold as you type
-- **Editing**: the raw Markdown, with line numbers, syntax colors and code folding
+- **Source**: the raw Markdown itself, with line numbers, syntax colors and code folding
 - **Preview**: read-only rendering
 
 Switch from the Mode dropdown in the toolbar, or press Ctrl+1 / Ctrl+2 / Ctrl+3.
@@ -103,7 +103,7 @@ Type [!info] plus a space at the start of a line to create a callout — four co
 ## 3 つのモード
 
 - **WYSIWYG**：# と空白を入力すると見出しに、**太字** はその場で太字に
-- **編集モード**：生の Markdown を行番号・色分け・コード折りたたみ付きで表示
+- **ソース**：Markdown の原文を、行番号・色分け・コード折りたたみ付きで編集
 - **プレビュー**：読み取り専用の表示
 
 ツールバーの「モード」から切り替えるか、Ctrl+1 / Ctrl+2 / Ctrl+3 を押します。
@@ -132,7 +132,7 @@ Type [!info] plus a space at the start of a line to create a callout — four co
 ## 세 가지 모드
 
 - **위지윅**: # 과 공백을 입력하면 제목이 되고, **굵게**는 바로 굵게 표시됩니다
-- **편집 모드**: 원본 Markdown을 줄 번호, 구문 강조, 코드 접기와 함께 표시
+- **소스**: Markdown 원문을 줄 번호, 구문 강조, 코드 접기와 함께 편집
 - **미리보기**: 읽기 전용 렌더링
 
 도구 모음의 '모드'에서 바꾸거나 Ctrl+1 / Ctrl+2 / Ctrl+3을 누르세요.
@@ -161,7 +161,7 @@ Moins de 10 Mo, sans installation, sans réseau : **écriture Markdown**, **édi
 ## Trois modes
 
 - **WYSIWYG** : tapez # puis une espace pour obtenir un titre ; **gras** s'applique aussitôt
-- **Édition** : le Markdown brut, avec numéros de ligne, coloration et repli du code
+- **Source** : le Markdown brut, avec numéros de ligne, coloration et repli du code
 - **Aperçu** : rendu en lecture seule
 
 Basculez par la liste « Mode » de la barre d'outils, ou avec Ctrl+1 / Ctrl+2 / Ctrl+3.
@@ -190,7 +190,7 @@ Unter 10 MB, ohne Installation, ohne Netzwerk: **Markdown schreiben**, **Text be
 ## Drei Modi
 
 - **WYSIWYG**: # und ein Leerzeichen ergibt eine Überschrift; **fett** wird sofort fett
-- **Bearbeiten**: das rohe Markdown, mit Zeilennummern, Syntaxfarben und Code-Faltung
+- **Quelltext**: das rohe Markdown, mit Zeilennummern, Syntaxfarben und Code-Faltung
 - **Vorschau**: schreibgeschützte Darstellung
 
 Umschalten über die Auswahl „Modus“ in der Werkzeugleiste oder mit Strg+1 / Strg+2 / Strg+3.
@@ -219,7 +219,7 @@ Menos de 10 MB, sin instalación y sin conexión: **escritura Markdown**, **edic
 ## Tres modos
 
 - **WYSIWYG**: escribe # y un espacio para obtener un título; **negrita** se aplica al momento
-- **Edición**: el Markdown original, con números de línea, colores de sintaxis y plegado de código
+- **Código fuente**: el Markdown original, con números de línea, colores de sintaxis y plegado de código
 - **Vista previa**: representación de solo lectura
 
 Cambia desde la lista «Modo» de la barra de herramientas o con Ctrl+1 / Ctrl+2 / Ctrl+3.
@@ -248,7 +248,7 @@ Menos de 10 MB, sem instalação e sem rede: **escrita Markdown**, **edição de
 ## Três modos
 
 - **WYSIWYG**: digite # e um espaço para criar um título; **negrito** aplica-se na hora
-- **Edição**: o Markdown original, com números de linha, cores de sintaxe e recolhimento de código
+- **Código-fonte**: o Markdown original, com números de linha, cores de sintaxe e recolhimento de código
 - **Pré-visualização**: visualização apenas de leitura
 
 Alterne na lista «Modo» da barra de ferramentas ou com Ctrl+1 / Ctrl+2 / Ctrl+3.

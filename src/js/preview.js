@@ -78,9 +78,9 @@ function renderJson(text, target) {
     const loc = err.line
       ? tt(err.col ? '第 {line} 行第 {col} 列：' : '第 {line} 行：', { line: err.line, col: err.col })
       : '';
-    head = '<div class="json-err">' + tt('JSON 语法错误 · {loc}{msg}', { loc, msg: escape(err.message) }) + '</div>';
+    head = '<div class="json-err">' + tt('JSON 语法错误：{loc}{msg}', { loc, msg: escape(err.message) }) + '</div>';
   } else {
-    head = '<div class="json-err" style="background:var(--add-bg);color:var(--add-fg);border-left-color:var(--add-fg)">' + tt('JSON 格式有效 · {n} 个键', { n: countJsonKeys(text) }) + '</div>';
+    head = '<div class="json-err ok">' + tt('JSON 有效：{n} 个键', { n: countJsonKeys(text) }) + '</div>';
   }
   // 预览额外提供「已格式化」视图：缩进 2 空格
   let pretty = text;

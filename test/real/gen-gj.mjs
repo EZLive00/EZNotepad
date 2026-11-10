@@ -54,9 +54,9 @@ plan('gj', (p) => {
   p.shot('j-title-back');
 
   /* H4 大纲显示开关 */
-  p.menu('视图', '显示大纲');
+  p.menu('视图', '显示侧栏');
   p.shot('j-outline-off');
-  p.menu('视图', '显示大纲');
+  p.menu('视图', '显示侧栏');
   p.shot('j-outline-on');
 
   /* J6 设置面板 */

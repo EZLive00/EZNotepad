@@ -131,10 +131,10 @@ function cellHtml(x, side) {
 function render() {
   const headL = $('headL'), headR = $('headR');
   headL.textContent = S.sides.l.path
-    ? `${baseName(S.sides.l.path)} · ${tt('{n} 个文件', { n: (S.sides.l.files || []).length })}`
+    ? tt('{a}（{b}）', { a: baseName(S.sides.l.path), b: tt('{n} 个文件', { n: (S.sides.l.files || []).length }) })
     : tt('左侧');
   headR.textContent = S.sides.r.path
-    ? `${baseName(S.sides.r.path)} · ${tt('{n} 个文件', { n: (S.sides.r.files || []).length })}`
+    ? tt('{a}（{b}）', { a: baseName(S.sides.r.path), b: tt('{n} 个文件', { n: (S.sides.r.files || []).length }) })
     : tt('右侧');
   headL.title = S.sides.l.path || '';
   headR.title = S.sides.r.path || '';
@@ -157,7 +157,7 @@ function render() {
     rows.innerHTML = '';
     empty.classList.remove('hidden');
     empty.textContent = tt('没有差异（或该目录为空）');
-    $('stat').textContent = tt('共 {n} 个文件 · 仅左 {l} · 仅右 {r} · 已修改 {m} · 相同 {s}',
+    $('stat').textContent = tt('共 {n} 个文件，仅左 {l}，仅右 {r}，已修改 {m}，相同 {s}',
       { n: S.items.length, l: cnt.left, r: cnt.right, m: cnt.mod, s: cnt.same });
     return;
   }
@@ -179,11 +179,12 @@ function render() {
     };
   });
 
-  const cutNote = S.truncated || show.length > MAX_ROWS
-    ? ` · ${tt('只显示前 {n} 条', { n: MAX_ROWS })}`
-    : '';
-  $('stat').textContent = tt('共 {n} 个文件 · 仅左 {l} · 仅右 {r} · 已修改 {m} · 相同 {s}',
-    { n: S.items.length, l: cnt.left, r: cnt.right, m: cnt.mod, s: cnt.same }) + cutNote;
+  const statText = tt('共 {n} 个文件，仅左 {l}，仅右 {r}，已修改 {m}，相同 {s}',
+    { n: S.items.length, l: cnt.left, r: cnt.right, m: cnt.mod, s: cnt.same });
+  /* 截断说明裹在括号里，而不是再接一个分隔符：它是「附加条件」，不是第五个统计数 */
+  $('stat').textContent = (S.truncated || show.length > MAX_ROWS)
+    ? tt('{a}（{b}）', { a: statText, b: tt('只显示前 {n} 条', { n: MAX_ROWS }) })
+    : statText;
 }
 
 /* ---------------- 两侧文件夹 ---------------- */

@@ -64,8 +64,8 @@ export const ERR_TEXT = {
   'image.name_invalid': '图片文件名无效',
   'image.target_invalid': '目标文件名无效',
   'image.empty': '图片内容为空',
-  'image.too_many': '同名图片太多了，换个文件名吧',
-  'image.too_large_clip': '图片超过 64 MB，挡住它比较好',
+  'image.too_many': '同名图片过多，请更换文件名',
+  'image.too_large_clip': '图片超过 64 MB，已跳过',
   'image.too_large_embed': '图片超过 {mb}MB，没有内嵌',
   'path.invalid': '文档路径无效',
 
