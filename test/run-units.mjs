@@ -239,6 +239,32 @@ ok('语言表：新建类型够多', newDocTypes().length >= 24);
     { at, branchLen: emptyBranch.length, hasReplaceChildren: emptyBranch.includes('replaceChildren') });
 }
 
+/* ---------- 图标 sprite：重新生成不许把还在用的图标弄丢 ----------
+   sprite 整段由 scripts/build-icons.mjs 按 vendor 目录重写。曾经 undo/redo 两个
+   symbol 只存在于手改过的 index.html 里，加一个新图标重新生成后它们凭空消失，
+   工具栏两颗按钮变成空白 —— 截图里几乎看不出来。这里双向钉死：引用必须有 symbol，
+   vendored 原文必须都进 sprite（唯一例外是项目自己画的品牌标 i-brand）。 */
+{
+  const HTML = fs.readFileSync(new URL('../src/index.html', import.meta.url), 'utf8');
+  const iconDir = new URL('../src/vendor/icons/lucide/', import.meta.url);
+  const vendored = fs.readdirSync(iconDir).filter((f) => f.endsWith('.svg'))
+    .map((f) => 'i-' + f.slice(0, -4));
+  const defined = [...HTML.matchAll(/<symbol id="(i-[\w-]+)"/g)].map((m) => m[1]);
+  const used = [...new Set([
+    ...[...HTML.matchAll(/href="#(i-[\w-]+)"/g)].map((m) => m[1]),
+    ...fs.readdirSync(new URL('../src/js/', import.meta.url))
+      .filter((f) => f.endsWith('.js'))
+      .flatMap((f) => [...fs.readFileSync(new URL('../src/js/' + f, import.meta.url), 'utf8')
+        .matchAll(/["'`]#?(i-[a-z][\w-]*)["'`]/g)].map((m) => m[1])),
+  ])];
+  const missing = used.filter((id) => !defined.includes(id));
+  const notVendored = defined.filter((id) => id !== 'i-brand' && !vendored.includes(id));
+  const notBuilt = vendored.filter((id) => !defined.includes(id));
+  ok('引用的图标都在 sprite 里', missing.length === 0, missing);
+  ok('sprite 里除品牌标外每个图标都有 vendored 原文', notVendored.length === 0, notVendored);
+  ok('每个 vendored 图标都进了 sprite', notBuilt.length === 0, notBuilt);
+}
+
 /* ---------- 汇总 ---------- */
 const fail = out.filter((r) => !r.ok);
 out.forEach((r) => {

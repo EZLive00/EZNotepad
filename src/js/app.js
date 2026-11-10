@@ -56,6 +56,7 @@ const el = {
   stLines: $('stLines'),
   stWords: $('stWords'),
   stChars: $('stChars'),
+  stSel: $('stSel'),
   stEOL: $('stEOL'),
   stEncoding: $('stEncoding'),
   findbar: $('findbar'),
@@ -72,6 +73,7 @@ const el = {
   sideOutline: $('sideOutline'),
   sideFiles: $('sideFiles'),
   sideTabs: [...document.querySelectorAll('.side-tab')],
+  sideLocate: $('sideLocate'),
   ftQuery: $('ftQuery'),
   ftRegex: $('ftRegex'),
   ftCase: $('ftCase'),
@@ -99,7 +101,7 @@ const plain = new PlainEditor(el.editor, {
 const modeMeta = () => ({
   // short 用于工具栏/标题栏这类横向空间紧张的地方
   wysiwyg: { label: tt('所见即所得'), short: tt('所见即所得'), icon: 'type' },
-  edit: { label: tt('源码模式'), short: tt('源码'), icon: 'code' },
+  edit: { label: tt('编辑模式'), short: tt('编辑'), icon: 'code' },
   preview: { label: tt('预览模式'), short: tt('预览'), icon: 'eye' },
 });
 
@@ -967,8 +969,30 @@ function setSide(side) {
   el.sideFiles.classList.toggle('hidden', s !== 'files');
 }
 
-/** 从搜索结果打开：先开文件，等它渲染完再跳到那一行 */
-async function openPathAt(p, line) {
+/**
+ * 「在文件列表中定位」：把当前标签对应到文件树里的那一行。
+ *
+ * 三件事按顺序做，顺序不能换：先把侧栏叫出来（用户可能设了「显示侧栏」为关），
+ * 再切到「文件」页，最后才展开定位 —— 树的行是在页面可见后才有高度的，
+ * 反过来做的话 scrollIntoView 作用在一个 display:none 的容器上，等于没滚。
+ */
+async function locateCurrentFile() {
+  const t = activeTab();
+  if (!t) return;
+  if (!t.path) { toast(tt('这个标签还没保存到磁盘，文件列表里没有它')); return; }
+  if (!tree.root) { toast(tt('先在侧栏选择一个文件夹')); return; }
+  if (!settings.outlineVisible) {
+    settings.outlineVisible = true;
+    saveSettings();
+    updateOutline();
+  }
+  setSide('files');
+  const r = await tree.reveal(t.path);
+  if (r === 'outside') toast(tt('当前文件不在已打开的文件夹里'));
+  else if (r === 'gone') toast(tt('文件列表里找不到这个文件'));
+}
+
+/** 从搜索结果打开：先开文件，等它渲染完再跳到那一行 */async function openPathAt(p, line) {
   await openPath(p);
   if (line) setTimeout(() => gotoLine(line - 1), 90);
 }
@@ -976,12 +1000,17 @@ async function openPathAt(p, line) {
 async function pickFolder() {
   const p = await be.pickFolder(tt('选择文件夹'));
   if (!p) return;
-  settings.folder = p;
+  await setFolder(p);
+}
+
+/** 把文件树切到某个根目录（选择框与探针共用；不要把这段逻辑复制第二份） */
+async function setFolder(p) {
+  settings.folder = p || '';
   saveSettings();
   setSide('files');
   el.ftQuery.value = '';
   el.ftClear.classList.add('hidden');
-  await tree.setRoot(p);
+  await tree.setRoot(p || '');
 }
 
 function clearFolder() {
@@ -995,6 +1024,7 @@ function clearFolder() {
 /* ---------------- 侧栏：大纲 / 文件 ---------------- */
 function setupSidebar() {
   el.sideTabs.forEach((b) => { b.onclick = () => setSide(b.dataset.side); });
+  el.sideLocate.onclick = locateCurrentFile;
   el.ftPick.onclick = pickFolder;
   /* 设置入口只在两处：顶部菜单栏的「设置」和 Ctrl+,（同一个 showSettings）。
      侧栏那个齿轮去掉了——它紧挨「大纲/文件」，看着像「这一栏的设置」。 */
@@ -1349,6 +1379,35 @@ function updateCursorPos() {
     el.stPos.textContent = '';
     el.stPos.hidden = true;
   }
+}
+
+/* ---------------- 选区字符数 ----------------
+   框选一段想知道「到底多少个字」，现在只能复制到别处再数 —— 太蠢。
+   监听挂在 document 上：三种模式的选区都是真实 DOM 选区（CM6 也维护同步的
+   DOM 选区），一处监听就够。拖动时这个事件每移一像素都响，用 rAF 合并成一次计算。 */
+let selRaf = 0;
+function syncSelCount() {
+  if (selRaf) return;
+  selRaf = requestAnimationFrame(() => {
+    selRaf = 0;
+    let n = 0;
+    const sel = document.getSelection();
+    if (sel && !sel.isCollapsed && sel.rangeCount) {
+      const node = sel.anchorNode;
+      const host = node && (node.nodeType === 1 ? node : node.parentElement);
+      /* 只算正文里的选区：对话框输入框、查找框里选中几个字，不是「选了正文多少字」 */
+      if (host && host.closest('#preview, #editorPane') && !host.closest('input, textarea')) {
+        n = String(sel).length;
+      }
+    }
+    if (n > 0) {
+      el.stSel.textContent = tt('已选 {n} 字符', { n });
+      el.stSel.hidden = false;
+    } else {
+      el.stSel.textContent = '';
+      el.stSel.hidden = true;
+    }
+  });
 }
 
 function updateStatus() {
@@ -2112,7 +2171,7 @@ function toggleDupLines() {
     toast(n ? tt('已高亮 {n} 处重复内容', { n }) : tt('没有重复内容'));
     return;
   }
-  if (t.mode !== 'edit') { toast(tt('请切换到源码模式（Ctrl+2）再用')); return; }
+  if (t.mode !== 'edit') { toast(tt('请切换到编辑模式（Ctrl+2）再用')); return; }
   const nums = dupLineNumbers(plain.value);
   if (!nums.length) { toast(tt('没有重复行')); return; }
   plain.setDupLines(nums);
@@ -2122,7 +2181,7 @@ function toggleDupLines() {
 function requireEditMode() {
   const t = activeTab();
   if (!t) return false;
-  if (t.mode === 'preview') { toast(tt('预览模式下不能编辑，请切换到源码模式')); return false; }
+  if (t.mode === 'preview') { toast(tt('预览模式下不能编辑，请切换到编辑模式')); return false; }
   return true;
 }
 /** 块级格式命令只在「所见即所得」模式下有意义 */
@@ -2739,8 +2798,8 @@ async function switchToEditForReplace() {
   const t = activeTab();
   if (!t || t.mode !== 'wysiwyg') return true;
   const go = await confirmBox(
-    tt('替换需要源码模式'),
-    tt('这一处匹配跨越了加粗、链接这类格式，在所见即所得里直接改会把它们弄乱。<br><br>切到源码模式（Ctrl+2）继续替换？'),
+    tt('替换需要编辑模式'),
+    tt('这一处匹配跨越了加粗、链接这类格式，在所见即所得里直接改会把它们弄乱。<br><br>切到编辑模式（Ctrl+2）继续替换？'),
     tt('切换并替换'), tt('取消')
   );
   if (!go) return false;
@@ -2803,7 +2862,7 @@ async function replaceAll() {
     }
     const rest = list.length - ok;
     if (!list.length) { toast(tt('没有找到匹配项')); return; }
-    if (rest) toast(tt('已替换 {ok} 处；另有 {rest} 处跨越了格式，请切到源码模式处理', { ok, rest }));
+    if (rest) toast(tt('已替换 {ok} 处；另有 {rest} 处跨越了格式，请切到编辑模式处理', { ok, rest }));
     else toast(tt('已替换 {n} 处', { n: ok }));
     return;
   }
@@ -3539,7 +3598,7 @@ const menuTree = () => [
     label: tt('视图'),
     items: [
       { id: 'modeWysiwyg', label: tt('所见即所得'), kbd: 'Ctrl+1', checked: markMode('wysiwyg'), disabled: () => !hasTab() },
-      { id: 'modeEdit', label: tt('源码模式'), kbd: 'Ctrl+2', checked: markMode('edit'), disabled: () => !hasTab() },
+      { id: 'modeEdit', label: tt('编辑模式'), kbd: 'Ctrl+2', checked: markMode('edit'), disabled: () => !hasTab() },
       { id: 'modePreview', label: tt('预览模式'), kbd: 'Ctrl+3', checked: markMode('preview'), disabled: () => !hasTab() },
       { sep: true },
       { id: 'layoutSingle', label: tt('单栏'), kbd: 'Ctrl+Shift+L', checked: () => settings.layout === 'single' },
@@ -4037,6 +4096,9 @@ function setupBlockHandle() {
     if (blockMenuOpen()) closeBlockMenu();
     refreshHandle();
   }, { passive: true });
+
+  /* 选区字符数（三种模式共用一个监听，见 syncSelCount） */
+  document.addEventListener('selectionchange', syncSelCount);
 
   /* 键盘移动光标时才让锚点跟着走；鼠标在场时以鼠标压着的块为准 */
   document.addEventListener('selectionchange', () => {
@@ -4884,6 +4946,9 @@ window.__snp = {
   editor: wys,          // 编辑器实例（与 __merge 同类调试面：真机 CDP 探针要用）
   capture: persistCurrentView,
   openCompare: (l, r) => be.openCompareWindow(l, r),
+  /* 探针：选文件夹要弹系统对话框，自动化进不去；这条走的是和选择框同一条路
+     （setFolder 而不是直接 tree.setRoot），否则测的不是用户按下去会发生的事 */
+  setFolder: (p) => setFolder(p),
   exportPdfTo: (p) => exportPdfTo(p),   // 探针：绕开系统保存框跑完整导出
   externalFileKind: (p) => externalFileKind(p),
   /* 大纲是窗口化渲染的：DOM 里只有视口那一段（含上下各 12 行），

@@ -167,11 +167,26 @@
       <path d="M8 12h13" />
       <path d="M8 19h13" />
     </symbol>
+    <symbol id="i-locate" viewBox="0 0 24 24">
+      <line x1="2" x2="5" y1="12" y2="12" />
+      <line x1="19" x2="22" y1="12" y2="12" />
+      <line x1="12" x2="12" y1="2" y2="5" />
+      <line x1="12" x2="12" y1="19" y2="22" />
+      <circle cx="12" cy="12" r="7" />
+    </symbol>
     <symbol id="i-minus" viewBox="0 0 24 24">
       <path d="M5 12h14" />
     </symbol>
     <symbol id="i-moon" viewBox="0 0 24 24">
       <path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401" />
+    </symbol>
+    <symbol id="i-notebook-pen" viewBox="0 0 24 24">
+      <path d="M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4" />
+      <path d="M2 6h4" />
+      <path d="M2 10h4" />
+      <path d="M2 14h4" />
+      <path d="M2 18h4" />
+      <path d="M21.378 5.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z" />
     </symbol>
     <symbol id="i-octagon-alert" viewBox="0 0 24 24">
       <path d="M12 16h.01" />
@@ -191,9 +206,9 @@
       <path d="M5 12h14" />
       <path d="M12 5v14" />
     </symbol>
-    <symbol id="i-redo" viewBox="0 0 24 24">
+    <symbol id="i-redo-2" viewBox="0 0 24 24">
       <path d="m15 14 5-5-5-5" />
-      <path d="M20 9H9.5A5.5 5.5 0 0 0 4 14.5 5.5 5.5 0 0 0 9.5 20H13" />
+      <path d="M20 9H9.5A5.5 5.5 0 0 0 4 14.5A5.5 5.5 0 0 0 9.5 20H13" />
     </symbol>
     <symbol id="i-rotate-ccw" viewBox="0 0 24 24">
       <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
@@ -265,9 +280,9 @@
       <path d="M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2" />
       <path d="M9 20h6" />
     </symbol>
-    <symbol id="i-undo" viewBox="0 0 24 24">
+    <symbol id="i-undo-2" viewBox="0 0 24 24">
       <path d="M9 14 4 9l5-5" />
-      <path d="M4 9h10.5A5.5 5.5 0 0 1 20 14.5 5.5 5.5 0 0 1 14.5 20H11" />
+      <path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11" />
     </symbol>
     <symbol id="i-wand-sparkles" viewBox="0 0 24 24">
       <path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72" />
@@ -335,13 +350,13 @@
           </button>
           <div class="menu-panel" id="modeMenu">
             <button data-mode="wysiwyg"><b><span data-i18n="所见即所得">所见即所得</span><svg class="ico menu-check" aria-hidden="true"><use href="#i-check" /></svg></b></button>
-            <button data-mode="edit"><b><span data-i18n="源码模式">源码模式</span><svg class="ico menu-check" aria-hidden="true"><use href="#i-check" /></svg></b></button>
+            <button data-mode="edit"><b><span data-i18n="编辑模式">编辑模式</span><svg class="ico menu-check" aria-hidden="true"><use href="#i-check" /></svg></b></button>
             <button data-mode="preview"><b><span data-i18n="预览模式">预览模式</span><svg class="ico menu-check" aria-hidden="true"><use href="#i-check" /></svg></b></button>
           </div>
         </div>
 
-        <button class="tb icon-only" id="btnUndo" title="撤销 (Ctrl+Z)" data-i18n-title="撤销 (Ctrl+Z)" disabled><svg class="ico" aria-hidden="true"><use href="#i-undo" /></svg></button>
-        <button class="tb icon-only" id="btnRedo" title="重做 (Ctrl+Y)" data-i18n-title="重做 (Ctrl+Y)" disabled><svg class="ico" aria-hidden="true"><use href="#i-redo" /></svg></button>
+        <button class="tb icon-only" id="btnUndo" title="撤销 (Ctrl+Z)" data-i18n-title="撤销 (Ctrl+Z)" disabled><svg class="ico" aria-hidden="true"><use href="#i-undo-2" /></svg></button>
+        <button class="tb icon-only" id="btnRedo" title="重做 (Ctrl+Y)" data-i18n-title="重做 (Ctrl+Y)" disabled><svg class="ico" aria-hidden="true"><use href="#i-redo-2" /></svg></button>
         <button class="tb icon-only" id="btnFind" title="查找替换 (Ctrl+F)" data-i18n-title="查找替换 (Ctrl+F)"><svg class="ico" aria-hidden="true"><use href="#i-search" /></svg></button>
         <button class="tb" id="btnSave" title="保存 (Ctrl+S)" data-i18n-title="保存 (Ctrl+S)"><svg class="ico" aria-hidden="true"><use href="#i-save" /></svg><span data-i18n="保存">保存</span></button>
       </div>
@@ -356,6 +371,10 @@
           <button type="button" class="side-tab active" data-side="outline" data-i18n="大纲">大纲</button>
           <button type="button" class="side-tab" data-side="files" data-i18n="文件">文件</button>
         </div>
+        <!-- 定位当前文件（照 IDEA 的 Select Opened File）：把树展开到这一行再闪一下 -->
+        <button type="button" class="side-locate" id="sideLocate" title="在文件列表中定位" data-i18n-title="在文件列表中定位">
+          <svg class="ico" aria-hidden="true"><use href="#i-locate" /></svg>
+        </button>
       </div>
 
       <!-- 大纲：只管导航 -->
@@ -446,6 +465,7 @@
     <span class="st-item" id="stLines"></span>
     <span class="st-item" id="stWords"></span>
     <span class="st-item" id="stChars"></span>
+    <span class="st-item" id="stSel" hidden></span>
     <span class="st-item fmt" id="fmtBadge">Markdown</span>
     <span class="st-spacer"></span>
     <button class="st-btn" id="stEOL" title="切换换行符" data-i18n-title="切换换行符">LF</button>
