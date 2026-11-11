@@ -3839,6 +3839,9 @@ const blockKinds = () => [
     两张表的 key 不能重：面板只开一张，但用户在两张之间切换时不能有歧义。
     `T` 与 `t` 是同一族的两档（3×3 / 自定大小），大写那档要按 Shift。 */
 const blockInserts = () => [
+  /* Notion 的「+」：最常用的一件事就该排第一。kbd 只是 title / aria 提示，
+     真正的 Ctrl+Enter 在 wysiwyg.js 里按「块末尾」判定，不注册成全局命令。 */
+  { id: 'blank', label: tt('插入空行'), icon: 'plus', key: 'n', kbd: 'Ctrl+Enter' },
   { id: 'table', label: tt('表格（3 × 3）'), icon: 'table', key: 't', kbd: 'Ctrl+Shift+T' },
   { id: 'tablePrompt', label: tt('表格（自定大小）…'), icon: 'table', key: 'T' },
   { id: 'image', label: tt('图片…'), icon: 'image', key: 'i' },
@@ -4152,7 +4155,13 @@ function bmRun(id) {
   closeBlockMenu();
   if (!block || !block.isConnected) return;
   if (mode === 'insert') {
-    if (SELF_INSERTING.has(id)) {
+    if (id === 'blank') {
+      /* 「插入空行」永远在下方真开一行，不走 slash 面板的「空块复用」——
+         那一支会让用户在空段落里按 / 选它时看起来什么都没发生。 */
+      const nb = wys.insertEmptyAfter(block);
+      wys.focusBlock(nb);
+      wys.flush();
+    } else if (SELF_INSERTING.has(id)) {
       wys.focusBlock(block, true);
       commands[id]?.();
     } else {

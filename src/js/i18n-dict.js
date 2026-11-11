@@ -299,6 +299,8 @@ export const DICT = {
   '标题 3': ['標題 3', 'Heading 3', '見出し 3', '제목 3', 'Titre 3', 'Überschrift 3', 'Título 3', 'Título 3'],
   '表格（3 × 3）': ['表格（3 × 3）', 'Table (3 × 3)', '表（3 × 3）', '표(3 × 3)', 'Tableau (3 × 3)', 'Tabelle (3 × 3)', 'Tabla (3 × 3)', 'Tabela (3 × 3)'],
   '在下方插入': ['在下方插入', 'Insert Below', '下に挿入', '아래에 삽입', 'Insérer en dessous', 'Darunter einfügen', 'Insertar debajo', 'Inserir abaixo'],
+  '插入空行': ['插入空行', 'Insert Blank Line', '空行を挿入', '빈 줄 삽입', 'Insérer une ligne vide', 'Leerzeile einfügen', 'Insertar línea en blanco', 'Inserir linha em branco'],
+  '按 Enter 在此插入一行': ['按 Enter 在此插入一行', 'Press Enter to insert a line here', 'ここで Enter を押すと行を挿入', '여기서 Enter를 눌러 줄 삽입', 'Appuyez sur Entrée pour insérer une ligne ici', 'Enter drücken, um hier eine Zeile einzufügen', 'Pulsa Enter para insertar una línea aquí', 'Pressione Enter para inserir uma linha aqui'],
   '转换这一块': ['轉換這一塊', 'Convert Block', 'このブロックを変換', '이 블록 변환', 'Convertir ce bloc', 'Block umwandeln', 'Convertir este bloque', 'Converter este bloco'],
   '删除这一块': ['刪除這一塊', 'Delete This Block', 'このブロックを削除', '이 블록 삭제', 'Supprimer ce bloc', 'Diesen Block löschen', 'Eliminar este bloque', 'Excluir este bloco'],
   '还原': ['還原', 'Restore', '元に戻す', '복원', 'Restaurer', 'Wiederherstellen', 'Restaurar', 'Restaurar'],

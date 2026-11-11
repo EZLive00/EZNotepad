@@ -1232,8 +1232,11 @@ export class WysiwygEditor {
     /* 「块后待插入」：带边界的块末尾按 → / ↓ 出块时，方向键**不改文档**，
        只把「这一块后面还缺一行」记在这里。等用户真的按回车或开始输入，
        才把那个空段落建出来（见 materializeGap）。一次性：任何光标移动、
-       快捷键、失焦、重渲染都把它清掉，绝不残留到别的操作上。 */
+       快捷键、失焦、重渲染都把它清掉，绝不残留到别的操作上。
+       读写一律走 setGapAfter() / clearGapAfter()，好让那条「插入指示线」
+       和状态同生共死 —— 以前是散落的赋值，漏一处线就会赖在屏幕上。 */
     this.gapAfter = null;
+    this.gapHint = null;
 
     /* ---- 视口渲染（仅超大文档启用，见 _render 的分流） ----
        records 是块的唯一真相（每项存 md 原文切片），root.children 只是
@@ -1261,7 +1264,9 @@ export class WysiwygEditor {
     document.addEventListener('pointercancel', endDrag, true);
     window.addEventListener('blur', endDrag);
 
-    root.addEventListener('scroll', () => this._onVirtualScroll(), { passive: true });
+    /* 出块期间那条常驻插入线钉在块的底边上，滚动后要跟着走；块被窗口化
+       重铺掉时 syncGapHint() 自己会把它藏起来。 */
+    root.addEventListener('scroll', () => { this._onVirtualScroll(); this.syncGapHint(); }, { passive: true });
     root.addEventListener('input', () => this.onInput());
     root.addEventListener('keydown', (e) => this.handleKey(e));
     root.addEventListener('beforeinput', (e) => this.onBeforeInput(e));
@@ -1278,7 +1283,7 @@ export class WysiwygEditor {
     /* 失焦只在真有未落账的编辑时才 flush。没编辑过也 flush 的话，序列化的
        规范化写法（* → - 之类）会经 onChange 写进 tab.content —— 用户一个字
        没动，标签却亮脏标记，只能靠保存一次才消掉。 */
-    root.addEventListener('blur', () => { this.gapAfter = null; if (this.pending()) this.flush(); });
+    root.addEventListener('blur', () => { this.clearGapAfter(); if (this.pending()) this.flush(); });
     root.addEventListener('click', (e) => this.handleClick(e));
     root.addEventListener('pointerdown', (e) => this.handlePointerDown(e));
     root.addEventListener('pointermove', (e) => this.hoverImgCorner(e));
@@ -1288,6 +1293,19 @@ export class WysiwygEditor {
     this.insertLine = document.createElement('div');
     this.insertLine.className = 'w-insert-line';
     (root.parentElement || root).appendChild(this.insertLine);
+    /* 「块后待插入」的常驻提示：和 hover 插入线**必须**是两个元素。
+       hoverInsertLine() 每次 pointermove 都可能 hideInsertLine()，共用一条线
+       的话，用户出块后随手挪一下鼠标，提示就被擦掉了。 */
+    this.gapHint = document.createElement('div');
+    this.gapHint.className = 'w-gap-hint';
+    const hintLine = document.createElement('span');
+    hintLine.className = 'w-gap-hint-line';
+    const hintLabel = document.createElement('span');
+    hintLabel.className = 'w-gap-hint-label';
+    hintLabel.dataset.i18n = '按 Enter 在此插入一行';
+    hintLabel.textContent = tt('按 Enter 在此插入一行');
+    this.gapHint.append(hintLine, hintLabel);
+    (root.parentElement || root).appendChild(this.gapHint);
     root.addEventListener('pointermove', (e) => this.hoverInsertLine(e));
     root.addEventListener('mouseleave', () => this.hideInsertLine());
     root.addEventListener('dragstart', (e) => {
@@ -1347,7 +1365,7 @@ export class WysiwygEditor {
   setDocDir(dir) { docDir = dir || ''; }
 
   render(md, restore) {
-    this.gapAfter = null;          // 整篇换掉，旧的「块后」位置已经没有意义
+    this.clearGapAfter();          // 整篇换掉，旧的「块后」位置已经没有意义
     this._render(md, restore);
     /* 撤销基线先用「源文本」顶上 —— 它就是盘上的真状态，不必为了基线把
        整篇 DOM 再序列化一遍（万行文档下那是秒级的无谓开销）。之后空闲时
@@ -2403,7 +2421,7 @@ export class WysiwygEditor {
         return;
       }
       if (t.startsWith('insert')) this.materializeGap();
-      else this.gapAfter = null;
+      else this.clearGapAfter();
     }
     if (!this._selAll) return;
     if (!this._selAllHeld()) { this._selAll = false; return; }
@@ -2839,7 +2857,7 @@ export class WysiwygEditor {
       } else if (e.key === 'Process' || e.key === 'Unidentified' || e.key === 'Dead') {
         /* IME 起手键：状态留给 compositionstart，那里才是组字的起点 */
       } else {
-        this.gapAfter = null;
+        this.clearGapAfter();
       }
     }
     const sel = window.getSelection();
@@ -2850,6 +2868,14 @@ export class WysiwygEditor {
     // 撤销 / 重做 / 行内格式
     if ((e.metaKey || e.ctrlKey) && !e.altKey) {
       const k = e.key.toLowerCase();
+      /* Typora 式「强制插入新行」：只在带边界块的末尾生效（见 insertLineBelow）。
+         不在末尾也 preventDefault —— 不让浏览器把 Ctrl+Enter 当成一次普通换行
+         写进代码块里，那会变成「按了却悄悄改了文档」。 */
+      if (k === 'enter') {
+        e.preventDefault();
+        this.insertLineBelow();
+        return;
+      }
       if (k === 'a') {
         /* 代码块里 Ctrl+A = 选中**这一块自己的代码**（编辑器里的共识：想改一段
            代码时先全选它）。再按一次才扩到整篇 —— 判据是「选区是不是已经盖住
@@ -3196,6 +3222,79 @@ export class WysiwygEditor {
     return false;
   }
 
+  /* ---------------- 块后待插入：状态与可见提示 ---------------- */
+
+  /** 唯一的状态写入口：状态与那条插入指示线同生共死，不许再散落赋值 */
+  setGapAfter(block) {
+    this.gapAfter = block ? { block } : null;
+    this.syncGapHint();
+  }
+
+  clearGapAfter() { this.setGapAfter(null); }
+
+  /**
+   * 把「按回车会在哪儿开一行」画出来。参考 Notion 的块间插入线：光标即使被
+   * 送进了下一块，线仍然钉在**出块那一块的底边**，用户一眼就知道插入点在
+   * 两块之间，不是在光标现在站着的那一块里。纯视图层，不进序列化、不改文档。
+   */
+  syncGapHint() {
+    const hint = this.gapHint;
+    if (!hint) return;
+    const gap = this.gapAfter;
+    const block = gap && gap.block;
+    /* 块被窗口化重铺 / 整篇重渲染后就成了游离节点，提示必须跟着作废 */
+    if (!block || !block.isConnected || block.parentElement !== this.root) {
+      hint.style.display = 'none';
+      return;
+    }
+    const host = hint.parentElement;
+    if (!host) { hint.style.display = 'none'; return; }
+    const r = block.getBoundingClientRect();
+    const h = host.getBoundingClientRect();
+    /* 滚出视口就别把线画到容器外面；状态留着，滚回来线会自己出现 */
+    if (r.bottom < h.top || r.top > h.bottom) { hint.style.display = 'none'; return; }
+    hint.style.top = (r.bottom - h.top) + 'px';
+    hint.style.left = (r.left - h.left) + 'px';
+    hint.style.width = r.width + 'px';
+    const label = hint.querySelector('.w-gap-hint-label');
+    if (label) label.textContent = tt('按 Enter 在此插入一行');   // 切语言后下一轮就跟上
+    hint.style.display = 'block';
+  }
+
+  /**
+   * Ctrl/Cmd+Enter：Typora 式「强制插入新行」，一步到位，不用先按方向键出块。
+   * ⛔ **只在带边界块内最后一个可编辑位置生效**：在代码块中间按会把代码
+   *    劈成两段，在普通段落里按更是无的放矢（那里按回车本来就能开行）。
+   *    不满足条件时连浏览器默认行为一起拦掉，文档一个字都不改。
+   * 与 gapAfter 无关：这是一条独立的、确定性的命令。
+   */
+  insertLineBelow() {
+    const cell = this.currentCell();
+    if (cell) {
+      const info = this.tableInfo();
+      if (!info || !this.atTableExit(info)) return false;
+      return this.forceGapAfter(info.block);
+    }
+    const block = this.currentBlock();
+    if (!block || !this.endsBounded(block) || !this.isCaretAtEnd(block)) return false;
+    return this.forceGapAfter(block);
+  }
+
+  /** 保证 block 后面有一个可写的空段落：已有就复用，没有才新建并落库 */
+  forceGapAfter(block) {
+    const next = block.nextElementSibling;
+    if (next && (next.dataset.type || 'p') === 'p' && this.isEmptyBlock(next)) {
+      this.clearGapAfter();
+      this.placeCaretStart(next);
+      return true;
+    }
+    const p = this.insertEmptyAfter(block);
+    this.clearGapAfter();
+    this.placeCaretStart(p);
+    this.flush();
+    return true;
+  }
+
   /**
    * 带范围的块（表格 / 代码块 / 公式块 / 引用 / 列表）的末尾不长光标位，
    * → / ↓ 得把人送出去。**但方向键只是移动光标，绝不改文档**：
@@ -3218,11 +3317,11 @@ export class WysiwygEditor {
   caretAfterBlock(block) {
     const next = block.nextElementSibling;
     if (next && (next.dataset.type || 'p') === 'p' && this.isEmptyBlock(next)) {
-      this.gapAfter = null;
+      this.clearGapAfter();
       this.placeCaretStart(next);
       return;
     }
-    this.gapAfter = { block };
+    this.setGapAfter(block);
     if (next && next.dataset.type !== 'hr') this.placeCaretStart(next);
   }
 
@@ -3233,7 +3332,7 @@ export class WysiwygEditor {
    */
   materializeGap() {
     const gap = this.gapAfter;
-    this.gapAfter = null;
+    this.clearGapAfter();
     if (!gap) return null;
     const block = gap.block;
     if (!block || !block.isConnected || block.parentElement !== this.root) return null;
@@ -4465,7 +4564,7 @@ export class WysiwygEditor {
   }
 
   handlePointerDown(e) {
-    this.gapAfter = null;      // 鼠标重新摆了光标，「块后待插入」立刻作废
+    this.clearGapAfter();      // 鼠标重新摆了光标，「块后待插入」立刻作废
     /* 复制按钮按下的那一下别把编辑区的光标/选区抢走 */
     if (e.target && e.target.closest && e.target.closest('.cc-copy')) { e.preventDefault(); return; }
     const img = e.target;
@@ -4588,7 +4687,7 @@ export class WysiwygEditor {
   }
 
   handleClick(e) {
-    this.gapAfter = null;
+    this.clearGapAfter();
     if (this.loading) return;
     /* 代码块右上角的「复制」：整块代码直接进剪贴板，不需要先选中。
        必须待在选区判断之前 —— 用户常常是先选了一段、再想起来复制整块，
