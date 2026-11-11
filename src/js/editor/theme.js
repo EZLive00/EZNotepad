@@ -50,8 +50,10 @@ export const cmTheme = EditorView.theme({
     backgroundColor: 'transparent',
     color: 'var(--fg-soft)',
   },
+  /* 当前行只是「光标在哪」，不是状态、也不该抢注意：走极淡的中性灰。
+     以前用 7% 强调色，深色主题里 accent 是亮橙，一条橙红横杠压在纸面上很重。 */
   '.cm-activeLine': {
-    backgroundColor: 'color-mix(in srgb, var(--accent) 7%, transparent)',
+    backgroundColor: 'var(--active-line-bg)',
   },
   '.cm-foldGutter .cm-gutterElement': { color: 'var(--fg-faint)', padding: '0 2px' },
 
@@ -63,8 +65,16 @@ export const cmTheme = EditorView.theme({
   '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection': {
     backgroundColor: 'var(--sel-bg)',
   },
+  /* 选中一段文字时，文档里相同的文字也标出来。和所见即所得的
+     ::highlight(sn-same) 共用同一个灰阶，两种模式看起来是一套。 */
   '.cm-selectionMatch': {
-    backgroundColor: 'color-mix(in srgb, var(--accent) 18%, transparent)',
+    backgroundColor: 'var(--sel-match-bg)',
+  },
+  /* 非 Markdown 文件的「高亮」：== 不是这些文件的语法，写进去就是脏字符。
+     所以只给选区挂一层视图装饰，和 md 的 <mark> 同色，但不落盘。 */
+  '.cm-view-mark': {
+    backgroundColor: 'var(--mark-bg)',
+    borderRadius: '2px',
   },
 
   /* 括号匹配 */

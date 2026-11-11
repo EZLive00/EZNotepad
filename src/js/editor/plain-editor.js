@@ -25,7 +25,7 @@ import {
   indentMore, indentLess, undo as cmUndo, redo as cmRedo, selectAll as cmSelectAll,
   undoDepth, redoDepth,
   syntaxHighlighting, indentOnInput, indentUnit, bracketMatching, foldGutter, foldKeymap,
-  closeBrackets, closeBracketsKeymap, StreamLanguage,
+  closeBrackets, closeBracketsKeymap, highlightSelectionMatches, StreamLanguage,
   javascript, python, rust, go, json, css, html, sql, yaml, markdown, java, cpp,
   less, sass, vue, php,
   shell, properties, xml, toml, ruby, lua, swift, perl, powerShell, dockerfile, diff,
@@ -130,6 +130,34 @@ const dupLinesField = StateField.define({
   provide: (f) => EditorView.decorations.from(f),
 });
 
+/* ---------------- 文字高亮（非 Markdown 文件专用，纯视图） ----------------
+   `==` 是 Markdown 语法：往 .txt / 代码文件里写它，既污染文件、又没有任何渲染
+   —— 用户看到的就是「前后多了两个 ==，字却没亮」。这些文件的「高亮」改成
+   一层 CM6 装饰，只在编辑区显示，不落盘。
+   和「高亮重复行」不同，docChanged 时这里不清空：字符区间可以用
+   changes.mapPos 精确映射，标记跟着文字走；行号那样一改就漂才必须作废。 */
+const setViewMarks = StateEffect.define();
+
+function buildViewMarks(ranges, state) {
+  const len = state.doc.length;
+  const marks = [];
+  for (const r of ranges || []) {
+    const from = Math.max(0, Math.min(len, Math.trunc(r.from) || 0));
+    const to = Math.max(from, Math.min(len, Math.trunc(r.to) || 0));
+    if (to > from) marks.push(Decoration.mark({ class: 'cm-view-mark' }).range(from, to));
+  }
+  return marks.length ? Decoration.set(marks, true) : Decoration.none;
+}
+
+const viewMarksField = StateField.define({
+  create: () => Decoration.none,
+  update(deco, tr) {
+    for (const e of tr.effects) if (e.is(setViewMarks)) return buildViewMarks(e.value, tr.state);
+    return tr.docChanged ? deco.map(tr.changes) : deco;
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
+
 export class PlainEditor {
   /**
    * @param {HTMLElement} host 挂载容器（#editor）
@@ -175,6 +203,11 @@ export class PlainEditor {
       highlightSpecialChars(),
       history(),
       drawSelection(),
+      /* 选中一段文字 → 文档里相同的文字一并标亮（纯视图装饰，不改文档）。
+         选项名是 minSelectionLength 而不是 minLength，写错了会被静默忽略。
+         中文一个字就是一个词，所以最小长度保持 1；maxMatches 与所见即所得
+         那侧的上限对齐，避免长文档里铺满一屏灰底。扩展只处理可见范围。 */
+      highlightSelectionMatches({ minSelectionLength: 1, maxMatches: 300 }),
       dropCursor(),
       /* Alt + 拖动 = 竖着选一列（改对齐的表格、批量加前缀时用得上）；
          Alt 按住时光标变十字，提示这个模式存在 */
@@ -196,6 +229,8 @@ export class PlainEditor {
       this.readOnlyComp.of(this._roExt(this.readOnly)),
       /* 高亮重复行：默认空集合，等 setDupLines 推一个 effect 进来 */
       dupLinesField,
+      /* 非 Markdown 文件的文字高亮：切标签时由 setViewMarks 重放 */
+      viewMarksField,
       /* 剪贴板里是图片：拦下来交给外层落盘，否则 CM6 会安静地什么都不做 */
       EditorView.domEventHandlers({
         paste: (e) => {
@@ -301,6 +336,34 @@ export class PlainEditor {
   /** 现在有没有标亮着（菜单的勾选状态要问它，文档一改它自己就变 false） */
   get hasDupHighlight() {
     return this.view.state.field(dupLinesField).size > 0;
+  }
+
+  /* ---------------- 文字高亮（非 Markdown 文件，纯视图） ---------------- */
+
+  /** 当前挂着的高亮区间（已按文档改动映射过），用来存回标签、切回来重放 */
+  get viewMarks() {
+    const out = [];
+    const it = this.view.state.field(viewMarksField).iter();
+    while (it.value) { out.push({ from: it.from, to: it.to }); it.next(); }
+    return out;
+  }
+
+  setViewMarks(ranges) {
+    this.view.dispatch({ effects: setViewMarks.of(ranges || []) });
+  }
+
+  hasViewMark(from, to) {
+    return this.viewMarks.some((r) => r.from < to && r.to > from);
+  }
+
+  /** 选区已标过就取消，否则加上。返回 'on' / 'off' 给 toast 用。 */
+  toggleViewMark(from, to) {
+    const cur = this.viewMarks;
+    const kept = cur.filter((r) => !(r.from < to && r.to > from));
+    const off = kept.length !== cur.length;
+    if (!off && to > from) kept.push({ from, to });
+    this.setViewMarks(kept);
+    return off ? 'off' : 'on';
   }
 
   /* ---------------- 视图 ---------------- */

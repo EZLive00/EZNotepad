@@ -15,6 +15,7 @@
 import { resolveDocImg, headingSlugs, CALLOUT_TYPES, RE_CALLOUT, normalizeCallout, splitImgAlt } from './markdown.js';
 import { tt } from './i18n.js';
 import { codeText, refreshCode } from './codehilite.js';
+import { updateSelMatch, clearSelMatch } from './selmatch.js';
 
 const MAX_INDENT = 6;
 const ZWSP = '\u200b';
@@ -1324,13 +1325,30 @@ export class WysiwygEditor {
       e.preventDefault();
     });
     // 光标离开某个标题时，把它亮出来的 ### 收回去
-    this._onSelChange = () => this.collapseHashes();
+    this._selMatchRaf = 0;
+    this._onSelChange = () => { this.collapseHashes(); this.scheduleSelMatch(); };
     document.addEventListener('selectionchange', this._onSelChange);
     /* 代码块高亮：只在 DOM 真的变了才重算。输入、粘贴、撤销、render、
        视口搬家都会落到这里 —— 比在每个出口各挂一次可靠（少一处就少一次
        「有的路径高亮不刷新」的怪象）。它不碰 DOM，所以不会自激。 */
     this._codeObs = new MutationObserver(() => this.scheduleCodeHilite());
     this._codeObs.observe(root, { childList: true, subtree: true, characterData: true });
+  }
+
+  /* 选中一段文字时，把文档里相同的文字一并标亮（selmatch.js，纯视图）。
+     selectionchange 在拖选期间每帧都来，用 rAF 合并成一帧一次；整篇重渲染
+     之后旧 Range 指向的节点已经被摘掉，必须当场清掉，否则灰底会残留。 */
+  scheduleSelMatch() {
+    if (this._selMatchRaf) return;
+    this._selMatchRaf = requestAnimationFrame(() => {
+      this._selMatchRaf = 0;
+      updateSelMatch(this.root, window.getSelection());
+    });
+  }
+
+  clearSelMatchNow() {
+    if (this._selMatchRaf) { cancelAnimationFrame(this._selMatchRaf); this._selMatchRaf = 0; }
+    clearSelMatch();
   }
 
   /**
@@ -1399,6 +1417,9 @@ export class WysiwygEditor {
   }
 
   _render(md, restore) {
+    /* render() 和撤销恢复都会走到这里，两条路都会把 root 的孩子整批换掉。
+       「相同文本」的 Range 还指着被摘掉的节点，必须当场清，否则灰底残留。 */
+    this.clearSelMatchNow();
     /* 记下原文有没有结尾换行：序列化只吐「行」，补不补最后那个 \n 得看原来的样子。
        不记的话每次编辑都会把文件的结尾换行吃掉，git 立刻给你一行
        "\ No newline at end of file"。

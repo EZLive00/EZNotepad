@@ -61,6 +61,11 @@ export {
 /* ---- 自动补全括号 / 引号 ---- */
 export { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
 
+/* ---- 选区匹配：选中一段文字时，把文档里相同的文字一并标出来 ----
+   只取这一个扩展，不引官方查找面板的快捷键表 —— 查找条是项目自己实现的，
+   两套快捷键会打架。 */
+export { highlightSelectionMatches } from '@codemirror/search';
+
 export { tags } from '@lezer/highlight';
 
 /* ---- 具体语言（lezer 语法，增量解析） ---- */

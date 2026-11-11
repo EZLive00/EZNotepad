@@ -478,6 +478,7 @@ function activate(id) {
 function clearView() {
   renderedTabId = null;
   plain.load('');
+  wys.clearSelMatchNow();   // 编辑区被清空，全局的高亮注册表不会自己消失
   el.wysiwyg.innerHTML = '';
   el.preview.innerHTML = '<div class="diff-empty">' + tt('没有打开的文件') + '</div>';
   el.preview.__pvText = null;   // 容器被换掉了，预览的内容签名也要一起作废
@@ -543,7 +544,12 @@ function setMode(mode, opt = {}) {
 
   const docDir = t.path ? be.dirName(t.path) : '';
   if (showWys) { wys.setDocDir(docDir); renderWys(t.content); }
-  else if (showEditor) { plain.load(t.content, currentLang); }
+  else if (showEditor) {
+    plain.load(t.content, currentLang);
+    /* 视图高亮跟着标签走：load() 会重建 state、把它清空，这里按标签重放，
+       也不会把 A 的高亮带到 B。 */
+    plain.setViewMarks(t.viewMarks || []);
+  }
   /* 从这一行起，编辑器里装的就是 t 的内容了。之前它是上一个标签的 */
   renderedTabId = t.id;
   if (showPreview) renderPreview(kind, t.content, currentLang, el.preview, docDir);
@@ -2045,6 +2051,9 @@ function onEditorInput() {
   const t = activeTab();
   if (!t) return;
   t.content = plain.value;
+  /* 文档改过之后，视图高亮的字符区间已被 CM6 映射过；存回标签，
+     否则下次切模式重放旧区间，黄底会整段漂走。 */
+  t.viewMarks = plain.viewMarks;
   schedulePreview();
   refreshStats();
   updateOutline();
@@ -2076,6 +2085,14 @@ function surround(marker) {
 function selectionHighlighted() {
   const t = activeTab();
   if (!t) return false;
+  /* 非 Markdown 文件没有 == 语法：高亮是编辑区里的视图标记，得问 CM6 的装饰。
+     落到下面「源码里有没有 ==」那段会出事 —— 代码文件里写个 a == b，
+     菜单就永远显示「取消高亮」。 */
+  if (detectKind(t.name) !== 'md') {
+    if (t.mode !== 'edit') return false;
+    const { from, to } = plain.selection;
+    return to > from && plain.hasViewMark(from, to);
+  }
   if (t.mode === 'wysiwyg') {
     const s = window.getSelection();
     if (!s || !s.rangeCount) return false;
@@ -2095,6 +2112,18 @@ function selectionHighlighted() {
 function toggleHighlight() {
   const t = activeTab();
   if (!t) return;
+  /* 非 Markdown 文件：== 不是这些文件的语法，写进去只会多两个不渲染的字符
+     （用户看到的「只有前后出现 ==，并没有显示高亮」）。改成只给选区挂一层
+     视图装饰，当场显示黄底、再点一次取消，文件内容一个字节都不动。 */
+  if (detectKind(t.name) !== 'md') {
+    if (t.mode !== 'edit') { toast(tt('预览模式下不能编辑')); return; }
+    const { from, to } = plain.selection;
+    if (to <= from) { toast(tt('先选中要标亮的文字')); return; }
+    const r = plain.toggleViewMark(from, to);
+    t.viewMarks = plain.viewMarks;
+    toast(r === 'on' ? tt('已高亮') : tt('已取消高亮'));
+    return;
+  }
   if (t.mode === 'wysiwyg') {
     const r = wys.toggleMark();
     if (!r) toast(tt('先选中同一段里要标亮的文字'));
