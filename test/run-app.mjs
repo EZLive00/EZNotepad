@@ -819,6 +819,39 @@ try {
     ok('连开两次浮层菜单后，Esc 仍能取消对话框（幽灵监听已清）', await dlgHidden(),
       String(await ev(`document.getElementById('dlgTitle').textContent`)));
   }
+
+  /* ---- 14. 一键格式化：不标准也不拒绝 ----
+     以前 prettier 一报语法错误就弹「无法格式化」且原文不动；现在三级
+     尽力而为。这里测的是 app.js 的接线：不弹框、真排版、可撤销。 */
+  {
+    const hidden = () => ev(`document.getElementById('dlgOverlay').classList.contains('hidden')`);
+    const fmt = async (name, text, wait = 700) => {
+      await ev(`window.__snp.newTab(${JSON.stringify(name)}, ${JSON.stringify(text)}, null)`);
+      await ev('new Promise(r => setTimeout(r, 120))');
+      await ev(`window.__snp.commands.format(); 0`);
+      await ev(`new Promise(r => setTimeout(r, ${wait}))`);
+      return ev(`window.__snp.getEditorText()`);
+    };
+    const strip = (s) => String(s).replace(/[ \t\r\n]/g, '');
+
+    /* 首次按会现拉 2 MB 的引擎，多等一拍 */
+    const broken = await fmt('broke.json', '{ "a":1,', 1800);
+    ok('坏 JSON 不弹「无法格式化」', await hidden(),
+      String(await ev(`document.getElementById('dlgTitle').textContent`)));
+    ok('坏 JSON 仍按深度缩进了', broken.includes('\n  "a":1,'), JSON.stringify(broken));
+    ok('坏 JSON 一个非空白字符都没丢', strip(broken) === strip('{ "a":1,'), JSON.stringify(broken));
+    ok('强行排版给了撤销入口', await ev(`[...document.querySelectorAll('#toasts .toast')].some(b => b.textContent.includes('撤销'))`),
+      String(await ev(`document.getElementById('toasts').textContent`)));
+
+    const comment = await fmt('cmt.json', '{ "a":1, // hi\n "b":2 }');
+    ok('带注释的 JSON 被宽松 parser 接住、注释还在', comment.includes('// hi'), JSON.stringify(comment));
+
+    const css = await fmt('style.css', 'a{color:red}');
+    ok('CSS 格式化成功（parser 名不再是 postcss）', css.includes('color: red;'), JSON.stringify(css));
+
+    const py = await fmt('f.py', 'def f():   \n    return 1   \n');
+    ok('Python 仍是保守清理，缩进一字不动', py === 'def f():\n    return 1\n', JSON.stringify(py));
+  }
 } catch (e) {
   ok('运行期间没有异常', false, String((e && e.message) || e).slice(0, 300));
 } finally {

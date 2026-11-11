@@ -16,6 +16,8 @@ import { blockItems, arrange, rangeText } from '../src/js/difflist.js';
 import { sortLines, sortKey, isSorted } from '../src/js/linesort.js';
 import { detectLang } from '../src/js/highlight.js';
 import { normalizeLang, langForFile, newDocTypes } from '../src/js/langs.js';
+import { formatLoose } from '../src/js/format-loose.js';
+import { formatByKind } from '../src/js/format.js';
 
 const out = [];
 const eq = (name, got, want) => out.push({ name, ok: JSON.stringify(got) === JSON.stringify(want), got, want });
@@ -303,6 +305,127 @@ ok('语言表：新建类型够多', newDocTypes().length >= 24);
     selmatch.includes('lowAll.length === all.length')
       && selmatch.includes('lowKey.length === needle.length')
       && selmatch.includes('const fold =') && selmatch.includes('hay.indexOf(key, at)'));
+}
+
+/* ---------- 语法错误时的兜底排版：只增删空白，一个字符都不能丢 ---------- */
+{
+  const strip = (s) => String(s).replace(/[ \t\r\n]/g, '');
+  const samples = [
+    ['残缺 JSON', '{ "a":1,'],
+    ['缺右括号', '{"a":1,"b":[2,3'],
+    ['JS 截断', 'function f( { return 1'],
+    ['TS 残缺', 'const a: = 1'],
+    ['中文键值', '{ "名字":"张三", "列表":[1,2'],
+    ['字符串里有括号', 'const s = "a{b}c [d]"; const o = {x:1'],
+    ['字符串里有连续空格', 'const s = "a   b  "; const o = {x:1'],
+    ['转义引号', 'const s = "he said \\"hi\\" {"; const o = {x:1'],
+    ['行注释', 'const a = 1; // 这里有 { 括号\n const o = {x:1'],
+    ['块注释', '/* 注释 { [ ] */ const o = {x:1'],
+    ['模板串跨行', 'const s = `第一行\n  第二行 {x}`; const o = {a:1'],
+    ['URL 里的双斜线', 'const u = "http://a.com/b?c=1"; const o = {x:1'],
+    ['全角空格是内容', 'const s = "中文　全角"; const o = {x:1'],
+    ['CRLF', '{\r\n "a":1,\r\n "b":2'],
+    ['代理对 emoji', 'const s = "😀 {x}"; const o = {a:1'],
+    ['多余空行', 'const a = 1;\n\n\n\nconst b = 2;'],
+    ['函数参数不拆行', 'function f(a, b, c) { return a + b; }'],
+  ];
+  for (const [name, src] of samples) {
+    ok(`兜底排版保住全部非空白字符：${name}`, strip(formatLoose(src)) === strip(src));
+  }
+
+  eq('残缺 JSON 按括号深度缩进', formatLoose('{ "a":1,'), '{\n  "a":1,\n');
+  eq('未闭合数组逐项换行', formatLoose('{"b":[2,3'), '{\n  "b":[\n    2,\n    3\n');
+  eq('CRLF 不冒空行', formatLoose('{\r\n "a":1,\r\n "b":2'), '{\n  "a":1,\n  "b":2\n');
+  eq('右括号前不冒空行', formatLoose('f(a, b) { return a; }'), 'f(a, b) {\n  return a;\n}\n');
+  ok('字符串内部空格一字不动', formatLoose('const s = "a   b  ";').includes('"a   b  "'));
+  ok('模板串内部换行与缩进原样', formatLoose('const s = `第一行\n  第二行`;').includes('`第一行\n  第二行`'));
+  ok('字符串里的括号不参与深度计数',
+    formatLoose('const s = "a{b}c"; const o = {x:1').startsWith('const s = "a{b}c";\nconst o = {'));
+  ok('注释里的括号不参与深度计数',
+    formatLoose('const a = 1; // {\nconst o = {x:1').startsWith('const a = 1;\n// {\nconst o = {'));
+  ok('行注释之后的代码行仍按深度缩进',
+    formatLoose(['{', '// c', '"a":1', '}'].join(String.fromCharCode(10)))
+      .includes(String.fromCharCode(10) + '  "a":1'));
+  eq('超大文本不排版、原样返回', formatLoose('a'.repeat(300001)), 'a'.repeat(300001));
+  eq('空输入原样返回', formatLoose(''), '');
+  ok('兜底排版器带硬校验与长度上限',
+    /stripWs\(out\) === stripWs\(src\) \? out : src/.test(fs.readFileSync('src/js/format-loose.js', 'utf8'))
+      && /MAX_LEN/.test(fs.readFileSync('src/js/format-loose.js', 'utf8')));
+}
+
+/* ---------- 一键格式化：严格 → 宽松 → 只重排空白（真实调用整条链） ---------- */
+{
+  const NL = String.fromCharCode(10);
+  const strip = (s) => String(s).replace(/[ \t\r\n]/g, '');
+
+  const strictJson = await formatByKind('json', '{"a":1,"b":[2,3]}', 'a.json');
+  eq('标准 JSON 走严格 parser', strictJson.loose, false);
+  eq('标准 JSON 重排成两空格缩进', strictJson.text,
+    ['{', '  "a": 1,', '  "b": [', '    2,', '    3', '  ]', '}', ''].join(NL));
+  eq('标准 JSON 不带提示', strictJson.notes, []);
+
+  const commentJson = await formatByKind('json', ['{ "a":1, // hi', ' "b":2 }'].join(NL), 'a.json');
+  eq('带注释的 JSON 由宽松 parser 接住', commentJson.loose, true);
+  ok('宽松路径保留了注释', commentJson.text.includes('// hi'));
+  ok('宽松路径在提示里说明', commentJson.notes.includes('已按宽松规则'));
+
+  const oddJson = await formatByKind('json', "{a:1, b:'x',}", 'a.json');
+  eq('单引号 / 尾逗号 / 无引号键仍走严格 parser', oddJson.loose, false);
+  ok('非标准写法被规范化成合法 JSON', oddJson.text.includes('"a": 1') && oddJson.text.includes('"b": "x"'));
+
+  const brokenJson = await formatByKind('json', '{ "a":1,', 'a.json');
+  eq('残缺 JSON 落到空白兜底', brokenJson.forced, true);
+  eq('残缺 JSON 仍按深度缩进了', brokenJson.text, ['{', '  "a":1,', ''].join(NL));
+  ok('残缺 JSON 一个非空白字符都没丢', strip(brokenJson.text) === strip('{ "a":1,'));
+  ok('语法错误行列仍带回来给用户看', brokenJson.error && brokenJson.error.line > 0 && brokenJson.error.col > 0);
+  ok('兜底路径不再抛错、不再弹框', !brokenJson.error.message.includes('保持原样'));
+
+  const jsBroken = await formatByKind('code', 'function f( { return 1', 'a.js');
+  eq('截断的 JS 也强行排版', jsBroken.forced, true);
+  ok('截断的 JS 非空白字符不变', strip(jsBroken.text) === strip('function f( { return 1'));
+
+  /* CSS 类文件以前写的是插件名而不是 parser 名，格式化一直弹「无法格式化」 */
+  for (const [file, src, want] of [
+    ['a.css', 'a{color:red}', 'a {' + NL + '  color: red;' + NL + '}' + NL],
+    ['a.scss', '$c:red;a{color:$c}', '$c: red;' + NL + 'a {' + NL + '  color: $c;' + NL + '}' + NL],
+    ['a.less', '@c:red;a{color:@c}', '@c: red;' + NL + 'a {' + NL + '  color: @c;' + NL + '}' + NL],
+  ]) {
+    const r = await formatByKind('code', src, file);
+    eq(`${file} 用真正的 parser 名格式化`, r.text, want);
+    eq(`${file} 不再落进兜底`, r.forced, false);
+  }
+
+  const yamlBad = await formatByKind('code', ['a:', '    b: 1', ' c: 2'].join(NL), 'a.yaml');
+  eq('缩进敏感的 YAML 也走兜底（不拒绝）', yamlBad.forced, true);
+  ok('YAML 兜底不重排缩进（缩进就是语义）',
+    yamlBad.text.split(NL).some((l) => l.startsWith('    b: 1'))
+      && yamlBad.text.split(NL).some((l) => l.startsWith(' c: 2')));
+
+  const py = await formatByKind('code', ['def f():   ', '    return 1   '].join(NL), 'a.py');
+  eq('没有格式化器的语言仍是保守清理', py.forced, undefined);
+  eq('Python 缩进一字不动', py.text, ['def f():', '    return 1', ''].join(NL));
+
+  const md = await formatByKind('md', ['# 标题', '正文一行', ''].join(NL), 'a.md');
+  eq('Markdown 走严格 parser', md.loose, false);
+  ok('Markdown 标题后补空行', md.text.includes('# 标题' + NL + NL + '正文一行'));
+
+  /* 源码级不变量：防止以后又把插件名当 parser 名、或把「语法错误」改回弹框 */
+  const langs = fs.readFileSync('src/js/langs.js', 'utf8');
+  const entry = fs.readFileSync('src/js/vendor-entry/prettier.js', 'utf8');
+  const fmt = fs.readFileSync('src/js/format.js', 'utf8');
+  const app = fs.readFileSync('src/js/app.js', 'utf8');
+  ok('语言表不再写 postcss 这个不存在的 parser',
+    !/fmt: 'postcss'/.test(langs) && /fmt: 'css'/.test(langs)
+      && /fmt: 'scss'/.test(langs) && /fmt: 'less'/.test(langs));
+  ok('预打包入口登记了全部严格 / 宽松 parser',
+    /\bcss: \[postcss\]/.test(entry) && /\bless: \[postcss\]/.test(entry)
+      && /\bscss: \[postcss\]/.test(entry) && /jsonc:/.test(entry)
+      && /json5:/.test(entry) && /'babel-ts':/.test(entry));
+  ok('三级回退链与缩进敏感白名单都在',
+    fmt.includes('LOOSE_CHAIN') && fmt.includes('INDENT_SENSITIVE') && fmt.includes('formatLoose('));
+  ok('app.js 不再拿语法错误弹框拦人',
+    !app.includes('文件中存在语法错误') && app.includes('r.forced')
+      && app.includes('r.error && r.error.line'));
 }
 
 /* ---------- 汇总 ---------- */

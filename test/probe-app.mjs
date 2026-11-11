@@ -1361,6 +1361,45 @@ try {
     await sleep(900);
     const py2 = await ev(`window.__snp.getEditorText()`);
     ok('Python 只去行尾空格，缩进原样', py2 === 'def f():\n    return 1\n', JSON.stringify(py2));
+
+    /* ---------- 不标准的文本：严格 → 宽松 → 只重排空白 ---------- */
+    const NL = String.fromCharCode(10);
+    const badJson = '{ "a":1,';
+    const cmtJson = ['{ "a":1, // hi', ' "b":2 }'].join(NL);
+    const cssSrc = 'a{color:red}';
+
+    await ev(`window.__snp.newTab('fmt-bad.json', ${JSON.stringify(badJson)}, null)`);
+    await sleep(260);
+    await ev(`window.__snp.commands.format(); 0`);
+    await sleep(1100);
+    const bad2 = await ev(`window.__snp.getEditorText()`);
+    ok('真机：残缺 JSON 也强行按深度缩进', bad2.includes(NL + '  "a":1,'), JSON.stringify(bad2));
+    ok('真机：残缺 JSON 的非空白字符一字不变',
+      bad2.replace(/[ \t\r\n]/g, '') === badJson.replace(/[ \t\r\n]/g, ''), JSON.stringify(bad2));
+    ok('真机：不再弹「无法格式化」把人挡在门外',
+      await ev(`document.getElementById('dlgOverlay').classList.contains('hidden')`),
+      String(await ev(`document.getElementById('dlgTitle').textContent`)));
+    ok('真机：提示里说明只调整了空白',
+      await ev(`/仅调整空白|whitespace/i.test(document.getElementById('toasts').textContent)`),
+      String(await ev(`document.getElementById('toasts').textContent`)));
+    ok('真机：强行排版仍可撤销',
+      await ev(`[...document.querySelectorAll('#toasts .toast')].some(b => b.textContent.includes('撤销'))`));
+
+    await ev(`window.__snp.newTab('fmt-cmt.json', ${JSON.stringify(cmtJson)}, null)`);
+    await sleep(260);
+    await ev(`window.__snp.commands.format(); 0`);
+    await sleep(900);
+    const cmt2 = await ev(`window.__snp.getEditorText()`);
+    ok('真机：宽松 parser 接住带注释的 JSON，注释还在',
+      cmt2.includes('// hi') && cmt2.includes('"b": 2'), JSON.stringify(cmt2));
+
+    /* 以前写的是插件名 postcss，不是 parser 名，CSS 格式化一直报错 */
+    await ev(`window.__snp.newTab('fmt.css', ${JSON.stringify(cssSrc)}, null)`);
+    await sleep(260);
+    await ev(`window.__snp.commands.format(); 0`);
+    await sleep(900);
+    const css2 = await ev(`window.__snp.getEditorText()`);
+    ok('真机：CSS 用真正的 parser 名格式化成功', css2.includes('color: red;'), JSON.stringify(css2));
   }
 
   /* ---------- ```mermaid：真的画出来 ----------
