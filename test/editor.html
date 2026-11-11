@@ -40,6 +40,34 @@
       R.push(ok('折叠槽存在', !!q('.cm-foldGutter')));
       R.push(ok('当前行高亮元素存在', !!q('.cm-activeLine')));
 
+      /* ---- 1.2 当前行：极淡的中性灰，不是一条橙红横杠 ----
+         强调色只表示状态；当前行只是「光标在哪」的提示，所以走
+         --active-line-bg（正文色的低比例混合）。读 computed 的 alpha：
+         color-mix(..., transparent) 会解析成带 alpha 的颜色。 */
+      const alphaOf = (c) => {
+        if (!c) return -1;
+        const slash = c.match(/\/\s*([\d.]+)\s*\)/);
+        if (slash) return Number(slash[1]);
+        const p = c.slice(c.indexOf('(') + 1, c.lastIndexOf(')')).split(',').map(Number);
+        return p.length === 4 ? p[3] : (p.length === 3 ? 1 : -1);
+      };
+      const lineProbe = document.createElement('div');
+      lineProbe.style.backgroundColor = 'var(--active-line-bg)';
+      document.body.appendChild(lineProbe);
+      const wantLineBg = getComputedStyle(lineProbe).backgroundColor;
+      lineProbe.remove();
+      const gotLineBg = q('.cm-activeLine') ? getComputedStyle(q('.cm-activeLine')).backgroundColor : '';
+      R.push(eq('当前行走 --active-line-bg 令牌', gotLineBg, wantLineBg));
+      R.push(ok('当前行底色足够淡（alpha ≤ 0.08）',
+        alphaOf(gotLineBg) > 0 && alphaOf(gotLineBg) <= 0.08, gotLineBg));
+      document.body.dataset.theme = 'dark';
+      await tick();
+      const darkLineBg = getComputedStyle(q('.cm-activeLine')).backgroundColor;
+      R.push(ok('深色主题下当前行也很淡',
+        alphaOf(darkLineBg) > 0 && alphaOf(darkLineBg) <= 0.08, darkLineBg));
+      document.body.dataset.theme = initialTheme;
+      await tick();
+
       /* ---- 1.5 行号槽必须是不透明的纸面 ----
          CM6 把 .cm-gutters 做成 sticky + zIndex 200：不换行横向滚动时长行会从
          它底下经过。背景透明就把文字透出来，看着像正文跑到行号左边去了。 */
@@ -199,6 +227,48 @@
       const h = q('.cm-line').getBoundingClientRect().height;
       R.push(ok(`长行折行：行高 ${Math.round(h)}px > 单行 ${Math.round(lh)}px`, h > lh * 1.5,
         { h: Math.round(h), lh: Math.round(lh) }));
+
+      /* ---- 15.5 选中相同文本 + 非 Markdown 文件的视图高亮 ---- */
+      /* CM6 的 getDeco 只装饰选区之外的命中，主选区那处由选区底色自己画：
+         三个 foo 选中第一个，装饰恰好是两个。别拿「3」当期望值。 */
+      plain.load('foo bar foo baz foo', '');
+      plain.setSelection(0, 3);
+      await tick();
+      const fooMatch = qa('.cm-selectionMatch');
+      R.push(ok('选中 foo 时其它两处相同的文字一并标亮',
+        fooMatch.length === 2 && fooMatch.every((e) => e.textContent === 'foo'),
+        fooMatch.length));
+      plain.setSelection(0, 1);
+      await tick();
+      const fMatch = qa('.cm-selectionMatch');
+      R.push(ok('单字选区也标相同文本（中文一个字就是一个词）',
+        fMatch.length === 2 && fMatch.every((e) => e.textContent === 'f'), fMatch.length));
+      /* 官方 @codemirror/search 的 baseTheme 给 .cm-selectionMatch 铺了亮绿底，
+         必须确认我们自己的 --sel-match-bg 盖住了它，否则主题规范破了个口子。 */
+      const matchEl = q('.cm-selectionMatch');
+      const matchBg = matchEl ? getComputedStyle(matchEl).backgroundColor : '';
+      const matchProbe = document.createElement('div');
+      matchProbe.style.backgroundColor = 'var(--sel-match-bg)';
+      document.body.appendChild(matchProbe);
+      const wantMatchBg = getComputedStyle(matchProbe).backgroundColor;
+      matchProbe.remove();
+      R.push(eq('匹配底色走 --sel-match-bg（没被官方绿底盖掉）', matchBg, wantMatchBg));
+      plain.setSelection(0);
+      await tick();
+      R.push(eq('光标折叠后匹配标记清空', qa('.cm-selectionMatch').length, 0));
+
+      /* 非 md 文件的「高亮」：== 是 Markdown 语法，往 .txt / 代码里写它会污染
+         文件又没人渲染。这里只挂一层 CM6 装饰，文档一个字节都不动。 */
+      plain.setViewMarks([{ from: 0, to: 3 }]);
+      await tick();
+      R.push(eq('视图高亮区间读回', plain.viewMarks, [{ from: 0, to: 3 }]));
+      R.push(eq('视图高亮挂上了装饰', qa('.cm-view-mark').length, 1));
+      R.push(eq('视图高亮不改文档', plain.value, 'foo bar foo baz foo'));
+      R.push(ok('重叠区间才被算作已高亮', plain.hasViewMark(1, 2) && !plain.hasViewMark(10, 12)));
+      R.push(eq('再切一次取消', plain.toggleViewMark(1, 2), 'off'));
+      R.push(eq('取消后装饰消失', qa('.cm-view-mark').length, 0));
+      plain.load('fresh', '');
+      R.push(eq('换文档不会把高亮带到下一篇', plain.viewMarks.length, 0));
 
       /* ---- 16. 收尾：恢复一个正常文档，给截图用 ---- */
       plain.load(

@@ -425,6 +425,58 @@ try {
     ok('转一圈回来第一次点击就能标亮', (await ev(`document.querySelectorAll('.w-dup').length`)) === 2,
       String(await ev(`document.querySelectorAll('.w-dup').length`)));
 
+    /* ---- 8b. 非 Markdown 文件的高亮：== 不是这些文件的语法 ----
+       用户反馈「只有前后出现 ==，并没有显示高亮」。修法：不写标记，只给
+       选区挂一层视图装饰（编辑区当场显示黄底），文件内容一个字节都不动。 */
+    const nap = (ms) => ev(`new Promise(r => setTimeout(r, ${ms}))`);
+    await ev(`window.__snp.newTab('hl.txt', '重点 重点 重点', null)`);
+    await ev('window.__snp.commands.modeEdit()');
+    await nap(200);
+    await ev(`window.__snp.plain.setSelection(0, 2)`);
+    await ev('window.__snp.commands.highlight(); 0');
+    await nap(120);
+    const hlTxt = await ev('window.__snp.getEditorText()');
+    ok('非 md 高亮不往文件写 ==', hlTxt === '重点 重点 重点', JSON.stringify(hlTxt));
+    ok('编辑区真的出现黄底装饰',
+      (await ev(`document.querySelectorAll('.cm-view-mark').length`)) === 1,
+      String(await ev(`document.querySelectorAll('.cm-view-mark').length`)));
+    ok('高亮区间记在标签上',
+      (await ev(`window.__snp.getActiveTab().viewMarks.length`)) === 1,
+      String(await ev(`window.__snp.getActiveTab().viewMarks.length`)));
+    await ev('window.__snp.commands.highlight(); 0');
+    await nap(120);
+    ok('再点一次取消，装饰消失',
+      (await ev(`document.querySelectorAll('.cm-view-mark').length`)) === 0);
+    /* 重新标上再切标签：视图高亮是标签自己的状态，不能串到别的文档 */
+    await ev('window.__snp.commands.highlight(); 0');
+    await nap(120);
+    await ev(`window.__snp.newTab('other.txt', '别的文本', null)`);
+    await nap(200);
+    ok('切到别的标签不带高亮',
+      (await ev(`document.querySelectorAll('.cm-view-mark').length`)) === 0);
+
+    /* 代码里的 a == b 不能被当成「已经标亮」——旧实现会去读源码里的 == */
+    await ev(`window.__snp.newTab('eq.py', 'a == b', null)`);
+    await ev('window.__snp.commands.modeEdit()');
+    await nap(200);
+    await ev(`window.__snp.plain.setSelection(2, 4)`);
+    await ev('window.__snp.commands.highlight(); 0');
+    await nap(120);
+    ok('代码里的 == 不会被误判成标记',
+      (await ev(`document.querySelectorAll('.cm-view-mark').length`)) === 1);
+    ok('代码文件内容原样', (await ev('window.__snp.getEditorText()')) === 'a == b');
+
+    /* md 的编辑模式仍走 ==，没有被一刀切改掉 */
+    await ev(`window.__snp.newTab('hl2.md', '这是重点文字', null)`);
+    await ev('window.__snp.commands.modeEdit()');
+    await nap(200);
+    await ev(`window.__snp.plain.setSelection(2, 4)`);
+    await ev('window.__snp.commands.highlight(); 0');
+    await nap(120);
+    ok('md 的编辑模式仍写 ==重点==',
+      (await ev('window.__snp.getEditorText()')) === '这是==重点==文字',
+      JSON.stringify(await ev('window.__snp.getEditorText()')));
+
     /* ---- 9. 表格里的 ↑↓ 是上下走一格，不是横向跳 ----
        必须用真实按键：这条逻辑分的是「浏览器默认行为」和「我们的接管」，
        合成事件根本走不到浏览器的默认那一步。 */

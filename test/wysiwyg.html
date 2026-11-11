@@ -19,6 +19,7 @@ import { WysiwygEditor, blocksToMarkdown } from '../src/js/wysiwyg.js';
 import { renderMarkdown } from './../src/js/markdown.js';
 import { refreshCode } from '../src/js/codehilite.js';
 import * as df from '../src/js/domfind.js';
+import { updateSelMatch, clearSelMatch } from '../src/js/selmatch.js';
 
 const root = document.getElementById('wysiwyg');
 let out = '';
@@ -1828,6 +1829,78 @@ window.__run = () => {
     const l = readVar('light');
     const d = readVar('dark');
     has('光标: 明暗各一套', l !== d && l.includes('data:image/png') && d.includes('data:image/png'));
+  }
+
+  /* ---- 选中相同文本：纯视图，不改 DOM、不改 Markdown ----
+     走 CSS Custom Highlight API（和查找高亮 / 代码块着色同一套机制），
+     所以断言直接问注册表里挂了哪些 Range。 */
+  {
+    const supported = typeof CSS !== 'undefined' && !!CSS.highlights && typeof Highlight !== 'undefined';
+    has('CSS Custom Highlight API 可用', supported);
+    if (supported) {
+      const src = '红 蓝 红 绿 红';
+      T.reset(src);
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      let tn = null;
+      while ((tn = walker.nextNode())) if (tn.nodeValue.includes('红')) break;
+      const sel = window.getSelection();
+      const r = document.createRange();
+      r.setStart(tn, 0);
+      r.setEnd(tn, 1);
+      sel.removeAllRanges();
+      sel.addRange(r);
+      updateSelMatch(root, sel);
+      const hl = CSS.highlights.get('sn-same');
+      has('选中「红」把三处相同文本都标出来', hl && hl.size >= 3);
+      eq('标相同文本不改 Markdown', T.out(), src);
+      has('标相同文本不动 DOM（没有插 mark）',
+        root.querySelectorAll('mark').length === 0 && root.textContent === src);
+
+      /* 折叠光标 / 选区跑到正文之外，都必须清掉 —— 注册表是全局的，不会自己消失 */
+      r.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(r);
+      updateSelMatch(root, sel);
+      has('光标折叠后清掉相同文本标记', !CSS.highlights.has('sn-same'));
+
+      r.setStart(tn, 0);
+      r.setEnd(tn, 1);
+      sel.removeAllRanges();
+      sel.addRange(r);
+      updateSelMatch(root, sel);
+      has('重新选中能再标出来', CSS.highlights.has('sn-same'));
+
+      const probe = document.createElement('span');
+      probe.textContent = src;
+      document.body.appendChild(probe);
+      const outside = document.createRange();
+      outside.selectNodeContents(probe);
+      sel.removeAllRanges();
+      sel.addRange(outside);
+      updateSelMatch(root, sel);
+      has('选区不在正文里就清掉', !CSS.highlights.has('sn-same'));
+      probe.remove();
+
+      /* toLowerCase 会改变长度的字符（İ → i̇）：折叠大小写时 hay 与 key
+         必须一起退回原文，否则全文偏移整体错位、灰底会涂到别的字上。 */
+      const oddHost = document.createElement('div');
+      oddHost.innerHTML = '<p>甲İ乙 İ</p>';
+      document.body.appendChild(oddHost);
+      const oddNode = document.createTreeWalker(oddHost, NodeFilter.SHOW_TEXT).nextNode();
+      const oddRange = document.createRange();
+      oddRange.setStart(oddNode, 1);
+      oddRange.setEnd(oddNode, 2);
+      sel.removeAllRanges();
+      sel.addRange(oddRange);
+      updateSelMatch(oddHost, sel);
+      const oddHl = CSS.highlights.get('sn-same');
+      const oddTexts = [];
+      if (oddHl) oddHl.forEach((x) => oddTexts.push(x.toString()));
+      has('大小写折叠变长时不把高亮涂错位置',
+        oddTexts.length === 2 && oddTexts.every((x) => x === 'İ'), JSON.stringify(oddTexts));
+      oddHost.remove();
+      clearSelMatch();
+    }
   }
 
   return R;

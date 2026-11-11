@@ -265,6 +265,46 @@ ok('语言表：新建类型够多', newDocTypes().length >= 24);
   ok('每个 vendored 图标都进了 sprite', notBuilt.length === 0, notBuilt);
 }
 
+/* ---------- 编辑区三条视图约定（源码级不变量） ----------
+   色值、装饰、语言分流这些，运行时断言容易被主题 / 窗口尺寸 / API 可用性
+   影响；这里把「以后别改回去」的约束钉在源码上。 */
+{
+  const read = (p) => fs.readFileSync(new URL('../' + p, import.meta.url), 'utf8');
+  const theme = read('src/js/editor/theme.js');
+  const css = read('src/styles.css');
+  const entry = read('src/js/editor/cm6-entry.js');
+  const plain = read('src/js/editor/plain-editor.js');
+  const app = read('src/js/app.js');
+  const selmatch = read('src/js/selmatch.js');
+
+  const activeLine = (theme.match(/'\.cm-activeLine'\s*:\s*\{[^}]*\}/) || [''])[0];
+  ok('当前行不再用强调色染底',
+    activeLine.includes('--active-line-bg') && !activeLine.includes('--accent'), activeLine);
+  ok('选中相同文本：CM6 与所见即所得共用一个灰阶令牌',
+    theme.includes("'.cm-selectionMatch'") && theme.includes('--sel-match-bg')
+      && css.includes('::highlight(sn-same)') && css.includes('--sel-match-bg'));
+  ok('明暗两套主题都定义了当前行底与匹配底',
+    (css.match(/--active-line-bg:/g) || []).length === 2
+      && (css.match(/--sel-match-bg:/g) || []).length === 2);
+  ok('编辑模式接了选区匹配扩展，但不引查找面板快捷键',
+    entry.includes('highlightSelectionMatches') && !entry.includes('searchKeymap')
+      && plain.includes('minSelectionLength: 1') && plain.includes('maxMatches: 300'));
+  ok('非 md 的视图高亮是 CM6 装饰、随文档映射，不写内容',
+    plain.includes('viewMarksField') && plain.includes('deco.map(tr.changes)')
+      && theme.includes('cm-view-mark'));
+  ok('高亮按文件类型分流：非 md 走视图，md 仍写 ==',
+    app.includes("detectKind(t.name) !== 'md'") && app.includes('plain.toggleViewMark')
+      && app.includes('t.viewMarks = plain.viewMarks')
+      && app.includes("'==' + sel + '=='") && app.includes('wys.toggleMark()'));
+  ok('相同文本高亮有总量上限且绝不改 DOM',
+    selmatch.includes('MAX_TEXT') && selmatch.includes('MAX_HITS')
+      && !/insertNode|appendChild|innerHTML|replaceChildren/.test(selmatch));
+  ok('大小写折叠变长时 hay 与 key 一起退回原文，偏移不会错位',
+    selmatch.includes('lowAll.length === all.length')
+      && selmatch.includes('lowKey.length === needle.length')
+      && selmatch.includes('const fold =') && selmatch.includes('hay.indexOf(key, at)'));
+}
+
 /* ---------- 汇总 ---------- */
 const fail = out.filter((r) => !r.ok);
 out.forEach((r) => {
