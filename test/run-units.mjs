@@ -428,6 +428,45 @@ ok('语言表：新建类型够多', newDocTypes().length >= 24);
       && app.includes('r.error && r.error.line'));
 }
 
+/* ---------- 文件树 / 标签右键两条新命令（源码级不变量） ----------
+   这两处都曾经「能跑但不对」：标签右键的复制路径在 WebView2 里抛
+   NotAllowedError 却照样报成功；批量关闭直接 removeTab，静默丢未保存内容。 */
+{
+  const app = fs.readFileSync('src/js/app.js', 'utf8');
+  const tree = fs.readFileSync('src/js/filetree.js', 'utf8');
+  const clip = fs.readFileSync('src/js/clipboard.js', 'utf8');
+  const wys = fs.readFileSync('src/js/wysiwyg.js', 'utf8');
+  const badWrite = /\bnavigator\.clipboard\.writeText\s*\(/;
+
+  ok('写剪贴板只有一份实现，走 WebView2 里确定能用的 execCommand',
+    clip.includes("document.execCommand('copy')") && !badWrite.test(clip)
+      && !/function writeClipboard\(/.test(wys) && wys.includes("from './clipboard.js'")
+      && app.includes("from './clipboard.js'") && tree.includes("from './clipboard.js'"));
+  ok('两个右键菜单都不再直接调 clipboard.writeText',
+    !badWrite.test(app) && !badWrite.test(tree));
+  ok('复制失败说失败，不无条件报「已复制」',
+    app.includes("toast(writeClipboard(p) ? tt('路径已复制') : tt('无法复制路径'))")
+      && tree.includes("writeClipboard(path) ? tt('路径已复制') : tt('无法复制路径')"));
+  ok('文件树行右键有复制路径，且紧挨在「在资源管理器中显示」之前',
+    tree.includes("label: tt('复制文件路径')") && tree.includes('this._copyPath(entry.path)')
+      && tree.indexOf("label: tt('复制文件路径')") < tree.indexOf("label: tt('在资源管理器中显示')"));
+
+  ok('标签右键四个关闭方向齐全，没有目标的项置灰',
+    ["tt('关闭')", "tt('关闭其他')", "tt('关闭左侧')", "tt('关闭右侧')"].every((s) => app.includes(s))
+      && app.includes('disabled: idx <= 0') && app.includes('disabled: idx >= tabs.length - 1')
+      && app.includes('disabled: tabs.length < 2'));
+  ok('三个批量关闭统一走 closeMany 守卫，不再直接 removeTab 丢数据',
+    ['closeOthers', 'closeLeft', 'closeRight'].every((n) => app.includes(`function ${n}(id)`))
+      && app.includes('async function closeMany(')
+      && app.includes('tabs.filter((t) => set.has(t.id) && isDirty(t))')
+      && app.includes('await saveAllQuiet(dirty)') && app.includes('dirty.filter(isDirty).map(')
+      && !/function closeRight\(id\)[\s\S]{0,240}removeTab/.test(app));
+  ok('速记先 flush，无路径的脏标签持久化进草稿（不被下一轮 saveDraft 覆盖）',
+    app.includes('set.has(t.id) && t.quickNote') && app.includes("LS.set('draftStash'")
+      && app.includes("...LS.get('draftStash', [])") && app.includes("LS.del('draftStash')")
+      && app.includes('activate(keepId)'));
+}
+
 /* ---------- 汇总 ---------- */
 const fail = out.filter((r) => !r.ok);
 out.forEach((r) => {

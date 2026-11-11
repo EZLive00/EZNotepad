@@ -107,6 +107,48 @@ try {
   const dirMenu = await labels();
   ok('目录菜单多出两个新建项', dirMenu.includes('新建文件…') && dirMenu.includes('新建文件夹…'), dirMenu.join(' | '));
 
+  // ---- 行右键「复制文件路径」：路径对、提示真、目录也支持 ----
+  /* 预览页没有系统剪贴板权限，这里只拦 execCommand 记录「离屏 textarea 里
+     写了什么」，真实调用照常发生（结果由 __copyOk 控制，用来走失败分支）。 */
+  await ev(`(() => {
+    window.__copied = [];
+    window.__copyOk = true;
+    const orig = document.execCommand.bind(document);
+    document.execCommand = (cmd) => {
+      if (cmd === 'copy') {
+        window.__copied.push(document.activeElement && document.activeElement.value);
+        return window.__copyOk;
+      }
+      return orig(cmd);
+    };
+    return 1;
+  })()`);
+  ok('文件菜单有「复制文件路径」', fileMenu.includes('复制文件路径'), fileMenu.join(' | '));
+  ok('复制路径紧挨在「在资源管理器中显示」之前',
+    fileMenu.indexOf('复制文件路径') === fileMenu.indexOf('在资源管理器中显示') - 1, fileMenu.join(' | '));
+  ok('目录菜单也给了复制路径', dirMenu.includes('复制文件路径'), dirMenu.join(' | '));
+
+  await rightClick('笔记.md');
+  ok('点复制路径能执行', await pick('复制文件路径'));
+  const copied = await ev(`window.__copied`);
+  ok('复制的是被右键那一行的完整路径',
+    copied.length === 1 && copied[0] === 'C:/demo/笔记.md', JSON.stringify(copied));
+  const lastToast = await ev(`window.__calls.filter(c => c[0] === 'toast').pop()`);
+  ok('复制成功才提示「路径已复制」', lastToast && lastToast[1] === '路径已复制', JSON.stringify(lastToast));
+
+  await ev(`window.__copyOk = false; 1`);
+  await rightClick('笔记.md');
+  await pick('复制文件路径');
+  const failToast = await ev(`window.__calls.filter(c => c[0] === 'toast').pop()`);
+  ok('复制失败时说「无法复制路径」，不假装成功',
+    failToast && failToast[1] === '无法复制路径', JSON.stringify(failToast));
+  await ev(`window.__copyOk = true; 1`);
+
+  await rightClick('assets');
+  await pick('复制文件路径');
+  const dirCopied = await ev(`window.__copied.slice(-1)[0]`);
+  ok('右键目录复制的是目录自己的路径', dirCopied === 'C:/demo/assets', JSON.stringify(dirCopied));
+
   // ---- 多选 + 右键比较 ----
   const clickRow = (name, mod) => ev(`(() => {
     const row = [...document.querySelectorAll('.ft-row')].find(r => r.querySelector('.ft-name').textContent === ${JSON.stringify(name)});

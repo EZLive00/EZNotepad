@@ -852,6 +852,110 @@ try {
     const py = await fmt('f.py', 'def f():   \n    return 1   \n');
     ok('Python 仍是保守清理，缩进一字不动', py === 'def f():\n    return 1\n', JSON.stringify(py));
   }
+
+  /* ---------- 标签右键：关闭左侧 / 复制路径 / 批量关闭守卫 ---------- */
+  {
+    const names = () => ev(`[...document.querySelectorAll('.tab[data-id] .tab-name')].map(n => n.textContent)`);
+    const menu = () => ev(`[...document.querySelectorAll('.ctx-menu .ctx-item')].map(b => ({
+      label: b.querySelector('.ctx-label').textContent, disabled: b.disabled }))`);
+    const rightTab = (name) => ev(`(() => {
+      const b = [...document.querySelectorAll('.tab[data-id]')]
+        .find(x => (x.querySelector('.tab-name')?.textContent || '').includes(${JSON.stringify(name)}));
+      if (!b) return false;
+      b.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 60, clientY: 20 }));
+      return true;
+    })()`);
+    const clickItem = (label) => ev(`(() => {
+      const b = [...document.querySelectorAll('.ctx-menu .ctx-item')]
+        .find(x => x.querySelector('.ctx-label').textContent === ${JSON.stringify(label)});
+      if (!b || b.disabled) return false;
+      b.click(); return true;
+    })()`);
+    const dlgHidden = () => ev(`document.getElementById('dlgOverlay').classList.contains('hidden')`);
+    const dlgKey = (k) => ev(`(() => {
+      const b = [...document.querySelectorAll('#dlgFoot button')].find(x => x.dataset.key === ${JSON.stringify(k)});
+      if (!b) return false; b.click(); return true;
+    })()`);
+    const waitDlg = async () => {
+      for (let i = 0; i < 40; i++) { if (!(await dlgHidden())) return true; await new Promise(r => setTimeout(r, 80)); }
+      return false;
+    };
+    const waitFor = async (pred) => {
+      for (let i = 0; i < 40; i++) { const n = await names(); if (pred(n)) return n; await new Promise(r => setTimeout(r, 80)); }
+      return names();
+    };
+
+    /* 左侧造一个无路径的脏标签：既触发整批守卫，又验证「保存」时
+       没地方落盘的内容会进草稿，而不是跟着标签一起消失。 */
+    await ev(`(() => {
+      window.__snp.newTab('dirty-nopath.md', '原始', null);
+      window.__snp.setContent('未落盘的内容');
+      window.__snp.newTab('L.md', 'L', 'C:/tmp/L.md');
+      window.__snp.newTab('M.md', 'M', 'C:/tmp/M.md');
+      window.__snp.newTab('R.md', 'R', 'C:/tmp/R.md');
+      return 1;
+    })()`);
+    await ev('new Promise(r => setTimeout(r, 200))');
+
+    ok('右键中间标签能弹出菜单', await rightTab('M.md'));
+    const items = await menu();
+    const ls = items.map(i => i.label);
+    ok('标签右键有四个关闭方向 + 复制路径 + 在文件夹中显示',
+      ['关闭', '关闭其他', '关闭左侧', '关闭右侧', '复制文件路径', '在文件夹中显示'].every(s => ls.includes(s)),
+      JSON.stringify(ls));
+    ok('关闭方向按「其他 / 左 / 右」相邻排列',
+      ls.indexOf('关闭左侧') === ls.indexOf('关闭其他') + 1
+        && ls.indexOf('关闭右侧') === ls.indexOf('关闭左侧') + 1, JSON.stringify(ls));
+    ok('中间标签的左右两侧都可执行',
+      !items.find(i => i.label === '关闭左侧').disabled
+        && !items.find(i => i.label === '关闭右侧').disabled, JSON.stringify(items));
+
+    /* 真实 copy 照常执行，只拦下来记录离屏 textarea 里写了什么 */
+    await ev(`(() => {
+      window.__tabCopied = [];
+      const orig = document.execCommand.bind(document);
+      document.execCommand = (cmd) => {
+        if (cmd === 'copy') { window.__tabCopied.push(document.activeElement && document.activeElement.value); return true; }
+        return orig(cmd);
+      };
+      return 1;
+    })()`);
+    ok('点「复制文件路径」能执行', await clickItem('复制文件路径'));
+    const tabCopied = await ev(`window.__tabCopied`);
+    ok('标签右键复制的是该标签自己的路径',
+      tabCopied.length === 1 && tabCopied[0] === 'C:/tmp/M.md', JSON.stringify(tabCopied));
+    ok('复制成功提示「路径已复制」',
+      await ev(`[...document.querySelectorAll('#toasts .toast')].some(b => b.textContent.includes('路径已复制'))`));
+
+    /* 整批只确认一次；Esc 取消后一个都不能少 */
+    await rightTab('M.md');
+    const before = await names();
+    ok('点「关闭左侧」能执行', await clickItem('关闭左侧'));
+    ok('批量关闭遇到未保存内容会先确认，不静默丢弃',
+      await waitDlg() && (await ev(`document.getElementById('dlgTitle').textContent`)) === '还有未保存的内容');
+    ok('确认框是整批一次，三个按钮带 Y / N / Esc',
+      (await ev(`[...document.querySelectorAll('#dlgFoot button')].map(b => b.dataset.key).join(',')`)) === 'Y,N,Esc');
+    ok('Esc 取消关闭', await dlgKey('Esc'));
+    await ev('new Promise(r => setTimeout(r, 200))');
+    const afterCancel = await names();
+    ok('取消后一个标签都没少', afterCancel.length === before.length,
+      JSON.stringify({ before: before.length, after: afterCancel.length }));
+
+    /* 「全部保存并关闭」：左侧清空，无路径的脏内容进草稿 */
+    await rightTab('M.md');
+    ok('再次点「关闭左侧」', await clickItem('关闭左侧'));
+    ok('第二次确认也会弹出', await waitDlg());
+    ok('Y 全部保存并关闭', await dlgKey('Y'));
+    const after = await waitFor((n) => n.includes('M.md') && n.includes('R.md') && !n.includes('L.md'));
+    ok('关闭左侧后只剩被右键的标签及其右侧',
+      after.includes('M.md') && after.includes('R.md') && !after.includes('L.md')
+        && !after.includes('dirty-nopath.md'), JSON.stringify(after));
+    const drafts = await ev(`localStorage.getItem('snp.drafts') || ''`);
+    ok('无路径的未保存内容没被丢掉，写进了草稿',
+      drafts.includes('未落盘的内容'), String(drafts).slice(0, 200));
+    ok('draftStash 会一直跟着草稿，恢复后才清',
+      await ev(`(localStorage.getItem('snp.draftStash') || '').includes('未落盘的内容')`));
+  }
 } catch (e) {
   ok('运行期间没有异常', false, String((e && e.message) || e).slice(0, 300));
 } finally {

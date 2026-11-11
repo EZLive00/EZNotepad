@@ -1757,6 +1757,119 @@ try {
     ok('「在文件夹中显示」紧跟在「打开文件夹」下面',
       labels.indexOf('在文件夹中显示') === labels.indexOf('打开文件夹…') + 1, JSON.stringify(labels));
   }
+
+  /* ---------- 两个右键菜单的新命令（真机 WebView2） ----------
+     复制路径必须真机验：navigator.clipboard.writeText 在这儿会抛
+     NotAllowedError，旧实现还照样弹「路径已复制」。 */
+  {
+    const ctxLabels = () => ev(`[...document.querySelectorAll('.ctx-menu .ctx-item')]
+      .map(b => ({ label: b.querySelector('.ctx-label').textContent, disabled: b.disabled }))`);
+    const clickCtx = (label) => ev(`(() => {
+      const b = [...document.querySelectorAll('.ctx-menu .ctx-item')]
+        .find(x => x.querySelector('.ctx-label').textContent === ${JSON.stringify(label)});
+      if (!b || b.disabled) return false;
+      b.click(); return true;
+    })()`);
+    const rightClickAt = async (x, y) => {
+      await send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'right', clickCount: 1 });
+      await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'right', clickCount: 1 });
+      await sleep(260);
+    };
+    /* 真读系统剪贴板：离屏 textarea + 真实 Ctrl+V，paste 事件或 value 都认 */
+    const readClip = async () => {
+      await ev(`(() => {
+        window.__clipProbe = null;
+        const ta = document.createElement('textarea');
+        ta.id = 'snClipProbe';
+        ta.style.cssText = 'position:fixed;left:8px;top:90px;width:280px;height:30px;z-index:99999';
+        ta.addEventListener('paste', (e) => {
+          window.__clipProbe = e.clipboardData && e.clipboardData.getData('text');
+          e.preventDefault();
+        });
+        document.body.appendChild(ta);
+        ta.focus();
+        return 1;
+      })()`);
+      const k = { modifiers: 2, key: 'v', code: 'KeyV', windowsVirtualKeyCode: 86 };
+      await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...k });
+      await send('Input.dispatchKeyEvent', { type: 'keyUp', ...k });
+      await sleep(350);
+      const v = await ev(`window.__clipProbe === null
+        ? document.getElementById('snClipProbe').value : window.__clipProbe`);
+      await ev(`document.getElementById('snClipProbe')?.remove(); 1`);
+      return v;
+    };
+
+    /* 标签右键：M 是中间那个，左右都有可关的目标 */
+    await ev(`(() => {
+      window.__snp.newTab('ctx-L.md', 'L', 'C:/tmp/ctx-L.md');
+      window.__snp.newTab('ctx-M.md', 'M', 'C:/tmp/ctx-M.md');
+      window.__snp.newTab('ctx-R.md', 'R', 'C:/tmp/ctx-R.md');
+      return 1;
+    })()`);
+    await sleep(350);
+    const tbox = await ev(`(() => {
+      const b = [...document.querySelectorAll('.tab[data-id]')]
+        .find(x => (x.querySelector('.tab-name')?.textContent || '').includes('ctx-M.md'));
+      if (!b) return null;
+      const r = b.getBoundingClientRect();
+      return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+    })()`);
+    ok('真机：找到中间标签', !!tbox, JSON.stringify(tbox));
+    if (tbox) {
+      await rightClickAt(tbox.x, tbox.y);
+      const tm = await ctxLabels();
+      const tl = tm.map(i => i.label);
+      ok('真机：标签右键同时有「关闭左侧」和「复制文件路径」',
+        tl.includes('关闭左侧') && tl.includes('复制文件路径'), JSON.stringify(tl));
+      ok('真机：关闭方向仍是「其他 / 左 / 右」相邻',
+        tl.indexOf('关闭左侧') === tl.indexOf('关闭其他') + 1
+          && tl.indexOf('关闭右侧') === tl.indexOf('关闭左侧') + 1, JSON.stringify(tl));
+      ok('真机：中间标签两侧都可关闭',
+        !tm.find(i => i.label === '关闭左侧').disabled
+          && !tm.find(i => i.label === '关闭右侧').disabled, JSON.stringify(tm));
+      ok('真机：点「复制文件路径」能执行', await clickCtx('复制文件路径'));
+      await sleep(250);
+      ok('真机：WebView2 里复制真的成功（不再抛 NotAllowedError）',
+        await ev(`[...document.querySelectorAll('#toasts .toast')].some(b => b.textContent.includes('路径已复制'))`),
+        String(await ev(`document.getElementById('toasts').textContent`)));
+      const pastedPath = await readClip();
+      ok('真机：剪贴板里就是该标签的完整路径',
+        pastedPath === 'C:/tmp/ctx-M.md', JSON.stringify(pastedPath));
+    }
+
+    /* 文件树行右键：新开的文件夹里放一个真文件，右键那一行 */
+    const ftRoot = path.join(os.tmpdir(), 'eznotepad-probe', 'ctx-path');
+    fs.mkdirSync(ftRoot, { recursive: true });
+    const ftFile = path.join(ftRoot, 'p.md');
+    fs.writeFileSync(ftFile, '# p\n', 'utf8');
+    const winRoot = ftRoot.replace(/\//g, '\\');
+    const winFile = ftFile.replace(/\//g, '\\');
+    await ev(`(async () => { await window.__snp.setFolder(${JSON.stringify(winRoot)}); return 1; })()`);
+    await sleep(650);
+    await ev(`document.querySelector('[data-side="files"]').click()`);
+    await sleep(350);
+    const fbox = await ev(`(() => {
+      const r = [...document.querySelectorAll('#ftBody .ft-row')]
+        .find(x => /p\\.md$/.test(x.dataset.path || ''));
+      if (!r) return null;
+      const b = r.getBoundingClientRect();
+      return { x: Math.round(b.left + 30), y: Math.round(b.top + b.height / 2), path: r.dataset.path };
+    })()`);
+    ok('真机：文件树里有目标文件行', !!fbox, JSON.stringify(fbox));
+    if (fbox) {
+      await rightClickAt(fbox.x, fbox.y);
+      const fm = (await ctxLabels()).map(i => i.label);
+      ok('真机：文件树行右键有「复制文件路径」', fm.includes('复制文件路径'), JSON.stringify(fm));
+      ok('真机：复制路径紧挨「在资源管理器中显示」',
+        fm.indexOf('复制文件路径') === fm.indexOf('在资源管理器中显示') - 1, JSON.stringify(fm));
+      ok('真机：点文件树复制路径能执行', await clickCtx('复制文件路径'));
+      await sleep(250);
+      const ftPasted = await readClip();
+      ok('真机：文件树复制的是那一行的完整路径',
+        ftPasted === winFile, JSON.stringify({ got: ftPasted, want: winFile }));
+    }
+  }
 } catch (e) {
   ok('探针执行完成', false, e.message);
 } finally {
