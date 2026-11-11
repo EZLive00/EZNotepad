@@ -611,7 +611,7 @@ window.__run = () => {
   T.reset('```js\nx\n```');
   ed.restoreCaret({ blockIndex: 0, offset: 1 });
   T.key('ArrowDown');
-  eq('出块后插入提示线亮起', hint().style.display, 'block');
+  eq('出块后插入提示线亮起', hint().style.display, 'flex');
   eq('提示线上写明按哪个键', hintLabel().includes('Enter'), true);
   {
     const code = root.querySelector('.w-block[data-type="code"]');
@@ -620,7 +620,7 @@ window.__run = () => {
     eq('提示线宽度跟着块宽', parseFloat(hint().style.width) > 0, true);
   }
   T.hoverBelow();   // 鼠标挪动不能把常驻提示擦掉（和 hover 线是两个元素）
-  eq('鼠标移动后常驻提示仍在', hint().style.display, 'block');
+  eq('鼠标移动后常驻提示仍在', hint().style.display, 'flex');
   T.key('Enter');
   eq('回车兑现后提示线收起', hint().style.display, 'none');
   eq('回车后状态也清掉了', !!ed.gapAfter, false);

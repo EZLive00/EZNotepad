@@ -791,7 +791,7 @@ try {
     await caretEndOf('.w-code');
     await down();
     const h1 = await gapHint();
-    ok('真机：出块后插入提示线亮起', h1.display === 'block', JSON.stringify(h1));
+    ok('真机：出块后插入提示线亮起', h1.display === 'flex', JSON.stringify(h1));
     ok('真机：提示文字写明按哪个键', h1.label.includes('Enter'), h1.label);
     ok('真机：提示线钉在代码块底边',
       Math.abs(h1.top - ((await codeBottom()) - h1.hostTop)) < 3,
@@ -814,7 +814,7 @@ try {
     const h2 = await gapHint();
     const bqBottom = await ev(`document.querySelector('.w-block[data-type="bq"]').getBoundingClientRect().bottom`);
     ok('真机：光标进了引用块，提示线仍钉在代码块底边',
-      h2.display === 'block'
+      h2.display === 'flex'
         && Math.abs(h2.top - ((await codeBottom()) - h2.hostTop)) < 3
         && Math.abs(h2.top - (bqBottom - h2.hostTop)) > 4,
       `${h2.top} / code ${(await codeBottom()) - h2.hostTop} / bq ${bqBottom - h2.hostTop}`);

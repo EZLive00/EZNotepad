@@ -494,6 +494,10 @@ ok('语言表：新建类型够多', newDocTypes().length >= 24);
       && wys.includes("hintLabel.className = 'w-gap-hint-label'")
       && css.includes('.w-gap-hint-line') && css.includes('.w-gap-hint-label')
       && css.includes('pointer-events: none'));
+  ok('窄栏时文字标签不会把插入线挤没（线弹性占满 + 容器撑到标签宽 + 24）',
+    css.includes('flex: 1 1 auto') && css.includes('min-width: 16px')
+      && wys.includes('Math.max(r.width, labelW + 24)')
+      && wys.includes("hint.style.display = 'flex'"));
   ok('提示线钉在出块那一块底边，块被重铺掉就隐藏，滚动时跟着走',
     wys.includes('syncGapHint() {') && wys.includes('block.isConnected')
       && wys.includes('block.parentElement !== this.root')

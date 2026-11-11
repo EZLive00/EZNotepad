@@ -954,15 +954,18 @@ input[type="search"] { cursor: var(--cur-text), text; }
    pointermove 里的 hideInsertLine() 擦不掉它。强调色只用来标这个「待插入」状态，
    文字与边框走中性色，深浅色下都不刺眼。 */
 .w-gap-hint {
-  position: absolute; height: 0; display: none; pointer-events: none; z-index: 7;
+  position: absolute; display: none; align-items: center; gap: 6px;
+  transform: translateY(-50%); pointer-events: none; z-index: 7;
 }
+/* 弹性布局：线占满标签左边的剩余宽度。双栏窄编辑区里标签会比块还宽，
+   早先「线铺满 + 标签绝对定位盖在右端」会把整条线盖住，只剩一个悬浮文字框，
+   看不出是「插入点」。JS 把容器宽度至少撑到 标签宽 + 24px，保证线总露得出来。 */
 .w-gap-hint-line {
-  position: absolute; left: 0; right: 0; top: -1px; height: 2px;
+  flex: 1 1 auto; min-width: 16px; height: 2px;
   background: var(--accent); opacity: .55; border-radius: 1px;
 }
 .w-gap-hint-label {
-  position: absolute; right: 0; top: 0; transform: translateY(-50%);
-  padding: 1px 8px; border-radius: 4px;
+  flex: 0 0 auto; padding: 1px 8px; border-radius: 4px;
   background: var(--bg-panel); color: var(--fg-soft);
   border: 1px solid var(--line);
   font-size: 11px; line-height: 17px; white-space: nowrap;

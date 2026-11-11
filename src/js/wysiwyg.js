@@ -3253,12 +3253,15 @@ export class WysiwygEditor {
     const h = host.getBoundingClientRect();
     /* 滚出视口就别把线画到容器外面；状态留着，滚回来线会自己出现 */
     if (r.bottom < h.top || r.top > h.bottom) { hint.style.display = 'none'; return; }
-    hint.style.top = (r.bottom - h.top) + 'px';
-    hint.style.left = (r.left - h.left) + 'px';
-    hint.style.width = r.width + 'px';
     const label = hint.querySelector('.w-gap-hint-label');
     if (label) label.textContent = tt('按 Enter 在此插入一行');   // 切语言后下一轮就跟上
-    hint.style.display = 'block';
+    /* 先显示才量得到标签宽度：双栏窄编辑区里它可能比块还宽。把容器至少撑到
+       「标签 + 24px」，左边的线才不会被挤没（见 styles.css 的 .w-gap-hint）。 */
+    hint.style.display = 'flex';
+    const labelW = label ? label.getBoundingClientRect().width : 0;
+    hint.style.top = (r.bottom - h.top) + 'px';
+    hint.style.left = (r.left - h.left) + 'px';
+    hint.style.width = Math.max(r.width, labelW + 24) + 'px';
   }
 
   /**
