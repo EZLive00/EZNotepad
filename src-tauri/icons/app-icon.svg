@@ -1,12 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <defs><linearGradient id="g" x1="0" y1="0" x2="0.15" y2="1">
-    <stop offset="0" stop-color="#ff7d45"/><stop offset="1" stop-color="#e04a17"/></linearGradient></defs>
-  <rect width="1024" height="1024" rx="232" fill="url(#g)"/>
-  <path d="M264 108h316l228 228v504a40 40 0 0 1-40 40H264a40 40 0 0 1-40-40V148a40 40 0 0 1 40-40z" fill="#fbfaf7"/>
-  <path d="M580 108l228 228H620a40 40 0 0 1-40-40z" fill="#ece2d4"/>
-  <g fill="#1f232c">
-    <rect x="278" y="360" width="340" height="72" rx="36"/>
-    <rect x="278" y="492" width="470" height="48" rx="24"/>
-    <rect x="278" y="584" width="300" height="48" rx="24"/>
+  <!-- 由 scripts/app-icon.mjs 生成，请勿手改。几何与 #i-brand 同一组。 -->
+  <rect width="1024" height="1024" rx="372.3636" fill="#e54d2e" />
+  <g transform="translate(139.6364 139.6364) scale(31.0303)">
+    <path d="M5 2h9l7 7v11.4a1.6 1.6 0 0 1-1.6 1.6H5a1.6 1.6 0 0 1-1.6-1.6V3.6A1.6 1.6 0 0 1 5 2z" fill="#fbfaf7" />
+    <path d="M14 2l7 7h-5.4A1.6 1.6 0 0 1 14 7.4z" fill="#ece2d4" />
+    <g fill="#1f232c">
+      <rect x="5.4" y="9" width="9.2" height="2" rx="1" />
+      <rect x="5.4" y="12.4" width="12.6" height="1.7" rx=".85" />
+      <rect x="5.4" y="15.4" width="8.2" height="1.7" rx=".85" />
+    </g>
   </g>
 </svg>

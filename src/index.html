@@ -300,11 +300,7 @@
     </symbol>
   </svg>
   <!-- icon-sprite:end -->
-  <!-- 品牌标：**手写，不在生成区里**（build-icons.mjs 只重写上面那段，写在里面
-       会被整块抹掉）。形状和应用图标（src-tauri/icons/app-icon.svg）同一套：
-       白纸 + 暖灰折角 + 墨色正文条。三条线的粗细不是等比缩的 —— 从 1024 等比
-       缩到 24 时正文条只剩 0.8 单位（15px 下 ≈ 0.5px），会糊成一片白，所以
-       按「看起来一样」重新给了 1.7 单位（≈1px）。 -->
+  <!-- brand-sprite:start (由 scripts/app-icon.mjs 生成，请勿手改) -->
   <svg class="icon-sprite" aria-hidden="true" focusable="false">
     <symbol id="i-brand" viewBox="0 0 24 24">
       <path d="M5 2h9l7 7v11.4a1.6 1.6 0 0 1-1.6 1.6H5a1.6 1.6 0 0 1-1.6-1.6V3.6A1.6 1.6 0 0 1 5 2z" fill="#fbfaf7" />
@@ -316,6 +312,7 @@
       </g>
     </symbol>
   </svg>
+  <!-- brand-sprite:end -->
   <!-- ============ 顶部：标题栏（菜单 + 标题 + 窗口按钮）｜标签与工具行 ============ -->
   <header class="appbar">
     <div class="titlebar" data-tauri-drag-region>

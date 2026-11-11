@@ -15,6 +15,7 @@
     "build:syntax": "node scripts/build-syntax.mjs",
     "build:mermaid": "node scripts/build-mermaid.mjs",
     "icons": "node scripts/build-icons.mjs",
+    "icons:app": "node scripts/app-icon.mjs",
     "test": "node test/run.mjs",
     "test:editor": "node test/run-editor.mjs",
     "test:menu": "node test/run-menu.mjs",
