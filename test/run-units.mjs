@@ -18,6 +18,7 @@ import { detectLang } from '../src/js/highlight.js';
 import { normalizeLang, langForFile, newDocTypes } from '../src/js/langs.js';
 import { formatLoose } from '../src/js/format-loose.js';
 import { formatByKind } from '../src/js/format.js';
+import { appIconSvg, brandSprite } from '../scripts/app-icon.mjs';
 
 const out = [];
 const eq = (name, got, want) => out.push({ name, ok: JSON.stringify(got) === JSON.stringify(want), got, want });
@@ -520,6 +521,53 @@ ok('语言表：新建类型够多', newDocTypes().length >= 24);
       && app.includes('wys.focusBlock(nb)') && app.includes('wys.flush()'));
   ok('两个新词条都进了源字典与 8 语产物',
     ["'插入空行'", "'按 Enter 在此插入一行'"].every((k) => dictSrc.includes(k) && dict.includes(k)));
+}
+
+/* ---------- 品牌标 / 应用图标：只有一份几何，别再各写各的 ----------
+   曾经标题栏 #i-brand（纯色橙底、白纸小、留白多）和 app-icon.svg（渐变橙底、
+   白纸大、圆角小）是两份手写几何；改色时只重建了后者，于是任务栏和窗口
+   左上角显示两枚不同的图标。现在两边都从 scripts/app-icon.mjs 出，
+   这里把「源 = 产物」、配色口径和位图配套关系一起钉死。 */
+{
+  const read = (p) => fs.readFileSync(new URL('../' + p, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const HTML = read('src/index.html');
+  const SVG = read('src-tauri/icons/app-icon.svg');
+  const CSS = read('src/styles.css');
+  const CONF = read('src-tauri/tauri.conf.json');
+  const PKG = read('package.json');
+  const SRC = read('scripts/app-icon.mjs');
+  const BUILD_RS = read('src-tauri/build.rs');
+
+  ok('app-icon.svg 就是单一源生成的那份（等价 icons:app --check）', SVG === appIconSvg());
+  ok('index.html 的 #i-brand 就是单一源生成的那份', HTML.includes(brandSprite()));
+  ok('#i-brand 只存在于生成区，不许再手写一份',
+    (HTML.match(/<symbol id="i-brand"/g) || []).length === 1
+      && HTML.includes('brand-sprite:start') && HTML.includes('brand-sprite:end')
+      && !HTML.includes('手写，不在生成区里'));
+  ok('应用图标用 transform 复用同一组 path，没有另抄坐标',
+    SVG.includes('<g transform="translate(') && SRC.includes('function brandBody')
+      && (SVG.match(/<path d=/g) || []).length === 2
+      && (brandSprite().match(/<path d=/g) || []).length === 2);
+  ok('图标底色 = 标题栏底块色 = #e54d2e，亮/暗两主题同值',
+    SRC.includes("bg: '#e54d2e'") && SVG.includes('fill="#e54d2e"')
+      && /\.brand-mark\s*\{[^}]*background:\s*var\(--accent-solid\)/.test(CSS)
+      && (CSS.match(/--tm-9: #e54d2e;/g) || []).length === 2);
+  ok('完全照搬左上角：没有渐变、没有旧的蓝底或渐变橙',
+    !SVG.includes('linearGradient') && !SVG.includes('#2a5cf0') && !SVG.includes('#ff7d45'));
+  ok('bundle.icon 里有 icon.ico（任务栏 / 快捷方式走的就是它）',
+    /"icon"\s*:\s*\[[\s\S]*?"icons\/icon\.ico"/.test(CONF));
+  ok('package.json 提供 icons:app 重建入口',
+    PKG.includes('"icons:app"') && PKG.includes('scripts/app-icon.mjs'));
+  ok('build.rs 把 icons/ 声明为 rerun-if-changed，否则增量构建的 exe 仍是旧图标',
+    BUILD_RS.includes('cargo:rerun-if-changed=icons')
+      && BUILD_RS.includes('tauri_build::build()'));
+
+  const iconDir = new URL('../src-tauri/icons/', import.meta.url);
+  const bitmaps = fs.readdirSync(iconDir).filter((f) => /\.(png|ico|icns)$/.test(f));
+  ok('17 份桌面图标产物齐全（tauri icon 白名单）', bitmaps.length === 17, bitmaps.length);
+  const ico = fs.readFileSync(new URL('../src-tauri/icons/icon.ico', import.meta.url));
+  const big = fs.readFileSync(new URL('../src-tauri/icons/128x128@2x.png', import.meta.url));
+  ok('ico 内嵌的 256 帧与同批生成的 128x128@2x.png 一致', ico.includes(big));
 }
 
 /* ---------- 汇总 ---------- */
