@@ -1543,6 +1543,97 @@ try {
     ok('跨格选区不改表格结构', !/==/.test(cross) && /张三 \| 北京/.test(cross), JSON.stringify(cross));
   }
 
+  /* ---------- 编辑区三条视图能力（真机 WebView2） ----------
+     这里验「浏览器真的这么画」：computed 色值、CSS Custom Highlight 注册表、
+     以及右键高亮在非 Markdown 文件里不再往内容里塞 ==。 */
+  {
+    const alphaOf = (c) => {
+      const m = String(c).match(/\/\s*([\d.]+)\s*\)/);
+      if (m) return +m[1];
+      const s = String(c);
+      const p = s.slice(s.indexOf('(') + 1, s.lastIndexOf(')')).split(',').map(Number);
+      return p.length === 4 ? p[3] : -1;
+    };
+    await ev(`window.__snp.newTab('view.md', '红 蓝 红 绿 红', null, { mode: 'edit' })`);
+    await sleep(220);
+    const lineBg = await ev(`(() => {
+      const el = document.querySelector('.cm-activeLine');
+      if (!el) return { bg: '', want: '' };
+      const p = document.createElement('div');
+      p.style.backgroundColor = 'var(--active-line-bg)';
+      document.body.appendChild(p);
+      const want = getComputedStyle(p).backgroundColor;
+      p.remove();
+      return { bg: getComputedStyle(el).backgroundColor, want };
+    })()`);
+    ok('真机：当前行底色走 --active-line-bg', !!lineBg.bg && lineBg.bg === lineBg.want,
+      JSON.stringify(lineBg));
+    ok('真机：当前行底色够淡（alpha ≤ 0.08）',
+      alphaOf(lineBg.bg) > 0 && alphaOf(lineBg.bg) <= 0.08, lineBg.bg);
+
+    /* 编辑模式：选中一个字也把相同的字一并标出来。
+       ⚠️ @codemirror/search 的 getDeco 只装饰「选区之外」的命中
+       （from >= range.to || to <= range.from），主选区那处由选区底色自己画，
+       不挂 .cm-selectionMatch。三个「红」选中第一个，答案就是 2 而不是 3。
+       所见即所得的 sn-same 是 3，因为它把选中的那一处也算进去了。 */
+    await ev(`window.__snp.plain.setSelection(0, 1)`);
+    await sleep(220);
+    const cmSame = await ev(`(() => {
+      const els = [...document.querySelectorAll('.cm-selectionMatch')];
+      return { n: els.length, allRed: els.length > 0 && els.every((e) => e.textContent === '红') };
+    })()`);
+    ok('真机：编辑模式把选中之外的两处「红」一并标出',
+      cmSame.n === 2 && cmSame.allRed, JSON.stringify(cmSame));
+    await ev(`window.__snp.plain.setSelection(0)`);
+    await sleep(220);
+    ok('真机：光标折叠后清掉匹配',
+      (await ev(`document.querySelectorAll('.cm-selectionMatch').length`)) === 0);
+
+    /* 所见即所得：同一件事走 CSS Custom Highlight API */
+    await ev('window.__snp.commands.modeWysiwyg()');
+    await sleep(320);
+    await ev(`(() => {
+      const root = window.__snp.editor.root;
+      const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      let n = null;
+      while ((n = w.nextNode())) if (n.nodeValue.includes('红')) break;
+      const r = document.createRange(); r.setStart(n, 0); r.setEnd(n, 1);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      return 1;
+    })()`);
+    await sleep(200);   // selectionchange → rAF → updateSelMatch
+    const same = await ev(`(() => { const h = CSS.highlights && CSS.highlights.get('sn-same'); return h ? h.size : -1; })()`);
+    ok('真机：所见即所得把三处「红」都标出来', same >= 3, String(same));
+    ok('真机：标相同文本不改内容',
+      (await ev('window.__snp.getEditorText()')) === '红 蓝 红 绿 红');
+    ok('真机：标相同文本没往 DOM 插 mark',
+      (await ev(`document.querySelectorAll('#wysiwyg mark').length`)) === 0);
+
+    /* 非 Markdown 文件：视图高亮，不再写 == */
+    await ev(`window.__snp.newTab('view.txt', '重点 重点 重点', null, { mode: 'edit' })`);
+    await sleep(240);
+    await ev(`window.__snp.plain.setSelection(0, 2)`);
+    await ev(`window.__snp.commands.highlight(); 0`);
+    await sleep(180);
+    const txt = await ev('window.__snp.getEditorText()');
+    ok('真机：非 md 高亮不往文件写 ==', txt === '重点 重点 重点', JSON.stringify(txt));
+    ok('真机：编辑区真的显示黄底',
+      (await ev(`document.querySelectorAll('.cm-view-mark').length`)) === 1);
+    await ev(`window.__snp.commands.highlight(); 0`);
+    await sleep(180);
+    ok('真机：再点一次取消',
+      (await ev(`document.querySelectorAll('.cm-view-mark').length`)) === 0);
+
+    await ev(`window.__snp.newTab('eq.py', 'a == b', null, { mode: 'edit' })`);
+    await sleep(240);
+    await ev(`window.__snp.plain.setSelection(2, 4)`);
+    await ev(`window.__snp.commands.highlight(); 0`);
+    await sleep(180);
+    ok('真机：代码里的 == 不被当成已高亮',
+      (await ev(`document.querySelectorAll('.cm-view-mark').length`)) === 1
+        && (await ev('window.__snp.getEditorText()')) === 'a == b');
+  }
+
   /* ---------- 侧栏：在文件列表中定位当前文件 ----------
      照 IDEA 的 Select Opened File：展开父目录 → 滚到可见 → 闪三下。
      这里用三层深的真文件，且先把侧栏切到大纲页，模拟「用户不知道文件在哪」。 */
