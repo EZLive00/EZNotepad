@@ -2614,14 +2614,25 @@ async function formatDoc() {
   try {
     /* 格式化引擎按需加载（2 MB 的 prettier），第一次按会多等一拍 */
     const r = await formatByKind(kind, t.content, t.name);
-    if (r.text === t.content) { toast(tt('已经是最佳格式，无需调整')); return; }
+    if (r.text === t.content) {
+      toast(r.forced ? tt('原文有语法错误，且没有可调整的空白') : tt('已经是最佳格式，无需调整'));
+      return;
+    }
     setContent(r.text);
-    const notes = r.notes && r.notes.length ? `（${r.notes.join('、')}）` : '';
+    /* 宽松 / 兜底路径要在提示里说清楚用了哪条路；语法错误的行列只报出来，
+       不 gotoLine —— 重新排版后行号已经变了，把光标送过去反而会误导。 */
+    const bits = [...(r.notes || [])];
+    if (r.error && r.error.line) {
+      bits.push(tt('第 {line} 行第 {col} 列', { line: r.error.line, col: r.error.col }));
+    }
+    const notes = bits.length ? `（${bits.join('、')}）` : '';
     undoToast(tt('已格式化{notes}', { notes }), backup);
   } catch (e) {
-    const loc = e.line ? tt('第 {line} 行第 {col} 列', { line: e.line, col: e.col }) : '';
-    dialog({ title: tt('无法格式化'), body: tt('文件中存在语法错误，已保持原样。<br><br><b>{loc}</b><br><span style="font-family:var(--font-mono);font-size:12px">{msg}</span>', { loc, msg: String(e.message) }) });
-    if (e.line) gotoLine(e.line - 1);
+    /* 语法错误已经在 formatByKind 里兜住了；能到这里只剩「引擎加载失败」
+       这类真故障，值得弹框，但不再拿「文件有语法错误」去冤枉文本。 */
+    const msg = String((e && e.message) || e)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    dialog({ title: tt('无法格式化'), body: `<span style="font-family:var(--font-mono);font-size:12px">${msg}</span>` });
   }
 }
 

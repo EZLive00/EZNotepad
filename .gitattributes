@@ -1,6 +1,9 @@
 # 统一换行：仓库与工作区都用 LF（本机系统级 core.autocrlf=true，这里显式覆盖）
 * text=auto eol=lf
 
+# esbuild 压缩产物：模板字符串的尾空格是代码内容，⛔ 不能为了 diff --check 去手改
+src/vendor/*.js -whitespace
+
 # 二进制
 *.png binary
 *.jpg binary

@@ -6,13 +6,20 @@
 // 也不再自己写「自动修复全角引号 / 尾逗号」那类正则补丁 —— 那种补丁只在
 // 它见过的那几种坏法上有效，修错了还会静默改坏用户的数据。
 //
+// 「不标准」的文本不再被一句「无法格式化」挡回去，而是三级尽力而为：
+//   ① 语言表指定的严格 parser；
+//   ② 同族更宽松的 parser（JSON 注释用 json、JS 残缺试 babel-ts …）；
+//   ③ 全都解析不了 → formatLoose() 只重排空白，一个非空白字符都不动。
+// 语法错误不再是「拒绝操作」，只是「换一条更保守的路径」，结果仍可撤销。
+//
 // prettier 不管的语言（Python / Go / Rust / SQL …）保持原来的保守清理：
-// 统一换行、去行尾空格、压缩连续空行。**不动缩进、不动语法**，
-// 因为这几门语言在浏览器侧没有成熟格式化器，硬凑一个必然出错。
+// 统一换行、去行尾空格、压缩连续空行。**不动缩进、不动语法** ——
+// 靠缩进定语法的语言重排缩进会改语义，不能为了「看起来整齐」去赌。
 // ============================================================
 import { tt } from './i18n.js';
 import { errText } from './errors.js';
 import { LANGS, langForFile, langInfo } from './langs.js';
+import { formatLoose } from './format-loose.js';
 
 /** 由文件名判断格式类型（语言表是唯一真源） */
 export function detectKind(fileName = '') {
@@ -64,10 +71,39 @@ const FORMAT_OPTIONS = {
   endOfLine: 'lf',
 };
 
-/** prettier 的 parser 名 → 出错时给人看的语言名（对话框里那句「无法格式化」） */
+/**
+ * 严格 parser 解析不了时依次尝试的更宽松 parser。
+ * key / value 都必须在 vendor-entry/prettier.js 的 PLUGIN_SETS 里登记过，
+ * 否则 formatText() 会直接 reject（写的不是插件导出的 parser 名）。
+ * 只列「同族、解析结果仍是可信的同一份数据」的候选：不会拿 Markdown
+ * parser 去凑 JSON，也不会为了通过而改写用户的内容。
+ */
+const LOOSE_CHAIN = {
+  'json-stringify': ['json', 'jsonc', 'json5'],
+  babel: ['babel-ts'],
+  typescript: ['babel-ts'],
+};
+
+/** 缩进承载语义的语言：连兜底都不能重排缩进（四空格在 Markdown 是代码块、
+ *  在 YAML 是层级），只能退到 formatPlain 的保守清理。其它有 parser 的语言
+ *  空白不承载语义，兜底排版才安全。 */
+const INDENT_SENSITIVE = new Set(['yaml', 'markdown']);
+
+/** prettier 的 parser 名 → 出错时给人看的语言名 */
 function engineLabel(id) {
   const def = langInfo(id);
   return def ? def.label : id;
+}
+
+/** 把 prettier 的错误留给提示用：行列 + 语言名，不再拿它拦住格式化 */
+function formatError(e, id) {
+  const loc = e && e.loc && e.loc.start;
+  return {
+    message: errText(e).replace(/^\[error\]\s*/i, ''),
+    line: loc ? loc.line : 0,
+    col: loc ? loc.column : 0,
+    engine: engineLabel(id),
+  };
 }
 
 /* ---------------- 保守清理（prettier 不管的类型） ---------------- */
@@ -90,36 +126,52 @@ export function formatPlain(text, kind) {
 }
 
 /**
- * 一键格式化。
+ * 一键格式化：严格 → 宽松 → 只重排空白，三级尽力而为，**不因语法错误抛错**。
  *
  * @param {string} kind      detectKind() 的结果
  * @param {string} text      全文
  * @param {string} fileName  用来认语言（不传就按 kind 猜 md / json）
- * @returns {Promise<{text: string, notes: string[]}>}
- * @throws 语法错误时抛出带 line / col 的 Error（原文件保持不变）
+ * @returns {Promise<{text: string, notes: string[], loose?: boolean,
+ *                    forced?: boolean, error?: {message:string,line:number,col:number,engine:string}|null}>}
+ *          loose  = 宽松 parser 接住了；forced = 所有 parser 都失败、走了空白兜底
+ * @throws 只在「格式化引擎本身加载失败」时抛出，那是真故障，不是文本的问题
  */
 export async function formatByKind(kind, text, fileName = '') {
   const id = langForFile(fileName) || (kind === 'md' ? 'md' : kind === 'json' ? 'json' : '');
   const def = id ? LANGS[id] : null;
+  if (!def || !def.fmt) return formatPlain(text, kind);
 
-  if (def && def.fmt) {
-    const { formatText } = await loadFormatter();
+  const { formatText } = await loadFormatter();
+  const parsers = [def.fmt, ...(LOOSE_CHAIN[def.fmt] || [])];
+  let firstError = null;
+
+  for (let i = 0; i < parsers.length; i++) {
     try {
-      const out = await formatText(String(text), def.fmt, FORMAT_OPTIONS);
-      return { text: out, notes: [] };
+      const out = await formatText(String(text), parsers[i], FORMAT_OPTIONS);
+      return {
+        text: out,
+        notes: i > 0 ? [tt('已按宽松规则')] : [],
+        loose: i > 0,
+        forced: false,
+        error: null,
+      };
     } catch (e) {
-      /* prettier 的错误消息自带行列（e.loc.start），原样带着走，
-         上层据此弹「第几行第几列」并把光标送过去 */
-      const msg = errText(e).replace(/^\[error\]\s*/i, '');
-      const err = new Error(msg);
-      const loc = e && e.loc && e.loc.start;
-      if (loc) { err.line = loc.line; err.col = loc.column; }
-      err.engine = engineLabel(id);
-      throw err;
+      if (!firstError) firstError = e;
     }
   }
 
-  return formatPlain(text, kind);
+  /* 全部解析失败：仍按规则排版，但只动空白。错误行列带回去给用户看，
+     不弹「无法格式化」把人挡在门外。缩进敏感的语言只做保守清理。 */
+  const fallback = INDENT_SENSITIVE.has(def.fmt)
+    ? formatPlain(text, kind).text
+    : formatLoose(text);
+  return {
+    text: fallback,
+    notes: [tt('原文有语法错误，仅调整空白')],
+    loose: false,
+    forced: true,
+    error: firstError ? formatError(firstError, id) : null,
+  };
 }
 
 /* ---------------- JSON 出错定位（预览用，非格式化） ---------------- */

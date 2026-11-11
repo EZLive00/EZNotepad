@@ -38,9 +38,9 @@ export const LANGS = {
   html: { label: 'HTML', exts: ['html', 'htm'], files: [], hljs: 'xml', cm: 'html', fmt: 'html', kind: 'code', desc: '' },
   xml: { label: 'XML', exts: ['xml', 'xsd', 'xsl', 'svg', 'plist', 'rss'], files: [], hljs: 'xml', cm: 'xml', fmt: null, kind: 'code', desc: '' },
   vue: { label: 'Vue', exts: ['vue'], files: [], hljs: 'xml', cm: 'vue', fmt: 'html', kind: 'code', desc: '' },
-  css: { label: 'CSS', exts: ['css'], files: [], hljs: 'css', cm: 'css', fmt: 'postcss', kind: 'code', desc: '' },
-  scss: { label: 'SCSS', exts: ['scss'], files: [], hljs: 'scss', cm: 'scss', fmt: 'postcss', kind: 'code', desc: '' },
-  less: { label: 'Less', exts: ['less'], files: [], hljs: 'less', cm: 'less', fmt: 'postcss', kind: 'code', desc: '' },
+  css: { label: 'CSS', exts: ['css'], files: [], hljs: 'css', cm: 'css', fmt: 'css', kind: 'code', desc: '' },
+  scss: { label: 'SCSS', exts: ['scss'], files: [], hljs: 'scss', cm: 'scss', fmt: 'scss', kind: 'code', desc: '' },
+  less: { label: 'Less', exts: ['less'], files: [], hljs: 'less', cm: 'less', fmt: 'less', kind: 'code', desc: '' },
 
   js: { label: 'JavaScript', exts: ['js', 'mjs', 'cjs'], files: [], hljs: 'javascript', cm: 'js', fmt: 'babel', kind: 'code', desc: '代码高亮' },
   jsx: { label: 'JSX', exts: ['jsx'], files: [], hljs: 'javascript', cm: 'jsx', fmt: 'babel', kind: 'code', desc: '' },
