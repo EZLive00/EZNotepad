@@ -444,6 +444,41 @@ for (const theme of ['light', 'dark']) {
 }
 await ev(`document.body.dataset.theme = 'light'`);
 
+/* ---------- 8. 「+」面板的「插入空行」（Notion 式显式入口） ----------
+   出块提示线是「已经按了方向键」之后的引导；这里给不碰方向键的人一条
+   明确的、点得到的路。kbd 只作 title 提示，不注册成全局命令（全局那条
+   会被编辑模式、查找框一起吃到）。 */
+await openDoc('blank-line.md', '甲段\n\n乙段');
+await sleep(220);
+const nBefore = await ev(`document.querySelectorAll('.wysiwyg > .w-block').length`);
+ok('点 + 打开插入面板', await openMenu());
+const blankItem = await ev(`(() => {
+  const b = [...document.querySelectorAll('#wBlockMenu .bm-item')]
+    .find(e => e.textContent.includes('插入空行'));
+  if (!b) return null;
+  const r = b.getBoundingClientRect();
+  return { key: b.dataset.key, title: b.title, x: r.left + 40, y: r.top + r.height / 2 };
+})()`);
+ok('面板里有「插入空行」，标了 n 选择键与 Ctrl+Enter',
+  !!blankItem && blankItem.key === 'n' && blankItem.title === 'Ctrl+Enter',
+  JSON.stringify(blankItem));
+if (blankItem) {
+  await click(blankItem.x, blankItem.y);
+  await sleep(420);
+  const nAfter = await ev(`document.querySelectorAll('.wysiwyg > .w-block').length`);
+  ok('点「插入空行」真的多出一个块', nAfter === nBefore + 1, `${nBefore} -> ${nAfter}`);
+  ok('新块是空段落，光标落在里面', await ev(`(() => {
+    const n = getSelection().anchorNode;
+    const el = n && (n.nodeType === 1 ? n : n.parentElement);
+    const b = el && el.closest ? el.closest('.wysiwyg > .w-block') : null;
+    return !!b && (b.dataset.type || 'p') === 'p'
+      && (b.textContent || '').split('\\u200b').join('') === '';
+  })()`));
+} else {
+  ok('点「插入空行」真的多出一个块', false, '菜单项没找到');
+  ok('新块是空段落，光标落在里面', false, '菜单项没找到');
+}
+
 /* ---------- 汇总 ---------- */
 console.log('');
 let bad = 0;

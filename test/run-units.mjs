@@ -467,6 +467,57 @@ ok('语言表：新建类型够多', newDocTypes().length >= 24);
       && app.includes('activate(keepId)'));
 }
 
+/* ---------- 出块提示线与 Ctrl+Enter 强制插入（源码级不变量） ----------
+   出块本身零文档改动是对的，但状态一直是隐形的：光标还在原位、或落进下一块，
+   界面上没有任何东西说「按回车会在这儿开一行」。这里钉住三件事：状态只有
+   一个写入口、提示线与状态同生共死、Ctrl+Enter 只在块末尾生效。 */
+{
+  const wys = fs.readFileSync('src/js/wysiwyg.js', 'utf8');
+  const app = fs.readFileSync('src/js/app.js', 'utf8');
+  const css = fs.readFileSync('src/styles.css', 'utf8');
+  const dictSrc = fs.readFileSync('src/js/i18n-dict-src.js', 'utf8');
+  const dict = fs.readFileSync('src/js/i18n-dict.js', 'utf8');
+
+  ok('gapAfter 只剩构造与 setGapAfter 两处赋值，禁止再散落清状态',
+    (wys.match(/this\.gapAfter\s*=/g) || []).length === 2
+      && !wys.includes('this.gapAfter = { block }')
+      && wys.includes('setGapAfter(block) {') && wys.includes('clearGapAfter() { this.setGapAfter(null); }'));
+  ok('所有清零点都走 clearGapAfter，提示线跟着一起收',
+    (wys.match(/this\.clearGapAfter\(\)/g) || []).length >= 9
+      && wys.includes('render(md, restore) {\n    this.clearGapAfter();')
+      && wys.includes("root.addEventListener('blur'")
+      && wys.includes("this.clearGapAfter();      // 鼠标重新摆了光标"));
+  ok('常驻提示线与 hover 插入线是两个元素，鼠标移动擦不掉它',
+    wys.includes("this.insertLine.className = 'w-insert-line'")
+      && wys.includes("this.gapHint.className = 'w-gap-hint'")
+      && wys.includes("hintLine.className = 'w-gap-hint-line'")
+      && wys.includes("hintLabel.className = 'w-gap-hint-label'")
+      && css.includes('.w-gap-hint-line') && css.includes('.w-gap-hint-label')
+      && css.includes('pointer-events: none'));
+  ok('提示线钉在出块那一块底边，块被重铺掉就隐藏，滚动时跟着走',
+    wys.includes('syncGapHint() {') && wys.includes('block.isConnected')
+      && wys.includes('block.parentElement !== this.root')
+      && wys.includes("hint.style.top = (r.bottom - h.top) + 'px'")
+      && wys.includes("this._onVirtualScroll(); this.syncGapHint();")
+      && wys.includes("tt('按 Enter 在此插入一行')"));
+  ok('Ctrl+Enter 只在带边界块的最后一个可编辑位置生效',
+    wys.includes("if (k === 'enter')") && wys.includes('this.insertLineBelow();')
+      && wys.includes('insertLineBelow() {')
+      && wys.includes('!this.endsBounded(block) || !this.isCaretAtEnd(block)')
+      && wys.includes('!this.atTableExit(info)')
+      && wys.includes('forceGapAfter(block) {')
+      && !/insertLineBelow\(\)[\s\S]{0,400}insertEmptyAfter\(block\)[\s\S]{0,200}this\.endsBounded/.test(wys));
+  ok('强制插入复用已有空行，不连开两行；不依赖 gapAfter 状态',
+    wys.includes('this.isEmptyBlock(next)') && wys.includes('this.placeCaretStart(next);\n      return true;')
+      && wys.includes('this.clearGapAfter();\n    this.placeCaretStart(p);\n    this.flush();'));
+  ok('块手柄「+」面板有插入空行，且不走 slash 面板的空块复用',
+    app.includes("id: 'blank', label: tt('插入空行')")
+      && app.includes("if (id === 'blank')") && app.includes('wys.insertEmptyAfter(block)')
+      && app.includes('wys.focusBlock(nb)') && app.includes('wys.flush()'));
+  ok('两个新词条都进了源字典与 8 语产物',
+    ["'插入空行'", "'按 Enter 在此插入一行'"].every((k) => dictSrc.includes(k) && dict.includes(k)));
+}
+
 /* ---------- 汇总 ---------- */
 const fail = out.filter((r) => !r.ok);
 out.forEach((r) => {

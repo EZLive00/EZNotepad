@@ -756,6 +756,95 @@ try {
     await right();
     ok('代码块后面已经空着一行，→ 不改文档', (await bl()).length === 2, JSON.stringify(await bl()));
 
+    /* ---- I3. 出块提示线与 Ctrl+Enter 强制插入 ----
+       方向键出块零文档改动是对的，但状态一直隐形：光标还在原位、或落进下一块，
+       界面上没任何东西说「按回车会在这儿开一行」。这里在真 WebView2 里验
+       提示线真的画出来、钉在接缝上、状态一作废就收起；Ctrl+Enter 是 Typora
+       式一步到位命令，只在带边界块的最后一个可编辑位置生效。 */
+    const gapHint = () => ev(`(() => {
+      const h = window.__snp.editor.gapHint;
+      return { display: h.style.display, top: parseFloat(h.style.top),
+        label: h.querySelector('.w-gap-hint-label').textContent,
+        hostTop: h.parentElement.getBoundingClientRect().top };
+    })()`);
+    const codeBottom = () => ev(`(() => {
+      const b = document.querySelector('.w-block[data-type="code"]');
+      return b ? b.getBoundingClientRect().bottom : null;
+    })()`);
+    const caretCode = (off) => ev(`(() => {
+      window.__snp.editor.restoreCaret({ blockIndex: 0, offset: ${off} });
+      document.querySelector('.wysiwyg').focus(); return 1;
+    })()`);
+    /* 只发 rawKeyDown + keyUp：Ctrl+Enter 不该产生字符，也不该让 beforeinput
+       把一次换行偷偷写进代码块里。modifiers:2 = Ctrl。 */
+    const ctrlEnter = async () => {
+      const k = { modifiers: 2, key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 };
+      await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...k });
+      await send('Input.dispatchKeyEvent', { type: 'keyUp', ...k });
+      await sleep(360);
+    };
+
+    await ev(`window.__snp.newTab('gap1.md', ${JSON.stringify(CB2)}, null)`);
+    await sleep(400);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(500);
+    await caretEndOf('.w-code');
+    await down();
+    const h1 = await gapHint();
+    ok('真机：出块后插入提示线亮起', h1.display === 'block', JSON.stringify(h1));
+    ok('真机：提示文字写明按哪个键', h1.label.includes('Enter'), h1.label);
+    ok('真机：提示线钉在代码块底边',
+      Math.abs(h1.top - ((await codeBottom()) - h1.hostTop)) < 3,
+      `${h1.top} vs ${(await codeBottom()) - h1.hostTop}`);
+    await enter();
+    ok('真机：回车兑现后提示线收起', (await gapHint()).display === 'none');
+
+    await caretEndOf('.w-code');
+    await down();
+    await arrow('ArrowLeft', 'ArrowLeft', 37);
+    ok('真机：非写入键让状态作废后提示线也收起', (await gapHint()).display === 'none');
+
+    const CBQ = ['```', '甲', '```', '', '> 引用'].join('\n');
+    await ev(`window.__snp.newTab('gap2.md', ${JSON.stringify(CBQ)}, null)`);
+    await sleep(400);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(500);
+    await caretEndOf('.w-code');
+    await down();
+    const h2 = await gapHint();
+    const bqBottom = await ev(`document.querySelector('.w-block[data-type="bq"]').getBoundingClientRect().bottom`);
+    ok('真机：光标进了引用块，提示线仍钉在代码块底边',
+      h2.display === 'block'
+        && Math.abs(h2.top - ((await codeBottom()) - h2.hostTop)) < 3
+        && Math.abs(h2.top - (bqBottom - h2.hostTop)) > 4,
+      `${h2.top} / code ${(await codeBottom()) - h2.hostTop} / bq ${bqBottom - h2.hostTop}`);
+
+    await ev(`window.__snp.newTab('gap3.md', ${JSON.stringify(CB2)}, null)`);
+    await sleep(400);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(500);
+    await caretEndOf('.w-code');
+    await ctrlEnter();
+    ok('真机：块末尾 Ctrl+Enter 直接开出块后空行', (await bl()).length === 2, JSON.stringify(await bl()));
+    ok('真机：Ctrl+Enter 不留待插入状态', !(await gapPending()));
+    ok('真机：Ctrl+Enter 后光标在新空行', (await caretWhere()).idx === 1, JSON.stringify(await caretWhere()));
+
+    await ev(`window.__snp.newTab('gap4.md', ${JSON.stringify(CB2)}, null)`);
+    await sleep(400);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(500);
+    await caretCode(0);
+    await ctrlEnter();
+    ok('真机：块中间 Ctrl+Enter 不劈开代码块', (await bl()).length === 1, JSON.stringify(await bl()));
+
+    await ev(`window.__snp.newTab('gap5.md', '正文一段', null)`);
+    await sleep(400);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(500);
+    await caretCode(4);
+    await ctrlEnter();
+    ok('真机：普通段落里 Ctrl+Enter 不改文档', (await bl()).length === 1, JSON.stringify(await bl()));
+
     /* ---- I2. 引用 / 提示块 / 列表也是「带范围的块」 ----
        它们一行一块：只有「这一组的最后一行」归我们管，组内还有下一行时交给
        浏览器自己走（折了几行、要不要顺手滚动，只有它知道）。 */

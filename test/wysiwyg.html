@@ -603,6 +603,95 @@ window.__run = () => {
   T.key('Enter');
   eq('回车才在代码块后开一行', T.blocks().join(','), 'code=x,p=');
 
+  /* 19c3. 「块后待插入」必须**看得见**：出块后常驻一条插入线，钉在出块那一块
+     的底边；光标被送进下一块时也不跟着跑。状态一作废，线必须同步收掉。 */
+  const hint = () => ed.gapHint;
+  const hintLabel = () => hint().querySelector('.w-gap-hint-label').textContent;
+  const hostTop = () => hint().parentElement.getBoundingClientRect().top;
+  T.reset('```js\nx\n```');
+  ed.restoreCaret({ blockIndex: 0, offset: 1 });
+  T.key('ArrowDown');
+  eq('出块后插入提示线亮起', hint().style.display, 'block');
+  eq('提示线上写明按哪个键', hintLabel().includes('Enter'), true);
+  {
+    const code = root.querySelector('.w-block[data-type="code"]');
+    const exp = code.getBoundingClientRect().bottom - hostTop();
+    eq('提示线钉在代码块底边', Math.abs(parseFloat(hint().style.top) - exp) < 2, true);
+    eq('提示线宽度跟着块宽', parseFloat(hint().style.width) > 0, true);
+  }
+  T.hoverBelow();   // 鼠标挪动不能把常驻提示擦掉（和 hover 线是两个元素）
+  eq('鼠标移动后常驻提示仍在', hint().style.display, 'block');
+  T.key('Enter');
+  eq('回车兑现后提示线收起', hint().style.display, 'none');
+  eq('回车后状态也清掉了', !!ed.gapAfter, false);
+
+  T.reset('```js\nx\n```');
+  ed.restoreCaret({ blockIndex: 0, offset: 1 });
+  T.key('ArrowDown');
+  T.key('Tab');     // 非写入键：状态作废
+  eq('其它按键让状态作废后提示线也收起', hint().style.display, 'none');
+
+  T.reset('```js\nx\n```');
+  ed.restoreCaret({ blockIndex: 0, offset: 1 });
+  T.key('ArrowDown');
+  T.reset('新文档');   // 整篇重渲染
+  eq('重渲染后不留旧提示线', hint().style.display, 'none');
+
+  /* 光标落进下一块时，线仍钉在两块之间的接缝，不跟着光标跑 —— 这正是
+     「用户不知道可以换行」的根因：以前界面上只有光标，没有插入点。 */
+  T.reset('```js\nx\n```\n\n> 引用');
+  ed.restoreCaret({ blockIndex: 0, offset: 1 });
+  T.key('ArrowDown');
+  {
+    const code = root.querySelector('.w-block[data-type="code"]');
+    const bq = root.querySelector('.w-block[data-type="bq"]');
+    const got = parseFloat(hint().style.top);
+    eq('线钉在接缝处，不是光标所在的下一块底边',
+      Math.abs(got - (code.getBoundingClientRect().bottom - hostTop())) < 2
+        && Math.abs(got - (bq.getBoundingClientRect().bottom - hostTop())) > 4, true);
+  }
+
+  /* 19c4. Ctrl/Cmd+Enter（Typora 式强制插入新行）：一步到位，只在块末尾生效。
+     在块中间按会把代码劈成两段 —— 这条命令必须连浏览器默认行为一起拦掉。 */
+  T.reset('```js\nx\n```');
+  ed.restoreCaret({ blockIndex: 0, offset: 1 });
+  T.key('Enter', { ctrlKey: true });
+  eq('块末尾 Ctrl+Enter 直接开出块后空行', T.blocks().join(','), 'code=x,p=');
+  eq('强制插入不留下待插入状态', !!ed.gapAfter, false);
+  eq('强制插入后提示线不亮', hint().style.display, 'none');
+  ed.restoreCaret({ blockIndex: 0, offset: 1 });
+  T.key('Enter', { ctrlKey: true });
+  eq('块后已有空行时复用，不连开两行', T.blocks().join(','), 'code=x,p=');
+
+  T.reset('```js\nabc\n```');
+  ed.restoreCaret({ blockIndex: 0, offset: 1 });   // 块中间
+  T.key('Enter', { ctrlKey: true });
+  eq('块中间 Ctrl+Enter 不劈开代码块', T.out(), '```js\nabc\n```');
+  eq('块中间 Ctrl+Enter 不开新行', T.blocks().join(','), 'code=abc');
+
+  T.reset('正文一段');
+  ed.restoreCaret({ blockIndex: 0, offset: 4 });
+  T.key('Enter', { ctrlKey: true });
+  eq('普通段落里 Ctrl+Enter 不改文档', T.blocks().length, 1);
+
+  T.reset('> 甲\n> 乙');
+  ed.restoreCaret({ blockIndex: 0, offset: 1 });
+  T.key('Enter', { ctrlKey: true });
+  eq('引用组内非末行 Ctrl+Enter 不触发', T.blocks().length, 2);
+  ed.restoreCaret({ blockIndex: 1, offset: 1 });
+  T.key('Enter', { ctrlKey: true });
+  eq('引用组末行 Ctrl+Enter 在组后开行', T.blocks().length, 3);
+
+  T.reset('| a | b |\n| --- | --- |\n| 1 | 2 |');
+  {
+    const td = [...root.querySelectorAll('.w-table td')].pop();
+    const r = document.createRange(); r.selectNodeContents(td); r.collapse(false);
+    const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+    root.focus();
+  }
+  T.key('Enter', { ctrlKey: true });
+  eq('表格右下角 Ctrl+Enter 出表开行', T.blocks().length, 2);
+
   /* 19c2. 点末块下方空白：光标送回文末。只有末块是「带边界的块」
      （代码 / 公式 / 表格 / 分割线：块内没有可写的尾位）才补一行 ——
      以前无条件 insertEmptyAfter，每点一次空白多一个空行，越点越长 */
