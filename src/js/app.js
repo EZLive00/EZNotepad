@@ -27,6 +27,7 @@ import * as win from './win.js';
 import { tt, setLang, resolveLang, getLang, applyDom, LANGS } from './i18n.js';
 import { errText } from './errors.js';
 import { welcomeDoc } from './welcome.js';
+import { writeClipboard } from './clipboard.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -287,12 +288,14 @@ function renderTabs() {
 
     b.oncontextmenu = (e) => {
       e.preventDefault();
+      const idx = tabs.findIndex((x) => x.id === t.id);
       contextMenu(e.clientX, e.clientY, [
         { label: tt('关闭'), shortcut: 'Ctrl+W', action: () => closeTab(t.id) },
-        { label: tt('关闭其他'), action: () => closeOthers(t.id) },
-        { label: tt('关闭右侧'), action: () => closeRight(t.id) },
+        { label: tt('关闭其他'), disabled: tabs.length < 2, action: () => closeOthers(t.id) },
+        { label: tt('关闭左侧'), disabled: idx <= 0, action: () => closeLeft(t.id) },
+        { label: tt('关闭右侧'), disabled: idx >= tabs.length - 1, action: () => closeRight(t.id) },
         { sep: true },
-        { label: tt('复制文件路径'), disabled: !t.path, action: () => { navigator.clipboard.writeText(t.path || ''); toast(tt('路径已复制')); } },
+        { label: tt('复制文件路径'), disabled: !t.path, action: () => copyPath(t.path) },
         { label: tt('在文件夹中显示'), disabled: !t.path, action: () => revealInFolder(t.path) },
       ]);
     };
@@ -401,14 +404,70 @@ async function revealInFolder(p) {
   } catch { toast(tt('无法打开文件位置')); }
 }
 
+/** 复制路径到系统剪贴板。与文件树行右键共用 clipboard.js —— WebView2 里
+    navigator.clipboard.writeText 会抛 NotAllowedError，旧实现还无条件报「已复制」。 */
+function copyPath(p) {
+  if (!p) return;
+  toast(writeClipboard(p) ? tt('路径已复制') : tt('无法复制路径'));
+}
+
+/* ---------------- 批量关闭 ----------------
+   以前「关闭其他 / 关闭右侧」直接 removeTab：未保存的标签连问都不问就没了，
+   比单个「关闭」还倒退一截。现在三个方向统一走 closeMany：整批只确认一次，
+   保存用 saveAllQuiet（各标签自己的 t.content —— readEditor 读的是屏幕上那个
+   活动标签，拿去写别的文件就是把 A 的正文灌进 B），没有路径、存不进去的
+   脏标签写进草稿，和退出时「存成草稿，下次启动还能恢复」走同一条路。 */
+async function closeMany(ids, keepId) {
+  const set = new Set(ids);
+  if (!set.size) return;
+  /* 速记永远算干净，但它是防抖写盘的：关之前先 flush，否则最后几个字会丢 */
+  for (const t of tabs) if (set.has(t.id) && t.quickNote) await flushQuickNote(t);
+  const dirty = tabs.filter((t) => set.has(t.id) && isDirty(t));
+  if (dirty.length) {
+    const names = dirty.map((t) => `<b>${t.name}</b>`).join('、');
+    const r = await dialog({
+      title: tt('还有未保存的内容'),
+      body: tt('{n} 个标签有未保存的修改：{names}。', { n: dirty.length, names }),
+      buttons: [
+        { id: 'save', label: tt('全部保存并关闭'), primary: true, key: 'Y' },
+        { id: 'discard', label: tt('不保存并关闭'), key: 'N' },
+        { id: 'cancel', label: tt('取消'), key: 'Esc' },
+      ],
+    });
+    if (r === 'cancel') return;
+    if (r === 'save') {
+      await saveAllQuiet(dirty);
+      /* 保存完仍脏的＝没路径的 / 写失败的，别跟着 removeTab 一起消失。
+         持久化到 draftStash：输入防抖、activate、beforeunload 每轮都会重调
+         saveDraft()，只在参数里带一次会被下一轮覆盖。restoreDrafts 后清空。 */
+      const stash = dirty.filter(isDirty).map((t) => ({
+        path: t.path, name: t.name, content: t.content,
+        encoding: t.encoding, bom: t.bom, eol: t.eol, mode: t.mode,
+        scrollTop: t.scrollTop || 0, caret: t.caret ?? null, time: Date.now(),
+      }));
+      if (stash.length) LS.set('draftStash', [...LS.get('draftStash', []), ...stash].slice(-20));
+    }
+  }
+  /* 活动标签若在待关名单里，必须先落账再 removeTab —— removeTab 会把 activeId
+     换成下一个，那之后的 persistCurrentView 看到的是新标签 + 旧 DOM */
+  if (activeTab() && set.has(activeTab().id)) persistCurrentView();
+  for (const id of ids) removeTab(id);
+  syncWatches();
+  if (!tabs.length) { newTab(untitledName('md'), ''); return; }
+  activate(keepId);
+}
+
 function closeOthers(id) {
-  [...tabs].filter((t) => t.id !== id).forEach((t) => removeTab(t.id));
-  activate(id);
+  closeMany([...tabs].filter((t) => t.id !== id).map((t) => t.id), id);
+}
+function closeLeft(id) {
+  const idx = tabs.findIndex((t) => t.id === id);
+  if (idx <= 0) return;
+  closeMany([...tabs].slice(0, idx).map((t) => t.id), id);
 }
 function closeRight(id) {
   const idx = tabs.findIndex((t) => t.id === id);
-  [...tabs].slice(idx + 1).forEach((t) => removeTab(t.id));
-  activate(id);
+  closeMany([...tabs].slice(idx + 1).map((t) => t.id), id);
 }
 
 export function newTab(name = tt('未命名.md'), content = '', path = null, opts = {}) {
@@ -1451,13 +1510,17 @@ function saveDraft() {
   const act = activeTab();
   LS.set('sessionActive', act ? (act.path || act.name) : '');
 
-  const dirty = tabs.filter(isDirty);
-  if (!dirty.length) { LS.del('drafts'); LS.del('draft'); return; }
+  /* draftStash 是刚被批量关掉、用户选了「保存」却没路径落盘的标签。它们已经
+     不在 tabs 里，却必须每轮都进草稿：输入防抖、activate、beforeunload 都会
+     重调 saveDraft()，只写一次会被下一轮覆盖掉。排在后面，容量不够时按
+     「从后往前取」的规则优先保住它们；restoreDrafts 成功后会清空。 */
+  const pending = [...tabs.filter(isDirty), ...LS.get('draftStash', [])];
+  if (!pending.length) { LS.del('drafts'); LS.del('draft'); LS.del('draftStash'); return; }
   /* 容量不够时从最前面的开始放弃：最近改的那个一定保得住 */
   let budget = DRAFT_MAX_BYTES;
   const list = [];
-  for (let i = dirty.length - 1; i >= 0; i--) {
-    const t = dirty[i];
+  for (let i = pending.length - 1; i >= 0; i--) {
+    const t = pending[i];
     const size = (t.content || '').length * 2;   // UTF-16 粗算
     if (size > budget) continue;
     budget -= size;
@@ -1488,7 +1551,7 @@ async function restoreDrafts() {
       valid.push(d);           // 未命名文档：有字就值得留
     }
   }
-  if (!valid.length) { LS.del('drafts'); LS.del('draft'); return 0; }
+  if (!valid.length) { LS.del('drafts'); LS.del('draft'); LS.del('draftStash'); return 0; }
 
   const names = valid.map((d) => `<b>${d.name}</b>`).join('、');
   const when = new Date(valid[valid.length - 1].time || Date.now()).toLocaleString();
@@ -1497,7 +1560,7 @@ async function restoreDrafts() {
     tt('上次关闭时（{when}）还有没保存的内容：{names}。<br><br>是否全部恢复？', { when, names }),
     tt('恢复'), tt('丢弃')
   );
-  if (!keep) { LS.del('drafts'); LS.del('draft'); return 0; }
+  if (!keep) { LS.del('drafts'); LS.del('draft'); LS.del('draftStash'); return 0; }
 
   for (const d of valid) {
     const t = newTab(d.name, d.content, d.path, {
@@ -1512,7 +1575,7 @@ async function restoreDrafts() {
     }
   }
   renderTabs();
-  LS.del('drafts'); LS.del('draft');
+  LS.del('drafts'); LS.del('draft'); LS.del('draftStash');
   saveDraft();          // 恢复过程中 activate 覆盖过 session，这里写回完整状态
   toast(valid.length === 1 ? tt('草稿已恢复') : tt('已恢复 {n} 份草稿', { n: valid.length }));
   return valid.length;

@@ -11,6 +11,7 @@
 
 import { tt } from './i18n.js';
 import { errText } from './errors.js';
+import { writeClipboard } from './clipboard.js';
 const baseName = (p) => (p ? String(p).split(/[\\/]/).pop() : '');
 /** 取所在目录，保留原来的分隔符风格（后端给的是 \，别混用手写的 /） */
 const parentOf = (p) => String(p || '').replace(/[\\/][^\\/]*$/, '');
@@ -327,8 +328,18 @@ export class FileTree {
     items.push({ label: tt('重命名…'), icon: 'pencil', action: () => this._rename(entry) });
     items.push({ label: tt('删除'), icon: 'trash-2', danger: true, action: () => this._remove(entry) });
     items.push({ sep: true });
+    /* 与标签右键同一组、同一顺序：复制路径紧挨着「在资源管理器中显示」。
+       文件与目录都给 —— 目录路径贴到终端里一样有用。 */
+    items.push({ label: tt('复制文件路径'), icon: 'copy', action: () => this._copyPath(entry.path) });
     items.push({ label: tt('在资源管理器中显示'), icon: 'folder-open', action: () => this.onReveal(entry.path) });
     this.menu(ev.clientX, ev.clientY, items);
+  }
+
+  /** 复制的是被右键那一行，不是多选的整组（菜单上写的是单数）。
+      失败必须说失败：execCommand('copy') 会明确返回 false，不能无条件报「已复制」。 */
+  _copyPath(path) {
+    if (!path) return;
+    this.toast(writeClipboard(path) ? tt('路径已复制') : tt('无法复制路径'));
   }
 
   _rootMenu(ev) {

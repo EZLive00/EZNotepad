@@ -16,6 +16,7 @@ import { resolveDocImg, headingSlugs, CALLOUT_TYPES, RE_CALLOUT, normalizeCallou
 import { tt } from './i18n.js';
 import { codeText, refreshCode } from './codehilite.js';
 import { updateSelMatch, clearSelMatch } from './selmatch.js';
+import { writeClipboard } from './clipboard.js';
 
 const MAX_INDENT = 6;
 const ZWSP = '\u200b';
@@ -680,34 +681,9 @@ function tableToMarkdown(block) {
    两处各写一遍迟早漂移。这里留个别名，调用点不用改。 */
 const codeToText = codeText;
 
-/**
- * 把一段文本写进系统剪贴板，返回成功与否。
- *
- * 不用 `navigator.clipboard.writeText`：WebView2 里它在没有用户激活时抛
- * `NotAllowedError`，有激活时也偶发不 resolve（对比窗口读剪贴板踩过同一个坑，
- * 见 compare.js 的注释）。`execCommand('copy')` 只依赖「有选区」这一个条件、
- * 同步给出成败，复制按钮要的正是这种确定性。
- *
- * 代价是 textarea 的 `select()` 会顶掉编辑区的选区 —— 进出都把它还回去，
- * 用户只会看到按钮图标闪一下。
- */
-function writeClipboard(text) {
-  const sel = window.getSelection();
-  const saved = sel && sel.rangeCount ? sel.getRangeAt(0).cloneRange() : null;
-  const ta = document.createElement('textarea');
-  ta.value = text;
-  ta.setAttribute('readonly', '');
-  /* 不能 display:none / visibility:hidden —— 那样 select() 选不中，复制出来是空的 */
-  ta.style.cssText = 'position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0;';
-  document.body.appendChild(ta);
-  ta.select();
-  ta.setSelectionRange(0, text.length);
-  let ok = false;
-  try { ok = document.execCommand('copy'); } catch { ok = false; }
-  ta.remove();
-  if (saved && sel) { sel.removeAllRanges(); sel.addRange(saved); }
-  return ok;
-}
+/* 写剪贴板统一走 clipboard.js（离屏 textarea + execCommand('copy')）。
+   以前这里有一份同样的实现，另一处在标签右键；两份迟早漂移，而且标签右键那份
+   用的是 WebView2 里会抛错的 navigator.clipboard.writeText。 */
 
 /**
  * 换块类型时要搬的那段文字 —— 取 **Markdown 源**，不是 textContent。
