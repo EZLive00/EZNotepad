@@ -956,6 +956,32 @@ try {
     ok('draftStash 会一直跟着草稿，恢复后才清',
       await ev(`(localStorage.getItem('snp.draftStash') || '').includes('未落盘的内容')`));
   }
+
+  // ---- 标签条竖线：一条缝一条线，右端收口 ----
+  {
+    await ev(`(() => { window.__snp.newTab('edge-a.md', 'A'); window.__snp.newTab('edge-b.md', 'B'); return 1; })()`);
+    await ev('new Promise(r => setTimeout(r, 150))');
+    const g = await ev(`(() => {
+      const ts = [...document.querySelectorAll('.tabs .tab')];
+      return ts.slice(-3).map(e => {
+        const s = getComputedStyle(e); const r = e.getBoundingClientRect();
+        return { l: +r.left.toFixed(2), r: +r.right.toFixed(2),
+          blw: s.borderLeftWidth, brw: s.borderRightWidth,
+          blc: s.borderLeftColor, brc: s.borderRightColor, ml: s.marginLeft };
+      });
+    })()`);
+    ok('每颗标签只有左边框，中间不再叠两道',
+      g.length >= 3 && g.slice(0, -1).every(x => parseFloat(x.brw) === 0),
+      JSON.stringify(g));
+    ok('相邻标签精确相接，没有半像素负 margin',
+      g.slice(1).every((x, i) => Math.abs(x.l - g[i].r) < 0.02 && parseFloat(x.ml) === 0),
+      JSON.stringify(g));
+    ok('最右侧标签画出右边框（不是透明）',
+      parseFloat(g.at(-1).brw) > 0 && g.at(-1).brc !== 'rgba(0, 0, 0, 0)',
+      JSON.stringify(g.at(-1)));
+    const firstColor = await ev(`getComputedStyle(document.querySelector('.tabs .tab:first-child')).borderLeftColor`);
+    ok('最左侧标签仍不封口', firstColor === 'rgba(0, 0, 0, 0)', firstColor);
+  }
 } catch (e) {
   ok('运行期间没有异常', false, String((e && e.message) || e).slice(0, 300));
 } finally {

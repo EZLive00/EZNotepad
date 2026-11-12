@@ -570,6 +570,33 @@ ok('语言表：新建类型够多', newDocTypes().length >= 24);
   ok('ico 内嵌的 256 帧与同批生成的 128x128@2x.png 一致', ico.includes(big));
 }
 
+/* ---------- 标签条竖线：一条缝只许有一条线 ----------
+   WebView2 把 `--bw: 0.5px` 取整成 1px。以前每颗标签左右各画一道，再用
+   -0.5px 负 margin 压在一起：两道 1px 只错开半像素，中间其实是 1.5px 粗线
+   （用户看到的「两边的边框都显示了」）。现在中间那道只归后一颗的左边框，
+   最后一颗单独画右边框收口；状态色靠兄弟选择器同步，不靠抬层遮盖。 */
+{
+  const read = (p) => fs.readFileSync(new URL('../' + p, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const CSS = read('src/styles.css');
+  const tabRule = (CSS.match(/\n\.tab \{([\s\S]*?)\n\}/) || [])[1] || '';
+
+  ok('每颗标签只画左边框，不再左右各画一道',
+    /border-left: var\(--bw\) solid var\(--line\)/.test(tabRule)
+      && !/border-right/.test(tabRule));
+  ok('不再用负 margin 把两道边框压在一起',
+    !CSS.includes('.tab + .tab { margin-left: calc(var(--bw) * -1); }'));
+  ok('最右侧标签单独画右边框收口（不是透明）',
+    /\.tabs \.tab:last-child \{[^}]*border-right: var\(--bw\) solid var\(--line\)/.test(CSS)
+      && !CSS.includes('border-right-color: transparent'));
+  ok('最左侧标签仍不封口',
+    CSS.includes('.tabs .tab:first-child { border-left-color: transparent; }'));
+  ok('状态色用兄弟选择器同步右邻那条线，不靠 z-index 抬层遮盖',
+    CSS.includes('.tab:hover + .tab') && CSS.includes('.tab.active + .tab')
+      && !/\.tab\.active \{[^}]*z-index/s.test(CSS));
+  ok('激活 / 悬停的最右标签，右边框也跟着加深',
+    CSS.includes('.tabs .tab.active:last-child') && CSS.includes('.tabs .tab:hover:last-child'));
+}
+
 /* ---------- 汇总 ---------- */
 const fail = out.filter((r) => !r.ok);
 out.forEach((r) => {

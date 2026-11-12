@@ -1959,6 +1959,38 @@ try {
         ftPasted === winFile, JSON.stringify({ got: ftPasted, want: winFile }));
     }
   }
+
+  /* ---- I4. 标签条竖线：一条缝只画一条线，最右端要封口 ----
+     真机 WebView2 把 --bw 的 0.5px 取整成 1px，所以只用 computed 边框宽度
+     和相邻 rect 判断，别拿 CSS 里写的 0.5px 当真。 */
+  {
+    await ev(`(() => { window.__snp.newTab('edge-a.md', 'A'); window.__snp.newTab('edge-b.md', 'B'); return 1; })()`);
+    await sleep(450);
+    const tg = await ev(`(() => {
+      const ts = [...document.querySelectorAll('.tabs .tab')];
+      return ts.slice(-3).map(e => {
+        const s = getComputedStyle(e); const r = e.getBoundingClientRect();
+        return { l: +r.left.toFixed(2), r: +r.right.toFixed(2),
+          blw: s.borderLeftWidth, brw: s.borderRightWidth,
+          blc: s.borderLeftColor, brc: s.borderRightColor,
+          ml: s.marginLeft, act: e.classList.contains('active') };
+      });
+    })()`);
+    ok('真机：中间标签没有右边框（缝里的线只归后一颗）',
+      tg.length >= 3 && tg.slice(0, -1).every(x => parseFloat(x.brw) === 0),
+      JSON.stringify(tg));
+    ok('真机：相邻标签精确相接，不再叠出半像素粗线',
+      tg.slice(1).every((x, i) => Math.abs(x.l - tg[i].r) < 0.02 && parseFloat(x.ml) === 0),
+      JSON.stringify(tg));
+    ok('真机：最右侧标签画出了右边框（不是透明）',
+      parseFloat(tg.at(-1).brw) > 0 && tg.at(-1).brc !== 'rgba(0, 0, 0, 0)',
+      JSON.stringify(tg.at(-1)));
+    ok('真机：激活的最右标签右边框跟着加深',
+      tg.at(-1).act && tg.at(-1).brc === tg.at(-1).blc,
+      JSON.stringify(tg.at(-1)));
+    const firstColor = await ev(`getComputedStyle(document.querySelector('.tabs .tab:first-child')).borderLeftColor`);
+    ok('真机：最左侧标签仍不封口', firstColor === 'rgba(0, 0, 0, 0)', firstColor);
+  }
 } catch (e) {
   ok('探针执行完成', false, e.message);
 } finally {
