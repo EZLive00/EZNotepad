@@ -2151,6 +2151,119 @@ try {
         && longAfter.type === 'p' && longAfter.idx === 2,
       JSON.stringify({ longBefore, longAfter }));
   }
+
+  /* ---- I6. 文件树选中态 / 分割线独立块 / 文件右键历史版本 ----
+     放在整组最后：这几项都会换文档、切模式、开弹层，不能压在别的断言前面。 */
+  {
+    const dir = path.join(os.tmpdir(), 'eznotepad-probe-ft');
+    fs.mkdirSync(dir, { recursive: true });
+    for (const [n, body] of [['ft-a.md', '# A\n'], ['ft-b.md', '# B\n'], ['ft-c.md', '# C\n']]) {
+      fs.writeFileSync(path.join(dir, n), body);
+    }
+    await ev(`window.__snp.setFolder(${JSON.stringify(dir)})`);
+    await sleep(450);
+    await ev(`document.querySelector('[data-side="files"]').click()`);
+    const rows = () => ev(`JSON.stringify([...document.querySelectorAll('.ft-row')].map(r => ({ n: r.querySelector('.ft-name').textContent, cls: r.className })))`);
+    const clickRow = (n) => ev(`(() => { const r = [...document.querySelectorAll('.ft-row')].find(x => x.querySelector('.ft-name').textContent === ${JSON.stringify(n)}); if (r) r.click(); return !!r; })()`);
+    const clickTab = (n) => ev(`(() => { const t = [...document.querySelectorAll('.tab')].find(x => x.textContent.includes(${JSON.stringify(n)})); if (t) t.click(); return !!t; })()`);
+    await clickRow('ft-a.md');
+    await sleep(300);
+    await clickRow('ft-b.md');
+    await sleep(300);
+    await clickTab('ft-a.md');
+    await sleep(350);
+    const rs = JSON.parse(await rows());
+    const ra = rs.find((x) => x.n === 'ft-a.md');
+    const rb = rs.find((x) => x.n === 'ft-b.md');
+    ok('真机：从标签栏切回后，只有当前文件点亮',
+      !!ra && /\bactive\b/.test(ra.cls) && !/\bsel\b/.test(ra.cls), JSON.stringify(rs));
+    ok('真机：旧文件不再残留 .sel 边框与灰底',
+      !!rb && !/\bsel\b/.test(rb.cls) && !/\bactive\b/.test(rb.cls), JSON.stringify(rs));
+
+    /* 文件树右键的「历史版本」：对一个没打开的文件也要能看，但不给「恢复」 */
+    await ev(`(() => { const r = [...document.querySelectorAll('.ft-row')].find(x => x.querySelector('.ft-name').textContent === 'ft-c.md'); const b = r.getBoundingClientRect(); r.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: b.left + 20, clientY: b.top + 8 })); })()`);
+    await sleep(200);
+    const ctxItems = await ev(`JSON.stringify([...document.querySelectorAll('.ctx-item')].map(x => x.textContent.trim()))`);
+    ok('真机：文件树右键有「历史版本」', JSON.parse(ctxItems).some((t) => t.includes('历史版本')), ctxItems);
+    await ev(`(() => { const b = [...document.querySelectorAll('.ctx-item')].find(x => x.textContent.includes('历史版本')); if (b) b.click(); return !!b; })()`);
+    await sleep(350);
+    ok('真机：未打开文件的历史版本只给查看，不给「恢复」',
+      (await ev(`document.getElementById('dlgOverlay').classList.contains('hidden')`)) === false
+        && (await ev(`document.querySelectorAll('#dlgOverlay .hist-btn.primary').length`)) === 0);
+    await ev(`(() => { const b = document.querySelector('#dlgFoot .mini.primary') || document.getElementById('dlgClose'); if (b) b.click(); })()`);
+    await sleep(250);
+
+    /* 分割线是独立块：不多空行、删空行不删线、能点选、能整块删除 */
+    await ev(`window.__snp.newTab('hr-block.md', ${JSON.stringify('# T\n\n甲\n\n乙\n')}, null)`);
+    await sleep(250);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(420);
+    const blocks = () => ev(`JSON.stringify([...document.querySelectorAll('#wysiwyg .w-block')].map(b => b.dataset.type + ':' + b.textContent.trim()))`);
+    await ev(`(() => { const root = document.getElementById('wysiwyg'); const b = [...root.querySelectorAll('.w-block')].find(x => x.textContent.includes('甲')); const t = b.querySelector('.w-text') || b; const r = document.createRange(); r.selectNodeContents(t); r.collapse(false); const s = getSelection(); s.removeAllRanges(); s.addRange(r); root.focus(); })()`);
+    await sleep(150);
+    await ev(`window.__snp.commands.hr()`);
+    await sleep(350);
+    const b1 = await blocks();
+    ok('真机：插入分割线不再凭空多一个空段落',
+      b1 === JSON.stringify(['h1:T', 'p:甲', 'hr:', 'p:乙']), b1);
+    ok('真机：插入后分割线本身被选中，块手柄出现',
+      (await ev(`window.__snp.editor.blockSel?.dataset.type || ''`)) === 'hr'
+        && (await ev(`!document.getElementById('wHandle').classList.contains('hidden')`)) === true);
+
+    await ev(`(() => { const w = window.__snp.editor; const hr = [...document.querySelectorAll('#wysiwyg .w-block')].find(b => b.dataset.type === 'hr'); const p = w.insertEmptyAfter(hr); w.clearBlockSel(); w.placeCaretStart(p); w.flush(); })()`);
+    await sleep(200);
+    await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', windowsVirtualKeyCode: 8, code: 'Backspace', key: 'Backspace' });
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', windowsVirtualKeyCode: 8, code: 'Backspace', key: 'Backspace' });
+    await sleep(320);
+    const b2 = await blocks();
+    ok('真机：删除分割线下的空行不连线条一起删',
+      b2 === JSON.stringify(['h1:T', 'p:甲', 'hr:', 'p:乙'])
+        && (await ev(`window.__snp.editor.blockSel?.dataset.type || ''`)) === 'hr', b2);
+
+    const hrRect = await ev(`(() => { const h = document.querySelector('#wysiwyg .w-hr'); const b = h.getBoundingClientRect(); return JSON.stringify({ x: Math.round(b.left + b.width / 2), y: Math.round(b.top + b.height / 2) }); })()`);
+    const q = JSON.parse(hrRect);
+    await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: q.x, y: q.y, button: 'left', clickCount: 1, buttons: 1 });
+    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: q.x, y: q.y, button: 'left', clickCount: 1, buttons: 0 });
+    await sleep(280);
+    ok('真机：点中分割线能选中并给出可见选中态',
+      (await ev(`window.__snp.editor.blockSel?.dataset.type || ''`)) === 'hr'
+        && (await ev(`document.querySelectorAll('#wysiwyg .w-hr.w-sel').length`)) === 1);
+    await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', windowsVirtualKeyCode: 46, code: 'Delete', key: 'Delete' });
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', windowsVirtualKeyCode: 46, code: 'Delete', key: 'Delete' });
+    await sleep(320);
+    const b3 = await blocks();
+    ok('真机：选中后按 Delete 删掉整块分割线',
+      b3 === JSON.stringify(['h1:T', 'p:甲', 'p:乙'])
+        && !(await ev(`window.__snp.getEditorText()`)).includes('---'), b3);
+
+    /* 合并窗口在 Rust 侧，只有真调后端才验得到。用唯一路径，免得历次探针
+       留下的快照混进条数。这里存的是「即将被覆盖的旧版」，所以合并应当跳过、
+       保留会话起点那一版，而不是拿新内容覆盖它。 */
+    const hp = path.join(dir, `hist-merge-${Date.now()}.md`);
+    const hSave = (text, auto) => ev(`window.__snp.historyProbe.save(${JSON.stringify(hp)}, ${JSON.stringify(text)}, ${auto})`);
+    const hCount = () => ev(`window.__snp.historyProbe.list(${JSON.stringify(hp)}).then(r => r.length)`);
+    await hSave('# v0\n', false);
+    await hSave('# v1\n', true);
+    await hSave('# v2\n', true);
+    await hSave('# v3\n', true);
+    const merged = await hCount();
+    ok('真机：连续自动保存并成一份，不把 60 份上限塞满逐秒半成品', merged === 1, String(merged));
+    const oldest = await ev(`window.__snp.historyProbe.list(${JSON.stringify(hp)}).then(r => window.__snp.historyProbe.read(r[r.length - 1].path))`);
+    ok('真机：合并保住的是编辑会话起点那一版，不是被覆盖后的碎片',
+      oldest === '# v0\n', JSON.stringify(oldest));
+    await hSave('# v4\n', false);
+    const explicit = await hCount();
+    ok('真机：Ctrl+S 是显式里程碑，一定多记一份', explicit === 2, String(explicit));
+    await hSave('# v4\n', false);
+    ok('真机：内容完全相同不重复留档', (await hCount()) === 2);
+    /* 紧挨着存两次：文件名就是毫秒戳，撞在同一毫秒会互相覆盖、凭空少一条历史 */
+    await hSave('# v5\n', false);
+    await hSave('# v6\n', false);
+    ok('真机：连着两次显式保存各留一份（同一文件内戳严格递增）', (await hCount()) === 4);
+    await ev(`window.__snp.historyProbe.save(${JSON.stringify(hp)}, 'x'.repeat(2 * 1024 * 1024 + 1), false)`);
+    ok('真机：超大文件不进历史，免得一份吃光 20MB 总额', (await hCount()) === 4);
+    await ev(`window.__snp.historyProbe.clear(${JSON.stringify(hp)})`);
+  }
 } catch (e) {
   ok('探针执行完成', false, e.message);
 } finally {

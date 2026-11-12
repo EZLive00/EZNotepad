@@ -662,6 +662,76 @@ ok('语言表：新建类型够多', newDocTypes().length >= 24);
     /if \(e\.key === 'ArrowUp' \|\| e\.key === 'ArrowDown'\) return this\.arrowInCell\(e, info\);/.test(WYS));
 }
 
+/* ---------- 文件树选中态 / 分割线独立块 / 文件右键历史版本 ---------- */
+{
+  const read = (p) => fs.readFileSync(new URL('../' + p, import.meta.url), 'utf8');
+  const tree = read('src/js/filetree.js');
+  const wys = read('src/js/wysiwyg.js');
+  const app = read('src/js/app.js');
+  const css = read('src/styles.css');
+  const hist = read('src/js/history.js');
+
+  ok('树里的单选跟着编辑区换文件走，显式多选不被打断',
+    tree.includes('if (this.sel.size <= 1)') && tree.includes('this.sel.add(this.activePath)')
+      && tree.includes('this.anchor = this.activePath'));
+  ok('当前文件不再叠一圈 .sel（否则和悬浮灰底分不清）',
+    tree.includes('r.dataset.path !== this.activePath'));
+  ok('文件树右键补了历史版本，且传的是被右键那一行',
+    tree.includes("label: tt('历史版本')") && tree.includes('this.onHistory(entry.path, entry.name)'));
+  ok('历史版本面板按 path 取快照，只有当前文件能「恢复」',
+    app.includes('function showHistoryForPath(path, name)')
+      && app.includes('allowApply: !!cur && cur.path === path')
+      && hist.includes('if (o.allowApply !== false)'));
+  ok('插入分割线的两条路径都不再垫空段落',
+    !wys.includes('hr.after(p)') && wys.includes('this.selectBlock(hr)'));
+  ok('退格 / Delete 不再直接把分割线删掉',
+    !wys.includes("prev.dataset.type === 'hr') { prev.remove()")
+      && !wys.includes("next.dataset.type === 'hr') { next.remove()")
+      && wys.includes('this.selectBlock(prev)') && wys.includes('this.selectBlock(next)'));
+  ok('分割线有显式块选中态，currentBlock 优先认它',
+    wys.includes('this.blockSel = null') && wys.includes('selectBlock(block)')
+      && wys.includes('if (this.blockSel && this.blockSel.isConnected && this.root.contains(this.blockSel)) return this.blockSel;'));
+  ok('块选中态的按键由 document 捕获层接管，不赌焦点在哪',
+    wys.includes('handleBlockSelKey(e)') && wys.includes("document.addEventListener('keydown'")
+      && wys.includes('e.stopPropagation()'));
+  ok('点别处取消块选中，但手柄与块菜单豁免',
+    wys.includes("document.addEventListener('pointerdown'")
+      && wys.includes('t.closest(\'.w-block[data-type="hr"]\')')
+      && wys.includes("t.closest('.w-handle') || t.closest('.w-bmenu')"));
+  ok('分割线有块手柄，块菜单只给能兑现的删除',
+    !app.includes("if (block.dataset.type === 'hr') return hideHandle();")
+      && app.includes("if (handleBlock.dataset.type === 'hr')"));
+  ok('整批重渲染 / 清视图时块选中态作废',
+    wys.includes('旧块已被整批换掉') && app.includes('wys.clearBlockSel();'));
+  ok('分割线有真实可点高度与独立选中态',
+    css.includes('padding: .9em 0') && css.includes('.wysiwyg .w-hr.w-sel'));
+
+  /* 自动保存 1.2s 一次，不合并就会把 60 份上限很快塞满逐秒的半成品 */
+  const rust = read('src-tauri/src/lib.rs');
+  const beJs = read('src/js/backend.js');
+  ok('自动保存写历史时带 auto 标记，且不与 silent 混用',
+    app.includes("{ silent: true, auto: true }")
+      && app.includes('be.saveHistory(t.path, t.savedContent, !!opts.auto)')
+      && beJs.includes('auto = false'));
+  ok('合并窗口只收自动保存，Ctrl+S 仍是显式里程碑',
+    rust.includes('const HISTORY_MERGE_WINDOW_MS: u64 = 10 * 60 * 1000;')
+      && rust.includes('if auto {') && rust.includes('auto.unwrap_or(false)'));
+  ok('合并是「跳过」而不是「覆盖」，保住编辑会话开始那一版',
+    /if stamp\.saturating_sub\(\*ts\) < HISTORY_MERGE_WINDOW_MS \{\s*return Ok\(\(\)\);/.test(rust)
+      && rust.includes('覆盖会把这段编辑'));
+  ok('超大文件不进历史，免得一份吃掉整个 20MB 总额',
+    rust.includes('const HISTORY_MAX_FILE_BYTES: usize = 2 * 1024 * 1024;')
+      && rust.includes('content.len() > HISTORY_MAX_FILE_BYTES'));
+  ok('内容去重与 60 份 / 20MB 上限仍在',
+    rust.includes('if prev == content') && rust.includes('i >= 60')
+      && rust.includes('20 * 1024 * 1024'));
+  ok('同一文件内毫秒戳严格递增，同毫秒两次保存不互相覆盖',
+    rust.includes('let mut stamp = now_millis();')
+      && rust.includes('stamp = ts.saturating_add(1)'));
+  ok('真机探针有真实后端钩子可用，不另造测试实现',
+    app.includes('historyProbe: {') && app.includes('list: (p) => be.listHistory(p)'));
+}
+
 /* ---------- 汇总 ---------- */
 const fail = out.filter((r) => !r.ok);
 out.forEach((r) => {

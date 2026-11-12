@@ -1294,10 +1294,11 @@ window.__run = () => {
   has('预览：表格对齐', prev.includes('<th style="text-align:left">l</th>') && prev.includes('<td style="text-align:center">2</td>'));
   has('预览：任务清单', prev.includes('<ul class="task-list">') && prev.includes('checked'));
 
-  // 28. 输入 --- 变分割线
+  // 28. 输入 --- 变分割线（分割线是独立块：不再凭空垫一个空段落）
   T.reset('');
   T.type('---');
-  eq('输入 --- 变分割线', T.blocks().join(','), 'hr=,p=');
+  eq('输入 --- 变分割线', T.blocks().join(','), 'hr=');
+  eq('输入 --- 后分割线本身被选中', ed.blockSel && ed.blockSel.dataset.type, 'hr');
 
   // 29. 表格落在文档末尾时自动补一个空段落当落脚点
   T.reset('abc');
