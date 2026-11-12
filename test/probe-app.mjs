@@ -322,6 +322,70 @@ try {
   await sleep(400);
   ok('csv 不提取大纲', (await outlineRows()).length === 0);
 
+  /* 长大纲滚到中段后切到另一份文件：窗口化必须立刻换成新文档的条目。
+     旧实现拿上一份文档的 scrollTop 算新区间，start > end 时 new Array(负数)
+     抛异常、DOM 原封不动留着旧条目，只有用户手动滚回顶部才刷新。 */
+  const olLong = Array.from({ length: 320 }, (_, i) => `## LONG-${i + 1}\n\n段落 ${i + 1}\n`).join('\n');
+  const olShort = Array.from({ length: 3 }, (_, i) => `## SHORT-${i + 1}\n\n段落\n`).join('\n');
+  await ev(`window.__snp.newTab('ol-long.md', ${JSON.stringify(olLong)}, null)`);
+  await sleep(250);
+  await ev(`window.__snp.newTab('ol-short.md', ${JSON.stringify(olShort)}, null)`);
+  await sleep(250);
+  const clickTabNamed = (name) => ev(`(() => {
+    const t = [...document.querySelectorAll('.tab')].find(x => x.textContent.includes(${JSON.stringify(name)}));
+    if (t) t.click(); return !!t;
+  })()`);
+  ok('两个测试标签都在标签条上', await clickTabNamed('ol-long.md'));
+  await sleep(300);
+  await ev(`(() => { const l = document.getElementById('outlineList'); l.scrollTop = l.scrollHeight; l.dispatchEvent(new Event('scroll')); })()`);
+  await sleep(250);
+  const olBefore = await ev(`JSON.stringify({ st: Math.round(document.getElementById('outlineList').scrollTop), first: document.querySelector('#outlineList .outline-item')?.textContent || null })`);
+  ok('长大纲确实滚到了中段', JSON.parse(olBefore).st > 1000, olBefore);
+  await clickTabNamed('ol-short.md');
+  await sleep(400);
+  const olAfter = await ev(`JSON.stringify({ tab: window.__snp.getActiveTab().name, count: window.__snp.outlineCount(), st: Math.round(document.getElementById('outlineList').scrollTop), rows: [...document.querySelectorAll('#outlineList .outline-item')].map(b => b.textContent) })`);
+  const sw = JSON.parse(olAfter);
+  ok('切到另一份文件，大纲立刻换成新文档的条目',
+    sw.tab === 'ol-short.md' && sw.count === 3 && sw.rows.length === 3
+      && sw.rows[0] === 'SHORT-1' && !sw.rows.some((x) => x.startsWith('LONG-')), olAfter);
+  ok('换文档后大纲滚动位置归零', sw.st === 0, olAfter);
+  await clickTabNamed('ol-long.md');
+  await sleep(350);
+  ok('切回去长大纲仍在，且从第一项开始',
+    (await ev(`window.__snp.outlineCount()`)) === 320
+      && (await ev(`document.querySelector('#outlineList .outline-item')?.textContent`)) === 'LONG-1');
+
+  /* 选区配色：浅色跟大纲选中项同一层浅橙，深色不刷半透明白。
+     WYSIWYG / 预览此前没有 ::selection 规则，用的是系统高亮色。 */
+  const selColors = `(() => {
+    const p = document.createElement('div');
+    p.style.position = 'fixed'; p.style.left = '-9999px';
+    document.body.appendChild(p);
+    const get = (v) => { p.style.backgroundColor = 'var(' + v + ')'; return getComputedStyle(p).backgroundColor; };
+    const r = { theme: document.body.dataset.theme, sel: get('--sel-bg'), soft: get('--accent-soft'), match: get('--sel-match-bg') };
+    p.remove(); return JSON.stringify(r);
+  })()`;
+  const lum = (s) => {
+    const n = (s.match(/[\d.]+/g) || []).map(Number).slice(0, 3);
+    if (!n.length) return 1;
+    return s.startsWith('color(') ? Math.max(...n) : Math.max(...n) / 255;
+  };
+  const lightColors = JSON.parse(await ev(selColors));
+  ok('浅色选区就是大纲选中项那层浅橙',
+    lightColors.sel === lightColors.soft && /254, 235, 231/.test(lightColors.sel), JSON.stringify(lightColors));
+  await ev(`(() => { document.body.dataset.theme = 'dark'; return document.body.dataset.theme; })()`);
+  await sleep(150);
+  const darkColors = JSON.parse(await ev(selColors));
+  ok('深色相同文本高亮不再是半透明白',
+    darkColors.match.indexOf('/') < 0 && lum(darkColors.match) < 0.35, JSON.stringify(darkColors));
+  ok('深色选区是暗底，不是发白的亮块', lum(darkColors.sel) < 0.5, JSON.stringify(darkColors));
+  ok('文档区补了 ::selection 规则，不再交给系统高亮色',
+    await ev(`[...document.styleSheets].some(ss => { try {
+      return [...ss.cssRules].some(r => r.selectorText && r.selectorText.includes('#wysiwyg ::selection') && r.style.backgroundColor.includes('--sel-bg'));
+    } catch { return false; } })`));
+  await ev(`document.body.dataset.theme = 'light'`);
+  await sleep(150);
+
   /* 拖入文件。窗口开着 dragDropEnabled，正常路径是 Tauri 的 onDragDropEvent，
      但 OS 级拖放没法在探针里模拟。这里用合成 HTML5 drop 验的是**兜底分支**：
      真走到它时（原生通道没注册上）图片仍能落 assets、非图片仍会拦下默认行为。 */

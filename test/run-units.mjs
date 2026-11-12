@@ -283,9 +283,29 @@ ok('语言表：新建类型够多', newDocTypes().length >= 24);
   const activeLine = (theme.match(/'\.cm-activeLine'\s*:\s*\{[^}]*\}/) || [''])[0];
   ok('当前行不再用强调色染底',
     activeLine.includes('--active-line-bg') && !activeLine.includes('--accent'), activeLine);
-  ok('选中相同文本：CM6 与所见即所得共用一个灰阶令牌',
+  ok('选中相同文本：CM6 与所见即所得共用一个选中态令牌',
     theme.includes("'.cm-selectionMatch'") && theme.includes('--sel-match-bg')
       && css.includes('::highlight(sn-same)') && css.includes('--sel-match-bg'));
+  /* 选区配色：浅色跟大纲选中项同一层浅橙，深色不刷半透明白。
+     WYSIWYG / 预览此前没有 ::selection 规则，交给系统高亮色（深下白、浅下蓝）。 */
+  const lightCss = css.slice(css.indexOf('body[data-theme="light"]'), css.indexOf('body[data-theme="dark"]'));
+  ok('浅色选区直接用 --accent-soft（和大纲选中项同色）',
+    /--sel-bg:\s*var\(--accent-soft\)/.test(lightCss)
+      && /\.outline-item\.active\s*\{[^}]*--accent-soft/.test(css));
+  ok('两套主题的相同文本高亮都不再拿 --fg 刷半透明白',
+    (css.match(/--sel-match-bg:/g) || []).length === 2
+      && !/--sel-match-bg:\s*color-mix\(in srgb, var\(--fg\)/.test(css));
+  ok('文档区补了 ::selection，不再交给系统高亮色',
+    css.includes('#wysiwyg ::selection') && css.includes('#preview ::selection')
+      && /#wysiwyg[^{]*\{[^}]*--sel-bg/.test(css));
+  /* 大纲窗口化：换文档必须归零滚动位置与游标，窗口区间按 n 收口。 */
+  ok('换标签时大纲滚动位置、窗口游标与签名一起归零',
+    app.includes('outlineTabId !== t.id') && app.includes('el.outlineList.scrollTop = 0')
+      && app.includes('outlineStart = outlineEnd = 0') && app.includes("outlineSig = ''"));
+  ok('窗口区间按条目数收口，end 不会落到 start 前面',
+    app.includes('const maxTop = Math.max(0, n * OUTLINE_ROW - h)')
+      && app.includes('list.scrollTop > maxTop')
+      && app.includes('Math.max(start, Math.ceil'));
   ok('明暗两套主题都定义了当前行底与匹配底',
     (css.match(/--active-line-bg:/g) || []).length === 2
       && (css.match(/--sel-match-bg:/g) || []).length === 2);
