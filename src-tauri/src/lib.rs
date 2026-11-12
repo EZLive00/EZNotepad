@@ -709,9 +709,30 @@ fn history_dir(app: &tauri::AppHandle, path: &str) -> Result<PathBuf, AppError> 
     Ok(base.join("history").join(format!("{:016x}", fnv1a(path))))
 }
 
+/* 连续编辑的合并窗口：自动保存在这段时间里不再新增快照。
+   我们存的是「即将被覆盖的旧版」，与 VS Code 存「这一版保存后的内容」方向相反，
+   所以合并的动作是「跳过」，而不是拿新内容去覆盖最后一份 —— 覆盖会把这段编辑
+   开始前的那一版弄丢，而那恰恰是用户想回退的版本。Ctrl+S 是显式里程碑，不受此限。 */
+const HISTORY_MERGE_WINDOW_MS: u64 = 10 * 60 * 1000;
+/* 单个文件太大就别记历史了：一份 8MB 的快照能吃掉 20MB 总额里的一大半，
+   结果反而是把小文件的历史全挤掉。VS Code 的默认门槛是 256KB，这里放宽到 2MB。 */
+const HISTORY_MAX_FILE_BYTES: usize = 2 * 1024 * 1024;
+
+fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 /// 留一份快照。内容和最新那份一样时直接跳过，不制造一堆重复。
-fn write_history_snapshot(app: &tauri::AppHandle, path: &str, content: &str) -> Result<(), AppError> {
-    if content.is_empty() {
+fn write_history_snapshot(
+    app: &tauri::AppHandle,
+    path: &str,
+    content: &str,
+    auto: bool,
+) -> Result<(), AppError> {
+    if content.is_empty() || content.len() > HISTORY_MAX_FILE_BYTES {
         return Ok(());
     }
     let dir = history_dir(app, path)?;
@@ -749,10 +770,23 @@ fn write_history_snapshot(app: &tauri::AppHandle, path: &str, content: &str) -> 
         }
     }
 
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
+    let mut stamp = now_millis();
+    /* 文件名就是毫秒戳：同一毫秒里存两份会互相覆盖，凭空少一条历史。
+       让同一文件的戳严格递增，超出真实时钟 1ms 不影响排序和展示。 */
+    if let Some((ts, _)) = snaps.first() {
+        if stamp <= *ts {
+            stamp = ts.saturating_add(1);
+        }
+    }
+    /* 自动保存只在「距上一份快照超过合并窗口」时开新条目。连续打字那几十次写盘
+       共用窗口里的第一份，历史列表留的是一段段稳定态，不是逐秒的半成品。 */
+    if auto {
+        if let Some((ts, _)) = snaps.first() {
+            if stamp.saturating_sub(*ts) < HISTORY_MERGE_WINDOW_MS {
+                return Ok(());
+            }
+        }
+    }
     fs::write(dir.join(format!("{stamp}.txt")), content.as_bytes())
         .map_err(|e| AppError::detail("io.history_write", e))?;
 
@@ -770,8 +804,14 @@ fn write_history_snapshot(app: &tauri::AppHandle, path: &str, content: &str) -> 
 }
 
 #[tauri::command]
-fn save_history(app: tauri::AppHandle, path: String, content: String) -> Result<(), AppError> {
-    write_history_snapshot(&app, &path, &content)
+fn save_history(
+    app: tauri::AppHandle,
+    path: String,
+    content: String,
+    auto: Option<bool>,
+) -> Result<(), AppError> {
+    // 旧调用（清空速记等）不传 auto，一律当成显式里程碑
+    write_history_snapshot(&app, &path, &content, auto.unwrap_or(false))
 }
 
 #[tauri::command]

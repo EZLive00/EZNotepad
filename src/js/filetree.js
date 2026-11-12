@@ -35,6 +35,7 @@ export class FileTree {
    *   onDeleted (path) => void                 让打开着的标签脱离磁盘
    *   onReveal  (path) => void                 在资源管理器里定位
    *   onCompare (leftPath, rightPath) => void  多选两个文件后右键「比较」
+   *   onHistory (path, name) => void          右键「历史版本」（按被右键的路径）
    */
   constructor(opt) {
     this.body = opt.body;
@@ -49,6 +50,7 @@ export class FileTree {
     this.onDeleted = opt.onDeleted || (() => {});
     this.onReveal = opt.onReveal || (() => {});
     this.onCompare = opt.onCompare || null;
+    this.onHistory = opt.onHistory || null;
     /* 多选只对文件生效：Ctrl 点击增减、Shift 点击选一段，用来挑两个文件做比较 */
     this.sel = new Set();
     this.anchor = '';
@@ -77,13 +79,23 @@ export class FileTree {
     return this.render();
   }
 
-  /** 编辑区换文件时调用：把对应行点亮 */
+  /** 编辑区换文件时调用：把对应行点亮，并让「单选」一起跟着走 */
   setActive(path) {
     this.activePath = path || '';
     this.body.querySelectorAll('.ft-row.active').forEach((r) => r.classList.remove('active'));
-    if (!this.activePath) return;
-    const row = [...this.body.querySelectorAll('.ft-row')].find((r) => r.dataset.path === this.activePath);
+    const row = this.activePath
+      ? [...this.body.querySelectorAll('.ft-row')].find((r) => r.dataset.path === this.activePath)
+      : null;
+    /* 从标签栏换文件时，树里那圈 .sel 边框 + --bg-hover 灰底会留在旧文件上，
+       看起来像两个选中项（而灰底又和鼠标悬浮一模一样）。单选必须跟着编辑区走；
+       Ctrl/Shift 攒出来的显式多选（>= 2）不动 —— 那是正在挑两个文件做比较，
+       不该被一次标签切换打断。 */
+    if (this.sel.size <= 1) {
+      this.sel.clear();
+      if (row) { this.sel.add(this.activePath); this.anchor = this.activePath; }
+    }
     if (row) row.classList.add('active');
+    this._paintSel();
   }
 
   /**
@@ -299,7 +311,9 @@ export class FileTree {
   /** 选择状态画在行上；重画树之后要再调一次（行是新建的） */
   _paintSel() {
     this.body.querySelectorAll('.ft-row').forEach((r) => {
-      r.classList.toggle('sel', this.sel.has(r.dataset.path));
+      /* 当前文件已由 .active 点亮，再叠一圈 .sel 边框只会让「选中」和
+         「鼠标悬浮」分不清。.sel 只画给多选里额外的那些行。 */
+      r.classList.toggle('sel', this.sel.has(r.dataset.path) && r.dataset.path !== this.activePath);
     });
   }
 
@@ -328,6 +342,11 @@ export class FileTree {
     items.push({ label: tt('重命名…'), icon: 'pencil', action: () => this._rename(entry) });
     items.push({ label: tt('删除'), icon: 'trash-2', danger: true, action: () => this._remove(entry) });
     items.push({ sep: true });
+    /* 历史版本只针对文件（目录没有内容可快照）。不写省略号：点了直接列快照，
+       不会再弹一个要填东西的框。 */
+    if (!entry.is_dir && this.onHistory) {
+      items.push({ label: tt('历史版本'), icon: 'rotate-ccw', action: () => this.onHistory(entry.path, entry.name) });
+    }
     /* 与标签右键同一组、同一顺序：复制路径紧挨着「在资源管理器中显示」。
        文件与目录都给 —— 目录路径贴到终端里一样有用。 */
     items.push({ label: tt('复制文件路径'), icon: 'copy', action: () => this._copyPath(entry.path) });

@@ -1713,8 +1713,13 @@ body[data-zen="1"] .win-title { color: var(--fg-faint); }
   fill: none; stroke: currentColor; stroke-width: 2;
   stroke-linecap: round; stroke-linejoin: round;
 }
-.wysiwyg .w-hr { margin: 2.1em 0; }
+/* 分割线是独立块：margin 区域不属于元素盒、点不到，所以用 padding 撑出
+   一条真正可点的高度（总间距仍与原来的 2.1em 相当）。选中态用状态色，
+   不和「鼠标悬浮」的灰底混。 */
+.wysiwyg .w-hr { margin: 1.2em 0; padding: .9em 0; cursor: pointer; user-select: none; }
 .wysiwyg .w-hr hr { border: none; border-top: var(--bw) solid var(--line-strong); }
+.wysiwyg .w-hr.w-sel { background: var(--accent-soft); border-radius: 4px; }
+.wysiwyg .w-hr.w-sel hr { border-top-color: var(--accent); }
 /* 所见即所得里的公式只染色：真渲染交给预览（往 contenteditable 塞 KaTeX
    的 DOM，退格删不掉、光标会卡住）。染色是为了让人一眼认出这是公式而不是排版符号 */
 .wysiwyg .w-math {

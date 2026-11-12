@@ -76,20 +76,25 @@ export async function showHistory(o) {
       }
     };
 
-    const apply = document.createElement('button');
-    apply.type = 'button';
-    apply.className = 'hist-btn primary';
-    apply.textContent = tt('恢复');
-    apply.onclick = async () => {
-      try {
-        const text = await be.readHistory(snap.path);
-        o.onApply(text);
-      } catch (e) {
-        toast(errText(e));
-      }
-    };
+    /* 文件树右键看的是「某个路径的历史」，那个文件可能压根没打开。
+       没有编辑目标就不摆「恢复」—— 写回编辑器必须落到明确的标签上。 */
+    if (o.allowApply !== false) {
+      const apply = document.createElement('button');
+      apply.type = 'button';
+      apply.className = 'hist-btn primary';
+      apply.textContent = tt('恢复');
+      apply.onclick = async () => {
+        try {
+          const text = await be.readHistory(snap.path);
+          o.onApply(text);
+        } catch (e) {
+          toast(errText(e));
+        }
+      };
+      acts.append(apply);
+    }
 
-    acts.append(view, apply);
+    acts.prepend(view);
     row.append(acts);
     listEl.append(row);
   });

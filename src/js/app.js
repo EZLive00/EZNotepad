@@ -143,6 +143,12 @@ function scheduleOutline() {
 }
 
 const wys = new WysiwygEditor(el.wysiwyg, {
+  /* 点中分割线：它自己没有光标位，把块手柄的锚点直接钉到这一块上，
+     别等 selectionchange 拿旧锚点把刚选中的块盖掉 */
+  onBlockSelect: (block) => {
+    if (!block) { anchorBlock = null; hideHandle(); return; }
+    anchorBlock = block; placeHandle(block);
+  },
   /* 大文档分块载入的进度：状态栏行数位临时显示百分比。
      完成时（done === total）调度一次统计，把「载入中 x%」换回真实行数 ——
      否则最后一条进度文字会永远留在状态栏上（onChange 在载入期被抑制，
@@ -537,6 +543,7 @@ function activate(id) {
 function clearView() {
   renderedTabId = null;
   plain.load('');
+  wys.clearBlockSel();      // 编辑区被整批换掉，块选中态不该残留
   wys.clearSelMatchNow();   // 编辑区被清空，全局的高亮注册表不会自己消失
   el.wysiwyg.innerHTML = '';
   el.preview.innerHTML = '<div class="diff-empty">' + tt('没有打开的文件') + '</div>';
@@ -1001,6 +1008,9 @@ const tree = new FileTree({
   onReveal: (p) => revealInFolder(p),
   /* 树里选中两个文件右键「比较」：左边是被右键的那个 */
   onCompare: (l, r) => be.openCompareWindow(l, r).catch((e) => toast(tt('打不开对比窗口：') + e)),
+  /* 右键「历史版本」按被右键的那个路径列快照；那个文件可能没打开，
+     不能偷懒复用只认 activeTab 的入口 */
+  onHistory: (p, name) => showHistoryForPath(p, name),
   /* 改名/删除要带着已打开的标签一起走，否则标签还指着旧路径，
      下次保存就凭空造出一个同名文件（删除的情况则是把内容写回已删位置）。 */
   onRenamed: (oldPath, newPath) => {
@@ -1637,7 +1647,7 @@ function scheduleAutoSave() {
   clearTimeout(autoSaveTimer);
   autoSaveTimer = setTimeout(() => {
     const t = activeTab();
-    if (t && t.path && isDirty(t)) saveTab(t, false, { silent: true });
+    if (t && t.path && isDirty(t)) saveTab(t, false, { silent: true, auto: true });
   }, 1200);
 }
 
@@ -1806,7 +1816,9 @@ async function saveTab(t = activeTab(), saveAs = false, opts = {}) {
     /* 落盘之前先留一份旧的：一键格式化、排序去重之后想反悔，
        撤销栈未必翻得回去（还有 8MB 上限），这是最后一道 */
     if (t.savedContent && t.savedContent !== t.content) {
-      await be.saveHistory(t.path, t.savedContent).catch(() => {});
+      /* 自动保存走合并窗口，Ctrl+S 是显式里程碑。别拿 silent 代替 auto：
+         silent 只管要不要弹「已保存」，别处（安静批量保存）也会用它。 */
+      await be.saveHistory(t.path, t.savedContent, !!opts.auto).catch(() => {});
     }
     await be.saveText({ path: t.path, content, encoding: t.encoding, bom: t.bom });
     t.savedContent = t.content;
@@ -3193,16 +3205,28 @@ function showHistoryPanel() {
   const t = activeTab();
   if (!t) return;
   if (!t.path) { toast(tt('这个文件还没保存过，没有历史版本')); return; }
+  showHistoryForPath(t.path, t.name);
+}
+
+/* 按路径列历史版本：文件树右键点进来的文件可能压根没打开（没有标签），
+   面板只认 path，不认「当前标签」。没有编辑目标时只给「查看」，不摆「恢复」——
+   写回编辑器必须落到一个明确的标签上，不能写到用户没看着的文件里。 */
+function showHistoryForPath(path, name) {
+  const display = name || String(path).split(/[\\/]/).pop() || '';
+  const cur = activeTab();
   showHistory({
-    path: t.path,
+    path,
+    allowApply: !!cur && cur.path === path,
     onOpen: ({ text, time }) => {
       const d = new Date(time);
       const stamp = `${d.getMonth() + 1}-${String(d.getDate()).padStart(2, '0')} `
         + `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-      newTab(tt('历史版本：{name}', { name: t.name }), text, null);
+      newTab(tt('历史版本：{name}', { name: display }), text, null);
       toast(tt('已打开 {when} 的版本，要留下就「另存为」', { when: stamp }));
     },
     onApply: (text) => {
+      const t = activeTab();
+      if (!t || t.path !== path) return;   // 面板开着时用户换了标签
       t.content = text;
       setContent(text);
       updateStatus();
@@ -3914,7 +3938,8 @@ function kindOfBlock(b) {
 
 function placeHandle(block) {
   if (!block || !block.isConnected || !block.classList.contains('w-block')) return hideHandle();
-  if (block.dataset.type === 'hr') return hideHandle();
+  /* 分割线也是独立块：从前这里直接藏掉手柄，它才「不算一个块」。
+     现在由块选中态驱动，手柄给出「删除这一块」的入口。 */
   /* 引用整组是一个逻辑块，只该有一个 ⋮⋮，钉在组首。续行上若再冒一个手柄，
      第二行看着就是可独立修改的块 —— 转换 / 删除会只作用在半截引用上。
      锚点一并归一，菜单与键盘操作就都落在同一个块上。 */
@@ -4009,23 +4034,30 @@ function openBlockMenu(mode, fromSlash = false) {
   };
 
   const cur = mode === 'convert' ? kindOfBlock(handleBlock) : '';
-  head(mode === 'insert' ? tt('在下方插入') : tt('转换这一块'));
-  let prevGroup = '';
-  blockKinds().forEach((it) => {
-    if (prevGroup && it.group && it.group !== prevGroup) sep();
-    if (it.group) prevGroup = it.group;
-    item(it, it.id === cur);
-  });
-  if (mode === 'insert') {
-    sep();
-    head(tt('插入'));
-    blockInserts().forEach((it) => item(it, false));
-  } else {
-    sep();
-    /* 转换面板底部补上块级删除：和「改类型」同属块操作。故意不给选择键、
-       也不进键盘导航 —— 面板里 0~9 / w / d / s 是盲打键，↑↓ / End + Enter
-       同样是盲按；破坏性操作只留鼠标这条明确路径。 */
+  if (handleBlock.dataset.type === 'hr') {
+    /* 分割线没有可搬的文本，转换面板那一整排块类型对它全是死路
+       （convertBlock 会直接 return）。只摆一条能兑现的块操作。 */
+    head(tt('分割线'));
     item({ id: 'deleteBlock', label: tt('删除这一块'), icon: 'trash-2', danger: true }, false, false);
+  } else {
+    head(mode === 'insert' ? tt('在下方插入') : tt('转换这一块'));
+    let prevGroup = '';
+    blockKinds().forEach((it) => {
+      if (prevGroup && it.group && it.group !== prevGroup) sep();
+      if (it.group) prevGroup = it.group;
+      item(it, it.id === cur);
+    });
+    if (mode === 'insert') {
+      sep();
+      head(tt('插入'));
+      blockInserts().forEach((it) => item(it, false));
+    } else {
+      sep();
+      /* 转换面板底部补上块级删除：和「改类型」同属块操作。故意不给选择键、
+         也不进键盘导航 —— 面板里 0~9 / w / d / s 是盲打键，↑↓ / End + Enter
+         同样是盲按；破坏性操作只留鼠标这条明确路径。 */
+      item({ id: 'deleteBlock', label: tt('删除这一块'), icon: 'trash-2', danger: true }, false, false);
+    }
   }
 
   // 贴着按钮展开；右边放不下就翻到左边，下边放不下就往上收
@@ -5090,6 +5122,14 @@ window.__snp = {
      只能问这个，不能数 DOM 节点 —— 矮窗口下那样数到的是 25。 */
   outlineCount: () => outlineItems.length,
   outlineActive: () => outlineActive,
+  /* 探针：历史快照的合并窗口在 Rust 侧，只能真调后端才验得到。
+     三个都是只读语义之外的既有命令，不另造测试专用实现。 */
+  historyProbe: {
+    save: (p, text, auto) => be.saveHistory(p, text, auto),
+    list: (p) => be.listHistory(p),
+    read: (p) => be.readHistory(p),
+    clear: (p) => be.clearHistory(p),
+  },
 };
 window.__merge = merge;
 

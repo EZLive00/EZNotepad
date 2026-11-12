@@ -145,7 +145,10 @@ export const quickNotePath = () => invoke('quick_note_path');
 
 /* ---------------- 本地历史 ----------------
    每次保存前把旧内容留一份，存在应用数据目录（不进文档目录，不污染仓库） */
-export const saveHistory = (path, content) => invoke('save_history', { path, content });
+/* auto=true 表示这次写盘来自自动保存：后端会按合并窗口把连续编辑并成一份快照。
+   不传（或 false）是显式里程碑（Ctrl+S / 清空速记），每次都记。 */
+export const saveHistory = (path, content, auto = false) =>
+  invoke('save_history', { path, content, auto });
 export const listHistory = (path) => invoke('list_history', { path });
 export const readHistory = (path) => invoke('read_history', { path });
 export const clearHistory = (path) => invoke('clear_history', { path });

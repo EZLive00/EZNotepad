@@ -1222,6 +1222,11 @@ export class WysiwygEditor {
     // 菜单/工具栏点击时焦点可能暂时离开编辑区，记住最后所在块以保持命令有目标
     this.lastBlock = null;
     this.lastCell = null;
+    /* 没有光标位的块（目前只有分割线）靠「块选中」承载操作单元：点中它、
+       块手柄、删除、块菜单都以这一块为准。它和文字选区互斥、不进文档模型，
+       整篇重渲染时一并作废。 */
+    this.blockSel = null;
+    this.onBlockSelect = opts.onBlockSelect || null;
 
     /* ---- 增量序列化 ----
        每次击键都要把整篇 DOM 写回 Markdown，大文档（万行级）下这是卡顿的
@@ -1277,6 +1282,25 @@ export class WysiwygEditor {
     root.addEventListener('scroll', () => { this._onVirtualScroll(); this.syncGapHint(); }, { passive: true });
     root.addEventListener('input', () => this.onInput());
     root.addEventListener('keydown', (e) => this.handleKey(e));
+    /* 点中不可编辑的分割线后，WebView2 会把焦点交还 body（实测 pointerdown
+       preventDefault + 保留折叠 Range 都拦不住），只挂在 root 上的 keydown
+       收不到 Delete / Backspace。块选中态的按键在 document 捕获层接管，
+       处理完就截断，免得 root 的 handleKey 再跑一遍。 */
+    document.addEventListener('keydown', (e) => {
+      if (e.isComposing || this.loading) return;
+      if (!this.blockSel || !this.blockSel.isConnected) return;
+      if (this.handleBlockSelKey(e)) e.stopPropagation();
+    }, true);
+    /* 点别处就取消块选中：点线本身由 handlePointerDown 重新选中，
+       手柄与块菜单要点这一块，必须豁免。不能只判「编辑区内」——
+       点在其它段落上一样该取消。 */
+    document.addEventListener('pointerdown', (e) => {
+      if (!this.blockSel) return;
+      const t = e.target;
+      if (t && t.closest && t.closest('.w-block[data-type="hr"]')) return;
+      if (t && t.closest && (t.closest('.w-handle') || t.closest('.w-bmenu'))) return;
+      this.clearBlockSel();
+    }, true);
     root.addEventListener('beforeinput', (e) => this.onBeforeInput(e));
     root.addEventListener('copy', (e) => this.onCopy(e, false));
     root.addEventListener('cut', (e) => this.onCopy(e, true));
@@ -1285,6 +1309,12 @@ export class WysiwygEditor {
       /* 中文输入法起手也是「要输入了」：先把块后那一行建出来，组字文本
          才会落在它里面，而不是写进下一块的正文。 */
       if (this.gapAfter) this.materializeGap();
+      /* 分割线被选中时同样要在它下方开一行，否则组字无处落脚 */
+      if (this.blockSel) {
+        const p = this.insertEmptyAfter(this.blockSel);
+        this.clearBlockSel();
+        this.placeCaretStart(p);
+      }
     });
     root.addEventListener('compositionend', () => { this.composing = false; this.onInput(); });
     root.addEventListener('paste', (e) => this.handlePaste(e));
@@ -1435,6 +1465,7 @@ export class WysiwygEditor {
     this._exitVirtual();
     this.lastBlock = null;
     this.lastCell = null;
+    this.blockSel = null;      // 旧块已被整批换掉，块选中态一并作废
     /* 大文档（>1MB）走视口渲染：块只存记录、DOM 里只留视口附近几十个。
        中小文档维持原路径（DOM 即模型），行为一字不变。 */
     if (md.length > BIG_DOC_CHARS) {
@@ -2199,7 +2230,42 @@ export class WysiwygEditor {
     return i >= 0 ? heads[i] : null;
   }
 
+  /* ---------------- 块选中（没有光标位的块） ----------------
+     分割线 contentEditable=false，浏览器不会给它选区。过去只能靠「下面垫一个
+     空段落 + 退格特判删线」绕，结果空行与线的生命周期绑死：删空行把线一起
+     删了，线自己反倒点不中。这里给它一份显式的块选中态，与文字选区互斥。 */
+
+  /** 只给无光标位的块用；选中后 currentBlock() 恒返回这一块 */
+  selectBlock(block) {
+    if (!block || !this.root.contains(block) || block.dataset.type !== 'hr') return;
+    this.clearBlockSel();
+    this.blockSel = block;
+    this.lastBlock = block;
+    block.classList.add('w-sel');
+    /* 别把选区清空：没有 Range 时 Chromium 会把焦点甩回 body，之后 keydown
+       根本到不了编辑区（「点中线再按 Delete」毫无反应）。在 root 上放一个
+       折叠 Range 把编辑宿主钉住 —— 它不可见、不产生文字高亮，块选中态由
+       currentBlock() 优先返回，不受这个落点影响。 */
+    const sel = window.getSelection();
+    const at = [...this.root.children].indexOf(block);
+    const r = document.createRange();
+    r.setStart(this.root, Math.max(0, at));
+    r.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(r);
+    this.root.focus({ preventScroll: true });
+    if (this.onBlockSelect) this.onBlockSelect(block);
+  }
+
+  clearBlockSel() {
+    if (!this.blockSel) return;
+    this.blockSel.classList.remove('w-sel');
+    this.blockSel = null;
+    if (this.onBlockSelect) this.onBlockSelect(null);
+  }
+
   currentBlock() {
+    if (this.blockSel && this.blockSel.isConnected && this.root.contains(this.blockSel)) return this.blockSel;
     const sel = window.getSelection();
     if (sel.rangeCount) {
       const node = sel.anchorNode;
@@ -2697,16 +2763,15 @@ export class WysiwygEditor {
       return true;
     };
 
-    // --- / *** / ___ → 分割线（只有整行就这些字符时才触发，后面自动补一个空段落）
+    // --- / *** / ___ → 分割线（只有整行就这些字符时才触发）
     if (mark === text && /^(-{3,}|\*{3,}|_{3,})$/.test(mark)) {
       const hr = mkHr();
-      const p = mkPara('');
       block.replaceWith(hr);
-      hr.after(p);
+      /* 不再凭空垫一个空段落：分割线自己是独立块，转完就选中它。
+         想接着写按 Enter / 直接打字 —— 那时才在它下方开一行。 */
+      this.selectBlock(hr);
       this.hCoalesce = false;
       this.flush();
-      this.root.focus();
-      setCaretOffset(textEl(p), 0);
       return true;
     }
 
@@ -2857,9 +2922,51 @@ export class WysiwygEditor {
 
   /* ---------------- 键盘 ---------------- */
 
+  /**
+   * 块选中态的按键（只给没有光标位的块用）。返回 true 表示这一下已经消费，
+   * 调用方别再往下派发 —— document capture 与 root 的 handleKey 共用这一份。
+   */
+  handleBlockSelKey(e) {
+    if (!this.blockSel || !this.blockSel.isConnected) return false;
+    const b = this.blockSel;
+    const plain = !e.ctrlKey && !e.metaKey && !e.altKey;
+    if (plain && (e.key === 'Backspace' || e.key === 'Delete')) {
+      e.preventDefault();
+      this.clearBlockSel();
+      this.deleteBlock(b);
+      return true;
+    }
+    if (plain && (e.key === 'Enter' || (e.key.length === 1 && !e.isComposing))) {
+      const p = this.insertEmptyAfter(b);
+      this.clearBlockSel();
+      this.placeCaretStart(p);
+      if (e.key === 'Enter') { e.preventDefault(); this.flush(); return true; }
+      /* 可打印字符不 preventDefault：它随后落进刚建好的段落，
+         由 input 事件负责序列化。 */
+      return true;
+    }
+    if (plain && /^Arrow(Up|Down|Left|Right)$/.test(e.key)) {
+      const up = e.key === 'ArrowUp' || e.key === 'ArrowLeft';
+      const near = up ? b.previousElementSibling : b.nextElementSibling;
+      if (near && near.dataset.type !== 'hr') {
+        e.preventDefault();
+        this.clearBlockSel();
+        if (up) this.placeCaretEnd(near); else this.placeCaretStart(near);
+        return true;
+      }
+    }
+    if (e.key === 'Escape' || e.key === 'Tab') {
+      e.preventDefault();
+      this.clearBlockSel();
+      return true;
+    }
+    return false;
+  }
+
   handleKey(e) {
     if (this.loading) { e.preventDefault(); return; }   // 大文档分块载入期间不响应
     if (e.isComposing) return;
+    if (this.handleBlockSelKey(e)) return;
 
     /* 出块时记下的「块后还缺一行」，只在用户真的要写入时才兑现。
        方向键 / 退格 / Tab / 快捷键一律让它失效 —— 移动光标不该改文档。 */
@@ -3065,7 +3172,17 @@ export class WysiwygEditor {
     const prev = block.previousElementSibling;
     if (!prev) { e.preventDefault(); return; }
     e.preventDefault();
-    if (prev.dataset.type === 'hr') { prev.remove(); this.hCoalesce = false; this.flush(); return; }
+    if (prev.dataset.type === 'hr') {
+      /* 分割线是独立块：退格只删这个空段落，线留着。删完把线选中，
+         想删线再按一次退格 —— 两步都有可见反馈。原来这里直接 prev.remove()，
+         空行和线的生命周期绑死，才出现「删空行就把线删了」。 */
+      if (this.isEmptyBlock(block)) {
+        block.remove();
+        this.renumber();
+      }
+      this.selectBlock(prev);
+      return;
+    }
     if (this.needsLineBelow(prev)) {
       /* 表格 / 代码块 / 公式块后面那个空段落是给它们垫的落脚行。行首退格应该
          把它删掉、光标退回块末 —— 原来只 placeCaretEnd 不删块，那一行永远删不掉。
@@ -3090,7 +3207,11 @@ export class WysiwygEditor {
     const next = block.nextElementSibling;
     if (!next) return;
     e.preventDefault();
-    if (next.dataset.type === 'hr') { next.remove(); this.hCoalesce = false; this.flush(); return; }
+    if (next.dataset.type === 'hr') {
+      /* 行末 Delete 撞上分割线：不删线，只把它选中；再按一次才删整块 */
+      this.selectBlock(next);
+      return;
+    }
     if (next.dataset.type === 'table' || next.dataset.type === 'code') return false;
     this.mergeForward(block, next);
   }
@@ -3775,6 +3896,7 @@ export class WysiwygEditor {
   deleteBlock(block = null) {
     if (!block) block = this.currentBlock();
     if (!block || !this.root.contains(block)) return;
+    if (block === this.blockSel) this.clearBlockSel();
     const group = this.bqGroupOf(block);
     const first = group[0];
     const last = group[group.length - 1];
@@ -4236,13 +4358,11 @@ export class WysiwygEditor {
     if (type === 'hr') {
       const hr = mkHr();
       this.insertAfter(block, hr);
-      const p = mkPara('');
-      hr.after(p);
-      this.placeCaretStart(p);
+      /* 不垫空段落：分割线自己是独立块，插入后选中它（可立刻 Delete 撤销，
+         或按 Enter / 打字在它下方开一行）。落脚行按需产生，不是插入的副产物。 */
+      this.selectBlock(hr);
       this.hCoalesce = false;
       this.flush();
-      this.root.focus();
-      setCaretOffset(textEl(p), 0);
       return;
     }
     if (type === 'code' || type === 'math') {
@@ -4671,6 +4791,12 @@ export class WysiwygEditor {
     this.clearGapAfter();      // 鼠标重新摆了光标，「块后待插入」立刻作废
     /* 复制按钮按下的那一下别把编辑区的光标/选区抢走 */
     if (e.target && e.target.closest && e.target.closest('.cc-copy')) { e.preventDefault(); return; }
+    /* 分割线 contentEditable=false：浏览器在按下这一刻的默认动作会把焦点甩到
+       body，随后所有 keydown 都到不了编辑区 —— 实测「点中线再按 Delete」毫无反应。
+       必须在 pointerdown 就 preventDefault 保住焦点，并当场选中这一块；
+       若浏览器仍派发 click，handleClick 里那一支是幂等的。 */
+    const hr = e.target && e.target.closest && e.target.closest('.w-block[data-type="hr"]');
+    if (hr) { e.preventDefault(); this.selectBlock(hr); return; }
     const img = e.target;
     if (!img || img.tagName !== 'IMG' || !img.classList.contains('w-img')) return;
     const r = img.getBoundingClientRect();
@@ -4792,6 +4918,9 @@ export class WysiwygEditor {
 
   handleClick(e) {
     this.clearGapAfter();
+    /* 块选中态的取消统一由 document 的 pointerdown 判定：click 的 target
+       是按下点与松开点的最近公共祖先，点在分割线上时它可能落回 root，
+       在这里无条件清就会把 pointerdown 刚选中的那一块抹掉。 */
     if (this.loading) return;
     /* 代码块右上角的「复制」：整块代码直接进剪贴板，不需要先选中。
        必须待在选区判断之前 —— 用户常常是先选了一段、再想起来复制整块，
@@ -4809,6 +4938,10 @@ export class WysiwygEditor {
       this.root.focus({ preventScroll: true });
       return;
     }
+    /* 分割线没有光标位，浏览器给不了选区：点中它 = 选中这一块。
+       和代码块复制按钮一样放在「有选区就返回」之前，免得被拖选判断吞掉。 */
+    const hrHit = e.target && e.target.closest && e.target.closest('.w-block[data-type="hr"]');
+    if (hrHit) { e.preventDefault(); this.selectBlock(hrHit); return; }
     /* 刚用鼠标拖选完，别再当成「点了一下」处理。
        跨块拖选之后 `click` 的 target 是**按下点与松开点的最近公共祖先** ——
        选到两行以上时它就是 root 本身，和「点了正文空白」长得一模一样。
