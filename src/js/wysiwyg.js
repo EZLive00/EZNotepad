@@ -1160,27 +1160,35 @@ function offsetIn(el) {
   return pre.toString().length;
 }
 
-function setCaretOffset(el, offset) {
+/**
+ * 字符偏移 → (文本节点, 节点内偏移)。`setCaretOffset` 和「按视觉 x 落到某一行」
+ * 都要这个换算，只许有一份实现：两处各写一份 walker，迟早有一处漏掉零宽空格
+ * 或 `<br>` 占位，光标就偏一个字符。返回 null 表示宿主里一个文本节点都没有。
+ */
+function caretPoint(el, offset) {
   let left = Math.max(0, offset);
   const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
   let node = walker.nextNode();
   let last = null;
   while (node) {
     const len = node.nodeValue.length;
-    if (left <= len) { placeCaret(node, left); return; }
+    if (left <= len) return { node, offset: left };
     left -= len;
     last = node;
     node = walker.nextNode();
   }
-  if (last) placeCaret(last, last.nodeValue.length);
-  else {
-    const r = document.createRange();
-    r.selectNodeContents(el);
-    r.collapse(false);
-    const sel = window.getSelection();
-    sel.removeAllRanges();
-    sel.addRange(r);
-  }
+  return last ? { node: last, offset: last.nodeValue.length } : null;
+}
+
+function setCaretOffset(el, offset) {
+  const p = caretPoint(el, offset);
+  if (p) { placeCaret(p.node, p.offset); return; }
+  const r = document.createRange();
+  r.selectNodeContents(el);
+  r.collapse(false);
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(r);
 }
 
 const isEmptyText = (el) => el.textContent.replace(/\u200b/g, '').trim() === '';
@@ -2254,30 +2262,40 @@ export class WysiwygEditor {
   isCaretAtStart(block) { return offsetIn(textEl(block)) === 0; }
 
   /**
-   * 光标是不是停在**看得见的最后一个字符之后**。
+   * 「看得见的最后一个字符之后」的字符偏移，以及末尾是不是藏着一条
+   * **不生成可点击行**的裸 `\n`。出口（↓/→）与入口（↑）共用这一份判据。
    *
    * 尾部垫的零宽空格不算内容：代码块末行、空单元格都会垫一个当落脚点，
    * 若按 `textContent.length` 判，光标停在「abc」之后时 offset 是 3、长度是 4，
    * 判定为「还没到头」—— 于是 → 交给浏览器，它只是跨过那个看不见的字符，
    * 用户看到的是「按一下没反应，得按两下才出块」。
+   *
+   * code / math 的正文是带真换行的文本（white-space: pre-wrap）。末尾那个
+   * `\n` 不生成可点击的行：光标最多停在它前面，浏览器也只肯把行尾点击
+   * 映射到那里。1.2.7 修出块时在这里剥掉它；↑ 从块后一行往回进块时，
+   * 浏览器找不到这条「上一行」的落点，会**整块跳过**落到更前面一块 ——
+   * 同一个根因，两个方向都要读这份判据。
+   *
+   * 只忽略一个：再往前的每个 \n 都对应一条看得见的空行，光标能站上去，
+   * 全剥掉会让用户在倒数第二行按 → 也出块。表格 / 引用 / 列表的换行是
+   * `<br>` 或单元格边界，textContent 里没有裸 \n，不受影响。
    */
-  isCaretAtEnd(block) {
-    const t = textEl(block);
-    const raw = t.textContent;
+  visibleEnd(block) {
+    const host = textEl(block);
+    const raw = host.textContent;
     let end = raw.length;
     while (end > 0 && raw[end - 1] === ZWSP) end--;
-    /* 代码块 / 公式块的正文是带真换行的文本（white-space: pre-wrap）。末尾那个
-       `\n` 不生成可点击的行：光标最多停在它前面（end - 1），浏览器也只肯把
-       行尾点击映射到那里。把它算进 end，则「末尾留过一次回车」的代码块永远
-       被判成「光标不在末尾」，→ / ↓ 不接管、浏览器把光标直接甩进下一块 ——
-       表现就是「代码块后面有内容时出不了块，别的块都行」。
-
-       只忽略一个：再往前的每个 \n 都对应一条看得见的空行，光标能站上去，
-       全剥掉会让用户在倒数第二行按 → 也出块。表格 / 引用 / 列表的换行是
-       <br> 或单元格边界，textContent 里没有裸 \n，不受影响。 */
     const type = block.dataset.type;
-    if ((type === 'code' || type === 'math') && end > 0 && raw[end - 1] === '\n') end--;
-    return offsetIn(t) >= end;
+    const invisibleNL = (type === 'code' || type === 'math')
+      && end > 0 && raw[end - 1] === '\n';
+    if (invisibleNL) end--;
+    return { host, end, invisibleNL };
+  }
+
+  /** 光标是不是停在**看得见的最后一个字符之后**（判据见 visibleEnd） */
+  isCaretAtEnd(block) {
+    const { host, end } = this.visibleEnd(block);
+    return offsetIn(host) >= end;
   }
 
   isEmptyBlock(block) { return isEmptyText(textEl(block)); }
@@ -3178,7 +3196,16 @@ export class WysiwygEditor {
       this.caretAfterBlock(info.block);
       return;
     }
-    if (!exit || !block) return;
+    if (!exit) {
+      /* ↑ 的「入口」：见 arrowIntoBlock。Shift+↑ 是扩选区，Ctrl/Cmd/Alt 组合
+         各有含义，一律不接管；其余情况浏览器本来就对，插一手只会弄丢折行、
+         滚动和按列对齐。 */
+      if (e.key === 'ArrowUp' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        this.arrowIntoBlock(e, block);
+      }
+      return;
+    }
+    if (!block) return;
     if (!this.endsBounded(block)) {
       /* 紧跟着一条分割线：它本身没有光标位，光标停在上面那一行的末尾按 ↓
          就再也没有下文（分割线落在文末时尤其明显）。这里只是「穿过一条线」：
@@ -3197,6 +3224,80 @@ export class WysiwygEditor {
     if (!this.isCaretAtEnd(block)) return;
     e.preventDefault();
     this.caretAfterBlock(block);
+  }
+
+  /**
+   * ↑ 从「块后一行」回到带边界的块里。
+   *
+   * 1.2.7 只修了出口（↓/→ 在块末出块），入口一直交给浏览器。code / math
+   * 正文末尾那个裸 `\n` 不生成可点击行，浏览器从下一块往回找「上一行」时
+   * 找不到落点，于是**整块跳过**，落到更前面一块 —— 用户看到的就是
+   * 「光标在代码块后一行按 ↑，跑到了代码块前面那个块」。
+   *
+   * 只在浏览器确实会跳块的条件下接管：前一块是 code/math、末尾有不可见
+   * `\n`、光标在当前块的第一视觉行。没有这个尾行时实测浏览器能正常进块
+   * （见 test/wysiwyg.html 的对照组），不该抢。
+   *
+   * ⛔ 绝不改文档：只 preventDefault + 摆光标，和出口的「方向键零改动」
+   * 契约一致；出块状态 `gapAfter` 由 handleKey 开头按非写入键清掉。
+   */
+  arrowIntoBlock(e, block) {
+    if (!block) return false;
+    const prev = block.previousElementSibling;
+    if (!prev || (prev.dataset.type !== 'code' && prev.dataset.type !== 'math')) return false;
+    const { host, end, invisibleNL } = this.visibleEnd(prev);
+    if (!invisibleNL || !this.onFirstVisualLine(block)) return false;
+    e.preventDefault();
+    this.placeCaretAtColumn(prev, host, end, this.caretX(block));
+    return true;
+  }
+
+  /** 光标是不是在当前块的第一视觉行（折行长段落的第二行往上不该出块） */
+  onFirstVisualLine(block) {
+    const sel = window.getSelection();
+    const cr = sel.rangeCount ? sel.getRangeAt(0).getClientRects()[0] : null;
+    if (!cr) return true;      // 空段落只有 <br>，没有 rect，它本身就是第一行
+    const t = textEl(block);
+    const tr = t.getClientRects()[0];
+    if (!tr) return true;
+    const cs = getComputedStyle(t);
+    const lh = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.6 || 20;
+    return cr.top - tr.top < lh * 0.6;
+  }
+
+  /** 当前光标的屏幕 x；空段落没有 rect 时退回宿主左边缘 */
+  caretX(block) {
+    const sel = window.getSelection();
+    const cr = sel.rangeCount ? sel.getRangeAt(0).getClientRects()[0] : null;
+    return cr ? cr.left : textEl(block).getBoundingClientRect().left;
+  }
+
+  /**
+   * 把光标放进带边界块的**最后一个可见行**，按屏幕 x 对齐（和浏览器原生 ↑
+   * 的语义一致），而不是无脑丢到行尾。先量「可见末尾」那一行的中线，再用
+   * caretRangeFromPoint 问浏览器这个 x 该落在哪两个字符之间；问不到或落到
+   * 块外就退回可见末尾，宁可少对齐一列也不能把光标甩进别的块。
+   */
+  placeCaretAtColumn(block, host, end, x) {
+    const p = caretPoint(host, end);
+    if (!p) { this.placeCaretEnd(block); return; }
+    const anchor = document.createRange();
+    try { anchor.setStart(p.node, p.offset); } catch { this.placeCaretEnd(block); return; }
+    anchor.collapse(true);
+    const cr = anchor.getClientRects()[0] || anchor.getBoundingClientRect();
+    let hit = null;
+    if (cr && cr.height > 0 && typeof document.caretRangeFromPoint === 'function') {
+      const r = document.caretRangeFromPoint(x, cr.top + cr.height / 2);
+      if (r && (r.startContainer === host || host.contains(r.startContainer))) hit = r;
+    }
+    if (hit) {
+      hit.collapse(true);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(hit);
+    } else {
+      placeCaret(p.node, p.offset);
+    }
   }
 
   /**
