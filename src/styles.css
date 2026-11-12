@@ -119,12 +119,14 @@ body[data-theme="light"] {
   --ring: 2px solid var(--accent-solid);
 
   /* --- 文档内的高亮 --- */
-  --sel-bg: var(--tm-4);
-  /* 当前行 / 选中相同文本都是「编辑器给的视图提示」，不是文档内容，也不表示状态：
-     一律走中性灰的极淡混合（强调色只留给焦点、当前标签、未保存点）。
-     当前行曾用 7% accent，深色下 accent 是亮橙，一条橙红横杠压在纸上很重。 */
+  /* 选区属于「当前选中」这一状态，跟大纲选中项用同一层浅橙底（--accent-soft）。
+     相同文本高亮是选中的延伸，取它再淡一档，免得两块同色抢视线。
+     深色下都不再拿半透明白往纸上刷：14% 白在深底上就是一块发白的灰，刺眼。 */
+  --sel-bg: var(--accent-soft);
+  /* 当前行只是「光标在哪」的视图提示，不表示选中，仍走中性灰的极淡混合。
+     它曾用 7% accent，深色下 accent 是亮橙，一条橙红横杠压在纸上很重。 */
   --active-line-bg: color-mix(in srgb, var(--fg) 3%, transparent);
-  --sel-match-bg: color-mix(in srgb, var(--fg) 10%, transparent);
+  --sel-match-bg: color-mix(in srgb, var(--accent-soft) 62%, var(--bg-panel));
   /* ==高亮== 走黄不走橙：橙色已经被「选区」占了，两个都染橙就分不清
      「你刚选中」和「文档里本来就标着」。 */
   --mark-bg: var(--amber-4);
@@ -234,9 +236,11 @@ body[data-theme="dark"] {
   --shadow-float: 0 10px 24px -8px rgba(0, 0, 0, .62);
   --ring: 2px solid var(--accent-solid);
 
+  /* 深色下选区用暗一档的番茄底：既不是系统高亮色（发白），也不是亮橙实底。
+     与浅色共用「选中态」的语义，但色值按主题各给一份。 */
   --sel-bg: var(--tm-5);
   --active-line-bg: color-mix(in srgb, var(--fg) 5%, transparent);
-  --sel-match-bg: color-mix(in srgb, var(--fg) 14%, transparent);
+  --sel-match-bg: color-mix(in srgb, var(--accent-soft) 62%, var(--bg-panel));
   /* 深色下不铺实心黄：黄实底会把黑字换成白字才看得清，正文颜色一变，
      整段的阅读节奏就断了。半透明黄只提亮那一块，字色原样保留。 */
   --mark-bg: color-mix(in srgb, var(--amber-9) 26%, transparent);
@@ -1181,6 +1185,15 @@ input[type="search"] { cursor: var(--cur-text), text; }
 .fb-replace-row { padding-left: 30px; }
 .fb-rep-btns { display: flex; align-items: center; gap: 4px; }
 
+/* 文档区的选区：CM6 由 theme.js 的 .cm-content ::selection 接管，所见即所得 /
+   预览此前没有规则，用的是系统高亮色 —— 深色下发白刺眼、浅色下发蓝，
+   和文档区那套配色不成套。这里补齐两种文档容器；字色继承正文，别让系统
+   选区把字染白（深色下尤其晃眼）。只管文档区，不动菜单与输入框。 */
+#wysiwyg::selection, #wysiwyg ::selection,
+#preview::selection, #preview ::selection,
+.md::selection, .md ::selection {
+  background-color: var(--sel-bg); color: inherit;
+}
 
 /* 查找高亮走 CSS Custom Highlight API：往 contenteditable 里插 <mark>
    会毁掉行内结构和光标，所以只在渲染层上色。

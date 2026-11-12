@@ -697,6 +697,9 @@ function schedulePreview() {
 /* 上一次画出来的大纲长什么样。签名里带上行号：标题文字没变、位置变了，
    点进去也得跳到新行，所以不能只比文字。 */
 let outlineSig = '';
+/* 大纲视图属于哪个标签。列表是窗口化的：换文档时滚动位置与窗口游标必须一起
+   归零，否则会拿上一份文档的 scrollTop 去算新文档的可见区间（见 updateOutline）。 */
+let outlineTabId = null;
 /* 与 outlineItems 一一对应的按钮节点，外加「当前亮着的那一项」。
    每次同步只动这两个节点 —— 不要遍历整个列表：四万项的大纲里逐一
    classList.toggle 等于每 70ms 制造几万次样式失效（实测把滚动帧时间
@@ -736,6 +739,20 @@ function updateOutline() {
   el.outlinePane.classList.toggle('hidden', !show);
   el.outlineSplitter.classList.toggle('hidden', !show);
   if (!show) return;
+  /* 换文档 = 换一份数据：先归零滚动位置、窗口游标与签名，再重铺。
+     少了这一步，renderOutlineWindow 会拿上一份文档的 scrollTop（几万像素）
+     去算新文档的可见区间，start 落到 end 之后，new Array(负数) 当场抛异常、
+     DOM 原封不动 —— 用户看到的是「切了文件大纲还是旧的，滚回顶部才刷新」。
+     同一文档内编辑导致的结构变化不能归零：用户正滚在中间看大纲，标题增删
+     不该把他拽回顶部。区分依据是标签 id，不是大纲签名。 */
+  if (outlineTabId !== t.id) {
+    outlineTabId = t.id;
+    el.outlineList.scrollTop = 0;
+    outlineStart = outlineEnd = 0;
+    outlineNodes = [];
+    outlineActive = -1;
+    outlineSig = '';
+  }
   const kind = detectKind(t.name);
   const items = extractOutline(kind, t.content);
   outlineItems = items;
@@ -797,8 +814,13 @@ function renderOutlineWindow(force) {
     requestAnimationFrame(() => { if (!outlineViewH) renderOutlineWindow(true); });
   }
   const h = outlineViewH || 600;
-  const start = Math.max(0, Math.floor(list.scrollTop / OUTLINE_ROW) - OUTLINE_OVER);
-  const end = Math.min(n, Math.ceil((list.scrollTop + h) / OUTLINE_ROW) + OUTLINE_OVER);
+  /* 数据变短（换文档 / 一次删掉大量标题）时，旧 scrollTop 会指向不存在的行。
+     先夹回合法范围，再算窗口；start/end 都按 n 收口且保证 end >= start，
+     new Array(end - start) 就永远不会拿到负数、也不会铺出一段空窗口。 */
+  const maxTop = Math.max(0, n * OUTLINE_ROW - h);
+  if (list.scrollTop > maxTop) list.scrollTop = maxTop;
+  const start = Math.max(0, Math.min(n, Math.floor(list.scrollTop / OUTLINE_ROW) - OUTLINE_OVER));
+  const end = Math.min(n, Math.max(start, Math.ceil((list.scrollTop + h) / OUTLINE_ROW) + OUTLINE_OVER));
   if (!force && start === outlineStart && end === outlineEnd) return;
   outlineStart = start;
   outlineEnd = end;
