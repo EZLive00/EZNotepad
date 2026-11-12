@@ -597,6 +597,51 @@ ok('语言表：新建类型够多', newDocTypes().length >= 24);
     CSS.includes('.tabs .tab.active:last-child') && CSS.includes('.tabs .tab:hover:last-child'));
 }
 
+/* ---------- 带边界块的 ↑ 入口：与 ↓/→ 出口共用一份「可见末尾」判据 ----------
+   code / math 的 pre-wrap 正文末尾若留过一次回车，那个裸 \n 不生成可点击行。
+   1.2.7 修了出口（isCaretAtEnd 剥掉它），但 ↑ 从块后一行往回进块时，浏览器
+   找不到「上一行」落点，会整块跳过落到更前面一块。入口与出口必须读同一份
+   判据，否则两个方向各写一份剥尾逻辑，迟早又漂移。 */
+{
+  const read = (p) => fs.readFileSync(new URL('../' + p, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const WYS = read('src/js/wysiwyg.js');
+
+  ok('可见末尾只有一份定义，isCaretAtEnd 复用 visibleEnd',
+    WYS.includes('visibleEnd(block) {')
+      && WYS.includes('const { host, end } = this.visibleEnd(block);')
+      && (WYS.match(/while \(end > 0 && raw\[end - 1\] === ZWSP\)/g) || []).length === 1);
+  ok('尾随换行只剥一个，且把「有不可见尾行」显式报给入口',
+    WYS.includes('const invisibleNL = (type === \'code\' || type === \'math\')')
+      && WYS.includes('if (invisibleNL) end--;')
+      && !/raw\.replace\(\/\\n\+\$\//.test(WYS));
+  ok('↑ 入口只在无修饰键时触发（Shift 扩选区、Ctrl/Cmd/Alt 各有含义）',
+    /if \(e\.key === 'ArrowUp' && !e\.shiftKey && !e\.ctrlKey && !e\.metaKey && !e\.altKey\)/.test(WYS)
+      && WYS.includes('this.arrowIntoBlock(e, block);'));
+  ok('入口判据是「前一块 code/math + 不可见尾行 + 光标在第一视觉行」',
+    WYS.includes("prev.dataset.type !== 'code' && prev.dataset.type !== 'math'")
+      && WYS.includes('if (!invisibleNL || !this.onFirstVisualLine(block)) return false;'));
+  ok('入口按视觉 x 落点，不是无脑丢到行尾',
+    WYS.includes('document.caretRangeFromPoint(x, cr.top + cr.height / 2)')
+      && WYS.includes('this.caretX(block)')
+      && WYS.includes('host.contains(r.startContainer)'));
+  ok('入口只 preventDefault + 摆光标，不 flush / 不插块 / 不改文档',
+    (() => {
+      const m = WYS.match(/arrowIntoBlock\(e, block\) \{[\s\S]*?\n  \}/);
+      return m && m[0].includes('e.preventDefault()')
+        && !m[0].includes('flush(') && !m[0].includes('insertEmptyAfter')
+        && !m[0].includes('setGapAfter');
+    })());
+  ok('字符偏移换算只有一份 caretPoint，setCaretOffset 复用它',
+    (() => {
+      const setter = (WYS.match(/function setCaretOffset\(el, offset\) \{[\s\S]*?\n\}/) || [])[0] || '';
+      return WYS.includes('function caretPoint(el, offset) {')
+        && setter.includes('const p = caretPoint(el, offset);')
+        && !setter.includes('createTreeWalker');
+    })());
+  ok('表格格内的 ↑ 仍走 arrowInCell，不被入口抢走',
+    /if \(e\.key === 'ArrowUp' \|\| e\.key === 'ArrowDown'\) return this\.arrowInCell\(e, info\);/.test(WYS));
+}
+
 /* ---------- 汇总 ---------- */
 const fail = out.filter((r) => !r.ok);
 out.forEach((r) => {

@@ -692,6 +692,60 @@ window.__run = () => {
   T.key('Enter', { ctrlKey: true });
   eq('表格右下角 Ctrl+Enter 出表开行', T.blocks().length, 2);
 
+  /* 19c5. ↑ 的「入口」：code / math 正文末尾那个裸 \n 不生成可点击行，
+     浏览器从后一块往回找「上一行」时找不到落点，会整块跳过落到更前面一块。
+     出口（↓/→）1.2.7 已修，这里补入口，判据共用 visibleEnd()。
+     合成 KeyboardEvent 不触发浏览器默认移动，所以「没接管」= 光标留在原块。 */
+  const caretBlock = () => {
+    const s = getSelection();
+    if (!s.rangeCount) return null;
+    const r = s.getRangeAt(0);
+    const n = r.startContainer;
+    const el = n.nodeType === 1 ? n : n.parentElement;
+    const b = el && el.closest ? el.closest('.w-block') : null;
+    return b ? { idx: [...root.children].indexOf(b), type: b.dataset.type || 'p', off: r.startOffset } : null;
+  };
+  const ARROW_DOC = '前面一段\n\n```js\n甲\n\n```\n\n后面一段';
+  T.reset(ARROW_DOC);
+  const arrowMd = T.out();
+  eq('↑ 场景的代码块正文确实带尾随换行',
+    root.querySelector('.w-code').textContent, '甲\n');
+  T.caret(2, 0);
+  T.key('ArrowUp');
+  eq('代码块末尾留过回车时，↑ 从后一行回到代码块内', caretBlock().type, 'code');
+  eq('↑ 落在代码块，没有跳到前一块', caretBlock().idx, 1);
+  eq('↑ 只移光标，不改文档', T.out(), arrowMd);
+
+  T.reset('前面一段\n\n```js\n甲\n```\n\n后面一段');
+  T.caret(2, 0);
+  T.key('ArrowUp');
+  eq('代码块末尾没有尾随换行时不抢浏览器', caretBlock().type, 'p');
+
+  T.reset('前面一段\n\n普通段落\n\n后面一段');
+  T.caret(2, 0);
+  T.key('ArrowUp');
+  eq('前一块不是 code/math 时入口不接管', caretBlock().type, 'p');
+
+  T.reset(ARROW_DOC);
+  T.caret(2, 0);
+  T.key('ArrowUp', { shiftKey: true });
+  eq('Shift+↑ 是扩选区，入口不接管', caretBlock().type, 'p');
+
+  T.reset('前面一段\n\n$$\nx^2\n$$\n\n后面一段');
+  root.querySelector('.w-tex').firstChild.nodeValue += '\n';
+  T.caret(2, 0);
+  T.key('ArrowUp');
+  eq('公式块末尾同样有不可见尾行时 ↑ 也进公式块', caretBlock().type, 'math');
+
+  T.reset('```js\n甲\n\n\n```');
+  {
+    const code = root.querySelector('.w-block[data-type="code"]');
+    const raw = code.querySelector('.w-code').textContent;
+    const v = ed.visibleEnd(code);
+    eq('visibleEnd 只剥一个不可见尾行', v.end, raw.length - 1);
+    eq('visibleEnd 报出不可见尾行', v.invisibleNL, true);
+  }
+
   /* 19c2. 点末块下方空白：光标送回文末。只有末块是「带边界的块」
      （代码 / 公式 / 表格 / 分割线：块内没有可写的尾位）才补一行 ——
      以前无条件 insertEmptyAfter，每点一次空白多一个空行，越点越长 */

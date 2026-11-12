@@ -1991,6 +1991,102 @@ try {
     const firstColor = await ev(`getComputedStyle(document.querySelector('.tabs .tab:first-child')).borderLeftColor`);
     ok('真机：最左侧标签仍不封口', firstColor === 'rgba(0, 0, 0, 0)', firstColor);
   }
+
+  /* ---- I5. 带边界块末尾留过回车时，↑ 从后一行要回到块内 ----
+     pre-wrap 末尾那个裸 \n 不生成可点击行，浏览器往回找「上一行」时会整块
+     跳过、落到更前面一块。出口（↓/→）1.2.7 已修，这里在真 WebView2 里验入口，
+     并守住两条边界：没有尾行时不抢浏览器、折行长段落第二行不抢浏览器。 */
+  {
+    const caretIn = (idx, off) => ev(`(() => {
+      const b = document.querySelectorAll('.wysiwyg > .w-block')[${idx}];
+      const t = b && b.querySelector('.w-text');
+      if (!t) return 0;
+      const node = t.firstChild;
+      const r = document.createRange();
+      if (!node || node.nodeName === 'BR') r.setStart(t, 0);
+      else r.setStart(node, Math.min(${off}, node.nodeValue.length));
+      r.collapse(true);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      document.querySelector('.wysiwyg').focus(); return 1;
+    })()`);
+    const where = () => ev(`(() => {
+      const s = getSelection(); if (!s.rangeCount) return null;
+      const r = s.getRangeAt(0); const n = r.startContainer;
+      const el = n.nodeType === 1 ? n : n.parentElement;
+      const b = el && el.closest ? el.closest('.wysiwyg > .w-block') : null;
+      return b ? { idx: [...b.parentElement.children].indexOf(b), type: b.dataset.type || 'p',
+        off: r.startOffset, inCode: !!el.closest('.w-code'), inTex: !!el.closest('.w-tex') } : null;
+    })()`);
+    const scene = async (name, md) => {
+      await ev(`window.__snp.newTab(${JSON.stringify(name)}, ${JSON.stringify(md)}, null)`);
+      await sleep(380);
+      await ev(`window.__snp.commands.modeWysiwyg()`);
+      await sleep(480);
+    };
+    /* 自己发 CDP 按键：上面那组 I3 的 arrow() 是块级局部函数，跨段引用会
+       直接「arrow is not defined」，整组探针以一条红收场（后面的断言全不跑）。 */
+    const up = async () => {
+      const k = { key: 'ArrowUp', code: 'ArrowUp', windowsVirtualKeyCode: 38 };
+      await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...k });
+      await send('Input.dispatchKeyEvent', { type: 'keyUp', ...k });
+      await sleep(300);
+    };
+    const DOC = ['前面一段', '', '```js', '甲', '乙', '', '```', '', '后面一段'].join('\n');
+
+    await scene('up-code.md', DOC);
+    const beforeMd = await ev(`window.__snp.getEditorText()`);
+    await caretIn(2, 0);
+    await up();
+    const hit = await where();
+    ok('真机：代码块末尾留过回车时 ↑ 从后一行回到代码块内',
+      hit && hit.type === 'code' && hit.inCode && hit.idx === 1, JSON.stringify(hit));
+    ok('真机：↑ 落在最后一个可见行，不越过不可见尾 \\n',
+      hit && hit.off <= 3, JSON.stringify(hit));
+    ok('真机：↑ 只移光标，文档零改动',
+      (await ev(`window.__snp.getEditorText()`)) === beforeMd);
+
+    await scene('up-plain.md', ['前面一段', '', '```js', '甲', '乙', '```', '', '后面一段'].join('\n'));
+    await caretIn(2, 0);
+    await up();
+    const hit2 = await where();
+    ok('真机：代码块末尾没有尾行时 ↑ 也正常进代码块（浏览器本来就对）',
+      hit2 && hit2.type === 'code' && hit2.idx === 1, JSON.stringify(hit2));
+
+    await scene('up-math.md', ['前面一段', '', '$$', 'x^2', '$$', '', '后面一段'].join('\n'));
+    await ev(`(() => { const t = document.querySelector('.w-tex'); t.firstChild.nodeValue += '\\n'; return 1; })()`);
+    await caretIn(2, 0);
+    await up();
+    const hit3 = await where();
+    ok('真机：公式块末尾同样有不可见尾行时 ↑ 进公式块',
+      hit3 && hit3.type === 'math' && hit3.inTex, JSON.stringify(hit3));
+
+    /* 故意用短行：双栏窄编辑区里 10 个等宽字符会折成两行，「最后一个可见行」
+       只剩 3 个字符，行首 / 行尾按 ↑ 会分别落到那一行的最左 / 最右，看起来
+       像「丢到行尾」。短行不折，才能干净地验按视觉列落点。 */
+    const COL = ['前面一段', '', '```js', 'abcdef', '', '```', '', '后面一段'].join('\n');
+    await scene('up-col-l.md', COL);
+    await caretIn(2, 0);
+    await up();
+    const hitL = await where();
+    await scene('up-col-r.md', COL);
+    await caretIn(2, 4);
+    await up();
+    const hitR = await where();
+    ok('真机：↑ 按视觉列落点，不无脑丢到行尾',
+      hitL && hitR && hitL.type === 'code' && hitR.type === 'code'
+        && hitR.off > hitL.off && hitL.off < 6,
+      JSON.stringify({ hitL, hitR }));
+
+    await scene('up-long.md', ['前面一段', '', '```js', '甲', '', '```', '', '甲'.repeat(90)].join('\n'));
+    await caretIn(2, 60);
+    const longBefore = await where();
+    await up();
+    const longAfter = await where();
+    ok('真机：光标在折行长段落第二行时 ↑ 留在原块，入口不抢浏览器',
+      longBefore && longBefore.type === 'p' && longAfter
+        && longAfter.type === 'p' && longAfter.idx === 2,
+      JSON.stringify({ longBefore, longAfter }));
+  }
 } catch (e) {
   ok('探针执行完成', false, e.message);
 } finally {
