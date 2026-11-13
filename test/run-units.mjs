@@ -783,6 +783,14 @@ ok('语言表：新建类型够多', newDocTypes().length >= 24);
   ok('参考线颜色走 --guide-line 令牌（明暗两套主题各定义一次）',
     css.includes('--guide-line: color-mix(in srgb, var(--fg) 10%, transparent);')
       && css.includes('.cm-line.cm-guide10') && css.includes('.w-guide {'));
+  const cmpJs = read('src/js/compare.js');
+  const cmpCss = read('src/css/compare.css');
+  ok('对比窗口参考线按对齐格子下标摆放，不跟单侧文件行号走',
+    cmpJs.includes('if (S.guides && i % 10 === 9) cls.push(\'g10\')')
+      && cmpJs.includes('S.guides = settings.lineGuides !== false'));
+  ok('对比窗口参考线画在行底缝（::after 贴 bottom，不压正文）且是浅色虚线',
+    cmpCss.includes('.cmp-row.g10::after') && cmpCss.includes('bottom: 0;')
+      && cmpCss.includes('border-top: 1px dashed var(--guide-line)'));
 }
 
 /* ---------- 汇总 ---------- */
