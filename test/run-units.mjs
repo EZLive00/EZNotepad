@@ -299,9 +299,11 @@ ok('语言表：新建类型够多', newDocTypes().length >= 24);
   ok('两套主题的相同文本高亮都不再拿 --fg 刷半透明白',
     (css.match(/--sel-match-bg:/g) || []).length === 2
       && !/--sel-match-bg:\s*color-mix\(in srgb, var\(--fg\)/.test(css));
-  ok('文档区补了 ::selection，不再交给系统高亮色',
-    css.includes('#wysiwyg ::selection') && css.includes('#preview ::selection')
-      && /#wysiwyg[^{]*\{[^}]*--sel-bg/.test(css));
+  /* 全局 ::selection：三个窗口都载入 styles.css，一条裸规则全覆盖
+     （用户 2026-11-13 要求所有选区统一，含对比窗口与输入框，不再有系统高亮色）。 */
+  ok('全局 ::selection 统一所有选区（含对比窗口），不再交给系统高亮色',
+    /^::selection\s*\{[^}]*--sel-bg/m.test(css)
+      && !css.includes('#wysiwyg ::selection') && !css.includes('#preview ::selection'));
   /* 大纲窗口化：换文档必须归零滚动位置与游标，窗口区间按 n 收口。 */
   ok('换标签时大纲滚动位置、窗口游标与签名一起归零',
     app.includes('outlineTabId !== t.id') && app.includes('el.outlineList.scrollTop = 0')
