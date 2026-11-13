@@ -23,6 +23,10 @@ export const DEFAULTS = {
      改一处全跟着变 —— 这是「记事本」级别的全局偏好，不是某个视图的设置。
      编辑区（CodeMirror）走 Compartment 重配，其余靠 body[data-nowrap] 的 CSS。 */
   wrap: true,
+  /* 行参考线：每 10 行一条浅色虚线，帮助在长文档里定位。
+     编辑区（CodeMirror）按逻辑行、所见即所得按视觉行（折行算多行），
+     共用这一个开关；预览没有行概念，不铺。 */
+  lineGuides: true,
   layout: 'single',     // single | split（2026-10-25 起默认单栏）
   outlineVisible: true,
   showToolbar: true,

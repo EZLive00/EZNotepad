@@ -717,6 +717,26 @@ const HISTORY_MERGE_WINDOW_MS: u64 = 10 * 60 * 1000;
 /* 单个文件太大就别记历史了：一份 8MB 的快照能吃掉 20MB 总额里的一大半，
    结果反而是把小文件的历史全挤掉。VS Code 的默认门槛是 256KB，这里放宽到 2MB。 */
 const HISTORY_MAX_FILE_BYTES: usize = 2 * 1024 * 1024;
+/* 长期检查点（天）：每个检查点之后的最近一份快照永远保留，60 份 / 20MB
+   上限不再删它们。否则连续编辑挤掉的虽是窗口里的中间态，几个月前的「样子」
+   也会被挤光 —— 等用户想找回一个月前的版本时已经没了。JetBrains 按天数
+   留整体历史，这里取其「时间维度上有代表」的思路，按检查点留代表。 */
+const HISTORY_CHECKPOINT_DAYS: [u64; 10] = [1, 3, 7, 10, 20, 30, 60, 90, 120, 360];
+
+/// 挑出每个检查点必须保留的快照时间戳（snaps 按时间倒序，元素 = (时间戳, 字节数)）。
+/// 对每个检查点 d：取「年龄 ≥ d 天」的快照里**最新**的一份 —— 它是离 d 天最近的
+/// 旧侧代表；还没有那么老的快照时该检查点先不生效（等快照自然变老就轮到它）。
+/// 同一份可能同时命中多个检查点，所以返回集合。
+fn history_keepers(snaps: &[(u64, u64)], now: u64) -> std::collections::HashSet<u64> {
+    let mut keepers = std::collections::HashSet::new();
+    for &d in HISTORY_CHECKPOINT_DAYS.iter() {
+        let target = d.saturating_mul(86_400_000);
+        if let Some(&(ts, _)) = snaps.iter().find(|(ts, _)| now.saturating_sub(*ts) >= target) {
+            keepers.insert(ts);
+        }
+    }
+    keepers
+}
 
 fn now_millis() -> u64 {
     std::time::SystemTime::now()
@@ -790,13 +810,20 @@ fn write_history_snapshot(
     fs::write(dir.join(format!("{stamp}.txt")), content.as_bytes())
         .map_err(|e| AppError::detail("io.history_write", e))?;
 
-    // 只留最近 60 份，再按总量 20MB 兜一道
+    // 只留最近 60 份，再按总量 20MB 兜一道；检查点代表不删（会超 60 份，故意的）
     snaps.insert(0, (stamp, dir.join(format!("{stamp}.txt"))));
+    let keepers = {
+        let meta: Vec<(u64, u64)> = snaps
+            .iter()
+            .map(|(ts, p)| (*ts, fs::metadata(p).map(|m| m.len()).unwrap_or(0)))
+            .collect();
+        history_keepers(&meta, now_millis())
+    };
     let mut total: u64 = 0;
-    for (i, (_, p)) in snaps.iter().enumerate() {
+    for (i, (ts, p)) in snaps.iter().enumerate() {
         let size = fs::metadata(p).map(|m| m.len()).unwrap_or(0);
         total += size;
-        if i >= 60 || total > 20 * 1024 * 1024 {
+        if (i >= 60 || total > 20 * 1024 * 1024) && !keepers.contains(ts) {
             let _ = fs::remove_file(p);
         }
     }
@@ -1678,6 +1705,43 @@ mod tests {
         assert!(check_simple_name("a\\b.md").is_err());
         assert!(check_simple_name("a:b.md").is_err());
         assert!(check_simple_name("..").is_err());
+    }
+
+    #[test]
+    fn history_keepers_pick_one_per_checkpoint() {
+        const DAY: u64 = 86_400_000;
+        let now = 400 * DAY;
+        // 时间戳按倒序排（新 → 旧），年龄 1/2/4/8/40/100/400 天
+        let snaps: Vec<(u64, u64)> = [1u64, 2, 4, 8, 40, 100, 400]
+            .iter()
+            .map(|&d| (now - d * DAY, 1u64))
+            .collect();
+        let k = history_keepers(&snaps, now);
+        // 1天→1天那份（边界含等于）；3天→4天；7天→8天；10/20/30天→40天；
+        // 60/90天→100天；120/360天→400天
+        let expect: std::collections::HashSet<u64> = [1u64, 4, 8, 40, 100, 400]
+            .iter()
+            .map(|&d| now - d * DAY)
+            .collect();
+        assert_eq!(k, expect);
+    }
+
+    #[test]
+    fn history_keepers_young_file_needs_no_checkpoint() {
+        // 全部快照都不满 1 天：还没有任何检查点生效，不保护任何一份
+        let now = 400 * 86_400_000;
+        let snaps = vec![(now - 3_600_000, 1u64), (now - 60_000, 1u64)];
+        assert!(history_keepers(&snaps, now).is_empty());
+    }
+
+    #[test]
+    fn history_keepers_dedup_single_snapshot() {
+        // 只有一份 2 天前的快照：1 天检查点保护它；3 天的还不生效
+        const DAY: u64 = 86_400_000;
+        let now = 400 * DAY;
+        let snaps = vec![(now - 2 * DAY, 1u64)];
+        let k = history_keepers(&snaps, now);
+        assert_eq!(k, [now - 2 * DAY].into_iter().collect());
     }
 
     #[test]

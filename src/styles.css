@@ -94,6 +94,8 @@ body[data-theme="light"] {
   --fg: var(--gray-12);
   --fg-soft: var(--gray-11);
   --fg-faint: var(--gray-10);
+  /* 行参考线（每 10 行一条虚线）：比 --line 更淡一档，只在视野边缘起作用 */
+  --guide-line: color-mix(in srgb, var(--fg) 10%, transparent);
 
   /* --- 强调：11 给文字与图标，9/10 给实心，3 给浅底 --- */
   --accent: var(--tm-11);
@@ -215,6 +217,8 @@ body[data-theme="dark"] {
   --fg: var(--gray-12);
   --fg-soft: var(--gray-11);
   --fg-faint: var(--gray-10);
+  /* 深色下「浅色虚线」= 极淡的白：同样跟 --fg 走，跟着主题自动切 */
+  --guide-line: color-mix(in srgb, var(--fg) 10%, transparent);
 
   --accent: var(--tm-11);
   --accent-solid: var(--tm-9);
@@ -1064,6 +1068,17 @@ input[type="search"] { cursor: var(--cur-text), text; }
    和 ==文字== 的黄底区分开 —— 那个是文档内容的一部分，这个只是「帮你看一眼」。 */
 .cm-line.cm-dup, .wysiwyg .w-block.w-dup {
   background: var(--dup-bg);
+}
+/* 行参考线（每 10 行一条）：纯视图提示，比重复行更淡、不带底色。
+   CM6 侧挂在行 div 上；所见即所得侧是 overlay 里的绝对定位线，见 wysiwyg.js */
+.cm-line.cm-guide10 { border-bottom: 1px dashed var(--guide-line); }
+.w-guide-layer {
+  position: absolute; inset: 0; overflow: hidden;
+  pointer-events: none; z-index: 1;
+}
+.w-guide {
+  position: absolute; height: 0;
+  border-top: 1px dashed var(--guide-line);
 }
 .md mark, .wysiwyg mark {
   background: var(--mark-bg); color: inherit;
