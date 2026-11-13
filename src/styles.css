@@ -1183,15 +1183,14 @@ input[type="search"] { cursor: var(--cur-text), text; }
 .fb-replace-row { padding-left: 30px; }
 .fb-rep-btns { display: flex; align-items: center; gap: 4px; }
 
-/* 文档区的选区：CM6 由 theme.js 的 .cm-content ::selection 接管，所见即所得 /
-   预览此前没有规则，用的是系统高亮色 —— 深色下发白刺眼、浅色下发蓝，
-   和文档区那套配色不成套。这里补齐两种文档容器；字色继承正文，别让系统
-   选区把字染白（深色下尤其晃眼）。只管文档区，不动菜单与输入框。 */
-#wysiwyg::selection, #wysiwyg ::selection,
-#preview::selection, #preview ::selection,
-.md::selection, .md ::selection {
-  background-color: var(--sel-bg); color: inherit;
-}
+/* 全局选区：一条裸 ::selection 全覆盖（用户 2026-11-13 要求所有选区统一）。
+   三个窗口（主窗 / 文本对比 / 文件夹对比）都载入这份 styles.css，所以
+   文档区、对比行、文件夹对比、查找框与各输入框看到的都是同一块底色 ——
+   以前只写了文档区三个容器，对比窗口正文一直是系统高亮色（深下发白、浅下发蓝），
+   和成套的界面配色脱节。字色继承正文，别让系统选区把字染白（深色下尤其晃眼）。
+   CM6 的选区底色画在 .cm-selectionLayer 上（theme.js），主题里的
+   .cm-content ::selection 与这里同值，谁赢都一样。 */
+::selection { background-color: var(--sel-bg); color: inherit; }
 
 /* 查找高亮走 CSS Custom Highlight API：往 contenteditable 里插 <mark>
    会毁掉行内结构和光标，所以只在渲染层上色。
