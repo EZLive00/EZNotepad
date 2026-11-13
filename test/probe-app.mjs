@@ -2236,6 +2236,32 @@ try {
       b3 === JSON.stringify(['h1:T', 'p:甲', 'p:乙'])
         && !(await ev(`window.__snp.getEditorText()`)).includes('---'), b3);
 
+    /* ---- 行参考线：每 10 行一条浅色虚线 ----
+       所见即所得按视觉行数（12 个不折行的段落 = 12 行 → 第 10 行底一条线）；
+       纯文本按逻辑行，走 guideLines() 读 StateField 的真实状态，不数 DOM
+       （CM6 只渲染视口内的行，数 DOM 会受窗口高度影响）。 */
+    await ev(`window.__snp.setContent(Array.from({length: 12}, (_, i) => '段' + i).join('\\n\\n'))`);
+    await sleep(650);
+    const wysGuides = () => ev(`document.querySelectorAll('.w-guide-layer:not([hidden]) .w-guide').length`);
+    ok('真机：所见即所得 12 段铺 1 条参考线', (await wysGuides()) === 1, String(await wysGuides()));
+    await ev(`window.__snp.commands.setLineGuides(false)`);
+    await sleep(180);
+    ok('真机：关掉参考线后所见即所得 overlay 清空',
+      (await ev(`document.querySelectorAll('.w-guide').length`)) === 0);
+    await ev(`window.__snp.commands.setLineGuides(true)`);
+    await sleep(450);
+    ok('真机：重开参考线按当前文档恢复', (await wysGuides()) === 1);
+
+    await ev(`window.__snp.commands.modeEdit()`);
+    await sleep(350);
+    await ev(`window.__snp.setContent(Array.from({length: 45}, (_, i) => 'l' + (i + 1)).join('\\n'))`);
+    await sleep(350);
+    ok('真机：纯文本 45 行参考线钉在第 10/20/30/40 行',
+      JSON.stringify(await ev(`window.__snp.plain.guideLines()`)) === JSON.stringify([10, 20, 30, 40]),
+      await ev(`window.__snp.plain.guideLines()`));
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(300);
+
     /* 合并窗口在 Rust 侧，只有真调后端才验得到。用唯一路径，免得历次探针
        留下的快照混进条数。这里存的是「即将被覆盖的旧版」，所以合并应当跳过、
        保留会话起点那一版，而不是拿新内容覆盖它。 */
@@ -2263,6 +2289,44 @@ try {
     await ev(`window.__snp.historyProbe.save(${JSON.stringify(hp)}, 'x'.repeat(2 * 1024 * 1024 + 1), false)`);
     ok('真机：超大文件不进历史，免得一份吃光 20MB 总额', (await hCount()) === 4);
     await ev(`window.__snp.historyProbe.clear(${JSON.stringify(hp)})`);
+
+    /* ---- 检查点保留：检查点代表不能被 60 份上限挤掉 ----
+       快照文件名就是毫秒戳，探针直接往历史目录写「翻过日期」的快照
+       （fnv1a 与 Rust 侧同一算法、同一目录规则），再真调 65 次后端触发
+       prune。年龄设计：
+         新 = 1.958 天 → 1 天检查点的代表（年龄 ≥ 1 天的最新一份）
+         中 = 2.000 天 → 不是任何检查点的代表，应当照常被挤掉
+         老 = 95 天    → 3/7/10/20/30/60/90 天检查点的代表 */
+    const ident = JSON.parse(fs.readFileSync(new URL('../src-tauri/tauri.conf.json', import.meta.url), 'utf8')).identifier;
+    const fnv1a = (s) => {
+      let h = 0xcbf29ce484222325n;
+      for (const b of Buffer.from(s, 'utf8')) {
+        h ^= BigInt(b);
+        h = (h * 0x100000001b3n) & 0xffffffffffffffffn;
+      }
+      return h.toString(16).padStart(16, '0');
+    };
+    const DAY = 86_400_000;
+    const cpPath = path.join(dir, `hist-ckpt-${Date.now()}.md`);
+    const cpDir = path.join(process.env.APPDATA || '', ident, 'history', fnv1a(cpPath));
+    fs.mkdirSync(cpDir, { recursive: true });
+    const nowMs = Date.now();
+    const olds = [
+      [nowMs - 2 * DAY + 3_600_000, '新'],
+      [nowMs - 2 * DAY, '中'],
+      [nowMs - 95 * DAY, '老'],
+    ];
+    for (const [ts, tag] of olds) fs.writeFileSync(path.join(cpDir, `${ts}.txt`), tag);
+    const cpSave = (text) => ev(`window.__snp.historyProbe.save(${JSON.stringify(cpPath)}, ${JSON.stringify(text)}, false)`);
+    for (let i = 0; i < 65; i++) await cpSave(`ckpt v${i}\n`);
+    ok('真机：检查点代表不被 60 份上限挤掉（1.96 天 / 95 天两份还在）',
+      fs.existsSync(path.join(cpDir, `${olds[0][0]}.txt`))
+        && fs.existsSync(path.join(cpDir, `${olds[2][0]}.txt`)));
+    ok('真机：非检查点代表的旧快照照常被挤掉（2.0 天那份没了）',
+      !fs.existsSync(path.join(cpDir, `${olds[1][0]}.txt`)));
+    const cpCount = await ev(`window.__snp.historyProbe.list(${JSON.stringify(cpPath)}).then(r => r.length)`);
+    ok('真机：60 份新快照 + 2 份检查点代表 = 62 条', cpCount === 62, String(cpCount));
+    await ev(`window.__snp.historyProbe.clear(${JSON.stringify(cpPath)})`);
   }
 } catch (e) {
   ok('探针执行完成', false, e.message);

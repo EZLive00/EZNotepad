@@ -728,8 +728,61 @@ ok('语言表：新建类型够多', newDocTypes().length >= 24);
   ok('同一文件内毫秒戳严格递增，同毫秒两次保存不互相覆盖',
     rust.includes('let mut stamp = now_millis();')
       && rust.includes('stamp = ts.saturating_add(1)'));
+  ok('历史检查点：1/3/7/10/20/30/60/90/120/360 天各保一份',
+    rust.includes('const HISTORY_CHECKPOINT_DAYS: [u64; 10] = [1, 3, 7, 10, 20, 30, 60, 90, 120, 360];'));
+  ok('检查点取「年龄 ≥ 检查点」的最新一份（旧侧代表，按天算）',
+    rust.includes('now.saturating_sub(*ts) >= target')
+      && rust.includes('d.saturating_mul(86_400_000)'));
+  ok('60 份 / 20MB 上限删文件前先放行检查点代表',
+    rust.includes('!keepers.contains(ts)')
+      && rust.includes('history_keepers(&meta, now_millis())'));
+  ok('检查点保护有 cargo 单测（边界含等于 / 年轻文件不生效 / 单份去重）',
+    read('src-tauri/src/lib.rs').includes('fn history_keepers_pick_one_per_checkpoint'));
   ok('真机探针有真实后端钩子可用，不另造测试实现',
     app.includes('historyProbe: {') && app.includes('list: (p) => be.listHistory(p)'));
+}
+
+/* ---------- 行参考线（每 10 行一条浅色虚线） ---------- */
+{
+  const read = (p) => fs.readFileSync(new URL('../' + p, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const cm = read('src/js/editor/plain-editor.js');
+  const wys = read('src/js/wysiwyg.js');
+  const app = read('src/js/app.js');
+  const state = read('src/js/state.js');
+  const css = read('src/styles.css');
+  ok('CM6 行参考线按行号取模，docChanged 全量重算',
+    cm.includes("class: 'cm-guide10'") && cm.includes('n += GUIDE_EVERY')
+      && /update\(deco, tr\) \{\s*return tr\.docChanged \? buildGuideLines\(tr\.state\) : deco;/.test(cm));
+  ok('CM6 超大文档不铺参考线（击键预算优先）',
+    cm.includes('const GUIDE_MAX_LINES = 100_000;') && cm.includes('doc.lines > GUIDE_MAX_LINES'));
+  ok('CM6 参考线开关走 Compartment 热替换，不重建 state',
+    cm.includes('this.guideComp = new Compartment();') && cm.includes('this.guideComp.reconfigure'));
+  ok('所见即所得参考线 overlay 挂 root 父层，不进 contenteditable',
+    wys.includes("className = 'w-guide-layer'")
+      && wys.includes("(root.parentElement || root).appendChild(this.guideLayer)"));
+  ok('所见即所得按视觉行数（Range rects 合并 top），空段落按一行算',
+    wys.includes('_guideBands(block)') && wys.includes('range.getClientRects()')
+      && wys.includes('block.offsetHeight > 0'));
+  ok('所见即所得量 .w-text 的 rects（量整块会混进容器盒 rect，每块多一条带）',
+    wys.includes('range.selectNodeContents(textEl(block))') && wys.includes('r.width <= 0'));
+  ok('CM6 行号镜像与装饰集合同源（探针不依赖压缩产物的 RangeSet API）',
+    cm.includes('guideLinesNow = nums') && cm.includes('let guideLinesNow = []'));
+  ok('视口模式（大文档）不铺参考线：累计行数会从窗口起点数起、整体错位',
+    wys.includes('this.virtual || this.records') && wys.includes('参考线是锦上添花，不能错着铺'));
+  ok('参考线开关两端共用 settings.lineGuides，applyGuides 双侧生效',
+    state.includes('lineGuides: true') && app.includes('plain.setGuides(on)')
+      && app.includes('wys.setGuides(on)'));
+  ok('两个编辑器构造都接收 guides 初始值',
+    app.includes('guides: settings.lineGuides !== false,'));
+  ok('菜单与设置页都有开关入口',
+    app.includes("label: tt('行参考线'), hint: tt('每 10 行显示一条浅色虚线')")
+      && app.includes("id: 'toggleLineGuides', label: tt('行参考线')")
+      && app.includes("id=\"setLineGuides\""));
+  ok('换行开关与切到所见即所得都会补铺参考线',
+    app.includes('wys.scheduleGuides(0);'));
+  ok('参考线颜色走 --guide-line 令牌（明暗两套主题各定义一次）',
+    css.includes('--guide-line: color-mix(in srgb, var(--fg) 10%, transparent);')
+      && css.includes('.cm-line.cm-guide10') && css.includes('.w-guide {'));
 }
 
 /* ---------- 汇总 ---------- */

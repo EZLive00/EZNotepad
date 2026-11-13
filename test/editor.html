@@ -209,6 +209,30 @@
       try { plain.revealOffset(999999); } catch { threw = true; }
       R.push(ok('越界偏移被钳制而不是抛异常', !threw));
 
+      /* ---- 13.6 行参考线：每 10 逻辑行一条浅色虚线（纯视图） ----
+         行号语义：装饰按当前行号取模，文档一改就重算 —— 不是 mapPos 跟着
+         文字走（那样插几行后虚线就不在第 10 行了）。 */
+      plain.load(Array.from({ length: 12 }, (_, i) => 'l' + (i + 1)).join('\n'), '');
+      await tick();
+      R.push(eq('12 行铺 1 条参考线（第 10 行）', qa('.cm-guide10').length, 1));
+      R.push(eq('虚线钉在第 10 行（行号语义）',
+        qa('.cm-guide10').map((e) => e.textContent), ['l10']));
+      const gEl = q('.cm-guide10');
+      R.push(eq('参考线是虚线', gEl && getComputedStyle(gEl).borderBottomStyle, 'dashed'));
+      plain.setSelection(0);
+      plain.insertText('x\ny\nz\n');
+      await tick();
+      R.push(eq('顶部插 3 行后重算：第 10 行变成 l7',
+        qa('.cm-guide10').map((e) => e.textContent), ['l7']));
+      plain.setGuides(false);
+      await tick();
+      R.push(eq('开关关掉后参考线清空（state 不重建）', qa('.cm-guide10').length, 0));
+      R.push(eq('关开关不改文档', plain.value.split('\n').length, 15));
+      plain.setGuides(true);
+      await tick();
+      R.push(eq('开关重开后按当前文档恢复',
+        qa('.cm-guide10').map((e) => e.textContent), ['l7']));
+
       /* ---- 14. 大文档：虚拟滚动 ---- */
       const big = Array.from({ length: 100000 }, (_, i) => 'line ' + i).join('\n');
       const t0 = performance.now();
