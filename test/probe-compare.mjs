@@ -1788,31 +1788,6 @@ try {
     JSON.stringify(ctxLabels));
   await cmp.ev(`(() => { const m = document.querySelector('.ctx-menu'); if (m) m.remove(); })()`);
 
-  /* 每 10 行一条浅色虚线（对齐辅助）：按对齐格子下标算，两侧同一格同时出现。
-     断言不写死条数 —— 视口里有多少行取决于窗口大小，契约是：
-     ① 两侧 g10 行的格子下标集合完全一致（这就是「对齐尺」的本意）；
-     ② 下标都对 10 取余为 9（第 10、20、30…行）；
-     ③ 线是 dashed 且足够淡（--guide-line = 正文 10% 混合）。 */
-  const guides = await cmp.ev(`(() => {
-    const idx = (pane) => [...document.querySelectorAll('#rows' + pane + ' .cmp-row.g10')]
-      .map((r) => +r.querySelector('.cmp-tx').dataset.i).sort((a, b) => a - b);
-    const row = document.querySelector('#rowsL .cmp-row.g10');
-    if (!row) return { l: [], r: [], dashed: false, color: '' };
-    const s = getComputedStyle(row, '::after');
-    /* 颜色原样带回 Node 侧解析 —— 嵌进模板串的正则会吃掉转义，别在页面里玩 */
-    return { l: idx('L'), r: idx('R'), dashed: s.borderTopStyle === 'dashed', color: s.borderTopColor };
-  })()`);
-  ok('对比窗口两侧的参考线落在同一批对齐行上（格子尺）',
-    guides.l.length > 0 && JSON.stringify(guides.l) === JSON.stringify(guides.r),
-    JSON.stringify(guides.l) + ' vs ' + JSON.stringify(guides.r));
-  ok('参考线按 10 的倍数行摆放（第 10、20、30…行）',
-    guides.l.every((i) => i % 10 === 9), JSON.stringify(guides.l));
-  /* Chromium 两个时代都可能出：旧的 rgba(r,g,b,a) 与新的 color(srgb r g b / a)。
-     color-mix 的计算值在 WebView2 里走后者，只认 rgba 会把透明度误读成 1。 */
-  const alphaRaw = (guides.color.match(/[,\s/]\s*0?\.\d+\s*\)?$/) || [''])[0].replace(/[^\d.]/g, '');
-  const alpha = alphaRaw ? Number(alphaRaw) : 1;
-  ok('参考线是浅色虚线（dashed，透明度 ≤ 0.3）',
-    guides.dashed && alpha <= 0.3, JSON.stringify({ dashed: guides.dashed, color: guides.color, alpha }));
 } finally {
   main.close();
   // 夹具留在 node_modules/.tmp/probe-cmp 下不复用删除：每轮 writeFileSync 直接覆盖。

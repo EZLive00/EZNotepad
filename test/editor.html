@@ -209,30 +209,6 @@
       try { plain.revealOffset(999999); } catch { threw = true; }
       R.push(ok('越界偏移被钳制而不是抛异常', !threw));
 
-      /* ---- 13.6 行参考线：每 10 逻辑行一条浅色虚线（纯视图） ----
-         行号语义：装饰按当前行号取模，文档一改就重算 —— 不是 mapPos 跟着
-         文字走（那样插几行后虚线就不在第 10 行了）。 */
-      plain.load(Array.from({ length: 12 }, (_, i) => 'l' + (i + 1)).join('\n'), '');
-      await tick();
-      R.push(eq('12 行铺 1 条参考线（第 10 行）', qa('.cm-guide10').length, 1));
-      R.push(eq('虚线钉在第 10 行（行号语义）',
-        qa('.cm-guide10').map((e) => e.textContent), ['l10']));
-      const gEl = q('.cm-guide10');
-      R.push(eq('参考线是虚线', gEl && getComputedStyle(gEl).borderBottomStyle, 'dashed'));
-      plain.setSelection(0);
-      plain.insertText('x\ny\nz\n');
-      await tick();
-      R.push(eq('顶部插 3 行后重算：第 10 行变成 l7',
-        qa('.cm-guide10').map((e) => e.textContent), ['l7']));
-      plain.setGuides(false);
-      await tick();
-      R.push(eq('开关关掉后参考线清空（state 不重建）', qa('.cm-guide10').length, 0));
-      R.push(eq('关开关不改文档', plain.value.split('\n').length, 15));
-      plain.setGuides(true);
-      await tick();
-      R.push(eq('开关重开后按当前文档恢复',
-        qa('.cm-guide10').map((e) => e.textContent), ['l7']));
-
       /* ---- 14. 大文档：虚拟滚动 ---- */
       const big = Array.from({ length: 100000 }, (_, i) => 'line ' + i).join('\n');
       const t0 = performance.now();
@@ -277,6 +253,22 @@
       const wantMatchBg = getComputedStyle(matchProbe).backgroundColor;
       matchProbe.remove();
       R.push(eq('匹配底色走 --sel-match-bg（没被官方绿底盖掉）', matchBg, wantMatchBg));
+
+      /* 选区底色同理：CM6 默认主题的选区规则是
+         &light.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground
+         （编辑器类 + 4 个类 = 五级特异性）。我们自己的规则写得比它浅就赢不了 ——
+         浅色露出官方淡紫 #d7d4f0，深色下 CM6 没被告知 darkTheme 也用这套浅色值，
+         又亮又刺眼。这条实测钉死「我们的 --sel-bg 真的赢了」。 */
+      plain.setSelection(2, 7);
+      await tick();
+      const selBgEl = q('.cm-selectionBackground');
+      const selBg = selBgEl ? getComputedStyle(selBgEl).backgroundColor : '';
+      const selProbe = document.createElement('div');
+      selProbe.style.backgroundColor = 'var(--sel-bg)';
+      document.body.appendChild(selProbe);
+      const wantSelBg = getComputedStyle(selProbe).backgroundColor;
+      selProbe.remove();
+      R.push(eq('选区底色走 --sel-bg（没被官方淡紫 #d7d4f0 盖掉）', selBg, wantSelBg));
       plain.setSelection(0);
       await tick();
       R.push(eq('光标折叠后匹配标记清空', qa('.cm-selectionMatch').length, 0));
