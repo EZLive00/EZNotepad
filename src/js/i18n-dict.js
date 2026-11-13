@@ -713,8 +713,5 @@ export const DICT = {
   '{n} 字': ['{n} 字', '{n} words', '{n} 語', '{n}단어', '{n} mots', '{n} Wörter', '{n} palabras', '{n} palavras'],
   '{n} 字符': ['{n} 字元', '{n} chars', '{n} 文字', '{n}자', '{n} caractères', '{n} Zeichen', '{n} caracteres', '{n} caracteres'],
   '已选 {n} 字符': ['已選 {n} 字元', '{n} chars selected', '{n} 文字を選択', '{n}자 선택됨', '{n} caractères sélectionnés', '{n} Zeichen ausgewählt', '{n} caracteres seleccionados', '{n} caracteres selecionados'],
-  '行参考线': ['行參考線', 'Line guides', '行ガイド', '행 가이드', 'Repères de ligne', 'Zeilenhilfslinien', 'Guías de línea', 'Guias de linha'],
-  '行参考线（每 10 行）': ['行參考線（每 10 行）', 'Line guides (every 10 lines)', '行ガイド（10 行ごと）', '행 가이드(10행마다)', 'Repères de ligne (tous les 10 lignes)', 'Zeilenhilfslinien (alle 10 Zeilen)', 'Guías de línea (cada 10 líneas)', 'Guias de linha (a cada 10 linhas)'],
-  '每 10 行显示一条浅色虚线': ['每 10 行顯示一條淺色虛線', 'Show a light dashed line every 10 lines', '10 行ごとに薄い破線を表示', '10행마다 옅은 점선 표시', 'Afficher un pointillé léger toutes les 10 lignes', 'Alle 10 Zeilen eine dezente gestrichelte Linie anzeigen', 'Mostrar una línea discontinua sutil cada 10 líneas', 'Mostrar uma linha tracejada sutil a cada 10 linhas'],
   '{a}（{b}）': ['{a}（{b}）', '{a} ({b})', '{a}（{b}）', '{a}({b})', '{a} ({b})', '{a} ({b})', '{a} ({b})', '{a} ({b})'],
 };

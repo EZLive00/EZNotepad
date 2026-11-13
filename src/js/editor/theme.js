@@ -57,17 +57,24 @@ export const cmTheme = EditorView.theme({
   },
   '.cm-foldGutter .cm-gutterElement': { color: 'var(--fg-faint)', padding: '0 2px' },
 
-  /* 选区与光标 */
+  /* 选区与光标。
+     ⛔ 选区底色必须对齐 CM6 默认主题的**完整选择器**：默认是
+     `&light.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground`
+     （编辑器类 + 4 个类 = 五级特异性）。写成 `.cm-selectionBackground` 这种
+     一级类赢不了它 —— 深色下还会露出 CM6 认为的「浅色」默认淡紫 #d7d4f0，
+     又亮又刺眼（darkTheme 没设，CM6 永远按浅色配）。 */
   '.cm-cursor, .cm-dropCursor': {
     borderLeftColor: 'var(--accent)',
     borderLeftWidth: '2px',
   },
-  '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection': {
+  '&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, & > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, & .cm-content ::selection': {
     backgroundColor: 'var(--sel-bg)',
+    color: 'inherit',
   },
   /* 选中一段文字时，文档里相同的文字也标出来。和所见即所得的
-     ::highlight(sn-same) 共用同一个灰阶，两种模式看起来是一套。 */
-  '.cm-selectionMatch': {
+     ::highlight(sn-same) 共用同一个灰阶，两种模式看起来是一套。
+     同样要带 & 前缀：默认规则是 `&light .cm-selectionMatch` 两级类。 */
+  '& .cm-selectionMatch': {
     backgroundColor: 'var(--sel-match-bg)',
   },
   /* 非 Markdown 文件的「高亮」：== 不是这些文件的语法，写进去就是脏字符。

@@ -480,11 +480,6 @@ function rowClass(row, i, side) {
   /* 类型要单独一个类：只改字的话，红字范围得区分「整行都是新增/删除」
      和「这一行只有几个字不一样」，光一个 .diff 分不出来 */
   if (row.kind !== 'same') cls.push('k-' + row.kind);
-  /* 每 10 行一条浅色虚线（对齐辅助）。按对齐格子的下标算，两边 pane 的
-     同一条对齐行同时出现 —— 是贯穿两栏的「格子尺」，不跟单侧文件行号走
-     （文件行号在差异块两侧会错位，尺子跟着错位就失去对齐意义了）。
-     开关与编辑器共用 settings.lineGuides，开窗时读一次。 */
-  if (S.guides && i % 10 === 9) cls.push('g10');
   return cls.join(' ');
 }
 
@@ -2966,8 +2961,6 @@ function pickSide(side) {
      setWrap 在「值没变」时会提前返回，但属性、勾选、提示语已经全部设好。 */
   S.wrap = settings.wrap !== false;
   setWrap(S.wrap);
-  /* 参考线开关与编辑器共用 settings.lineGuides；开窗读一次，和 wrap 同策略 */
-  S.guides = settings.lineGuides !== false;
   await fitToScreen();
   cacheColors();
   CHAR_W = measureCharW();

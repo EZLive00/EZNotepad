@@ -1344,20 +1344,6 @@ export class WysiwygEditor {
     hintLabel.textContent = tt('按 Enter 在此插入一行');
     this.gapHint.append(hintLine, hintLabel);
     (root.parentElement || root).appendChild(this.gapHint);
-    /* 每 10 视觉行一条浅色虚线：overlay 和插入线同层（root 父层，
-       position:relative），同样绝不能进 root —— 块遍历/序列化都假定
-       root 的孩子全是 .w-block。滚动只搬 overlay 的 transform，不重排。 */
-    this.guides = opts.guides !== false;
-    this.guideLayer = document.createElement('div');
-    this.guideLayer.className = 'w-guide-layer';
-    this.guideLayer.hidden = true;
-    (root.parentElement || root).appendChild(this.guideLayer);
-    root.addEventListener('scroll', () => this._syncGuideScroll(), { passive: true });
-    window.addEventListener('resize', () => this.scheduleGuides());
-    /* 几何不经过 root 子树的改动（换文档显隐、换行开关、字号）由外层
-       scheduleGuides() 补；输入、粘贴、撤销、视口搬家都在这里兜住 */
-    this._guideObs = new MutationObserver(() => this.scheduleGuides());
-    this._guideObs.observe(root, { childList: true, subtree: true, characterData: true });
     root.addEventListener('pointermove', (e) => this.hoverInsertLine(e));
     root.addEventListener('mouseleave', () => this.hideInsertLine());
     root.addEventListener('dragstart', (e) => {
@@ -1409,112 +1395,6 @@ export class WysiwygEditor {
       if (this.loading) { this.scheduleCodeHilite(200); return; }
       refreshCode(this.root);
     }, delay);
-  }
-
-  /* ---------------- 行参考线（每 10 视觉行一条浅色虚线） ----------------
-     所见即所得里的「行」按视觉行算：段落折行算多行，标题、列表项、表格、
-     代码块都一样。块内视觉行用 Range.getClientRects 按 top 合并数出来；
-     跨块累计，每逢 10 的倍数在那条视觉行底摆一条虚线。
-     视口模式（大文档）不铺：DOM 只有窗口几十块，累计行数从窗口起点数起
-     会整体错位 —— 参考线是锦上添花，不能错着铺。 */
-
-  scheduleGuides(delay = 150) {
-    if (!this.guides || this.virtual) return;
-    if (this._guideTimer) clearTimeout(this._guideTimer);
-    this._guideTimer = setTimeout(() => {
-      this._guideTimer = 0;
-      if (this.loading) { this.scheduleGuides(200); return; }
-      this._renderGuides();
-    }, delay);
-  }
-
-  /** 开关热切换：关掉只清 overlay，不碰文档；打开当场铺一次 */
-  setGuides(on) {
-    const v = on !== false;
-    if (v === this.guides) return;
-    this.guides = v;
-    if (this._guideTimer) { clearTimeout(this._guideTimer); this._guideTimer = 0; }
-    if (v) this.scheduleGuides(0);
-    else {
-      this.guideLayer.replaceChildren();
-      this.guideLayer.hidden = true;
-    }
-  }
-
-  _syncGuideScroll() {
-    if (!this.guides || !this.guideLayer.childElementCount) return;
-    this.guideLayer.style.transform = `translateY(${-this.root.scrollTop}px)`;
-  }
-
-  /** 块的视觉行条带：Range rects 按 top 合并 —— 同一视觉行里多个行内盒
-      top 只差几个像素，用行高的 0.6 倍当「同一行」的门槛。空段落（只有
-      ZWSP）没有可见 rect，按一行算。⛔ 必须量 .w-text 的 rects 而不是整块：
-      Range 对块级容器会额外吐出容器自己的盒子 rect（top 带着块 padding，
-      和文本行差出几个像素），每个段落凭空多出一条带，参考线全错位。 */
-  _guideBands(block) {
-    const bands = [];
-    try {
-      const range = document.createRange();
-      range.selectNodeContents(textEl(block));
-      for (const r of range.getClientRects()) {
-        if (r.height <= 0 || r.width <= 0) continue;
-        const last = bands[bands.length - 1];
-        if (last && Math.abs(r.top - last.top) < Math.max(last.height, r.height) * 0.6) {
-          last.bottom = Math.max(last.bottom, r.bottom);
-        } else {
-          bands.push({ bottom: r.bottom, height: r.height });
-        }
-      }
-    } catch { /* Range 建不起来（块已摘除等）就不计这块，下一轮再算 */ }
-    if (!bands.length && block.offsetHeight > 0) {
-      bands.push({ bottom: block.getBoundingClientRect().bottom, height: block.offsetHeight });
-    }
-    return bands;
-  }
-
-  _renderGuides() {
-    const layer = this.guideLayer;
-    const root = this.root;
-    const rootRect = root.getBoundingClientRect();
-    /* 隐藏 / 没尺寸 / 视口模式：都铺不了，直接清干净 */
-    if (!this.guides || this.virtual || this.records
-      || root.classList.contains('hidden') || rootRect.width === 0 || rootRect.height === 0) {
-      layer.replaceChildren();
-      layer.hidden = true;
-      return;
-    }
-    const wrapRect = (root.parentElement || root).getBoundingClientRect();
-    const cs = getComputedStyle(root);
-    const x0 = parseFloat(cs.paddingLeft) || 0;
-    const x1 = root.clientWidth - (parseFloat(cs.paddingRight) || 0);
-    layer.style.left = `${rootRect.left - wrapRect.left}px`;
-    layer.style.top = `${rootRect.top - wrapRect.top}px`;
-    layer.style.width = `${root.clientWidth}px`;
-    layer.style.height = `${root.scrollHeight}px`;
-    layer.style.transform = `translateY(${-root.scrollTop}px)`;
-
-    const frag = document.createDocumentFragment();
-    let count = 0;
-    let quota = 4000;   // 虚线条数兜底：一万行的文档也就一千条
-    for (const block of root.children) {
-      if (!(block instanceof HTMLElement) || !block.classList.contains('w-block')) continue;
-      for (const b of this._guideBands(block)) {
-        count++;
-        if (count % 10 === 0) {
-          const g = document.createElement('div');
-          g.className = 'w-guide';
-          /* b.bottom 是视口坐标；层已经 translateY(-scrollTop)，这里补回去 */
-          g.style.top = `${b.bottom - rootRect.top + root.scrollTop}px`;
-          g.style.left = `${x0}px`;
-          g.style.width = `${Math.max(0, x1 - x0)}px`;
-          frag.appendChild(g);
-          if (--quota <= 0) break;
-        }
-      }
-      if (quota <= 0) break;
-    }
-    layer.replaceChildren(frag);
-    layer.hidden = false;
   }
 
   /* ---------------- 公共 API ---------------- */

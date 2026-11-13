@@ -91,7 +91,6 @@ const el = {
  */
 const plain = new PlainEditor(el.editor, {
   wrap: settings.wrap !== false,
-  guides: settings.lineGuides !== false,
   onChange: () => onEditorInput(),
   onCursor: () => updateCursorPos(),
   onScroll: () => scheduleOutlineSync(),
@@ -145,7 +144,6 @@ function scheduleOutline() {
 
 const wys = new WysiwygEditor(el.wysiwyg, {
   /* 每 10 视觉行一条浅色虚线（overlay），跟编辑区共用一个开关 */
-  guides: settings.lineGuides !== false,
   /* 点中分割线：它自己没有光标位，把块手柄的锚点直接钉到这一块上，
      别等 selectionchange 拿旧锚点把刚选中的块盖掉 */
   onBlockSelect: (block) => {
@@ -614,8 +612,6 @@ function setMode(mode, opt = {}) {
   const docDir = t.path ? be.dirName(t.path) : '';
   if (showWys) {
     wys.setDocDir(docDir); renderWys(t.content);
-    /* 隐→显不产生 DOM 变更，MutationObserver 看不见：显式补一次参考线 */
-    wys.scheduleGuides(0);
   }
   else if (showEditor) {
     plain.load(t.content, currentLang);
@@ -1268,7 +1264,6 @@ function showSettings() {
           <div class="set-label" data-i18n="布局">布局</div>
           <label class="set-row"><input type="checkbox" id="setOutline" ${settings.outlineVisible ? 'checked' : ''} /> <span data-i18n="显示侧栏">显示侧栏</span></label>
           <label class="set-row"><input type="checkbox" id="setSplit" ${settings.layout === 'split' ? 'checked' : ''} /> <span data-i18n="双栏">双栏</span></label>
-          <label class="set-row"><input type="checkbox" id="setLineGuides" ${settings.lineGuides !== false ? 'checked' : ''} /> <span data-i18n="行参考线（每 10 行）">行参考线（每 10 行）</span></label>
         </div>
       </section>
 
@@ -1389,11 +1384,6 @@ function showSettings() {
     setLayout(e.target.checked ? 'split' : 'single');
     updateStatus();
   };
-  box.querySelector('#setLineGuides').onchange = (e) => {
-    settings.lineGuides = e.target.checked;
-    saveSettings();
-    applyGuides();
-  };
   box.querySelector('#setAutoSave').onchange = (e) => {
     settings.autoSave = e.target.checked;
     saveSettings();
@@ -1424,11 +1414,9 @@ function showSettings() {
     box.querySelectorAll('.set-seg[data-name="theme"] button').forEach((x) => x.classList.toggle('on', x.dataset.v === 'auto'));
     box.querySelector('#setOutline').checked = true;
     box.querySelector('#setSplit').checked = false;
-    box.querySelector('#setLineGuides').checked = true;
     box.querySelector('#setAutoSave').checked = true;
     box.querySelector('#setLang').value = settings.lang;
     applyLang();
-    applyGuides();
     toast(tt('已恢复默认设置'));
   };
 
@@ -3196,16 +3184,6 @@ function applyWrap() {
   const on = settings.wrap !== false;
   document.body.toggleAttribute('data-nowrap', !on);
   plain.setWrap(on);
-  /* 折行变了，视觉行数跟着变：参考线重铺一次（防抖，0 延迟即下一帧） */
-  wys.scheduleGuides(0);
-}
-
-/* 行参考线（每 10 行一条浅色虚线）：两个编辑器共用一个开关。
-   预览没有行概念，不铺。 */
-function applyGuides() {
-  const on = settings.lineGuides !== false;
-  plain.setGuides(on);
-  wys.setGuides(on);
 }
 
 function gotoLinePrompt() {
@@ -3566,15 +3544,6 @@ const commands = {
     applyWrap();
     toast(v ? tt('长行折到下一行显示') : tt('长行不折行，横向滚动查看'));
   },
-  /* 行参考线组：编辑区（CodeMirror）与所见即所得共用一个开关（applyGuides）。 */
-  setLineGuides: (on) => {
-    const v = on !== false;
-    if ((settings.lineGuides !== false) === v) return;
-    settings.lineGuides = v;
-    saveSettings();
-    applyGuides();
-  },
-  toggleLineGuides: () => commands.setLineGuides(settings.lineGuides === false),
   toggleOutline: () => {
     settings.outlineVisible = !settings.outlineVisible;
     saveSettings();
@@ -3791,7 +3760,6 @@ const menuTree = () => [
          所以放在「视图」而不是某个具体视图的设置里 */
       { id: 'wrapSoft', label: tt('自动换行'), checked: () => settings.wrap !== false },
       { id: 'wrapNone', label: tt('不换行'), checked: () => settings.wrap === false },
-      { id: 'toggleLineGuides', label: tt('行参考线'), checked: () => settings.lineGuides !== false },
       { sep: true },
       { id: 'toggleOutline', label: tt('显示侧栏'), kbd: 'Ctrl+Shift+O', checked: () => settings.outlineVisible },
       { id: 'toggleToolbar', label: tt('显示快捷按钮'), checked: () => settings.showToolbar !== false },
@@ -4489,7 +4457,6 @@ function bindEvents() {
       { lead: tt('换行'), row: [
         { label: tt('自动换行'), hint: tt('长行折到下一行显示'), checked: () => settings.wrap !== false, action: () => commands.setWrap(true) },
         { label: tt('不换行'), hint: tt('长行不折行，横向滚动查看'), checked: () => settings.wrap === false, action: () => commands.setWrap(false) },
-      { label: tt('行参考线'), hint: tt('每 10 行显示一条浅色虚线'), checked: () => settings.lineGuides !== false, action: () => commands.toggleLineGuides() },
       ] },
     ]);
   });
@@ -4513,7 +4480,6 @@ function bindEvents() {
       { lead: tt('换行'), row: [
         { label: tt('自动换行'), hint: tt('长行折到下一行显示'), checked: () => settings.wrap !== false, action: () => commands.setWrap(true) },
         { label: tt('不换行'), hint: tt('长行不折行，横向滚动查看'), checked: () => settings.wrap === false, action: () => commands.setWrap(false) },
-      { label: tt('行参考线'), hint: tt('每 10 行显示一条浅色虚线'), checked: () => settings.lineGuides !== false, action: () => commands.toggleLineGuides() },
       ] },
     ]);
   });
@@ -4608,7 +4574,6 @@ function bindEvents() {
         { lead: tt('换行'), row: [
           { label: tt('自动换行'), hint: tt('长行折到下一行显示'), checked: () => settings.wrap !== false, action: () => commands.setWrap(true) },
           { label: tt('不换行'), hint: tt('长行不折行，横向滚动查看'), checked: () => settings.wrap === false, action: () => commands.setWrap(false) },
-      { label: tt('行参考线'), hint: tt('每 10 行显示一条浅色虚线'), checked: () => settings.lineGuides !== false, action: () => commands.toggleLineGuides() },
         ] },
       );
       contextMenu(e.clientX, e.clientY, items);

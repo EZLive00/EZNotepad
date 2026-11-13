@@ -130,45 +130,6 @@ const dupLinesField = StateField.define({
   provide: (f) => EditorView.decorations.from(f),
 });
 
-/* ---------------- 行参考线（每 10 行一条浅色虚线，纯视图） ----------------
-   按当前行号取模：第 10/20/30… 行各挂一条虚线底。文档一改行号就变，
-   所以 docChanged 时全量重算 —— 「行号语义」不能用 mapPos 映射，映射会让
-   装饰跟着文字走，插几行之后虚线就不在第 10 行了。开关走 Compartment
-   热替换（重开时 StateField 的 create 会按当前文档重建）。
-   超大文档不铺：每次击键重建几万条装饰反过来吃掉击键预算，参考线只是
-   锦上添花。 */
-const GUIDE_EVERY = 10;
-const GUIDE_MAX_LINES = 100_000;
-
-/* 与装饰集合同源的行号镜像：buildGuideLines 每次重算顺手记一份，供
-   plain.guideLines()（探针）读。不遍历装饰集合本身 —— vendor 里的 CM6 是
-   压过名的产物，RangeSet 的运行时 API 不能当契约依赖。 */
-let guideLinesNow = [];
-
-function buildGuideLines(state) {
-  const doc = state.doc;
-  if (doc.lines > GUIDE_MAX_LINES) {
-    guideLinesNow = [];
-    return Decoration.none;
-  }
-  const marks = [];
-  const nums = [];
-  for (let n = GUIDE_EVERY; n <= doc.lines; n += GUIDE_EVERY) {
-    nums.push(n);
-    marks.push(Decoration.line({ class: 'cm-guide10' }).range(doc.line(n).from));
-  }
-  guideLinesNow = nums;
-  return marks.length ? Decoration.set(marks) : Decoration.none;
-}
-
-const guideLinesField = StateField.define({
-  create: (state) => buildGuideLines(state),
-  update(deco, tr) {
-    return tr.docChanged ? buildGuideLines(tr.state) : deco;
-  },
-  provide: (f) => EditorView.decorations.from(f),
-});
-
 /* ---------------- 文字高亮（非 Markdown 文件专用，纯视图） ----------------
    `==` 是 Markdown 语法：往 .txt / 代码文件里写它，既污染文件、又没有任何渲染
    —— 用户看到的就是「前后多了两个 ==，字却没亮」。这些文件的「高亮」改成
@@ -220,9 +181,6 @@ export class PlainEditor {
        一个 Compartment 只能装「一个扩展」或扩展数组，所以「不换行」时塞空数组。 */
     this.wrapComp = new Compartment();
     this.wrap = opts.wrap !== false;
-    /* 行参考线（每 10 行一条虚线）同样走 Compartment，开关热替换不重建 state */
-    this.guideComp = new Compartment();
-    this.guides = opts.guides !== false;
 
     const state = EditorState.create({
       doc: opts.value || '',
@@ -271,8 +229,6 @@ export class PlainEditor {
       this.readOnlyComp.of(this._roExt(this.readOnly)),
       /* 高亮重复行：默认空集合，等 setDupLines 推一个 effect 进来 */
       dupLinesField,
-      /* 行参考线：默认跟设置走，setGuides 热替换 */
-      this.guideComp.of(this.guides ? guideLinesField : []),
       /* 非 Markdown 文件的文字高亮：切标签时由 setViewMarks 重放 */
       viewMarksField,
       /* 剪贴板里是图片：拦下来交给外层落盘，否则 CM6 会安静地什么都不做 */
@@ -502,21 +458,6 @@ export class PlainEditor {
     if (v === this.wrap) return;
     this.wrap = v;
     this.view.dispatch({ effects: this.wrapComp.reconfigure(v ? EditorView.lineWrapping : []) });
-  }
-
-  /** 行参考线开关（每 10 行一条浅色虚线）。只换 Compartment 里的扩展，
-      state 不重建，撤销历史和选区都还在；重开时 create 按当前文档重算。 */
-  setGuides(on) {
-    const v = on !== false;
-    if (v === this.guides) return;
-    this.guides = v;
-    this.view.dispatch({ effects: this.guideComp.reconfigure(v ? guideLinesField : []) });
-  }
-
-  /** 参考线钉在哪些行号上（1 起，升序）。读 buildGuideLines 的同源行号
-      镜像 —— 探针用它，免得数 DOM 受视口渲染影响。 */
-  guideLines() {
-    return this.guides ? guideLinesNow : [];
   }
 
   /* ---------------- 编辑命令 ---------------- */
