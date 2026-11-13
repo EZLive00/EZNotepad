@@ -379,6 +379,19 @@ body {
   color: var(--fg);
 }
 
+/* 每 10 行一条浅色虚线（对齐辅助）：画在行底缝上，贴着行边界、不压正文
+   （行高=行距，字底离缝还有 2~3px）。颜色与编辑器同源 --guide-line，
+   明暗主题自动跟随。折叠缝（.gap）自己已有标记，虚线照画不冲突。 */
+.cmp-row.g10::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  border-top: 1px dashed var(--guide-line);
+  pointer-events: none;
+}
+
 .cmp-ln {
   width: var(--cmp-ln-w);
   flex: none;
