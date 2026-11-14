@@ -75,6 +75,7 @@ const el = {
   sideFiles: $('sideFiles'),
   sideTabs: [...document.querySelectorAll('.side-tab')],
   sideLocate: $('sideLocate'),
+  sideRefresh: $('sideRefresh'),
   ftQuery: $('ftQuery'),
   ftRegex: $('ftRegex'),
   ftCase: $('ftCase'),
@@ -628,6 +629,13 @@ function setMode(mode, opt = {}) {
   updateOutline();
   refreshStats();
   updateStatus();   // 切换文件/模式后格式徽标、行列数、草稿状态都要跟着变
+  /* 查找结果绑在「当前视图的 DOM」上：换模式就换了 DOM，旧匹配的偏移全部作废
+     （预览走的也是 DOM 分支）。不重算的话，切模式后高亮要么落在空的、要么不出现 */
+  if (!el.findbar.classList.contains('hidden')) {
+    /* 「选区内」只对源码编辑有意义：DOM 模式按看得见的文字算，源码偏移套不上 */
+    if (mode !== 'edit') { $('findScope').disabled = true; $('findScope').checked = false; }
+    runFind();
+  }
   if (mode === 'preview') el.preview.scrollTop = t.previewScroll || 0;
   else if (showPreview) el.preview.scrollTop = t.previewScroll || 0;
   /* 切回这个标签时把光标和滚动放回原处。只在「切标签」这条路上做，
@@ -1070,6 +1078,44 @@ function setSide(side) {
 }
 
 /**
+ * 侧栏的刷新按钮：把界面重新对齐到磁盘上的真相。
+ *
+ * 两件事，都是「用户已经知道外面变了，别再自作聪明」：
+ *   · 文件页在前台 → 重扫当前文件夹。别的程序刚建的文件、改名、删除立刻出现；
+ *     搜索状态下按当前查询重搜一遍，而不是把结果换成树（人还在看命中列表）。
+ *   · 当前标签有路径 → 从磁盘重读。和「外部改动」那条自动检查不同：
+ *     这里是用户主动要求，**不比对 mtime**（比对只会得出「没变」，
+ *     可用户明明点了刷新——比如文件系统时间戳精度不够的那种改动）。
+ *     有未保存改动时先问一句，重读会把这些改动丢掉。
+ *
+ * 预览模式下重读同样走 reloadTab → setContent，渲染视图跟着刷新。
+ */
+async function refreshFromDisk() {
+  const filesFront = !el.sideFiles.classList.contains('hidden');
+  if (filesFront) {
+    const q = el.ftQuery.value.trim();
+    if (q) await tree.search(q);
+    else await tree.render();
+  }
+  const t = activeTab();
+  if (!t || !t.path) return;
+  if (isDirty(t)) {
+    const go = await confirmBox(
+      tt('重新载入'), tt('当前有未保存的修改，重新载入会丢弃它们。继续？'),
+      tt('重新载入'), tt('保留我的')
+    );
+    if (!go) return;
+  }
+  try {
+    const m = await be.fileMtime(t.path);
+    await reloadTab(t, m);
+    toast(tt('已重新载入'));
+  } catch (e) {
+    toast(tt('重新载入失败：') + e);
+  }
+}
+
+/**
  * 「在文件列表中定位」：把当前标签对应到文件树里的那一行。
  *
  * 三件事按顺序做，顺序不能换：先把侧栏叫出来（用户可能设了「显示侧栏」为关），
@@ -1125,6 +1171,7 @@ function clearFolder() {
 function setupSidebar() {
   el.sideTabs.forEach((b) => { b.onclick = () => setSide(b.dataset.side); });
   el.sideLocate.onclick = locateCurrentFile;
+  el.sideRefresh.onclick = refreshFromDisk;
   el.ftPick.onclick = pickFolder;
   /* 设置入口只在两处：顶部菜单栏的「设置」和 Ctrl+,（同一个 showSettings）。
      侧栏那个齿轮去掉了——它紧挨「大纲/文件」，看着像「这一栏的设置」。 */
@@ -2813,7 +2860,7 @@ function openFind(expand) {
   el.findbar.classList.remove('hidden');
   if (expand != null) setFindExpanded(expand);
   // 「选区内」只在真的选了东西时才可用，否则勾了也没意义还让人困惑
-  const sel = t.mode === 'wysiwyg' ? '' : plain.selectedText;
+  const sel = t.mode === 'edit' ? plain.selectedText : '';
   $('findScope').disabled = !sel;
   if (!sel) $('findScope').checked = false;
   // 选中的文字直接填进查找框（含换行也行，跨块匹配现在支持）
@@ -2866,16 +2913,19 @@ function runFind() {
   find.index = 0;
   if (!t || !re) { setFindCount(); domfind.clear(); return; }
 
-  if (t.mode === 'wysiwyg') {
+  /* 预览也是「渲染后的 DOM」：匹配必须按**看得见的文字**算，不能拿 md 源码的
+     偏移去套（`**粗**` 在预览里只剩「粗」两个字）。以前预览落进下面的源码分支，
+     匹配数得出来、高亮却画不到预览上，表现就是「预览模式搜不到内容」。 */
+  if (t.mode === 'wysiwyg' || t.mode === 'preview') {
     find.dom = true;
-    if (wys.virtual) {
+    if (t.mode === 'wysiwyg' && wys.virtual) {
       /* 视口模式：匹配在块模型上算（DOM 里只有窗口内容），
          跳转时再把对应块搬进窗口、由 DOM 现算高亮范围 */
       find.model = true;
       find.matches = wys.findMatches(re) || [];
     } else {
       find.model = false;
-      find.matches = domfind.findInDom(el.wysiwyg, re);
+      find.matches = domfind.findInDom(t.mode === 'wysiwyg' ? el.wysiwyg : el.preview, re);
     }
     // 编辑正文触发的刷新不要把人踢回第一处匹配
     find.index = Math.min(prevIndex, Math.max(0, find.matches.length - 1));
@@ -2915,7 +2965,7 @@ function locateMatch() {
       return;
     }
     domfind.paint(find.matches, find.index);
-    domfind.scrollTo(find.matches[find.index], el.wysiwyg);
+    domfind.scrollTo(find.matches[find.index], t.mode === 'wysiwyg' ? el.wysiwyg : el.preview);
     return;
   }
   const [a, b] = find.matches[find.index] || [];
@@ -2971,6 +3021,14 @@ async function replaceOne() {
   const t = activeTab();
   if (!t || !find.matches.length) return;
   const rep = $('replaceInput').value;
+  /* 预览是渲染结果：在这里改 DOM 回不到正文（也没法从 DOM 反推源码）。
+     点「替换」就是要改文档，切到编辑模式再做 —— 顺带告诉用户视图为什么变了。 */
+  if (t.mode === 'preview') {
+    toast(tt('替换需要编辑模式'));
+    setMode('edit', { fromActivate: true });
+    runFind();
+    if (!find.matches.length) return;
+  }
   if (find.dom) {
     if (replaceInDom(find.matches[find.index], rep)) { runFind(); return; }
     if (!(await switchToEditForReplace())) return;
@@ -2986,6 +3044,14 @@ async function replaceAll() {
   const t = activeTab();
   if (!t) return;
   const rep = $('replaceInput').value;
+
+  /* 预览同上：批量替换也得回编辑模式（源码里替换，预览随后重渲染）。 */
+  if (t.mode === 'preview') {
+    toast(tt('替换需要编辑模式'));
+    setMode('edit', { fromActivate: true });
+    runFind();
+    if (!find.matches.length) { toast(tt('没有找到匹配项')); return; }
+  }
 
   /* 所见即所得：从后往前就地替换，前面的偏移不会被改动影响。
      跨格式的那几处单独数出来，一个都不剩才不必退回编辑模式。 */

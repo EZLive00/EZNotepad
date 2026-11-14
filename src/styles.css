@@ -668,17 +668,19 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
 }
 .side-tab:hover { background: var(--bg-hover); color: var(--fg-soft); }
 .side-tab.active { background: var(--bg-panel); color: var(--fg); }
-/* 「在文件列表中定位」：页签右边一个圆圈准星，靠右收起。
-   图标是 Lucide 的 locate（圆圈 + 四向刻度），和菜单栏其它图标同源 */
-.side-locate {
+/* 侧栏头右侧的两个图标钮：刷新（重新对齐磁盘）与定位（在树里找到当前文件）。
+   靠右收起；图标是 Lucide 的 refresh-cw / locate，和菜单栏其它图标同源 */
+.side-locate, .side-refresh {
   margin-left: auto;
   width: 24px; height: 24px; flex: none;
   display: grid; place-items: center;
   border: none; border-radius: var(--r-1);
   background: transparent; color: var(--fg-faint); cursor: pointer;
 }
-.side-locate:hover { background: var(--bg-hover); color: var(--fg); }
-.side-locate .ico { width: 14px; height: 14px; }
+/* 两个都写 auto 时，第一个吃掉全部空余、第二个紧挨着它 —— 这一组是整体靠右的 */
+.side-refresh + .side-locate { margin-left: 0; }
+.side-locate:hover, .side-refresh:hover { background: var(--bg-hover); color: var(--fg); }
+.side-locate .ico, .side-refresh .ico { width: 14px; height: 14px; }
 .side-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 
 /* ---- 文件树 ---- */

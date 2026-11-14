@@ -410,6 +410,8 @@ export const SRC = {
   '重命名…': ["Rename…", "名前を変更…", "이름 바꾸기…", "Renommer…", "Umbenennen…", "Renombrar…", "Renomear…"],
   '在资源管理器中显示': ["Show in File Explorer", "エクスプローラーで表示", "탐색기에서 보기", "Afficher dans l'explorateur", "Im Explorer anzeigen", "Mostrar en el explorador", "Mostrar no explorador"],
   '刷新': ["Refresh", "更新", "새로 고침", "Actualiser", "Aktualisieren", "Actualizar", "Atualizar"],
+  '刷新文件树与当前文档': ["Refresh the file tree and the open file", "ファイルツリーと開いているファイルを更新", "파일 트리와 열린 파일 새로 고침", "Actualiser l'arborescence et le fichier ouvert", "Dateibaum und geöffnete Datei aktualisieren", "Actualizar el árbol de archivos y el archivo abierto", "Atualizar a árvore de arquivos e o arquivo aberto"],
+  '重新载入失败：': ["Reload failed: ", "再読み込みに失敗しました：", "다시 불러오기 실패: ", "Échec du rechargement : ", "Neu laden fehlgeschlagen: ", "Error al recargar: ", "Falha ao recarregar: "],
   '新建文件夹': ["New Folder", "新規フォルダー", "새 폴더", "Nouveau dossier", "Neuer Ordner", "Nueva carpeta", "Nova pasta"],
   '新建文件': ["New File", "新規ファイル", "새 파일", "Nouveau fichier", "Neue Datei", "Nuevo archivo", "Novo arquivo"],
   '文件夹名': ["Folder name", "フォルダー名", "폴더 이름", "Nom du dossier", "Ordnername", "Nombre de la carpeta", "Nome da pasta"],
