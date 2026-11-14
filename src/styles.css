@@ -391,10 +391,13 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
    上沿这一道线把它和标题栏分开——同色平面不画线，两行就糊成一片。
    高度 33 = 内容 32 + 上边线 1，保证标签还是 32px 高（若写 32，
    内容只剩 31px，奇高会让 12.5px 的字落在半像素上发虚） */
+/* 标签栏：12px 的字落在 16px 的行盒里，所以 30px 的栏高上下各留 7px —— 
+   再矮就贴住字了（28 是点击热区的下限，30 给关闭键 18px 留得出上下各 6px）。
+   左右 padding 收成对称的 6px：标签自己能撑出留白，栏再各留一道就是双份。 */
 .tabbar {
-  height: 33px;
+  height: 30px;
   display: flex; align-items: center; gap: 2px;
-  padding: 0 6px 0 8px;
+  padding: 0 6px;
   border-top: var(--bw) solid var(--line-strong);
 }
 .tabs {
@@ -416,8 +419,12 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
    `--bw: 0.5px` 取整成 1px —— 两道 1px 只错开半像素，中间实际是 1.5px
    的粗线（就是「两边的边框都显示了」）。别再改回负 margin 那套。 */
 .tab {
-  display: flex; align-items: center; gap: 6px;
-  padding: 0 7px 0 11px;
+  display: flex; align-items: center; gap: 5px;
+  /* 左右不对称是故意的：右边有 18px 的关闭键替我们撑住视觉边界，左边只有字，
+     所以左 8 右 5。两边的和（13）加上关闭键与间距（23）就是一颗满宽标签里
+     除了文件名之外的全部开销 —— 133 − 36.5 = 96.5px 给文件名。
+     ⛔ 别再为了「对称」把左边补到 11：那是每个标签白扔 3px。 */
+  padding: 0 5px 0 8px;
   border: none;
   border-left: var(--bw) solid var(--line);
   color: var(--fg-soft);
@@ -466,7 +473,7 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
   display: block; height: 0; overflow: hidden;
   font-weight: 600; visibility: hidden;
 }
-.tab-name { overflow: hidden; text-overflow: ellipsis; max-width: 100px; }
+.tab-name { overflow: hidden; text-overflow: ellipsis; max-width: 96px; }
 .tab-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent-solid); flex: none; }
 /* 后台标签被别的程序改过：琥珀点，和「未保存」的蓝点分开看 */
 .tab.stale .tab-name::after {
