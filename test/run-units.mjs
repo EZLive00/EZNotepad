@@ -19,6 +19,7 @@ import { normalizeLang, langForFile, newDocTypes } from '../src/js/langs.js';
 import { formatLoose } from '../src/js/format-loose.js';
 import { formatByKind } from '../src/js/format.js';
 import { appIconSvg, brandSprite } from '../scripts/app-icon.mjs';
+import { splitFrontmatter, parseFrontmatter, inlineTags, allTags } from '../src/js/frontmatter.js';
 
 const out = [];
 const eq = (name, got, want) => out.push({ name, ok: JSON.stringify(got) === JSON.stringify(want), got, want });
@@ -786,6 +787,74 @@ ok('语言表：新建类型够多', newDocTypes().length >= 24);
   ok('有未保存改动时刷新先问一句',
     app.includes('当前有未保存的修改，重新载入会丢弃它们。继续？'));
   ok('刷新按钮已接线', app.includes('el.sideRefresh.onclick = refreshFromDisk;'));
+}
+
+/* ---------- YAML 头（属性区）与标签 ---------- */
+{
+  const doc = [
+    '---',
+    'title: 甲',
+    'tags:',
+    '  - 项目/乙',
+    '  - 笔记',
+    'done: true',
+    'n: 3',
+    'due: 2026-11-14',
+    'list: [a, b]',
+    '---',
+    '',
+    '正文 #行内 与 `#代码` 还有 C# 和 #1984',
+    '',
+    '```',
+    '#围栏里不算',
+    '```',
+  ].join('\n');
+  const fm = splitFrontmatter(doc);
+  eq('第一行的 --- 被认成属性头', fm.has, true);
+  eq('头 + 正文与原文件逐字节相同（切模式不改字）', fm.raw + fm.body, doc);
+
+  const p = parseFrontmatter(fm.yaml);
+  eq('属性名按出现顺序取出', p.entries.map((e) => e.key), ['title', 'tags', 'done', 'n', 'due', 'list']);
+  eq('布尔值判成 checkbox', p.entries[2].kind, 'checkbox');
+  eq('数字判成 number', p.entries[3].kind, 'number');
+  eq('ISO 日期判成 date', p.entries[4].kind, 'date');
+  eq('块列表取到每一项', p.entries[1].items, ['项目/乙', '笔记']);
+  eq('内联列表也能拆', p.entries[5].items, ['a', 'b']);
+
+  eq('行内标签跳过行内代码、围栏、C#、纯数字',
+    inlineTags(fm.body), ['行内']);
+  eq('正文 + 属性区的标签合并去重',
+    allTags(doc, p.entries), ['项目/乙', '笔记', '行内']);
+
+  eq('散文里的两个 --- 不当属性头（否则正文会消失）',
+    splitFrontmatter('---\n这是一段散文\n---\n').has, false);
+  eq('没有闭合行不当属性头', splitFrontmatter('---\ntitle: 甲\n').has, false);
+  eq('空属性区合法', splitFrontmatter('---\n---\n正文').has, true);
+
+  /* 接线：两处都要真的把 YAML 当元数据处理，不能留给 Markdown 渲染成两条横线 */
+  const wys = fs.readFileSync('src/js/wysiwyg.js', 'utf8');
+  ok('所见即所得在进块模型前拆掉 YAML 头',
+    wys.includes('const fm = splitFrontmatter(md);') && wys.includes('this.front = fm.has ? fm : null;'));
+  ok('序列化把 YAML 头原样接回去（raw 自带换行）',
+    wys.includes("return (this.front?.raw || '') + body;"));
+  const pv = fs.readFileSync('src/js/preview.js', 'utf8');
+  ok('预览先拆头再渲染，并在正文顶部补属性卡',
+    pv.includes('const fm = splitFrontmatter(text);') && pv.includes('propsHtml(parseFrontmatter(fm.yaml).entries, { doc: true'));
+
+  const appJs = fs.readFileSync('src/js/app.js', 'utf8');
+  ok('属性条只在所见即所得下出现（源码模式里 YAML 本来就在正文中）',
+    appJs.includes("if (!t || t.mode !== 'wysiwyg' || detectKind(t.name) !== 'md') {")
+      && appJs.includes('function syncPropBar()'));
+  ok('切模式后刷新属性条', appJs.includes('syncPropBar();\n}'));
+  ok('点标签走一次普通的文件夹搜索，不自建索引',
+    appJs.includes('el.ftQuery.value = \'#\' + t;') && appJs.includes("await tree.search('#' + t);"));
+  ok('标签点击在 document 上代理（属性条与预览共用一套 .tag）',
+    appJs.includes('bindTagClicks()') && appJs.includes("closest?.('.tag[data-tag]')"));
+
+  const css = fs.readFileSync('src/styles.css', 'utf8');
+  ok('属性条贴灰面、属性卡只画线不铺底（正文不上灰面）',
+    /\.propbar\s*\{[^}]*background:\s*var\(--bg-side\)/.test(css)
+      && /\.props-doc\s*\{[^}]*border:\s*var\(--bw\) solid var\(--line\)/.test(css));
 }
 
 /* ---------- 汇总 ---------- */

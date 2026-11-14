@@ -229,6 +229,53 @@ try {
         && (await ev('window.__snp.getEditorText()')).includes('**粗字**'),
       `${await ev('window.__snp.getActiveTab().mode')} / ${await ev('window.__snp.getEditorText()')}`);
 
+    // ---- 9.5 YAML 头：属性卡 / 属性条 / 标签 ----
+    /* 以前 `---` 落在第一行会被当分割线：打开一篇 Obsidian 笔记看到的是
+       一条横线 + 几行 key: value + 又一条横线。现在头被拆出来当元数据。 */
+    const withProps = '---\ntitle: 甲\ntags:\n  - 项目/乙\ndone: true\n---\n\n# 标题\n\n正文 #行内\n';
+    await ev(`window.__snp.setContent(${JSON.stringify(withProps)})`);
+    await ev('window.__snp.commands.modePreview()');
+    await ev('new Promise(r => setTimeout(r, 260))');
+    const card = await ev(`(() => {
+      const c = document.querySelector('#preview .props-doc');
+      if (!c) return null;
+      return {
+        keys: [...c.querySelectorAll('.pk')].map((e) => e.textContent),
+        tags: [...c.querySelectorAll('.tag')].map((e) => e.dataset.tag),
+        h1: (document.querySelector('#preview .md h1') || {}).textContent || '',
+        hr: document.querySelectorAll('#preview .md hr').length,
+      };
+    })()`);
+    ok('预览把 YAML 头渲染成属性卡（不再出两条横线）',
+      !!card && card.hr === 0 && card.h1 === '标题', JSON.stringify(card));
+    ok('属性卡里有属性名与可点的标签', !!card && card.keys.join(',') === 'title,tags,done'
+      && card.tags.join(',') === '项目/乙', JSON.stringify(card));
+
+    await ev('window.__snp.commands.modeWysiwyg()');
+    await ev('new Promise(r => setTimeout(r, 260))');
+    const bar = await ev(`(() => {
+      const b = document.getElementById('propBar');
+      return {
+        shown: !b.classList.contains('hidden'),
+        keys: [...b.querySelectorAll('.pk')].map((e) => e.textContent),
+        hr: document.querySelectorAll('#wysiwyg hr').length,
+        body: document.getElementById('wysiwyg').textContent.slice(0, 16),
+      };
+    })()`);
+    ok('所见即所得：属性进顶部属性条，YAML 不占正文',
+      bar.shown && bar.hr === 0 && bar.keys.join(',') === 'title,tags,done'
+        && !bar.body.includes('title'), JSON.stringify(bar));
+
+    /* 最强的一条：渲染一遍再序列化回来，必须与原文逐字节相同。
+       差一个字符就会在「切模式再存盘」时把文件改掉。 */
+    const rt = await ev(`(() => {
+      const w = window.__snp.editor;
+      w.render(${JSON.stringify(withProps)});
+      return w.toMarkdown();
+    })()`);
+    ok('所见即所得渲染再序列化与原文逐字节相同', rt === withProps, JSON.stringify(rt));
+    await ev(`window.__snp.setContent(${JSON.stringify('一段 **粗字** 文字')})`);
+
     // ---- 10. 侧栏刷新：重扫文件树 + 从磁盘重读当前文档 ----
     /* 假后端补一份「磁盘上的文件」；其余命令仍走原来的假实现 */
     await ev(`(() => {
