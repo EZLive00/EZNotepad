@@ -37,6 +37,15 @@ export const closeWindow = () => call('close');
 export const setTitle = (t) => call('setTitle', t);
 
 /**
+ * 当前窗口的 label（main / compare / foldercmp / tearoff-1 …）。
+ * 读不到时按 main 算：浏览器里调试没有这层概念，主窗口的行为才是不出错的那套。
+ */
+export async function label() {
+  const w = await api();
+  return (w && w.label) || 'main';
+}
+
+/**
  * 拦截系统关闭（Alt+F4、任务栏右键关闭）。handler 里可以 preventDefault() 拦下来。
  * 返回是否挂上了监听（浏览器里调试时为 false）。
  */

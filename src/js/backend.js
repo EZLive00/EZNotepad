@@ -75,6 +75,15 @@ export const openFolderCompareWindow = (left, right) =>
 export const takeFolderCompareRequest = () => invoke('take_folder_compare_request');
 /** 工具窗口 → 主窗口：在编辑器里打开这个文件 */
 export const openInMain = (path) => invoke('open_in_main', { path });
+
+/* ---- 标签拖出成独立窗口（tear-off）----
+   tabs 是 TearoffTab[]（见 js/tearoff.js::tabSeed），x/y 是松手点的屏幕坐标（CSS 像素）。 */
+export const openTearoffWindow = (tabs, x, y) => invoke('open_tearoff_window', { tabs, x, y });
+export const takeTearoffSeed = () => invoke('take_tearoff_seed');
+export const setMainTabbarRect = (x, y, w, h) => invoke('set_main_tabbar_rect', { x, y, w, h });
+export const mainTabbarRect = () => invoke('main_tabbar_rect');
+export const mergeTabsToMain = (tabs) => invoke('merge_tabs_to_main', { tabs });
+export const closeTearoffWindows = () => invoke('close_tearoff_windows');
 /** 工具窗口（文本对比 / 文件夹对比）的「最大化 / 还原」：无边框窗口没有系统
     最大化状态，改成两个矩形。label 是窗口标识（"compare" / "foldercmp"） */
 export const setToolFill = (label, fill) => invoke('tool_set_fullscreen', { label, fill: !!fill });

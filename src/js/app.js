@@ -24,6 +24,7 @@ import * as domfind from './domfind.js';
 import { FileTree } from './filetree.js';
 import { showHistory } from './history.js';
 import { freeUntitledName, moveById } from './taborder.js';
+import { isTearoffLabel, leftTabbar, hitsRect, tabSeed } from './tearoff.js';
 import { listen } from '../vendor/api/event.js';
 import * as win from './win.js';
 import { tt, setLang, resolveLang, getLang, applyDom, LANGS } from './i18n.js';
@@ -222,6 +223,13 @@ function refreshTitle() {
 
 let dragTabId = null;   // 正在被拖拽的标签 id（拖拽期间只存这一个）
 
+/* 这扇窗口是不是「从标签条拖出来的」那一种（label = tearoff-N，见 Rust 侧
+   open_tearoff_window）。两种窗口共用同一份页面，行为只在这里分叉三处：
+   拖回主窗口、关窗时把标签交回去、不写自己的会话/草稿（会话是主窗口的）。 */
+let IS_TEAROFF = false;
+/* 拆出去的窗口正在「离开」：合并已经发生，关闭守卫别再拦一次 */
+let tearoffLeaving = false;
+
 /* 上一次画出来的标签栏。输入时 updateStatus 会走 renderTabs，
    而 tag 的名字、脏标记、顺序在连打十几个字里通常一个都没变——
    全量重建（清空 + 重建 + 重绑事件 + 重解析图标）纯属白干。 */
@@ -239,7 +247,9 @@ function renderTabs() {
     b.className = 'tab' + (act && t.id === act.id ? ' active' : '');
     if (t.extChanged) b.classList.add('stale');   // 后台标签被外部改过，点开时会问
     b.title = t.path || t.name;
-    b.draggable = true;
+    /* 拆出去的窗口里不做 HTML5 排序拖拽：那一侧要靠 pointer 事件判「拖回主窗口」，
+       两套拖拽挂在同一个节点上会互相抢 mousedown。 */
+    b.draggable = !IS_TEAROFF;
     b.dataset.id = String(t.id);
     const name = document.createElement('span');
     name.className = 'tab-name';
@@ -266,18 +276,25 @@ function renderTabs() {
       closeTab(t.id);
     });
     b.addEventListener('mousedown', (e) => { if (e.button === 1) e.preventDefault(); });
+    if (IS_TEAROFF) setupTearoffDragOut(b);
 
     /* 拖拽换位。dragover 里按指针落在标签的左/右半边决定插到前面还是后面，
-       用一个 ::before/::after 的竖线提示落点 */
+       用一个 ::before/::after 的竖线提示落点。
+       松手时如果指针已经离开标签条（往下拖进正文区、或甩出窗口），就是「拖出成
+       独立窗口」—— 和换位共用同一个手势，靠位置区分，不另加键。 */
     b.addEventListener('dragstart', (e) => {
       dragTabId = t.id;
       b.classList.add('dragging');
       e.dataTransfer.effectAllowed = 'move';
       try { e.dataTransfer.setData('text/plain', String(t.id)); } catch {}
     });
-    b.addEventListener('dragend', () => {
+    b.addEventListener('dragend', (e) => {
+      const dragged = dragTabId;
+      const leaves = !IS_TEAROFF && leftTabbar(el.tabs.getBoundingClientRect(),
+        { x: e.clientX, y: e.clientY });
       dragTabId = null;
       el.tabs.querySelectorAll('.tab').forEach((n) => n.classList.remove('dragging', 'drop-before', 'drop-after'));
+      if (dragged === t.id && leaves) tearOffTab(t.id, e.screenX, e.screenY);
     });
     b.addEventListener('dragover', (e) => {
       if (dragTabId == null || dragTabId === t.id) return;
@@ -314,6 +331,153 @@ function renderTabs() {
   }
   refreshTitle();
   scheduleTabOverflow();
+  reportTabbarRect();
+}
+
+/* ---------------- 标签拖出 / 拖回 ----------------
+
+   两个方向各走一条显式通道，理由写在 js/tearoff.js 顶上：两扇窗口之间是 OS 级
+   拖放，HTML5 的 dataTransfer 过不去，而 `dragDropEnabled` 又不能关（主窗口还要
+   接外部拖进来的文件）。所以：
+
+     · 拖出：本窗口 dragend 判到指针离开标签条 → 建 tearoff 窗口，标签搬过去
+     · 拖回：tearoff 窗口自己跟 pointer，松手时把屏幕坐标和主窗口上报的标签栏
+       矩形比一下（矩形见 reportTabbarRect）
+
+   两条路都不跨 WebView 传数据，Windows / macOS 同一套。 */
+
+/** 把标签拆成独立窗口。建窗失败就把标签留在原处 —— 连未保存的内容一起消失
+    才是最坏的结果，宁可什么都不发生。 */
+async function tearOffTab(id, x, y) {
+  const t = tabs.find((v) => v.id === id);
+  if (!t) return;
+  /* 速记不拆：路径是固定的那一个，两扇窗口同时写它必然互相覆盖 */
+  if (t.quickNote) {
+    toast(tt('速记不能拆成独立窗口'));
+    return;
+  }
+  try {
+    /* 松手点有时是 (0,0)（dragend 在窗口外给不出坐标）：退回本窗口右上角附近，
+       总比把新窗口丢到屏幕左上角好 */
+    const px = x || (window.screenX + 120);
+    const py = y || (window.screenY + 40);
+    await be.openTearoffWindow([tabSeed(t, isDirty(t))], px, py);
+  } catch (e) {
+    toast(errText(e));
+    return;
+  }
+  const wasActive = activeTab() && activeTab().id === id;
+  if (wasActive) persistCurrentView();
+  removeTab(id);
+  syncWatches();
+  if (!tabs.length) newTab(untitledName('md'), '');
+  else if (wasActive) activate(activeTab().id);
+  /* activate 在「已经激活」时会提前返回，拖的是后台标签时更没有东西去重画标签条，
+     所以这里补一次（renderTabs 有签名短路，没变化时不做功） */
+  renderTabs();
+}
+
+/** 拆出去的窗口把手上全部标签交回主窗口，然后关自己。
+    关窗（点 × / Alt+F4）走的是同一条路：拆出去的东西不该因为关一扇窗就丢。 */
+async function mergeAllToMain() {
+  if (tearoffLeaving) return;
+  tearoffLeaving = true;
+  forceClose = true;
+  const list = tabs.map((t) => tabSeed(t, isDirty(t))).filter(Boolean);
+  try { await be.mergeTabsToMain(list); } catch (e) { toast(errText(e)); }
+  win.closeWindow();
+}
+
+/** 主窗口接收交回来的标签。有路径且不脏的按路径重开（顺便和已开着的标签对上），
+    其余连正文一起接 —— 未命名文档的正文只存在于刚才那扇窗口里。 */
+async function adoptTab(s) {
+  if (!s || !s.name) return;
+  if (s.path && !s.dirty) {
+    const already = tabs.find((t) => t.path === s.path);
+    if (already) { activate(already.id); return; }
+    const t = await openPath(s.path).catch(() => null);
+    if (t) { applySeedMode(t, s.mode); return; }
+  }
+  const t = newTab(s.name, s.content || '', s.path || null);
+  /* 脏标记得跟着回来：newTab 把 savedContent 记成了传进来的正文，
+     那样「还有未保存」的点会消失，用户会以为内容已经落盘 */
+  if (s.dirty) t.savedContent = null;
+  applySeedMode(t, s.mode);
+}
+
+/** 新窗口按种子开标签；模式只还原用户当初那个（不支持就交给默认） */
+function applySeedMode(t, mode) {
+  if (!t || !mode) return;
+  if (!modesFor(detectKind(t.name)).includes(mode)) return;
+  t.mode = mode;
+  if (activeTab() === t) setMode(mode);
+}
+
+async function openSeed(s) {
+  if (!s || !s.name) return null;
+  if (s.path && !s.dirty) {
+    const t = await openPath(s.path).catch(() => null);
+    if (t) { applySeedMode(t, s.mode); return t; }
+  }
+  const t = newTab(s.name, s.content || '', s.path || null);
+  if (s.dirty) t.savedContent = null;
+  applySeedMode(t, s.mode);
+  return t;
+}
+
+/**
+ * 拆出去的窗口里按住标签往外拖 = 拖回主窗口。
+ *
+ * 拖到别的窗口上时 HTML5 那套收不到 drop，所以自己跟 pointer：按下记起点，
+ * 动过 8px 才算「在拖」（否则是一次点击切换标签），松手时拿屏幕坐标去比
+ * 主窗口的标签栏矩形。指针移出本窗口后 pointermove / pointerup 仍然会来 ——
+ * Chromium 在按下时就做了隐式指针捕获。
+ */
+function setupTearoffDragOut(node) {
+  node.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || (e.target.closest && e.target.closest('.tab-close'))) return;
+    const x0 = e.screenX;
+    const y0 = e.screenY;
+    let moved = false;
+    try { node.setPointerCapture(e.pointerId); } catch { /* 捕获失败只是坐标可能截断，照样能拖 */ }
+    const move = (ev) => {
+      if (moved) return;
+      if (Math.hypot(ev.screenX - x0, ev.screenY - y0) < 8) return;
+      moved = true;
+      node.classList.add('dragging-out');
+      document.body.classList.add('tearoff-hint');
+    };
+    const up = async (ev) => {
+      node.removeEventListener('pointermove', move);
+      node.removeEventListener('pointerup', up);
+      node.removeEventListener('pointercancel', up);
+      node.classList.remove('dragging-out');
+      document.body.classList.remove('tearoff-hint');
+      try { node.releasePointerCapture(ev.pointerId); } catch { /* 已经释放过 */ }
+      if (!moved) return;
+      const rect = await be.mainTabbarRect().catch(() => null);
+      if (hitsRect(rect, window.screenX + ev.clientX, window.screenY + ev.clientY)) mergeAllToMain();
+    };
+    node.addEventListener('pointermove', move);
+    node.addEventListener('pointerup', up);
+    node.addEventListener('pointercancel', up);
+  });
+}
+
+/* 主窗口把标签栏的屏幕矩形报给后端：拆出去的窗口靠它判断「松手落在标签栏上」。
+   标签栏高度会随样式变、窗口会移动，所以不缓存，渲染完和窗口尺寸变化时各报一次
+   （120ms 防抖：拉窗口时 resize 一帧能来十几次）。 */
+let tabbarRectTimer = 0;
+function reportTabbarRect() {
+  if (IS_TEAROFF) return;
+  clearTimeout(tabbarRectTimer);
+  tabbarRectTimer = setTimeout(() => {
+    const bar = document.querySelector('.tabbar');
+    if (!bar) return;
+    const r = bar.getBoundingClientRect();
+    be.setMainTabbarRect(window.screenX + r.left, window.screenY + r.top, r.width, r.height)
+      .catch(() => { /* 浏览器里调试没有后端，静默 */ });
+  }, 120);
 }
 
 /* ---------------- 标签条溢出 ----------------
@@ -1657,6 +1821,9 @@ function scheduleDraft() {
 const DRAFT_MAX_BYTES = 4 * 1024 * 1024;   // localStorage 一般 5MB，给设置和会话留余量
 
 function saveDraft() {
+  /* 拆出去的窗口不写会话也不写草稿：这两份东西是主窗口的（同一个 localStorage），
+     它一写就会把主窗口的标签列表整个盖掉。它的内容由「关窗前合并回去」兜底。 */
+  if (IS_TEAROFF) return;
   /* 速记不进会话：它不是「上次打开的文档」，而是一个随时能一键回到的地方。
      混进去还会连带把它的路径塞进「最近打开」，那两份列表就都不干净了。 */
   const session = tabs.filter((t) => !t.quickNote).map((t) => ({
@@ -2168,6 +2335,9 @@ function finishQuit(ok) {
   if (ok === 'discard') discardOnQuit = true;
   else saveDraft();
   forceClose = true;
+  /* 拆出去的窗口挂在这个进程上，主窗口一关就再也回不去了（内容也不落盘），
+     一起收掉，别留一扇点了没反应的裸窗口 */
+  be.closeTearoffWindows().catch(() => {});
 }
 
 /* 批量保存不能走 saveTab()：它靠 readEditor(t) 取内容，而那只对屏幕上那个
@@ -5162,6 +5332,9 @@ function persistCurrentView() {
 /* ---------------- 启动 ---------------- */
 /* 欢迎文档按语言取，见 welcome.js；这里只在首次启动建标签时用一次。 */
 async function boot() {
+  /* 先认出自己是不是被拆出来的那扇窗：下面「怎么开标签」「怎么保存草稿」
+     「关窗做什么」三处都要按它分叉，晚一步问就来不及了 */
+  IS_TEAROFF = isTearoffLabel(await win.label());
   /* 语言必须在任何界面文案生成之前定下来：菜单树、工具栏、状态栏、
      空态提示都是后面按需取词的，先定语言才不会渲染出旧语言再闪一下 */
   setLang(resolveLang(settings.lang));
@@ -5199,15 +5372,31 @@ async function boot() {
     });
   } catch {}
 
+  /* 拆出去的窗口把标签交回来：拖到标签栏上松手、或者直接关掉那扇窗 */
+  try {
+    await listen('tearoff:tabs', async (e) => {
+      for (const s of e.payload || []) await adoptTab(s);
+    });
+  } catch {}
+
   /* 先按上次的标签列表开文件，再把没保存的内容捞回来。
      两件事各管一段：会话管「开过哪些文件」，草稿管「哪些还没存」。
-     以前这里只恢复最近 5 个文件里的标签，第 6 个开始就静默消失。 */
-  const cliFiles = await be.initialFiles().catch(() => []);
-  const opened = await restoreSession().catch(() => 0);
-  const drafts = await restoreDrafts().catch(() => 0);
-  /* 命令行/文件关联带进来的文件：双击 .md 时系统把路径塞进 argv */
-  for (const p of cliFiles || []) await openPath(p);
-  if (!opened && !drafts && !(cliFiles || []).length) newTab(tt('欢迎.md'), welcomeDoc(getLang()));
+     以前这里只恢复最近 5 个文件里的标签，第 6 个开始就静默消失。
+
+     拆出去的窗口走另一条：它只开自己的那一个标签。会话 / 草稿 / 命令行文件
+     都是主窗口的，在这里再走一遍就等于「拖出来一个，全部又复制一份」。 */
+  if (IS_TEAROFF) {
+    const seed = await be.takeTearoffSeed().catch(() => []);
+    for (const s of seed || []) await openSeed(s);
+    if (!tabs.length) newTab(tt('欢迎.md'), welcomeDoc(getLang()));
+  } else {
+    const cliFiles = await be.initialFiles().catch(() => []);
+    const opened = await restoreSession().catch(() => 0);
+    const drafts = await restoreDrafts().catch(() => 0);
+    /* 命令行/文件关联带进来的文件：双击 .md 时系统把路径塞进 argv */
+    for (const p of cliFiles || []) await openPath(p);
+    if (!opened && !drafts && !(cliFiles || []).length) newTab(tt('欢迎.md'), welcomeDoc(getLang()));
+  }
   setLayout(settings.layout);
   updateOutline();
   applyZen();
@@ -5219,6 +5408,12 @@ async function boot() {
     if (forceClose) return;
     event.preventDefault();
     persistCurrentView();
+    /* 拆出去的窗口关掉 = 标签回到主窗口，不弹「要保存吗」：
+       内容是交回去接着编辑，不是丢掉，那儿才是它该待的地方 */
+    if (IS_TEAROFF) {
+      await mergeAllToMain();
+      return;
+    }
     const ok = await confirmQuit();
     if (!ok) return;
     finishQuit(ok);
@@ -5239,6 +5434,10 @@ async function boot() {
   bootDone = true;
   for (const p of earlyOpen) openPath(p);
   earlyOpen.length = 0;
+
+  /* 标签栏的屏幕矩形变了就要重报一次：拆出去的窗口靠它判「松手落在标签栏上」 */
+  window.addEventListener('resize', reportTabbarRect);
+  if (!IS_TEAROFF) reportTabbarRect();
 }
 
 /* 供子面板回调 */
@@ -5251,6 +5450,10 @@ window.__snp = {
   gotoLine,
   newTab,
   getEditorText: () => activeTab() && activeTab().content,
+  /* 探针：拖出手势本身是鼠标轨迹，合成事件测不到，直接调这两个入口验后果 */
+  tearOffTab,
+  mergeAllToMain,
+  adoptTab,
   openQuickNote,
   quickNoteFile: () => quickFile(),
   isBusy: () => wys.loading,

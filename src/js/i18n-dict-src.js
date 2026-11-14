@@ -718,4 +718,7 @@ export const SRC = {
   '{n} 字符': ["{n} chars", "{n} 文字", "{n}자", "{n} caractères", "{n} Zeichen", "{n} caracteres", "{n} caracteres"],
   '已选 {n} 字符': ["{n} chars selected", "{n} 文字を選択", "{n}자 선택됨", "{n} caractères sélectionnés", "{n} Zeichen ausgewählt", "{n} caracteres seleccionados", "{n} caracteres selecionados"],
   '{a}（{b}）': ["{a} ({b})", "{a}（{b}）", "{a}({b})", "{a} ({b})", "{a} ({b})", "{a} ({b})", "{a} ({b})"],
+  /* 标签拖出成独立窗口 */
+  '速记不能拆成独立窗口': ["The quick note cannot be torn off into its own window", "クイックメモは独立したウィンドウに分離できません", "빠른 메모는 별도 창으로 분리할 수 없습니다", "La note rapide ne peut pas être détachée dans sa propre fenêtre", "Die Schnellnotiz lässt sich nicht in ein eigenes Fenster ziehen", "La nota rápida no se puede separar en su propia ventana", "A nota rápida não pode ser separada em uma janela própria"],
+  '要拖出去的标签是空的': ["There is no tab to drag out", "ドラッグして取り出せるタブがありません", "끌어낼 탭이 없습니다", "Aucun onglet à détacher", "Kein Tab zum Herausziehen vorhanden", "No hay ninguna pestaña para separar", "Não há nenhuma aba para separar"],
 };

@@ -511,6 +511,91 @@ try {
     ok('切换后当前标签也在视野内', (await strip()).actIn === true);
   }
 
+  /* ---- F2. 标签拆成独立窗口 / 收回来 ----
+     拖出去这个手势合成不出来（dragend 的坐标是浏览器按真实指针给的），这里直接
+     调 tearOffTab：它依赖的判据（leftTabbar）在 run-units 里逐条验过，真机这层
+     要验的是「拆出去之后会发生什么」—— 另一扇窗口真的起来、只带那一个标签、
+     改动能跟着收回来。 */
+  {
+    const pages = async () => (await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json())
+      .filter((t) => t.type === 'page' && !/(?:compare|foldercmp)\.html/.test(t.url));
+
+    /* 连到另一扇窗口：每扇窗口一个 WebSocket，用完就关 */
+    const attach = async (target) => {
+      const socket = new WebSocket(target.webSocketDebuggerUrl);
+      let n = 0;
+      const pend = new Map();
+      socket.addEventListener('message', (e) => {
+        const msg = JSON.parse(e.data);
+        const p = pend.get(msg.id);
+        if (p) { pend.delete(msg.id); msg.error ? p.rej(new Error(msg.error.message)) : p.res(msg.result); }
+      });
+      await new Promise((r) => socket.addEventListener('open', r));
+      return {
+        ev: (expr) => new Promise((res, rej) => {
+          const id = ++n;
+          pend.set(id, { res, rej });
+          socket.send(JSON.stringify({
+            id, method: 'Runtime.evaluate',
+            params: { expression: expr, awaitPromise: true, returnByValue: true },
+          }));
+        }).then((r) => (r.exceptionDetails ? null : r.result.value)),
+        close: () => { try { socket.close(); } catch { /* 已经关了 */ } },
+      };
+    };
+
+    const n0 = await ev(`document.querySelectorAll('.tab[data-id]').length`);
+    const made = await ev(`(() => {
+      const t = window.__snp.newTab('tear-probe.md', '# 拆出去\\n\\n正文在另一扇窗口里', null);
+      return { id: t.id, name: t.name };
+    })()`);
+    await sleep(250);
+    const nMade = await ev(`document.querySelectorAll('.tab[data-id]').length`);
+    ok('先确认标签建出来了', nMade === n0 + 1, `${n0} → ${nMade}`);
+    await ev(`window.__snp.tearOffTab(${made.id}, window.screenX + 260, window.screenY + 180)`);
+    await sleep(2600);
+    const n1 = await ev(`document.querySelectorAll('.tab[data-id]').length`);
+    ok('拆出去后主窗口回到拆之前的标签数', n1 === n0, `${nMade} → ${n1}（拆之前 ${n0}）`);
+
+    const all = await pages();
+    ok('多了一扇窗口', all.length >= 2, `${all.length} 个页面`);
+
+    let w2 = null;
+    for (const t of all) {
+      if (t.webSocketDebuggerUrl === page.webSocketDebuggerUrl) continue;
+      const c = await attach(t);
+      const names = await c.ev(`[...document.querySelectorAll('.tab-name')].map((n) => n.textContent).join('|')`);
+      if ((names || '').includes('tear-probe.md')) { w2 = { c, names }; break; }
+      c.close();
+    }
+    ok('新窗口里只有那一个标签（没把主窗口的标签复制一份）',
+      !!w2 && w2.names === 'tear-probe.md', w2 ? w2.names : '没找到窗口');
+
+    if (w2) {
+      ok('正文跟着过去了',
+        (await w2.c.ev(`window.__snp.getEditorText()`)).includes('正文在另一扇窗口里'));
+      const before = (await pages()).length;
+      /* 改了再收回去：改动和脏标记都得活着回到主窗口 */
+      await w2.c.ev(`window.__snp.setContent('# 拆出去\\n\\n改过的正文')`);
+      await sleep(250);
+      await w2.c.ev(`window.__snp.mergeAllToMain()`);
+      await sleep(1800);
+      w2.c.close();
+      const back = await ev(`(() => {
+        const t = window.__snp.getActiveTab();
+        return { name: t && t.name, text: window.__snp.getEditorText(),
+          dot: document.querySelectorAll('.tab-dot').length };
+      })()`);
+      ok('收回来变成主窗口的活动标签', back.name === 'tear-probe.md', String(back.name));
+      ok('收回来的是改过的内容', (back.text || '').includes('改过的正文'), back.text);
+      ok('脏标记跟着回来', back.dot >= 1, `${back.dot} 个未保存点`);
+      ok('那扇窗口自己关掉了', (await pages()).length === before - 1, `${before} → ${(await pages()).length}`);
+      /* 收尾：把它记成干净的，别给后面的段留一个「未保存」标签 */
+      await ev(`(() => { const t = window.__snp.getActiveTab(); t.savedContent = t.content; return 1; })()`);
+    }
+    await ev(`window.__TAURI_INTERNALS__.invoke('close_tearoff_windows')`);
+  }
+
   /* ---- G. 行显示模式（自动换行 / 不换行）----
      三种模式共用一个设置。换行是浏览器默认，所以真正要验的是「关掉之后
      长行确实横向滚起来」以及「切回来能复原」—— 只改属性不改编辑器

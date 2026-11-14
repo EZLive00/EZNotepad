@@ -440,6 +440,9 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
 .tab:hover { background: var(--bg-hover); }
 /* 拖拽换位的两个状态：被拖的那颗变淡，落点用 2px 竖线提示 */
 .tab.dragging { opacity: .4; }
+/* 拆出去的窗口里按住标签往外拖（目标是主窗口的标签栏）：先给一点拿起来了的反馈。
+   提示文字不画在屏幕上 —— 指针一旦移出窗口就看不见了，说了也白说。 */
+.tab.dragging-out { opacity: .55; }
 .tab.drop-before::before,
 .tab.drop-after::before {
   content: ""; position: absolute; top: 0; bottom: 0; width: 2px;

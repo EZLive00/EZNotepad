@@ -20,6 +20,7 @@ import { formatLoose } from '../src/js/format-loose.js';
 import { formatByKind } from '../src/js/format.js';
 import { appIconSvg, brandSprite } from '../scripts/app-icon.mjs';
 import { splitFrontmatter, parseFrontmatter, inlineTags, allTags } from '../src/js/frontmatter.js';
+import { isTearoffLabel, leftTabbar, hitsRect, tabSeed } from '../src/js/tearoff.js';
 
 const out = [];
 const eq = (name, got, want) => out.push({ name, ok: JSON.stringify(got) === JSON.stringify(want), got, want });
@@ -900,6 +901,53 @@ ok('语言表：新建类型够多', newDocTypes().length >= 24);
   eq('内核不反向引用 src/js/kb/', leaks, []);
   ok('前端只有一个模块入口（两个产品共用一份 index.html）',
     (fs.readFileSync('src/index.html', 'utf8').match(/<script type="module"/g) || []).length === 1);
+}
+
+/* ---------- 标签拖出成独立窗口 / 拖回合并 ----------
+   手势本身（鼠标轨迹）在真机上由 probe-app 验后果，这里只验判据：
+   什么时候算「离开标签栏」、什么时候算「落在标签栏上」。 */
+
+ok('tearoff 窗口 label 认得出', isTearoffLabel('tearoff-1') && isTearoffLabel('tearoff-12'));
+ok('主窗口 / 工具窗口不算 tearoff',
+  !isTearoffLabel('main') && !isTearoffLabel('compare') && !isTearoffLabel('foldercmp'));
+ok('光秃秃的 tearoff- 不算', !isTearoffLabel('tearoff-') && !isTearoffLabel(''));
+ok('空值不算', !isTearoffLabel(null) && !isTearoffLabel(undefined));
+
+const BAR = { top: 30, bottom: 60, left: 0, right: 800 };
+ok('指针在标签条里 = 换位，不是拖出', !leftTabbar(BAR, { x: 100, y: 45 }));
+ok('刚出下沿 10px 也不算（排序时手会晃）', !leftTabbar(BAR, { x: 100, y: 70 }));
+ok('拖进正文区才算拖出', leftTabbar(BAR, { x: 100, y: 90 }));
+ok('甩出左边界算拖出', leftTabbar(BAR, { x: -30, y: 45 }));
+ok('甩出右边界算拖出', leftTabbar(BAR, { x: 830, y: 45 }));
+ok('拿不到坐标就不动手', !leftTabbar(BAR, null) && !leftTabbar(null, { x: 1, y: 1 }));
+
+const RECT = { x: 100, y: 50, w: 400, h: 30 };
+ok('松手落在主窗口标签栏里 = 合并回去', hitsRect(RECT, 300, 65));
+ok('差一点也认（20px 容差）', hitsRect(RECT, 300, 95) && hitsRect(RECT, 85, 65));
+ok('隔远了不认', !hitsRect(RECT, 300, 140) && !hitsRect(RECT, 40, 65));
+ok('主窗口没报过矩形就不合并', !hitsRect(null, 300, 65));
+
+eq('干净的有路径标签带路径与模式',
+  tabSeed({ name: 'a.md', content: 'x', path: '/a.md', mode: 'edit' }, false),
+  { name: 'a.md', content: 'x', path: '/a.md', mode: 'edit', dirty: false });
+eq('未命名标签没有 path', tabSeed({ name: '未命名.md', content: 'x', mode: 'edit' }, true).path, null);
+ok('脏标记跟着走（新窗口靠它保住未保存的内容）',
+  tabSeed({ name: 'a.md', content: 'x', path: '/a.md' }, true).dirty === true);
+eq('没有标签给 null', tabSeed(null, false), null);
+
+/* 接线守卫：这三处任何一处被改掉，拖出去的内容就会丢或者被复制一份 */
+{
+  const app = fs.readFileSync('src/js/app.js', 'utf8');
+  ok('松手时判「离开标签栏」才拆窗口', /dragend[\s\S]{0,260}leftTabbar\(/.test(app));
+  ok('拆出去的窗口不写会话/草稿（那两份是主窗口的）',
+    /function saveDraft\(\)\s*\{[\s\S]{0,240}if \(IS_TEAROFF\) return;/.test(app));
+  ok('关掉拆出去的窗口是把标签交回去，不是丢掉',
+    /if \(IS_TEAROFF\)\s*\{\s*await mergeAllToMain\(\);/.test(app));
+  ok('主窗口退出时收掉拆出去的窗口', /closeTearoffWindows/.test(app));
+  const rust = fs.readFileSync('src-tauri/src/lib.rs', 'utf8');
+  ok('新窗口的 label 必须进 capabilities（否则窗口 API 静默失败）',
+    /"tearoff-\*"/.test(fs.readFileSync('src-tauri/capabilities/default.json', 'utf8')));
+  ok('文件监听按窗口取并集，别让后调的顶掉先调的', /by_window/.test(rust));
 }
 
 /* ---------- 汇总 ---------- */

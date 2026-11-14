@@ -914,28 +914,50 @@ fn quick_note_path(app: tauri::AppHandle) -> Result<String, AppError> {
    所以在一个有几万文件的目录里打开一个 md，也不会有事件涌到前端；
    底层是系统的 ReadDirectoryChangesW / inotify，空闲时不占 CPU。 */
 
-/// 当前活着的 watcher。换成新的时旧的自动 drop（监听句柄随之释放）。
-struct WatchState(std::sync::Mutex<Option<notify::RecommendedWatcher>>);
+#[derive(Default)]
+struct WatchState {
+    /// 当前活着的 watcher。换成新的时旧的自动 drop（监听句柄随之释放）。
+    watcher: std::sync::Mutex<Option<notify::RecommendedWatcher>>,
+    /// 每扇窗口各管自己那几份文档。主窗口和拖出去的小窗口都会调 watch_files，
+    /// 只留一份列表的话谁后调谁赢 —— 先调的那扇从此收不到外部改动，
+    /// 而它的标签还开着那个文件。
+    by_window: std::sync::Mutex<std::collections::HashMap<String, Vec<String>>>,
+}
 
-/// 让 Rust 侧重新布置监听：传进来的是所有「已存在磁盘上」的文档路径。
+/// 让 Rust 侧重新布置监听：传进来的是**本窗口**所有「已存在磁盘上」的文档路径。
 /// 返回真正被监听的目录数（纯粹给前端记日志，不影响功能）。
 #[tauri::command]
 fn watch_files(
     app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
     state: tauri::State<'_, WatchState>,
     paths: Vec<String>,
 ) -> Result<usize, AppError> {
     use notify::{RecursiveMode, Watcher};
     use std::collections::{HashMap, HashSet};
-    use tauri::Emitter;
+    use tauri::{Emitter, Manager};
 
-    // 1. 先撤掉旧的监听
-    *state.0.lock().map_err(|_| AppError::new("state.lock"))? = None;
+    // 1. 先按窗口记下这一份，再把所有窗口的并集装进 watcher。
+    //    顺手清掉已经关掉的窗口留下的条目（否则被监听的文件只增不减）。
+    let live: HashSet<String> = app.webview_windows().keys().cloned().collect();
+    let paths: Vec<String> = {
+        let mut map = state.by_window.lock().map_err(|_| AppError::new("state.lock"))?;
+        map.retain(|label, _| live.contains(label));
+        if paths.is_empty() {
+            map.remove(window.label());
+        } else {
+            map.insert(window.label().to_string(), paths);
+        }
+        map.values().flatten().cloned().collect()
+    };
+
+    // 2. 撤掉旧的监听
+    *state.watcher.lock().map_err(|_| AppError::new("state.lock"))? = None;
     if paths.is_empty() {
         return Ok(0);
     }
 
-    // 2. 关心的文件名（小写）→ 原始完整路径。
+    // 3. 关心的文件名（小写）→ 原始完整路径。
     //    Windows 大小写不敏感，事件里给的名字大小写未必和打开时一致，所以统一降为小写比对。
     let mut wanted: HashMap<String, String> = HashMap::new();
     let mut dirs: HashSet<PathBuf> = HashSet::new();
@@ -976,7 +998,7 @@ fn watch_files(
     })
     .map_err(|e| AppError::detail("watch.create", e))?;
 
-    // 3. 每个目录只监听一层。目录不存在（文件已被删）就跳过，不是错误
+    // 4. 每个目录只监听一层。目录不存在（文件已被删）就跳过，不是错误
     let mut n = 0;
     for d in &dirs {
         if watcher.watch(d, RecursiveMode::NonRecursive).is_ok() {
@@ -984,7 +1006,7 @@ fn watch_files(
         }
     }
 
-    *state.0.lock().map_err(|_| AppError::new("state.lock"))? = Some(watcher);
+    *state.watcher.lock().map_err(|_| AppError::new("state.lock"))? = Some(watcher);
     Ok(n)
 }
 
@@ -1189,6 +1211,166 @@ fn open_in_main(app: tauri::AppHandle, path: String) -> Result<(), AppError> {
     let _ = w.unminimize();
     let _ = w.set_focus();
     w.emit("open-files", vec![path]).map_err(|e| AppError::detail("app.emit", e))
+}
+
+/* ---------------- 标签拖出成独立窗口（tear-off） ----------------
+
+   拖出去的标签在新窗口里继续编辑，拖回来（或直接关掉那扇窗）时内容回到主窗口。
+
+   跨窗口这一段**没有**走 HTML5 拖放：两个 WebView 之间是 OS 级拖放，Tauri 的
+   原生 drop 只给文件路径，自定义 MIME 拿不到；而 `dragDropEnabled` 又不能关
+   （主窗口还要靠它接外部拖进来的文件）。所以改成两个方向的显式通道：
+
+     · 拖出：主窗口 dragend 判到指针离开了标签栏 → open_tearoff_window(tabs, 松手点)
+     · 拖回：tearoff 窗口自己判 —— pointerup 的屏幕坐标是否落在主窗标签栏矩形里
+       （矩形由主窗口 set_main_tabbar_rect 上报，两边统一用 CSS 像素）
+
+   这样两个方向都不依赖跨 WebView 的拖放数据，Windows / macOS 走同一条路。 */
+
+/// 拖出去的那一份标签。有路径且不脏时新窗口按路径重读（保住编码 / BOM / 行尾），
+/// 否则连正文一起带过去 —— 未命名文档没有别的地方能捞回内容。
+#[derive(Serialize, Deserialize, Clone)]
+struct TearoffTab {
+    name: String,
+    content: String,
+    path: Option<String>,
+    mode: Option<String>,
+    dirty: bool,
+}
+
+/// 主窗口标签栏的屏幕矩形（CSS 像素，左上角原点）。
+#[derive(Serialize, Clone, Default)]
+struct TabbarRect {
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+}
+
+#[derive(Default)]
+struct TearoffState {
+    /// 按窗口 label 存的待开标签，新窗口启动时取走一次
+    seeds: std::sync::Mutex<std::collections::HashMap<String, Vec<TearoffTab>>>,
+    tabbar: std::sync::Mutex<Option<TabbarRect>>,
+    next: std::sync::atomic::AtomicU64,
+}
+
+#[tauri::command]
+async fn open_tearoff_window(
+    app: tauri::AppHandle,
+    tabs: Vec<TearoffTab>,
+    x: f64,
+    y: f64,
+) -> Result<String, AppError> {
+    use tauri::Manager;
+
+    if tabs.is_empty() {
+        return Err(AppError::new("tearoff.empty"));
+    }
+    let state = app.state::<TearoffState>();
+    let n = state.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    let label = format!("tearoff-{n}");
+    state
+        .seeds
+        .lock()
+        .map_err(|_| AppError::new("state.lock"))?
+        .insert(label.clone(), tabs);
+
+    /* 和 open_compare_window 同一条理由：建窗要等 WebView2 回调，同步命令会把
+       主线程占死，页面永远停在空白。 */
+    let mut builder = tauri::WebviewWindowBuilder::new(
+        &app,
+        label.clone(),
+        tauri::WebviewUrl::App("index.html".into()),
+    )
+    .title("EZNotepad")
+    .inner_size(820.0, 620.0)
+    // 让光标落在标签条那一带上，和浏览器拖出时的位置感一致
+    .position((x - 90.0).max(0.0), (y - 16.0).max(0.0))
+    .min_inner_size(420.0, 300.0)
+    .decorations(false)
+    .shadow(true)
+    .visible(true);
+
+    #[cfg(target_os = "windows")]
+    {
+        builder = builder.additional_browser_args(
+            "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-gpu-sandbox",
+        );
+    }
+
+    let win = builder.build().map_err(|e| AppError::detail("win.create", e))?;
+    #[cfg(target_os = "windows")]
+    apply_rounded_corners(&win);
+    Ok(label)
+}
+
+/// 新窗口加载完取走自己的那份标签（按当前窗口 label 取，取一次就删）
+#[tauri::command]
+fn take_tearoff_seed(window: tauri::WebviewWindow, app: tauri::AppHandle) -> Vec<TearoffTab> {
+    use tauri::Manager;
+    let state = app.state::<TearoffState>();
+    state
+        .seeds
+        .lock()
+        .ok()
+        .and_then(|mut g| g.remove(window.label()))
+        .unwrap_or_default()
+}
+
+/// 主窗口上报标签栏的屏幕矩形。只认 main：别的窗口报上来会把落点判据带偏。
+#[tauri::command]
+fn set_main_tabbar_rect(
+    window: tauri::WebviewWindow,
+    app: tauri::AppHandle,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+) -> Result<(), AppError> {
+    use tauri::Manager;
+    if window.label() != "main" {
+        return Ok(());
+    }
+    let state = app.state::<TearoffState>();
+    *state.tabbar.lock().map_err(|_| AppError::new("state.lock"))? =
+        Some(TabbarRect { x, y, w, h });
+    Ok(())
+}
+
+#[tauri::command]
+fn main_tabbar_rect(app: tauri::AppHandle) -> Option<TabbarRect> {
+    use tauri::Manager;
+    app.state::<TearoffState>()
+        .tabbar
+        .lock()
+        .ok()
+        .and_then(|g| g.clone())
+}
+
+/// 把标签交回主窗口。主窗口那边走 `tearoff:tabs` 事件，关自己的事由前端做
+/// （它知道标签是不是脏的、要不要先落盘）。
+#[tauri::command]
+fn merge_tabs_to_main(app: tauri::AppHandle, tabs: Vec<TearoffTab>) -> Result<(), AppError> {
+    use tauri::{Emitter, Manager};
+    let Some(main) = app.get_webview_window("main") else {
+        return Err(AppError::new("win.main_missing"));
+    };
+    let _ = main.unminimize();
+    let _ = main.set_focus();
+    main.emit("tearoff:tabs", tabs)
+        .map_err(|e| AppError::detail("app.emit", e))
+}
+
+/// 主窗口退出前把拆出去的窗口一起收掉（它们的内容不落盘，主窗口没了就无所依附）
+#[tauri::command]
+fn close_tearoff_windows(app: tauri::AppHandle) {
+    use tauri::Manager;
+    for (label, w) in app.webview_windows() {
+        if label.starts_with("tearoff-") {
+            let _ = w.destroy();
+        }
+    }
 }
 
 /// 新窗口加载完取走待处理的文件夹对比请求（取一次就清空）
@@ -1635,9 +1817,10 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .manage(WatchState(std::sync::Mutex::new(None)))
+        .manage(WatchState::default())
         .manage(CompareRequest::default())
         .manage(FolderCompareRequest::default())
+        .manage(TearoffState::default())
         .invoke_handler(tauri::generate_handler![
             read_text_file,
             file_size,
@@ -1667,6 +1850,12 @@ pub fn run() {
             open_folder_compare_window,
             take_folder_compare_request,
             open_in_main,
+            open_tearoff_window,
+            take_tearoff_seed,
+            set_main_tabbar_rect,
+            main_tabbar_rect,
+            merge_tabs_to_main,
+            close_tearoff_windows,
             export_pdf,
             tool_set_fullscreen
         ])

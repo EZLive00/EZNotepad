@@ -84,6 +84,7 @@ export const ERR_TEXT = {
   'win.state': '无法切换窗口状态：{detail}',
   'win.compare_missing': '对比窗口不在',
   'win.main_missing': '主窗口不在',
+  'tearoff.empty': '要拖出去的标签是空的',
   'app.emit': '无法把文件交给主窗口：{detail}',
   'state.lock': '内部状态异常，请重试',
 };
