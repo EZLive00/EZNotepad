@@ -857,6 +857,23 @@ ok('语言表：新建类型够多', newDocTypes().length >= 24);
       && /\.props-doc\s*\{[^}]*border:\s*var\(--bw\) solid var\(--line\)/.test(css));
 }
 
+/* ---------- 两个产品的代码边界（《架构设计》§1.1）----------
+   知识库专属代码只许待在 src/js/kb/，方向恒为 kb/ → 内核。内核一旦反向引用，
+   那个提交就不能 cherry-pick 回 main 了 —— 反哺通道当场断掉，而且是静默断掉。
+   现在 kb/ 还不存在，这条守卫是给 P0.5 之后的每一行 kb 代码准备的。 */
+{
+  const dir = 'src/js';
+  const walk = (d) => fs.readdirSync(d, { withFileTypes: true })
+    .flatMap((e) => (e.isDirectory() ? walk(`${d}/${e.name}`) : [`${d}/${e.name}`]));
+  const sources = walk(dir).filter((f) => /\.(js|mjs)$/.test(f));
+  const core = sources.filter((f) => !f.startsWith(`${dir}/kb/`));
+  const leaks = core.filter((f) =>
+    /(?:from|import)\s*\(?\s*['"][^'"]*\bkb\/[^'"]*['"]/.test(fs.readFileSync(f, 'utf8')));
+  eq('内核不反向引用 src/js/kb/', leaks, []);
+  ok('前端只有一个模块入口（两个产品共用一份 index.html）',
+    (fs.readFileSync('src/index.html', 'utf8').match(/<script type="module"/g) || []).length === 1);
+}
+
 /* ---------- 汇总 ---------- */
 const fail = out.filter((r) => !r.ok);
 out.forEach((r) => {
