@@ -857,6 +857,34 @@ ok('语言表：新建类型够多', newDocTypes().length >= 24);
       && /\.props-doc\s*\{[^}]*border:\s*var\(--bw\) solid var\(--line\)/.test(css));
 }
 
+/* ---------- 标签条：四个方向的留白都有上限 ----------
+   用户的原话是「每个标签页的上下左右都有挺大的空间可以压缩，尤其是左边」。
+   这些数字不是审美，是三个物理量的余量：字行盒 16px、关闭键 18px、标签行 30px。
+   改任何一格都要重新量，所以这里钉上限而不是钉具体像素值。 */
+{
+  const css = fs.readFileSync('src/styles.css', 'utf8');
+  const bar = /\.tabbar\s*\{([^}]*)\}/.exec(css);
+  const tab = /^\.tab\s*\{([^}]*)\}/m.exec(css);
+  const num = (s, re) => {
+    const m = re.exec(s);
+    return m ? Number(m[1]) : NaN;
+  };
+  const barH = num(bar[1], /height:\s*(\d+)px/);
+  const pad = /padding:\s*0 (\d+)px 0 (\d+)px/.exec(tab[1]);
+  ok('标签行高 ≤ 30（字号 12 / 行盒 16 / 关闭键 18 三者算出来的上限）',
+    barH <= 30 && barH >= 28, String(barH));
+  ok('标签栏左右 padding 对称，最多各 6（标签自己能撑出留白，栏别再留一道）',
+    /padding:\s*0 6px;/.test(bar[1]));
+  ok('标签内边距左 ≤ 8、右 ≤ 5（左边只有字，右边有 18px 关闭键撑边界）',
+    !!pad && Number(pad[2]) <= 8 && Number(pad[1]) <= 5, pad ? pad[0] : '缺 padding');
+  ok('标签不自己写高度，靠 stretch 撑满（写了就会在上下多出空隙）',
+    !/(^|[;\s])height:/.test(tab[1].replace(/\/\*[\s\S]*?\*\//g, '')));
+  ok('关闭键仍有 18×18（缩它就是缩热区，别为了宽度动它）',
+    /\.tab-close\s*\{[^}]*width:\s*18px;\s*height:\s*18px/.test(css));
+  ok('文件名最大宽与内边距自洽：133 − 8 − 5 − 18 − 5 − 0.5 ≈ 96',
+    /\.tab-name\s*\{[^}]*max-width:\s*96px/.test(css));
+}
+
 /* ---------- 两个产品的代码边界（《架构设计》§1.1）----------
    知识库专属代码只许待在 src/js/kb/，方向恒为 kb/ → 内核。内核一旦反向引用，
    那个提交就不能 cherry-pick 回 main 了 —— 反哺通道当场断掉，而且是静默断掉。
