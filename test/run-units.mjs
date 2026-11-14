@@ -748,6 +748,46 @@ ok('语言表：新建类型够多', newDocTypes().length >= 24);
     app.includes('historyProbe: {') && app.includes('list: (p) => be.listHistory(p)'));
 }
 
+/* ---------- 预览模式查找 + 侧栏刷新 ---------- */
+{
+  const read = (p) => fs.readFileSync(new URL('../' + p, import.meta.url), 'utf8');
+  const app = read('src/js/app.js');
+  const dom = read('src/js/domfind.js');
+  const html = read('src/index.html');
+
+  /* 预览的查找必须按渲染后的 DOM 算：以前只给 wysiwyg 开这条 DOM 路径，
+     预览落进「按 md 源码算偏移」的分支 —— 计数算得出来、高亮画不到预览上，
+     用户看到的就是「预览模式搜不到内容」。 */
+  ok('查找把预览也当 DOM 视图（匹配按看得见的文字算）',
+    app.includes("if (t.mode === 'wysiwyg' || t.mode === 'preview')")
+      && app.includes("domfind.findInDom(t.mode === 'wysiwyg' ? el.wysiwyg : el.preview, re)"));
+  ok('跳转的滚动容器跟着模式走（预览滚 #preview）',
+    app.includes("domfind.scrollTo(find.matches[find.index], t.mode === 'wysiwyg' ? el.wysiwyg : el.preview)"));
+  ok('换模式后重算匹配（DOM 整套换了，旧偏移全部作废）',
+    app.includes("if (!el.findbar.classList.contains('hidden')) {"));
+  ok('块发现不再只认 .w-block：预览取 .md 的子元素、代码预览取 .codeline',
+    dom.includes('function blocksOf(root)') && dom.includes("classList.contains('md')")
+      && dom.includes("querySelectorAll('.codeline')"));
+  ok('代码预览的行号、JSON 横幅、KaTeX 隐藏 MathML 不参与查找',
+    dom.includes('.ln, .json-err, .katex-mathml'));
+  ok('块比视口高时按匹配矩形滚动（纯文本预览整篇就是一个 <pre>）',
+    dom.includes('br.height > box.height * 0.9') && dom.includes('scroller.scrollTo({ top:'));
+  ok('预览里替换先切回编辑模式（渲染结果写不回正文）',
+    app.includes("if (t.mode === 'preview') {") && app.includes("toast(tt('替换需要编辑模式'))"));
+  ok('「选区内」只在源码编辑时可勾（DOM 模式没有源码偏移可套）',
+    app.includes("const sel = t.mode === 'edit' ? plain.selectedText : '';"));
+
+  /* 侧栏刷新：放在「在文件列表中定位」左边，文件页在前台时重扫树 */
+  ok('刷新按钮在「在文件列表中定位」左边',
+    html.indexOf('id="sideRefresh"') > 0 && html.indexOf('id="sideRefresh"') < html.indexOf('id="sideLocate"'));
+  ok('刷新会重扫文件树、并重读当前文档（不比对 mtime）',
+    app.includes('async function refreshFromDisk()') && app.includes('await tree.render()')
+      && app.includes('await tree.search(q)') && app.includes('await reloadTab(t, m)'));
+  ok('有未保存改动时刷新先问一句',
+    app.includes('当前有未保存的修改，重新载入会丢弃它们。继续？'));
+  ok('刷新按钮已接线', app.includes('el.sideRefresh.onclick = refreshFromDisk;'));
+}
+
 /* ---------- 汇总 ---------- */
 const fail = out.filter((r) => !r.ok);
 out.forEach((r) => {

@@ -189,6 +189,87 @@ try {
     await ev('new Promise(r => setTimeout(r, 150))');
     ok('取消后内容没被改动', (await ev('window.__snp.getEditorText()')) === '一段 **粗字** 文字');
 
+    // ---- 9. 预览模式查找（渲染后的 DOM，不是 md 源码） ----
+    /* 以前 runFind 只给 wysiwyg 开 DOM 分支，预览落进「按 md 源码算偏移」那条：
+       计数算得出来，高亮却画不到预览上，表现就是「预览模式搜不到内容」。
+       现在预览和所见即所得走同一条路 —— 匹配按看得见的文字算。 */
+    await ev(`window.__snp.setContent(${JSON.stringify('# 标题\n\n一段 **粗体** 文字\n\n结尾 EZNotepad\n')})`);
+    await ev('window.__snp.commands.modePreview()');
+    await ev('new Promise(r => setTimeout(r, 220))');
+    await ev('window.__snp.commands.find()');
+    await typeIn('#findInput', '粗体');
+    await ev('new Promise(r => setTimeout(r, 160))');
+    const pvCount = await ev(`document.querySelector('#findCount').textContent`);
+    ok('预览模式查得到内容（命中数按渲染后的文字）', pvCount === '1/1', pvCount);
+
+    const pvHl = await ev(`(() => {
+      const h = window.CSS && CSS.highlights && CSS.highlights.get('sn-find-cur');
+      if (!h || !h.size) return { cur: false };
+      const r = h.values().next().value;
+      const n = r.startContainer;
+      return { cur: true, inside: !!(n && n.parentElement && n.parentElement.closest('#preview')) };
+    })()`);
+    ok('预览模式把当前命中画在了预览 DOM 上', pvHl.cur && pvHl.inside, JSON.stringify(pvHl));
+
+    /* markdown 记号和源码偏移在预览里都不存在：查 `**粗体**` 必须是 0 命中，
+       查得到就说明还在拿 md 源码那一份文本算 */
+    await typeIn('#findInput', '**粗体**');
+    await ev('new Promise(r => setTimeout(r, 140))');
+    ok('预览按看得见的文字算（markdown 记号搜不到）',
+      (await ev(`document.querySelector('#findCount').textContent`)) === '0/0',
+      await ev(`document.querySelector('#findCount').textContent`));
+
+    // 预览是只读的渲染结果：替换要切回编辑模式，落到源码上
+    await typeIn('#findInput', '粗体');
+    await typeIn('#replaceInput', '粗字');
+    await click('#findReplaceOne');
+    await ev('new Promise(r => setTimeout(r, 300))');
+    ok('预览里点替换会切到编辑模式并改到源码',
+      (await ev('window.__snp.getActiveTab().mode')) === 'edit'
+        && (await ev('window.__snp.getEditorText()')).includes('**粗字**'),
+      `${await ev('window.__snp.getActiveTab().mode')} / ${await ev('window.__snp.getEditorText()')}`);
+
+    // ---- 10. 侧栏刷新：重扫文件树 + 从磁盘重读当前文档 ----
+    /* 假后端补一份「磁盘上的文件」；其余命令仍走原来的假实现 */
+    await ev(`(() => {
+      const orig = window.__TAURI_INTERNALS__.invoke;
+      window.__TAURI_INTERNALS__.invoke = async (cmd, args) => {
+        if (cmd === 'read_text_file') {
+          return { content: '磁盘上的新内容\\n', encoding: 'utf-8', eol: 'lf', bom: false,
+                   path: args.path, name: 'fake.md' };
+        }
+        if (cmd === 'file_mtime') return 1234567890;
+        return orig(cmd, args);
+      };
+      return true;
+    })()`);
+
+    await ev(`window.__snp.setFolder('C:/x')`);
+    await ev('new Promise(r => setTimeout(r, 150))');
+    const dirCalls0 = await ev(`window.__calls.filter((c) => c === 'read_dir_shallow').length`);
+    await click('#sideRefresh');
+    await ev('new Promise(r => setTimeout(r, 220))');
+    const dirCalls1 = await ev(`window.__calls.filter((c) => c === 'read_dir_shallow').length`);
+    ok('文件页在前台时刷新会重扫目录', dirCalls1 > dirCalls0, `${dirCalls0} -> ${dirCalls1}`);
+
+    await ev(`window.__snp.newTab('fake.md', '旧的本地内容', 'C:/x/fake.md', { encoding: 'utf-8', bom: false, eol: 'lf', mtime: 1 })`);
+    await ev('new Promise(r => setTimeout(r, 160))');
+    await click('#sideRefresh');
+    await ev('new Promise(r => setTimeout(r, 260))');
+    const reloaded = await ev('window.__snp.getEditorText()');
+    ok('刷新会把当前文档从磁盘重读（mtime 与记录无关）', reloaded === '磁盘上的新内容\n', JSON.stringify(reloaded));
+
+    // 有未保存改动时先问一句：取消之后内容原样
+    await ev(`window.__snp.setContent('本地改过')`);
+    await ev('new Promise(r => setTimeout(r, 120))');
+    await click('#sideRefresh');
+    await ev('new Promise(r => setTimeout(r, 260))');
+    ok('有未保存改动时刷新先弹确认', !(await cls('#dlgOverlay')).includes('hidden'));
+    await click('#dlgFoot button:last-child');
+    await ev('new Promise(r => setTimeout(r, 200))');
+    ok('取消后不会覆盖本地改动', (await ev('window.__snp.getEditorText()')) === '本地改过',
+      JSON.stringify(await ev('window.__snp.getEditorText()')));
+
     // ---- 6. 新建文档：类型网格能用方向键走 ----
     /* 网格是「两列 + 底部一条自定义输入」，方向键必须把它当一块面板走完：
        ←→ 只在本行内、↑↓ 跨行、最后一行 ↓ 落进输入框、输入框 ↑ 回网格。
