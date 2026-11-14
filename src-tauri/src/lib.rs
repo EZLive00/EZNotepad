@@ -1318,7 +1318,12 @@ fn take_tearoff_seed(window: tauri::WebviewWindow, app: tauri::AppHandle) -> Vec
         .unwrap_or_default()
 }
 
-/// 主窗口上报标签栏的屏幕矩形。只认 main：别的窗口报上来会把落点判据带偏。
+/// 主窗口上报标签栏在**自己窗口内**的位置（CSS 像素，相对左上角）。
+///
+/// 存相对值而不是屏幕坐标：主窗口是自绘标题栏、随时会被拖走，前端又感知不到
+/// 「窗口被移动」（无边框窗口没有 window 的 move 事件）。存相对的，取的时候用
+/// 主窗口当前的 `outer_position` 加回去，窗口拖到哪都对。
+/// 只认 main：别的窗口报上来会把落点判据带偏。
 #[tauri::command]
 fn set_main_tabbar_rect(
     window: tauri::WebviewWindow,
@@ -1338,14 +1343,24 @@ fn set_main_tabbar_rect(
     Ok(())
 }
 
+/// 标签栏此刻在屏幕上的位置（CSS 像素）。拆出去的窗口在松手时问它。
 #[tauri::command]
 fn main_tabbar_rect(app: tauri::AppHandle) -> Option<TabbarRect> {
     use tauri::Manager;
-    app.state::<TearoffState>()
-        .tabbar
-        .lock()
-        .ok()
-        .and_then(|g| g.clone())
+    let state = app.state::<TearoffState>();
+    let rel = state.tabbar.lock().ok().and_then(|g| g.clone())?;
+    let main = app.get_webview_window("main")?;
+    /* 用 inner_position（内容区左上角），不是 outer_position：无边框窗口外面还裹着
+       DWM 的隐形边框，两个原点差 8px 左右，而前端 `window.screenX` 报的是内容区
+       原点 —— 两边必须用同一个原点，否则拖回时判据整体偏一格。 */
+    let pos = main.inner_position().ok()?;
+    let s = main.scale_factor().unwrap_or(1.0);
+    Some(TabbarRect {
+        x: pos.x as f64 / s + rel.x,
+        y: pos.y as f64 / s + rel.y,
+        w: rel.w,
+        h: rel.h,
+    })
 }
 
 /// 把标签交回主窗口。主窗口那边走 `tearoff:tabs` 事件，关自己的事由前端做

@@ -574,6 +574,18 @@ try {
     if (w2) {
       ok('正文跟着过去了',
         (await w2.c.ev(`window.__snp.getEditorText()`)).includes('正文在另一扇窗口里'));
+      /* 标签栏矩形：主窗口报的是相对坐标，读回来必须是「主窗口此刻的屏幕位置 + 相对位置」。
+         存屏幕坐标的写法在窗口被拖走之后就会失效，这条守着它。 */
+      const gotRect = await ev(`window.__TAURI_INTERNALS__.invoke('main_tabbar_rect')`);
+      const wantRect = await ev(`(() => {
+        const b = document.querySelector('.tabbar').getBoundingClientRect();
+        return { x: window.screenX + b.left, y: window.screenY + b.top, w: b.width, h: b.height };
+      })()`);
+      ok('标签栏矩形按主窗口当前位置现算（不是存下来的旧屏幕坐标）',
+        !!gotRect && Math.abs(gotRect.x - wantRect.x) <= 2 && Math.abs(gotRect.y - wantRect.y) <= 2
+          && Math.abs(gotRect.w - wantRect.w) <= 2 && Math.abs(gotRect.h - wantRect.h) <= 2,
+        JSON.stringify({ gotRect, wantRect }));
+
       const before = (await pages()).length;
       /* 改了再收回去：改动和脏标记都得活着回到主窗口 */
       await w2.c.ev(`window.__snp.setContent('# 拆出去\\n\\n改过的正文')`);

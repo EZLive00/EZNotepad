@@ -464,8 +464,10 @@ function setupTearoffDragOut(node) {
   });
 }
 
-/* 主窗口把标签栏的屏幕矩形报给后端：拆出去的窗口靠它判断「松手落在标签栏上」。
-   标签栏高度会随样式变、窗口会移动，所以不缓存，渲染完和窗口尺寸变化时各报一次
+/* 主窗口把标签栏的位置报给后端：拆出去的窗口靠它判断「松手落在标签栏上」。
+   报的是**相对窗口左上角**的坐标 —— 后端取的时候再加上主窗口当时的屏幕位置，
+   于是窗口被拖到副屏也不会失效（前端拿不到无边框窗口的移动事件）。
+   标签栏高度会随样式变，所以不缓存，渲染完和窗口尺寸变化时各报一次
    （120ms 防抖：拉窗口时 resize 一帧能来十几次）。 */
 let tabbarRectTimer = 0;
 function reportTabbarRect() {
@@ -475,7 +477,7 @@ function reportTabbarRect() {
     const bar = document.querySelector('.tabbar');
     if (!bar) return;
     const r = bar.getBoundingClientRect();
-    be.setMainTabbarRect(window.screenX + r.left, window.screenY + r.top, r.width, r.height)
+    be.setMainTabbarRect(r.left, r.top, r.width, r.height)
       .catch(() => { /* 浏览器里调试没有后端，静默 */ });
   }, 120);
 }
