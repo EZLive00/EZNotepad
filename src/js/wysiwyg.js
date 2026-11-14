@@ -13,6 +13,7 @@
 // ============================================================
 
 import { resolveDocImg, headingSlugs, CALLOUT_TYPES, RE_CALLOUT, normalizeCallout, splitImgAlt } from './markdown.js';
+import { splitFrontmatter } from './frontmatter.js';
 import { tt } from './i18n.js';
 import { codeText, refreshCode } from './codehilite.js';
 import { updateSelMatch, clearSelMatch } from './selmatch.js';
@@ -1404,7 +1405,13 @@ export class WysiwygEditor {
 
   render(md, restore) {
     this.clearGapAfter();          // 整篇换掉，旧的「块后」位置已经没有意义
-    this._render(md, restore);
+    /* YAML 头不进块模型：它上面没有「一行」，光标落不进去，退格也不该把它并进
+       第一段。这里拆掉，正文单独渲染；序列化时再原样接回去（见 toMarkdown）。
+       raw + body 拼起来与原文件逐字节相同，所以来回切模式不会改一个字。 */
+    const fm = splitFrontmatter(md);
+    this.front = fm.has ? fm : null;
+    const body = fm.has ? fm.body : String(md ?? '');
+    this._render(body, restore);
     /* 撤销基线先用「源文本」顶上 —— 它就是盘上的真状态，不必为了基线把
        整篇 DOM 再序列化一遍（万行文档下那是秒级的无谓开销）。之后空闲时
        预热块缓存并核对一次：往返结果与源文本一致（绝大多数）就维持源文本；
@@ -1416,8 +1423,8 @@ export class WysiwygEditor {
       this.history = [{ recs: this.records.slice(), trail: this.trailingNewline, caret: null }];
       this.hBytes = snapSize(this.history[0]);
     } else {
-      this.history = [{ md, caret: null }];
-      this.hBytes = bytesOf(md);
+      this.history = [{ md: body, caret: null }];
+      this.hBytes = bytesOf(body);
     }
     this.hIndex = 0;
     this.hLast = 0;
@@ -2037,16 +2044,20 @@ export class WysiwygEditor {
   }
 
   toMarkdown() {
+    /* 正文末尾那个换行先决定，再拼头：front.raw 自带它后面那个 \n，
+       所以 raw + body 与原文件逐字节一致（splitFrontmatter 的定义） */
+    let body;
     if (this.virtual) {
       /* 窗口里的块可能刚被改过：先把这几个块的 DOM 并回模型，再拼整篇。
          成本与窗口大小成正比（几十块），与文档大小无关 —— 这就是大文档
          序列化从 ~700ms 降到 1ms 级的原因。 */
       this._syncWindow();
-      return this._serializeRecords();
+      body = this._serializeRecords();
+    } else {
+      body = blocksToMarkdown(this.root, this.mdCache);
+      if (this.trailingNewline && body && !body.endsWith('\n')) body += '\n';
     }
-    let md = blocksToMarkdown(this.root, this.mdCache);
-    if (this.trailingNewline && md && !md.endsWith('\n')) md += '\n';
-    return md;
+    return (this.front?.raw || '') + body;
   }
 
   caretState() {

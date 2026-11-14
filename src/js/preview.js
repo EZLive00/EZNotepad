@@ -6,6 +6,8 @@
 //  txt/log -> 等宽只读
 // ============================================================
 import { renderMarkdown, resolveDocImg } from './markdown.js';
+import { splitFrontmatter, parseFrontmatter } from './frontmatter.js';
+import { propsHtml } from './propbar.js';
 import { highlight, highlightLines } from './highlight.js';
 import { jsonErrorPosition } from './format.js';
 import { renderMathIn } from './math.js';
@@ -25,7 +27,12 @@ export function renderPreview(kind, text, lang, target, docDir = '') {
   target.__pvDir = docDir;
 
   if (kind === 'md') {
-    target.innerHTML = renderMarkdown(text, {
+    /* YAML 头当作属性区渲染，不交给 Markdown：它是元数据，不是正文。
+       先剥掉再渲染，渲染结果前面补一块属性卡（导出 HTML / PDF 也会带上，
+       属性是文档的一部分，导出时丢掉反而像 bug）。 */
+    const fm = splitFrontmatter(text);
+    const props = fm.has ? propsHtml(parseFrontmatter(fm.yaml).entries, { doc: true, label: tt('属性') }) : '';
+    target.innerHTML = props + renderMarkdown(fm.has ? fm.body : text, {
       codeHighlight: (code, l) => highlight(code, l),
       imgResolver: (src) => resolveDocImg(src, docDir),
     });

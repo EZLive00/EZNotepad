@@ -8,6 +8,8 @@ import { detectKind, kindLabel, modesFor, formatByKind, lineOps, caseOps, extern
 import { newDocTypes } from './langs.js';
 import { renderPreview, extractOutline } from './preview.js';
 import { outlineFromMarkdown, headingSlugs } from './markdown.js';
+import { splitFrontmatter, parseFrontmatter, allTags } from './frontmatter.js';
+import { propsHtml } from './propbar.js';
 import { WysiwygEditor, relabelCallouts } from './wysiwyg.js';
 import { PlainEditor } from './editor/plain-editor.js';
 import { toast, dialog, confirmBox, contextMenu } from './ui.js';
@@ -67,6 +69,7 @@ const el = {
   wcMax: $('wcMax'),
   wcMaxIcon: $('wcMaxIcon'),
   editWrap: $('editWrap'),
+  propBar: $('propBar'),
   wHandle: $('wHandle'),
   whAdd: $('whAdd'),
   whMenu: $('whMenu'),
@@ -650,6 +653,7 @@ function setMode(mode, opt = {}) {
   // 手柄只属于所见即所得：切到编辑/预览就收起来
   if (mode === 'wysiwyg') { anchorBlock = null; refreshHandle(); }
   else { closeBlockMenu(); hideHandle(); }
+  syncPropBar();
 }
 
 /* 预览不在屏幕上时把它那份 DOM 丢掉。display:none 只是不画，节点还在 ——
@@ -1115,6 +1119,76 @@ async function refreshFromDisk() {
   }
 }
 
+/* ------------------------------------------------------------
+   属性区与标签
+   ------------------------------------------------------------ */
+
+/**
+ * 属性条：只在所见即所得下出现。
+ *
+ * 源码模式下 YAML 就在正文里，再显示一条是同一份东西给两遍；预览模式由
+ * preview.js 渲染成正文顶部的卡片（随内容滚动，导出 PDF / HTML 也带着）。
+ * 这里只管编辑态那一根。按 yaml 文本做签名缓存 —— 打字时 updateStatus 会
+ * 反复调它，重新解析一遍 YAML 没必要。
+ */
+function syncPropBar() {
+  const bar = el.propBar;
+  const t = activeTab();
+  if (!bar) return;
+  if (!t || t.mode !== 'wysiwyg' || detectKind(t.name) !== 'md') {
+    bar.classList.add('hidden');
+    bar.__sig = '';
+    return;
+  }
+  const fm = splitFrontmatter(t.content);
+  if (!fm.has) { bar.classList.add('hidden'); bar.__sig = ''; return; }
+  if (bar.__sig !== fm.yaml) {
+    bar.__sig = fm.yaml;
+    bar.innerHTML = propsHtml(parseFrontmatter(fm.yaml).entries, { label: tt('属性') });
+  }
+  bar.classList.toggle('hidden', !bar.firstElementChild);
+}
+
+/**
+ * 点标签 → 在库里搜它。
+ *
+ * 不自己做索引：标签搜索就是一次普通的文件夹搜索（词就是 `#tag`），
+ * 复用现成的那条路。全库标签聚合要等持久索引（P2），现在硬扫一遍
+ * 只会在每次点击时卡一下。
+ */
+async function searchTag(tag) {
+  const t = String(tag || '').trim();
+  if (!t) return;
+  if (!tree.root) { toast(tt('先在侧栏选择一个文件夹')); return; }
+  if (!settings.outlineVisible) {
+    settings.outlineVisible = true;
+    saveSettings();
+    updateOutline();
+  }
+  setSide('files');
+  el.ftQuery.value = '#' + t;
+  el.ftClear.classList.remove('hidden');
+  await tree.search('#' + t);
+}
+
+/** 标签点击统一在 document 上代理：属性条与预览正文里的是同一套 .tag */
+function bindTagClicks() {
+  document.addEventListener('click', (e) => {
+    const tag = e.target.closest?.('.tag[data-tag]');
+    if (!tag) return;
+    e.preventDefault();
+    e.stopPropagation();
+    searchTag(tag.dataset.tag);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const tag = e.target.closest?.('.tag[data-tag]');
+    if (!tag) return;
+    e.preventDefault();
+    searchTag(tag.dataset.tag);
+  });
+}
+
 /**
  * 「在文件列表中定位」：把当前标签对应到文件树里的那一行。
  *
@@ -1172,6 +1246,7 @@ function setupSidebar() {
   el.sideTabs.forEach((b) => { b.onclick = () => setSide(b.dataset.side); });
   el.sideLocate.onclick = locateCurrentFile;
   el.sideRefresh.onclick = refreshFromDisk;
+  bindTagClicks();
   el.ftPick.onclick = pickFolder;
   /* 设置入口只在两处：顶部菜单栏的「设置」和 Ctrl+,（同一个 showSettings）。
      侧栏那个齿轮去掉了——它紧挨「大纲/文件」，看着像「这一栏的设置」。 */
@@ -2192,6 +2267,7 @@ function setContent(text, opts = {}) {
   scheduleOutline();   // 大纲同理：提取 + 上万按钮的构建不挡打开
   scheduleDraft();
   updateStatus();
+  syncPropBar();       // 刷新/外部改动会把 YAML 头换掉，属性条要跟着换
 }
 
 function onEditorInput() {

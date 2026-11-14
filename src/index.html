@@ -446,6 +446,12 @@
         </div>
       </div>
 
+      <!-- 属性条：文件有 YAML 头时出现，只读。放在编辑流之外 —— 塞进
+           contenteditable 里就得给它一个块类型，光标、退格合并、虚拟渲染的
+           块下标全要跟着改，代价远大于收益。预览模式不用它，那里属性是正文
+           的一部分，随内容滚动（见 preview.js） -->
+      <div class="propbar hidden" id="propBar"></div>
+
       <div class="edit-wrap" id="editWrap">
         <!-- 纯文本 / 代码编辑区：CodeMirror 6 挂在这里（见 js/editor/plain-editor.js）。
              行号、当前行高亮、语法着色都由它自己管，所以这里不再有 linegutter -->

@@ -920,6 +920,64 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
 }
 .edit-wrap { flex: 1; display: flex; min-height: 0; position: relative; overflow: hidden; }
 
+/* ---- 属性区（YAML 头）----
+   编辑态是贴边的一条（不换行，横向滚），预览态是正文顶部的一块（换行，
+   跟着内容滚）。两者共用 .props 标记，只差 .props-doc 这一层。
+   属性不进编辑流：塞一个 contenteditable=false 的块进去，光标、退格合并、
+   虚拟渲染的块下标全要跟着改，代价远大于收益。 */
+.propbar {
+  flex: none;
+  background: var(--bg-side);
+  border-bottom: var(--bw) solid var(--line);
+  padding: 5px 12px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.propbar::-webkit-scrollbar { height: 0; }
+
+.props {
+  display: flex; align-items: center; gap: 12px;
+  font-size: var(--fs-1); line-height: 1.8;
+  white-space: nowrap;
+}
+.props-key {
+  flex: none; color: var(--fg-faint);
+  letter-spacing: .02em;
+}
+.props-item { display: inline-flex; align-items: baseline; gap: 5px; flex: none; }
+.pk { color: var(--fg-faint); }
+.pk::after { content: ":"; }
+.pv { color: var(--fg); }
+.pv-empty { color: var(--fg-faint); }
+.pv-bool.on { color: var(--accent); }
+.pv-sep { font-style: normal; color: var(--fg-faint); margin: 0 5px; }
+.pv-tags { display: inline-flex; gap: 4px; }
+
+/* 标签是一枚可点的按钮：底色用灰面（悬停不换色，只把字提亮），
+   强调色留给状态，不做装饰 */
+.tag {
+  display: inline-flex; align-items: center;
+  height: 18px; padding: 0 6px;
+  border: none; border-radius: var(--r-1);
+  background: var(--bg-hover); color: var(--fg);
+  font: inherit; font-size: var(--fs-1); line-height: 1;
+  cursor: pointer;
+}
+.tag:hover { color: var(--accent); }
+.tag:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* 预览里的属性卡：边框只画一圈线、不铺底（正文不许上灰面），
+   与下面正文同一个行长并居中 */
+.props-doc {
+  flex-wrap: wrap; white-space: normal;
+  max-width: var(--read-measure);
+  margin: 20px auto 4px;
+  padding: 9px 12px;
+  border: var(--bw) solid var(--line);
+  border-radius: var(--r-2);
+  row-gap: 4px;
+}
+
 /* 纯文本 / 代码编辑区：CodeMirror 6 的挂载点。
    这里只管「占多大、显示不显示」，字体、行号、选区、着色的全部细节
    由 js/editor/theme.js 的 cmTheme 管 —— 两层分工，不互相打架 */

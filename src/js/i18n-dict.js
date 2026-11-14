@@ -412,6 +412,8 @@ export const DICT = {
   '在资源管理器中显示': ['在資源管理器中顯示', 'Show in File Explorer', 'エクスプローラーで表示', '탐색기에서 보기', 'Afficher dans l\'explorateur', 'Im Explorer anzeigen', 'Mostrar en el explorador', 'Mostrar no explorador'],
   '刷新': ['重新整理', 'Refresh', '更新', '새로 고침', 'Actualiser', 'Aktualisieren', 'Actualizar', 'Atualizar'],
   '刷新文件树与当前文档': ['重新整理檔案樹與當前文件', 'Refresh the file tree and the open file', 'ファイルツリーと開いているファイルを更新', '파일 트리와 열린 파일 새로 고침', 'Actualiser l\'arborescence et le fichier ouvert', 'Dateibaum und geöffnete Datei aktualisieren', 'Actualizar el árbol de archivos y el archivo abierto', 'Atualizar a árvore de arquivos e o arquivo aberto'],
+  '属性': ['屬性', 'Properties', 'プロパティ', '속성', 'Propriétés', 'Eigenschaften', 'Propiedades', 'Propriedades'],
+  '标签': ['標籤', 'Tags', 'タグ', '태그', 'Étiquettes', 'Schlagwörter', 'Etiquetas', 'Etiquetas'],
   '重新载入失败：': ['重新載入失敗：', 'Reload failed: ', '再読み込みに失敗しました：', '다시 불러오기 실패: ', 'Échec du rechargement : ', 'Neu laden fehlgeschlagen: ', 'Error al recargar: ', 'Falha ao recarregar: '],
   '新建文件夹': ['新建資料夾', 'New Folder', '新規フォルダー', '새 폴더', 'Nouveau dossier', 'Neuer Ordner', 'Nueva carpeta', 'Nova pasta'],
   '新建文件': ['新建檔案', 'New File', '新規ファイル', '새 파일', 'Nouveau fichier', 'Neue Datei', 'Nuevo archivo', 'Novo arquivo'],
