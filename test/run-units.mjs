@@ -21,6 +21,7 @@ import { formatByKind } from '../src/js/format.js';
 import { appIconSvg, brandSprite } from '../scripts/app-icon.mjs';
 import { splitFrontmatter, parseFrontmatter, inlineTags, allTags } from '../src/js/frontmatter.js';
 import { isTearoffLabel, leftTabbar, hitsRect, tabSeed } from '../src/js/tearoff.js';
+import { inBarBand, planDrop } from '../src/js/tabdrag.js';
 
 const out = [];
 const eq = (name, got, want) => out.push({ name, ok: JSON.stringify(got) === JSON.stringify(want), got, want });
@@ -903,6 +904,40 @@ ok('语言表：新建类型够多', newDocTypes().length >= 24);
     (fs.readFileSync('src/index.html', 'utf8').match(/<script type="module"/g) || []).length === 1);
 }
 
+/* ---------- 标签拖拽：换位落点 ----------
+   四张标签，每张 100px 宽，从 x=0 排到 400。中线分别是 50 / 150 / 250 / 350。 */
+{
+  const items = [
+    { id: 1, left: 0, width: 100 },
+    { id: 2, left: 100, width: 100 },
+    { id: 3, left: 200, width: 100 },
+    { id: 4, left: 300, width: 100 },
+  ];
+  eq('往右拖过第三张中线 → 插到它后面', planDrop(items, 1, 260), { toId: 3, after: true });
+  /* 落点优先报左边那张（插它后面）：边界 2 与「第三张前面」是同一个位置 */
+eq('往右拖过第三张左半边 → 插到第二张后面（= 第三张前面）', planDrop(items, 1, 210), { toId: 2, after: true });
+  eq('往右拖过第四张中线 → 插到最后', planDrop(items, 1, 360), { toId: 4, after: true });
+  eq('往左拖到最前 → 插到第一张前面', planDrop(items, 4, 10), { toId: 1, after: false });
+  eq('往左拖过第二张中线 → 插到第二张前面（= 第一张后面）', planDrop(items, 4, 110), { toId: 1, after: true });
+  eq('拖到自己左半边 = 原地不动', planDrop(items, 2, 110), null);
+  eq('拖到自己右半边 = 原地不动', planDrop(items, 2, 190), null);
+  eq('只开一个标签时没处可换', planDrop([{ id: 7, left: 0, width: 100 }], 7, 50), null);
+  eq('没有标签时不炸', planDrop([], 1, 10), null);
+
+  /* 换位后的落点还得喂得进 moveById（两边是同一套语义，别各说一套） */
+  const order = ['a', 'b', 'c', 'd'].map((k, i) => ({ id: i + 1 }));
+  const slot = planDrop(items, 1, 260);
+  eq('算出「插到 3 后面」之后，moveById 真的把 1 挪过去了',
+    moveById(order, 1, slot.toId, slot.after).map((t) => t.id), [2, 3, 1, 4]);
+
+  const BAR2 = { top: 30, bottom: 60 };
+  ok('指针在标签条带子里 = 换位', inBarBand(BAR2, { x: 10, y: 45 }));
+  ok('上下晃 10px 还算换位（手不会那么稳）', inBarBand(BAR2, { x: 10, y: 70 }));
+  ok('进了正文区就算出去了', !inBarBand(BAR2, { x: 10, y: 76 }));
+  ok('带子外但没到 leftTabbar 的垫距 = 什么也不做',
+    !inBarBand(BAR2, { x: 10, y: 75 }) && !leftTabbar(BAR2, { x: 10, y: 75 }));
+}
+
 /* ---------- 标签拖出成独立窗口 / 拖回合并 ----------
    手势本身（鼠标轨迹）在真机上由 probe-app 验后果，这里只验判据：
    什么时候算「离开标签栏」、什么时候算「落在标签栏上」。 */
@@ -938,7 +973,13 @@ eq('没有标签给 null', tabSeed(null, false), null);
 /* 接线守卫：这三处任何一处被改掉，拖出去的内容就会丢或者被复制一份 */
 {
   const app = fs.readFileSync('src/js/app.js', 'utf8');
-  ok('松手时判「离开标签栏」才拆窗口', /dragend[\s\S]{0,260}leftTabbar\(/.test(app));
+  ok('松手时判「离开标签栏」才拆窗口',
+    /if \(leftTabbar\(bar[\s\S]{0,140}tearOffTab\(/.test(app));
+  /* Windows 上 dragDropEnabled=true 会把窗口拖放交给 OS，页面里的 HTML5 拖拽
+     一个事件都收不到（不报错，拖了就是不动）。标签拖拽必须走 pointer 事件。 */
+  ok('标签拖拽不用 HTML5 拖放（Windows 上它是死的）',
+    !/b\.draggable\s*=/.test(app) && !/b\.addEventListener\('drag/.test(app));
+  ok('标签节点接上 pointer 拖拽管线', /renderTabs[\s\S]{0,2000}attachTabDrag\(b, t\)/.test(app));
   ok('拆出去的窗口不写会话/草稿（那两份是主窗口的）',
     /function saveDraft\(\)\s*\{[\s\S]{0,240}if \(IS_TEAROFF\) return;/.test(app));
   ok('关掉拆出去的窗口是把标签交回去，不是丢掉',

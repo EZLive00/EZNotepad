@@ -25,6 +25,7 @@ import { FileTree } from './filetree.js';
 import { showHistory } from './history.js';
 import { freeUntitledName, moveById } from './taborder.js';
 import { isTearoffLabel, leftTabbar, hitsRect, tabSeed } from './tearoff.js';
+import { inBarBand, planDrop } from './tabdrag.js';
 import { listen } from '../vendor/api/event.js';
 import * as win from './win.js';
 import { tt, setLang, resolveLang, getLang, applyDom, LANGS } from './i18n.js';
@@ -221,7 +222,6 @@ function refreshTitle() {
   titleTimer = setTimeout(() => win.setTitle(docTitle), 300);
 }
 
-let dragTabId = null;   // 正在被拖拽的标签 id（拖拽期间只存这一个）
 
 /* 这扇窗口是不是「从标签条拖出来的」那一种（label = tearoff-N，见 Rust 侧
    open_tearoff_window）。两种窗口共用同一份页面，行为只在这里分叉三处：
@@ -247,9 +247,6 @@ function renderTabs() {
     b.className = 'tab' + (act && t.id === act.id ? ' active' : '');
     if (t.extChanged) b.classList.add('stale');   // 后台标签被外部改过，点开时会问
     b.title = t.path || t.name;
-    /* 拆出去的窗口里不做 HTML5 排序拖拽：那一侧要靠 pointer 事件判「拖回主窗口」，
-       两套拖拽挂在同一个节点上会互相抢 mousedown。 */
-    b.draggable = !IS_TEAROFF;
     b.dataset.id = String(t.id);
     const name = document.createElement('span');
     name.className = 'tab-name';
@@ -268,7 +265,15 @@ function renderTabs() {
     x.title = tt('关闭');
     x.onclick = (e) => { e.stopPropagation(); closeTab(t.id); };
     b.appendChild(x);
-    b.onclick = () => activate(t.id);
+    b.onclick = (e) => {
+      // 拖动松手补的那一次 click：位置和松手点重合就认出来
+      if (dragEndAt && Math.abs(e.clientX - dragEndAt.x) <= 2
+        && Math.abs(e.clientY - dragEndAt.y) <= 2) {
+        dragEndAt = null;
+        return;
+      }
+      activate(t.id);
+    };
     /* 中键关闭：几乎所有带标签的软件都认这个手势，缺了会一直误开新标签 */
     b.addEventListener('auxclick', (e) => {
       if (e.button !== 1) return;
@@ -276,43 +281,7 @@ function renderTabs() {
       closeTab(t.id);
     });
     b.addEventListener('mousedown', (e) => { if (e.button === 1) e.preventDefault(); });
-    if (IS_TEAROFF) setupTearoffDragOut(b);
-
-    /* 拖拽换位。dragover 里按指针落在标签的左/右半边决定插到前面还是后面，
-       用一个 ::before/::after 的竖线提示落点。
-       松手时如果指针已经离开标签条（往下拖进正文区、或甩出窗口），就是「拖出成
-       独立窗口」—— 和换位共用同一个手势，靠位置区分，不另加键。 */
-    b.addEventListener('dragstart', (e) => {
-      dragTabId = t.id;
-      b.classList.add('dragging');
-      e.dataTransfer.effectAllowed = 'move';
-      try { e.dataTransfer.setData('text/plain', String(t.id)); } catch {}
-    });
-    b.addEventListener('dragend', (e) => {
-      const dragged = dragTabId;
-      const leaves = !IS_TEAROFF && leftTabbar(el.tabs.getBoundingClientRect(),
-        { x: e.clientX, y: e.clientY });
-      dragTabId = null;
-      el.tabs.querySelectorAll('.tab').forEach((n) => n.classList.remove('dragging', 'drop-before', 'drop-after'));
-      if (dragged === t.id && leaves) tearOffTab(t.id, e.screenX, e.screenY);
-    });
-    b.addEventListener('dragover', (e) => {
-      if (dragTabId == null || dragTabId === t.id) return;
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
-      const r = b.getBoundingClientRect();
-      const after = e.clientX > r.left + r.width / 2;
-      b.classList.toggle('drop-after', after);
-      b.classList.toggle('drop-before', !after);
-    });
-    b.addEventListener('dragleave', () => b.classList.remove('drop-before', 'drop-after'));
-    b.addEventListener('drop', (e) => {
-      if (dragTabId == null) return;
-      e.preventDefault();
-      const r = b.getBoundingClientRect();
-      moveTab(dragTabId, t.id, e.clientX > r.left + r.width / 2);
-      dragTabId = null;
-    });
+    attachTabDrag(b, t);
 
     b.oncontextmenu = (e) => {
       e.preventDefault();
@@ -336,13 +305,11 @@ function renderTabs() {
 
 /* ---------------- 标签拖出 / 拖回 ----------------
 
-   两个方向各走一条显式通道，理由写在 js/tearoff.js 顶上：两扇窗口之间是 OS 级
-   拖放，HTML5 的 dataTransfer 过不去，而 `dragDropEnabled` 又不能关（主窗口还要
-   接外部拖进来的文件）。所以：
-
-     · 拖出：本窗口 dragend 判到指针离开标签条 → 建 tearoff 窗口，标签搬过去
-     · 拖回：tearoff 窗口自己跟 pointer，松手时把屏幕坐标和主窗口上报的标签栏
-       矩形比一下（矩形见 reportTabbarRect）
+   界面里的那条管线（attachTabDrag，在下面）负责判「松手落在哪儿」；这里只负责
+   「判到了之后做什么」：建窗口搬过去、或者收回来。两扇窗口之间是 OS 级拖放，
+   HTML5 的 dataTransfer 过不去，`dragDropEnabled` 又不能关（主窗口还要接外部
+   拖进来的文件），所以两边都不传数据，只比坐标 —— 拖回用到的主窗口标签栏矩形
+   见 reportTabbarRect。
 
    两条路都不跨 WebView 传数据，Windows / macOS 同一套。 */
 
@@ -425,42 +392,129 @@ async function openSeed(s) {
   return t;
 }
 
-/**
- * 拆出去的窗口里按住标签往外拖 = 拖回主窗口。
- *
- * 拖到别的窗口上时 HTML5 那套收不到 drop，所以自己跟 pointer：按下记起点，
- * 动过 8px 才算「在拖」（否则是一次点击切换标签），松手时拿屏幕坐标去比
- * 主窗口的标签栏矩形。指针移出本窗口后 pointermove / pointerup 仍然会来 ——
- * Chromium 在按下时就做了隐式指针捕获。
- */
-function setupTearoffDragOut(node) {
+/* ---------------- 标签拖拽（换位 / 拖出 / 拖回，一条管线） ----------------
+
+   ⛔ 不要改用 HTML5 拖放。Windows 上 Tauri 的 `dragDropEnabled: true` 会把整个
+   窗口的拖放交给 OS，页面里的 draggable / dragstart / dragover / drop 一个都不会
+   触发 —— 不报错、不弹框，拖了就是不动（macOS 不受影响，所以只看 mac 看不出来）。
+   而 `dragDropEnabled` 又关不得：主窗口还要接住从资源管理器拖进来的文件。
+   所以这里全部自己跟 pointer 事件，靠松手的位置分派三种意图：
+
+     · 还在标签条纵向带子里            → 换位（中线定插前插后，画 2px 竖线）
+     · 出了带子、但没出 leftTabbar 的垫距 → 什么也不做（排序时手抖，别把窗口拆了）
+     · 出了垫距                        → 主窗口拆成新窗口 / 拆出去的窗口合回主窗口
+
+   setPointerCapture 保证指针移出窗口之后仍能收到 move / up，这是「拖回主窗口」
+   那一侧唯一能拿到松手坐标的办法。 */
+
+/** 当前每张标签的左侧位置与宽度（视觉顺序，含被拖的那张） */
+function tabRects() {
+  return Array.from(el.tabs.querySelectorAll('.tab')).map((n) => {
+    const r = n.getBoundingClientRect();
+    return { id: Number(n.dataset.id), left: r.left, width: r.width };
+  });
+}
+
+/* 拖完松手后浏览器还会补一次 click（指针捕获把它派回标签本身）。那一次不能当
+   「激活标签」用 —— 拖完顺手把别的标签切过来不是用户要的。
+   用坐标认它：这次 click 的位置就是松手位置，而键盘触发的 click 是 (0,0)。
+   ⛔ 别用「window 捕获阶段吞下一次 click」：键盘激活（Enter / 空格）也派发
+   click，会把下一次真正的点击吞掉；也别用定时器，click 什么时候派发不由我们定。 */
+let dragEndAt = null;
+
+function attachTabDrag(node, t) {
   node.addEventListener('pointerdown', (e) => {
-    if (e.button !== 0 || (e.target.closest && e.target.closest('.tab-close'))) return;
-    const x0 = e.screenX;
-    const y0 = e.screenY;
-    let moved = false;
-    try { node.setPointerCapture(e.pointerId); } catch { /* 捕获失败只是坐标可能截断，照样能拖 */ }
-    const move = (ev) => {
-      if (moved) return;
-      if (Math.hypot(ev.screenX - x0, ev.screenY - y0) < 8) return;
-      moved = true;
-      node.classList.add('dragging-out');
-      document.body.classList.add('tearoff-hint');
+    if (e.button !== 0) return;
+    // 关闭键自己有点击语义，别把它变成拖拽的起点
+    if (e.target.closest && e.target.closest('.tab-close')) return;
+    dragEndAt = null;   // 新的一次按下：上一次拖拽留下的坐标作废
+    const x0 = e.clientX;
+    const y0 = e.clientY;
+    let dragging = false;
+    let slot = null;
+    try { node.setPointerCapture(e.pointerId); } catch { /* 合成事件没有真指针，捕获失败也照走 */ }
+
+    const clearMarks = () => {
+      el.tabs.querySelectorAll('.tab').forEach((n) => n.classList.remove('drop-before', 'drop-after'));
     };
-    const up = async (ev) => {
+    const paint = (s) => {
+      clearMarks();
+      if (!s) return;
+      const target = Array.from(el.tabs.querySelectorAll('.tab'))
+        .find((n) => Number(n.dataset.id) === s.toId);
+      if (target) target.classList.add(s.after ? 'drop-after' : 'drop-before');
+    };
+
+    const stop = () => {
       node.removeEventListener('pointermove', move);
       node.removeEventListener('pointerup', up);
-      node.removeEventListener('pointercancel', up);
-      node.classList.remove('dragging-out');
-      document.body.classList.remove('tearoff-hint');
-      try { node.releasePointerCapture(ev.pointerId); } catch { /* 已经释放过 */ }
-      if (!moved) return;
-      const rect = await be.mainTabbarRect().catch(() => null);
-      if (hitsRect(rect, window.screenX + ev.clientX, window.screenY + ev.clientY)) mergeAllToMain();
+      node.removeEventListener('pointercancel', cancel);
+      node.removeEventListener('lostpointercapture', cancel);
+      node.classList.remove('dragging');
+      document.body.classList.remove('tab-dragging');
+      clearMarks();
+      stopTabEdgeScroll();
     };
+    const release = (ev) => {
+      try { node.releasePointerCapture(ev.pointerId); } catch { /* 已经释放过 */ }
+    };
+
+    const move = (ev) => {
+      if (!dragging) {
+        // 4px 之内仍算点击：手一抖就把点标签变成拖标签会很难用
+        if (Math.hypot(ev.clientX - x0, ev.clientY - y0) < 4) return;
+        dragging = true;
+        node.classList.add('dragging');
+        document.body.classList.add('tab-dragging');
+      }
+      ev.preventDefault();   // 拖标签不该顺带划出一段文字选区
+      const bar = el.tabs.getBoundingClientRect();
+      if (inBarBand(bar, { x: ev.clientX, y: ev.clientY })) {
+        slot = planDrop(tabRects(), t.id, ev.clientX);
+        paint(slot);
+        tabEdgeScroll(ev.clientX);
+      } else {
+        slot = null;
+        paint(null);
+        stopTabEdgeScroll();
+      }
+    };
+
+    const cancel = (ev) => {
+      stop();
+      release(ev);
+    };
+
+    const up = async (ev) => {
+      stop();
+      release(ev);
+      if (!dragging) return;   // 没挪过 = 一次普通点击，交给 onclick 切标签
+      dragEndAt = { x: ev.clientX, y: ev.clientY };
+
+      const bar = el.tabs.getBoundingClientRect();
+      if (inBarBand(bar, { x: ev.clientX, y: ev.clientY })) {
+        /* 落点按松手这一刻重算，不用拖动途中的 slot：最后一次 move 之后
+           指针还会再走几个像素，用旧值会插错一格 */
+        const drop = planDrop(tabRects(), t.id, ev.clientX);
+        if (drop) moveTab(t.id, drop.toId, drop.after);
+        return;
+      }
+      /* 拆出去的窗口：松手落在主窗口标签栏上就合回去。
+         矩形是主窗口报的相对坐标 + 主窗口此刻的屏幕位置（见 reportTabbarRect）。 */
+      if (IS_TEAROFF) {
+        const rect = await be.mainTabbarRect().catch(() => null);
+        if (hitsRect(rect, window.screenX + ev.clientX, window.screenY + ev.clientY)) mergeAllToMain();
+        return;
+      }
+      if (leftTabbar(bar, { x: ev.clientX, y: ev.clientY })) tearOffTab(t.id, ev.screenX, ev.screenY);
+    };
+
     node.addEventListener('pointermove', move);
     node.addEventListener('pointerup', up);
-    node.addEventListener('pointercancel', up);
+    node.addEventListener('pointercancel', cancel);
+    /* 捕获被系统收走（窗口被抢焦点、拖到别的窗口时）而没有 pointerup：
+       当作取消，否则标签会一直淡淡的，像卡住了 */
+    node.addEventListener('lostpointercapture', cancel);
   });
 }
 
@@ -4724,10 +4778,6 @@ function bindEvents() {
   /* 标签条溢出：滚轮横滚 + 「全部标签」下拉 + 拖标签时贴边自动滚 */
   $('tabMore').onclick = showTabList;
   el.tabs.addEventListener('wheel', tabWheel, { passive: false });
-  el.tabs.addEventListener('dragover', (e) => { if (dragTabId != null) tabEdgeScroll(e.clientX); });
-  el.tabs.addEventListener('drop', stopTabEdgeScroll);
-  el.tabs.addEventListener('dragleave', (e) => { if (!el.tabs.contains(e.relatedTarget)) stopTabEdgeScroll(); });
-  el.tabs.addEventListener('dragend', stopTabEdgeScroll);
   window.addEventListener('resize', scheduleTabOverflow);
 
   $('btnMode').onclick = (e) => { e.stopPropagation(); el.modeMenu.classList.toggle('open'); };

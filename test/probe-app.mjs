@@ -544,6 +544,69 @@ try {
       };
     };
 
+    /* 真手势：在标签节点上走一遍 pointerdown → pointermove → pointerup。
+       这套事件是我们自己监听的，所以合成事件就够（不像 HTML5 拖放那样
+       必须由真实指针产生 dragstart）。 */
+    const dragTab = (idx, toX, toY) => ev(`(() => {
+      const n = document.querySelectorAll('.tab')[${idx}];
+      const r = n.getBoundingClientRect();
+      const x0 = r.left + r.width / 2, y0 = r.top + r.height / 2;
+      const opt = (x, y) => ({ bubbles: true, cancelable: true, composed: true, pointerId: 1,
+        pointerType: 'mouse', isPrimary: true, button: 0, buttons: 1,
+        clientX: x, clientY: y, screenX: x + window.screenX, screenY: y + window.screenY });
+      n.dispatchEvent(new PointerEvent('pointerdown', opt(x0, y0)));
+      for (let i = 1; i <= 8; i++) {
+        n.dispatchEvent(new PointerEvent('pointermove', opt(x0 + (${toX} - x0) * i / 8, y0 + (${toY} - y0) * i / 8)));
+      }
+      n.dispatchEvent(new PointerEvent('pointerup', { ...opt(${toX}, ${toY}), buttons: 0 }));
+      return { x0, y0, barTop: document.querySelector('.tabbar').getBoundingClientRect().top };
+    })()`);
+
+    /* 先验换位：把第一张标签拖过最后一张的中线。
+       HTML5 那套在 Windows 上是死的（dragDropEnabled=true 把拖放交给了 OS），
+       这条断言就是防它再被写回去 —— 那时它是「能编译、能跑、拖了不动」。 */
+    {
+      const ids0 = await ev(`[...document.querySelectorAll('.tab')].map(n => Number(n.dataset.id))`);
+      const active0 = await ev(`document.querySelector('.tab.active')?.title`);
+      const geo = await ev(`(() => {
+        const t = document.querySelectorAll('.tab');
+        const last = t[t.length - 1].getBoundingClientRect();
+        const first = t[0].getBoundingClientRect();
+        return { x: last.left + last.width - 6, y: first.top + first.height / 2, n: t.length };
+      })()`);
+      await dragTab(0, geo.x, geo.y);
+      await sleep(300);
+      const ids1 = await ev(`[...document.querySelectorAll('.tab')].map(n => Number(n.dataset.id))`);
+      ok('拖过最后一张的中线 → 第一张挪到末尾',
+        ids1.length === geo.n && ids1[ids1.length - 1] === ids0[0] && ids1[0] === ids0[1],
+        JSON.stringify({ ids0, ids1 }));
+      ok('拖完不顺手把标签切过去（松手后的 click 得吞掉）',
+        (await ev(`document.querySelector('.tab.active')?.title`)) === active0, active0);
+      /* 拖回原位，别把后面的断言建立在一个被改过的顺序上 */
+      const back = await ev(`(() => {
+        const t = document.querySelectorAll('.tab');
+        const first = t[0].getBoundingClientRect();
+        return { x: first.left + 4, y: first.top + first.height / 2 };
+      })()`);
+      await dragTab(geo.n - 1, back.x, back.y);
+      await sleep(300);
+      ok('再拖回去，顺序复原',
+        JSON.stringify(await ev(`[...document.querySelectorAll('.tab')].map(n => Number(n.dataset.id))`))
+          === JSON.stringify(ids0));
+
+      /* 手抖 2px 不该变成拖拽：点了自己那颗标签却换了位置最难解释 */
+      const jitter = await ev(`(() => {
+        const r = document.querySelectorAll('.tab')[0].getBoundingClientRect();
+        const c = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+        return { x: c.x + 2, y: c.y };
+      })()`);
+      await dragTab(0, jitter.x, jitter.y);
+      await sleep(200);
+      ok('按下后只挪 2px = 还是点击，不换位',
+        JSON.stringify(await ev(`[...document.querySelectorAll('.tab')].map(n => Number(n.dataset.id))`))
+          === JSON.stringify(ids0));
+    }
+
     const n0 = await ev(`document.querySelectorAll('.tab[data-id]').length`);
     const made = await ev(`(() => {
       const t = window.__snp.newTab('tear-probe.md', '# 拆出去\\n\\n正文在另一扇窗口里', null);
@@ -552,7 +615,14 @@ try {
     await sleep(250);
     const nMade = await ev(`document.querySelectorAll('.tab[data-id]').length`);
     ok('先确认标签建出来了', nMade === n0 + 1, `${n0} → ${nMade}`);
-    await ev(`window.__snp.tearOffTab(${made.id}, window.screenX + 260, window.screenY + 180)`);
+    /* 拖出去也走真手势：往下 120px（超过 leftTabbar 的 24px 垫距） */
+    const madeIdx = await ev(`[...document.querySelectorAll('.tab')].findIndex(n => n.title === 'tear-probe.md')`);
+    const madeGeo = await ev(`(() => {
+      const n = [...document.querySelectorAll('.tab')].find(x => x.title === 'tear-probe.md');
+      const r = n.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    })()`);
+    await dragTab(madeIdx, madeGeo.x, madeGeo.y + 120);
     await sleep(2600);
     const n1 = await ev(`document.querySelectorAll('.tab[data-id]').length`);
     ok('拆出去后主窗口回到拆之前的标签数', n1 === n0, `${nMade} → ${n1}（拆之前 ${n0}）`);
@@ -587,10 +657,28 @@ try {
         JSON.stringify({ gotRect, wantRect }));
 
       const before = (await pages()).length;
-      /* 改了再收回去：改动和脏标记都得活着回到主窗口 */
+      /* 改了再收回去：改动和脏标记都得活着回到主窗口。
+         回去也走真手势 —— 按住标签把指针拖到主窗口标签栏上松手。 */
       await w2.c.ev(`window.__snp.setContent('# 拆出去\\n\\n改过的正文')`);
       await sleep(250);
-      await w2.c.ev(`window.__snp.mergeAllToMain()`);
+      const backDrag = await w2.c.ev(`(async () => {
+        const rect = await window.__TAURI_INTERNALS__.invoke('main_tabbar_rect');
+        const n = document.querySelector('.tab');
+        const r = n.getBoundingClientRect();
+        const x0 = r.left + r.width / 2, y0 = r.top + r.height / 2;
+        const tx = rect.x + 40 - window.screenX, ty = rect.y + 10 - window.screenY;
+        const opt = (x, y) => ({ bubbles: true, cancelable: true, composed: true, pointerId: 9,
+          pointerType: 'mouse', isPrimary: true, button: 0, buttons: 1,
+          clientX: x, clientY: y, screenX: x + window.screenX, screenY: y + window.screenY });
+        n.dispatchEvent(new PointerEvent('pointerdown', opt(x0, y0)));
+        for (let i = 1; i <= 6; i++) {
+          n.dispatchEvent(new PointerEvent('pointermove', opt(x0 + (tx - x0) * i / 6, y0 + (ty - y0) * i / 6)));
+        }
+        n.dispatchEvent(new PointerEvent('pointerup', { ...opt(tx, ty), buttons: 0 }));
+        return { rect, tx, ty };
+      })()`);
+      ok('拖回时要拿到主窗口标签栏的矩形', !!backDrag && !!backDrag.rect,
+        JSON.stringify(backDrag));
       await sleep(1800);
       w2.c.close();
       const back = await ev(`(() => {

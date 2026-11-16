@@ -436,13 +436,17 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
   flex: 0 1 auto;
   position: relative;
   background: transparent;
+  /* 拖标签时不该顺带把标签文字划成选区（拖拽自己用 pointer 事件做，
+     系统不会替我们拦住选取） */
+  user-select: none;
+  cursor: default;
 }
 .tab:hover { background: var(--bg-hover); }
 /* 拖拽换位的两个状态：被拖的那颗变淡，落点用 2px 竖线提示 */
 .tab.dragging { opacity: .4; }
-/* 拆出去的窗口里按住标签往外拖（目标是主窗口的标签栏）：先给一点拿起来了的反馈。
-   提示文字不画在屏幕上 —— 指针一旦移出窗口就看不见了，说了也白说。 */
-.tab.dragging-out { opacity: .55; }
+/* 拖拽期间整扇窗口都换成「抓取」光标 —— 指针一旦离开标签条就收不到标签自己的
+   样式反馈了，靠 body 上这一个类跨过整个窗口（也跨到正文区）保持一致 */
+body.tab-dragging, body.tab-dragging * { cursor: grabbing !important; }
 .tab.drop-before::before,
 .tab.drop-after::before {
   content: ""; position: absolute; top: 0; bottom: 0; width: 2px;
