@@ -237,7 +237,7 @@ let tabsSig = '';
 
 function renderTabs() {
   const act = activeTab();
-  const sig = tabs.map((t) => `${t.id}|${tabLabel(t)}|${t.path || ''}|${isDirty(t) ? 1 : 0}|${t.extChanged ? 1 : 0}`).join('~')
+  const sig = tabs.map((t) => `${t.id}|${tabLabel(t)}|${t.path || ''}|${isDirty(t) ? 1 : 0}|${t.extChanged ? 1 : 0}|${t.ding ? 1 : 0}`).join('~')
     + '#' + (act ? act.id : '');
   if (sig === tabsSig && el.tabs.children.length) return;
   tabsSig = sig;
@@ -245,6 +245,7 @@ function renderTabs() {
   for (const t of tabs) {
     const b = document.createElement('div');
     b.className = 'tab' + (act && t.id === act.id ? ' active' : '');
+    if (t.ding) b.classList.add('ding');         // 钉住：没有关闭键，换成钉子
     if (t.extChanged) b.classList.add('stale');   // 后台标签被外部改过，点开时会问
     b.title = t.path || t.name;
     b.dataset.id = String(t.id);
@@ -259,12 +260,23 @@ function renderTabs() {
       d.className = 'tab-dot';
       b.appendChild(d);
     }
-    const x = document.createElement('button');
-    x.className = 'tab-close';
-    x.innerHTML = iconHTML('x');
-    x.title = tt('关闭');
-    x.onclick = (e) => { e.stopPropagation(); closeTab(t.id); };
-    b.appendChild(x);
+    /* 钉住的标签没有关闭键，占位换成钉子 —— 不是装饰：中键、Ctrl+W、菜单里的
+       「关闭」全都被挡着，标签上得有个东西解释「为什么关不掉」。
+       宽度与关闭键一样是 18px，钉与不钉之间标签不会跳。 */
+    if (t.ding) {
+      const pin = document.createElement('span');
+      pin.className = 'tab-pin';
+      pin.innerHTML = iconHTML('pin');
+      pin.title = tt('已钉住，右键可取消');
+      b.appendChild(pin);
+    } else {
+      const x = document.createElement('button');
+      x.className = 'tab-close';
+      x.innerHTML = iconHTML('x');
+      x.title = tt('关闭');
+      x.onclick = (e) => { e.stopPropagation(); closeTab(t.id); };
+      b.appendChild(x);
+    }
     b.onclick = (e) => {
       // 拖动松手补的那一次 click：位置和松手点重合就认出来
       if (dragEndAt && Math.abs(e.clientX - dragEndAt.x) <= 2
@@ -286,11 +298,15 @@ function renderTabs() {
     b.oncontextmenu = (e) => {
       e.preventDefault();
       const idx = tabs.findIndex((x) => x.id === t.id);
+      /* 钉住的标签谁都不关：自己的「关闭」变灰，三个方向只看「没钉住的那些」
+         还有没有得关 —— 光看标签个数会在剩下全是钉子时给出一个点了没反应的项 */
       contextMenu(e.clientX, e.clientY, [
-        { label: tt('关闭'), shortcut: 'Ctrl+W', action: () => closeTab(t.id) },
-        { label: tt('关闭其他'), disabled: tabs.length < 2, action: () => closeOthers(t.id) },
-        { label: tt('关闭左侧'), disabled: idx <= 0, action: () => closeLeft(t.id) },
-        { label: tt('关闭右侧'), disabled: idx >= tabs.length - 1, action: () => closeRight(t.id) },
+        { label: t.ding ? tt('取消钉住') : tt('钉住标签'), action: () => setDing(t.id, !t.ding) },
+        { sep: true },
+        { label: tt('关闭'), shortcut: 'Ctrl+W', disabled: t.ding, action: () => closeTab(t.id) },
+        { label: tt('关闭其他'), disabled: !tabs.some((x) => x.id !== t.id && !x.ding), action: () => closeOthers(t.id) },
+        { label: tt('关闭左侧'), disabled: !tabs.slice(0, idx).some((x) => !x.ding), action: () => closeLeft(t.id) },
+        { label: tt('关闭右侧'), disabled: !tabs.slice(idx + 1).some((x) => !x.ding), action: () => closeRight(t.id) },
         { sep: true },
         { label: tt('复制文件路径'), disabled: !t.path, action: () => copyPath(t.path) },
         { label: tt('在文件夹中显示'), disabled: !t.path, action: () => revealInFolder(t.path) },
@@ -301,6 +317,22 @@ function renderTabs() {
   refreshTitle();
   scheduleTabOverflow();
   reportTabbarRect();
+}
+
+/** 钉住 / 取消钉住。
+ *
+ *  「钉住」只承诺两件事：标签上不画关闭键，批量关闭（关闭其他 / 左侧 / 右侧）
+ *  绕开它。它不动顺序、不改激活、不算脏 —— 就是一把防手滑的锁：这个文件我暂时
+ *  不关，别的标签怎么批量收拾都别把它带走。
+ *
+ *  状态跟着会话走（见 saveDraft / restoreSession）：钉住的人要的是「重启后它
+ *  还在那儿」，不然每次开机都得重新钉一遍。 */
+function setDing(id, on) {
+  const t = tabs.find((x) => x.id === id);
+  if (!t) return;
+  t.ding = !!on;
+  renderTabs();
+  saveDraft();
 }
 
 /* ---------------- 标签拖出 / 拖回 ----------------
@@ -361,34 +393,41 @@ async function adoptTab(s) {
   if (!s || !s.name) return;
   if (s.path && !s.dirty) {
     const already = tabs.find((t) => t.path === s.path);
-    if (already) { activate(already.id); return; }
+    if (already) {
+      if (s.ding) already.ding = true;
+      activate(already.id);
+      return;
+    }
     const t = await openPath(s.path).catch(() => null);
-    if (t) { applySeedMode(t, s.mode); return; }
+    if (t) { applySeed(t, s); return; }
   }
   const t = newTab(s.name, s.content || '', s.path || null);
   /* 脏标记得跟着回来：newTab 把 savedContent 记成了传进来的正文，
      那样「还有未保存」的点会消失，用户会以为内容已经落盘 */
   if (s.dirty) t.savedContent = null;
-  applySeedMode(t, s.mode);
+  applySeed(t, s);
 }
 
-/** 新窗口按种子开标签；模式只还原用户当初那个（不支持就交给默认） */
-function applySeedMode(t, mode) {
-  if (!t || !mode) return;
-  if (!modesFor(detectKind(t.name)).includes(mode)) return;
-  t.mode = mode;
-  if (activeTab() === t) setMode(mode);
+/** 新窗口按种子开标签：模式只还原用户当初那个（不支持就交给默认），钉住照带 ——
+    钉住是标签自己的状态，换个窗口看一眼不该把它抖掉 */
+function applySeed(t, s) {
+  if (!t || !s) return;
+  if (s.ding) t.ding = true;
+  if (!s.mode) return;
+  if (!modesFor(detectKind(t.name)).includes(s.mode)) return;
+  t.mode = s.mode;
+  if (activeTab() === t) setMode(s.mode);
 }
 
 async function openSeed(s) {
   if (!s || !s.name) return null;
   if (s.path && !s.dirty) {
     const t = await openPath(s.path).catch(() => null);
-    if (t) { applySeedMode(t, s.mode); return t; }
+    if (t) { applySeed(t, s); return t; }
   }
   const t = newTab(s.name, s.content || '', s.path || null);
   if (s.dirty) t.savedContent = null;
-  applySeedMode(t, s.mode);
+  applySeed(t, s);
   return t;
 }
 
@@ -649,7 +688,12 @@ function copyPath(p) {
    活动标签，拿去写别的文件就是把 A 的正文灌进 B），没有路径、存不进去的
    脏标签写进草稿，和退出时「存成草稿，下次启动还能恢复」走同一条路。 */
 async function closeMany(ids, keepId) {
-  const set = new Set(ids);
+  /* 钉住的标签不参与批量关闭 —— 在入口处滤掉，三个方向（其他/左/右）以及以后
+     可能多出来的调用点都不必各自记得这件事。 */
+  const set = new Set(ids.filter((id) => {
+    const t = tabs.find((x) => x.id === id);
+    return t && !t.ding;
+  }));
   if (!set.size) return;
   /* 速记永远算干净，但它是防抖写盘的：关之前先 flush，否则最后几个字会丢 */
   for (const t of tabs) if (set.has(t.id) && t.quickNote) await flushQuickNote(t);
@@ -682,12 +726,16 @@ async function closeMany(ids, keepId) {
   /* 活动标签若在待关名单里，必须先落账再 removeTab —— removeTab 会把 activeId
      换成下一个，那之后的 persistCurrentView 看到的是新标签 + 旧 DOM */
   if (activeTab() && set.has(activeTab().id)) persistCurrentView();
-  for (const id of ids) removeTab(id);
+  /* ⛔ 遍历的是滤过的 set，不是传进来的 ids —— 用 ids 的话上面的过滤全白做，
+     钉住的标签照样被 removeTab 摘掉（真机现象：钉住了，点「关闭左侧」它还是没了） */
+  for (const id of set) removeTab(id);
   syncWatches();
   if (!tabs.length) { newTab(untitledName('md'), ''); return; }
   activate(keepId);
 }
 
+/* closeMany 会滤掉钉住的，这里也不必先剔 —— 但「有没有得关」的判断（右键菜单
+   的禁用态）必须和它同一套口径，所以两处都按 !t.ding 算 */
 function closeOthers(id) {
   closeMany([...tabs].filter((t) => t.id !== id).map((t) => t.id), id);
 }
@@ -1923,6 +1971,7 @@ function saveDraft() {
   const session = tabs.filter((t) => !t.quickNote).map((t) => ({
     path: t.path, name: t.name, mode: t.mode,
     scrollTop: t.scrollTop || 0, previewScroll: t.previewScroll || 0, caret: t.caret ?? null,
+    ding: !!t.ding,
   }));
   LS.set('session', session);
   const act = activeTab();
@@ -2015,6 +2064,7 @@ async function restoreSession() {
     t.scrollTop = s.scrollTop || 0;
     t.previewScroll = s.previewScroll || 0;
     t.caret = s.caret ?? null;
+    t.ding = !!s.ding;
     n++;
     last = t;
     if (s.path === activeKey) activeId2 = t.id;
@@ -2459,6 +2509,12 @@ async function saveAllQuiet(list) {
 async function closeTab(id) {
   const t = tabs.find((x) => x.id === id);
   if (!t) return;
+  /* 钉住的标签连自己都关不掉（右键里的「关闭」已变灰，这里兜住 × 之外的
+     中键、Ctrl+W 和菜单「文件→关闭」）。要关先取消钉住，这是钉住的意思是全部。 */
+  if (t.ding) {
+    toast(tt('「{name}」已钉住，先取消钉住才能关闭', { name: tabLabel(t) }));
+    return;
+  }
   /* 速记的改动是防抖写盘的，关得比 350ms 快就还没落地 —— 先写完再关 */
   if (t.quickNote) await flushQuickNote(t);
   if (isDirty(t)) {
@@ -4009,6 +4065,9 @@ const commands = {
 
 /* ---------------- 菜单结构（自绘标题栏用） ---------------- */
 const hasTab = () => !!activeTab();
+/* 钉住的标签连自己都关不掉（见 closeTab），菜单项跟着置灰 —— 菜单里点了没反应
+   比灰掉更难受。Ctrl+W 没得灰，由 closeTab 里那句提示兜住 */
+const canCloseActive = () => !!activeTab() && !activeTab().ding;
 const markMode = (m) => () => !!(activeTab() && activeTab().mode === m);
 const canWys = () => !!(activeTab() && activeTab().mode === 'wysiwyg');
 const inTable = () => canWys() && wys.isInTable();
@@ -4074,7 +4133,7 @@ const menuTree = () => [
       { id: 'history', label: tt('历史版本'), disabled: () => !hasTab() },
       { id: 'reload', label: tt('重新载入'), disabled: () => !hasTab() },
       { sep: true },
-      { id: 'closeTab', label: tt('关闭标签'), kbd: 'Ctrl+W', disabled: () => !hasTab() },
+      { id: 'closeTab', label: tt('关闭标签'), kbd: 'Ctrl+W', disabled: () => !canCloseActive() },
       /* 速记的其它辅助动作（插入时间 / 显示 / 复制路径）已经删掉：
          时间戳在正文里直接打更快，「显示」提到上面一条对谁都成立，
          复制路径在标签右键里本来就有。只剩「清空」没有别的入口，留一行 */

@@ -483,8 +483,10 @@ ok('语言表：新建类型够多', newDocTypes().length >= 24);
 
   ok('标签右键四个关闭方向齐全，没有目标的项置灰',
     ["tt('关闭')", "tt('关闭其他')", "tt('关闭左侧')", "tt('关闭右侧')"].every((s) => app.includes(s))
-      && app.includes('disabled: idx <= 0') && app.includes('disabled: idx >= tabs.length - 1')
-      && app.includes('disabled: tabs.length < 2'));
+      && app.includes('disabled: t.ding')
+      && app.includes('disabled: !tabs.some((x) => x.id !== t.id && !x.ding)')
+      && app.includes('disabled: !tabs.slice(0, idx).some((x) => !x.ding)')
+      && app.includes('disabled: !tabs.slice(idx + 1).some((x) => !x.ding)'));
   ok('三个批量关闭统一走 closeMany 守卫，不再直接 removeTab 丢数据',
     ['closeOthers', 'closeLeft', 'closeRight'].every((n) => app.includes(`function ${n}(id)`))
       && app.includes('async function closeMany(')
@@ -990,7 +992,9 @@ ok('主窗口没报过矩形就不合并', !hitsRect(null, 300, 65));
 
 eq('干净的有路径标签带路径与模式',
   tabSeed({ name: 'a.md', content: 'x', path: '/a.md', mode: 'edit' }, false),
-  { name: 'a.md', content: 'x', path: '/a.md', mode: 'edit', dirty: false });
+  { name: 'a.md', content: 'x', path: '/a.md', mode: 'edit', dirty: false, ding: false });
+ok('钉住跟着标签走（换扇窗口看不该把锁抖掉）',
+  tabSeed({ name: 'a.md', content: 'x', path: '/a.md', ding: true }, false).ding === true);
 eq('未命名标签没有 path', tabSeed({ name: '未命名.md', content: 'x', mode: 'edit' }, true).path, null);
 ok('脏标记跟着走（新窗口靠它保住未保存的内容）',
   tabSeed({ name: 'a.md', content: 'x', path: '/a.md' }, true).dirty === true);
@@ -1005,7 +1009,9 @@ eq('没有标签给 null', tabSeed(null, false), null);
      一个事件都收不到（不报错，拖了就是不动）。标签拖拽必须走 pointer 事件。 */
   ok('标签拖拽不用 HTML5 拖放（Windows 上它是死的）',
     !/b\.draggable\s*=/.test(app) && !/b\.addEventListener\('drag/.test(app));
-  ok('标签节点接上 pointer 拖拽管线', /renderTabs[\s\S]{0,2000}attachTabDrag\(b, t\)/.test(app));
+  /* 按标签循环内部找，不再拿「renderTabs 之后 2000 字符」当窗口 ——
+     往 renderTabs 里加东西（比如钉住的钉子）会把这个窗口挤破 */
+  ok('标签节点接上 pointer 拖拽管线', /for \(const t of tabs\) \{[\s\S]*?attachTabDrag\(b, t\);/.test(app));
   ok('拆出去的窗口不写会话/草稿（那两份是主窗口的）',
     /function saveDraft\(\)\s*\{[\s\S]{0,240}if \(IS_TEAROFF\) return;/.test(app));
   ok('关掉拆出去的窗口是把标签交回去，不是丢掉',
@@ -1015,6 +1021,61 @@ eq('没有标签给 null', tabSeed(null, false), null);
   ok('新窗口的 label 必须进 capabilities（否则窗口 API 静默失败）',
     /"tearoff-\*"/.test(fs.readFileSync('src-tauri/capabilities/default.json', 'utf8')));
   ok('文件监听按窗口取并集，别让后调的顶掉先调的', /by_window/.test(rust));
+}
+
+/* ---------- 钉住（ding）：关闭键让位、批量关闭绕开 ----------
+   用户要的三条：「ding 住后就不显示关闭按钮」「关闭其他 / 左侧 / 右侧都不关
+   ding 的标签」「本标签右键菜单只有非 ding 状态才能关闭自己」。
+
+   麻烦在于「关闭」不止一个入口：× 按钮、中键、Ctrl+W、菜单「文件→关闭」最后
+   全落到 closeTab 上，而批量关有三个方向。少挡一条，用户看到的就是「钉住了
+   还是没了」。所以这里钉的是**口径只有一处**：closeTab 挡单关、closeMany 在
+   入口滤掉、右键菜单的禁用态与 closeMany 用同一个判断。 */
+{
+  const app = fs.readFileSync('src/js/app.js', 'utf8');
+  const state = fs.readFileSync('src/js/state.js', 'utf8');
+  const css = fs.readFileSync('src/styles.css', 'utf8');
+  const dictSrc = fs.readFileSync('src/js/i18n-dict-src.js', 'utf8');
+  const dict = fs.readFileSync('src/js/i18n-dict.js', 'utf8');
+  const rust = fs.readFileSync('src-tauri/src/lib.rs', 'utf8');
+
+  ok('标签模型带 ding 字段，新建默认不钉',
+    /quickNote: false,[\s\S]{0,120}ding: false,/.test(state));
+  ok('钉住只有一个写入口，写完重画并落进会话',
+    /function setDing\(id, on\) \{\n[\s\S]{0,240}t\.ding = !!on;\n  renderTabs\(\);\n  saveDraft\(\);/.test(app));
+  ok('渲染签名带上钉住状态（少了它取消钉住不重画）',
+    app.includes('${t.ding ? 1 : 0}') && app.includes("b.classList.add('ding')"));
+  ok('钉住的标签不画关闭键，改画常驻的钉子',
+    /if \(t\.ding\) \{\n\s*const pin[\s\S]{0,160}iconHTML\('pin'\)[\s\S]{0,300}\} else \{\n\s*const x/.test(app));
+  ok('closeTab 自己就挡住钉住的（中键 / Ctrl+W / 菜单「关闭」都走它）',
+    /async function closeTab\(id\) \{[\s\S]{0,400}if \(t\.ding\) \{\n\s*toast\(tt\('「\{name\}」已钉住/.test(app));
+  ok('批量关闭在入口处滤掉钉住的，三个方向不必各自记得',
+    /const set = new Set\(ids\.filter[\s\S]{0,160}return t && !t\.ding;/.test(app));
+  /* 滤了不照着用等于没滤：第一版就是这么过掉的（钉住了，点「关闭左侧」照样没） */
+  ok('批量关闭遍历的是滤过的名单，不是原始 ids',
+    app.includes('for (const id of set) removeTab(id)')
+      && !app.includes('for (const id of ids) removeTab(id)'));
+  ok('右键菜单的禁用态与 closeMany 同一口径（按没钉住的算，不按标签个数）',
+    app.includes('disabled: t.ding')
+      && app.includes('disabled: !tabs.some((x) => x.id !== t.id && !x.ding)')
+      && app.includes('disabled: !tabs.slice(0, idx).some((x) => !x.ding)')
+      && app.includes('disabled: !tabs.slice(idx + 1).some((x) => !x.ding)'));
+  ok('文件菜单的「关闭标签」对钉住的也置灰（菜单里点了没反应最难受）',
+    /const canCloseActive = \(\) => !!activeTab\(\) && !activeTab\(\)\.ding;/.test(app)
+      && app.includes("disabled: () => !canCloseActive()"));
+  ok('钉住进会话，重启后还在',
+    app.includes('ding: !!t.ding,') && app.includes('t.ding = !!s.ding;'));
+  ok('钉子与关闭键同宽，钉与不钉之间标签不跳',
+    /\.tab-pin \{[^}]*width: 18px; height: 18px/.test(css)
+      && /\.tab-close\s*\{[^}]*width:\s*18px;\s*height:\s*18px/.test(css));
+  ok('钉子常驻显示（它要解释「为什么关不掉」，不能在悬停时才出现）',
+    !/\.tab-pin[^,{]*\{[^}]*opacity: 0/.test(css) && css.includes('.tab-pin .ico'));
+  ok('拖出成窗口时钉住跟着走',
+    /ding: !!tab\.ding/.test(fs.readFileSync('src/js/tearoff.js', 'utf8'))
+      && /#\[serde\(default\)\]\n\s*ding: bool,/.test(rust));
+  ok('四条新词条都进了源字典与 8 语产物',
+    ["'钉住标签'", "'取消钉住'", "'已钉住，右键可取消'", "'「{name}」已钉住，先取消钉住才能关闭'"]
+      .every((k) => dictSrc.includes(k) && dict.includes(k)));
 }
 
 /* ---------- 汇总 ---------- */

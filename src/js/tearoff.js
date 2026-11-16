@@ -54,5 +54,6 @@ export function tabSeed(tab, dirty) {
     path: tab.path || null,
     mode: tab.mode || null,
     dirty: !!dirty,
+    ding: !!tab.ding,     // 钉住跟着走：换扇窗口看它不该把锁抖掉
   };
 }

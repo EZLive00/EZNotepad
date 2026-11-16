@@ -74,6 +74,7 @@ export function createTab(name = tt('未命名.md'), content = '', path = null) 
     readonly: false,
     external: false,            // 是否为外部生成（对比结果 / 合并结果）
     quickNote: false,           // 是不是那份固定位置的速记（见 app.js openQuickNote）
+    ding: false,                // 钉住：不画关闭键，批量关闭也绕开它（见 app.js setDing）
     mtime: null,                // 上次读/写这个文件时的修改时间（毫秒），用于发现外部改动
   };
 }

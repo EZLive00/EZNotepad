@@ -1083,6 +1083,131 @@ try {
       drafts.includes('未落盘的内容'), String(drafts).slice(0, 200));
     ok('draftStash 会一直跟着草稿，恢复后才清',
       await ev(`(localStorage.getItem('snp.draftStash') || '').includes('未落盘的内容')`));
+
+    /* ---------- 钉住（ding） ----------
+       三条承诺：标签上没有关闭键、自己关不掉（× / 中键 / Ctrl+W / 菜单「关闭」）、
+       批量关闭绕开它。关掉的按钮不止一个入口，所以中键也在这里验一次。 */
+    const tabState = () => ev(`[...document.querySelectorAll('.tab[data-id]')].map(b => ({
+      name: b.querySelector('.tab-name').textContent,
+      ding: b.classList.contains('ding'),
+      close: !!b.querySelector('.tab-close'),
+      pin: !!b.querySelector('.tab-pin'),
+    }))`);
+
+    /* 清场：只留一颗，免得前面留下的标签把「左侧 / 右侧」算歪 */
+    await ev(`(() => {
+      window.__snp.newTab('p0.md', 'p0', 'C:/tmp/p0.md');
+      [...document.querySelectorAll('.tab[data-id]')].pop()
+        .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 60, clientY: 20 }));
+      return 1;
+    })()`);
+    await clickItem('关闭其他');
+    await ev('new Promise(r => setTimeout(r, 250))');
+    if (!(await dlgHidden())) await dlgKey('Y');       // 万一还有没落盘的，一起收掉
+    await ev('new Promise(r => setTimeout(r, 200))');
+    await ev(`(() => {
+      window.__snp.newTab('L.md', 'L', 'C:/tmp/L.md');
+      window.__snp.newTab('M.md', 'M', 'C:/tmp/M.md');
+      window.__snp.newTab('R.md', 'R', 'C:/tmp/R.md');
+      return 1;
+    })()`);
+    await ev('new Promise(r => setTimeout(r, 200))');
+
+    const tabW = (name) => ev(`(() => {
+      const b = [...document.querySelectorAll('.tab[data-id]')]
+        .find(x => x.querySelector('.tab-name').textContent === ${JSON.stringify(name)});
+      return b ? +b.getBoundingClientRect().width.toFixed(2) : -1;
+    })()`);
+    const wBefore = await tabW('M.md');
+
+    await rightTab('M.md');
+    const firstItem = (await menu())[0];
+    ok('标签右键第一项是「钉住标签」', !!firstItem && firstItem.label === '钉住标签', JSON.stringify(firstItem));
+    ok('钉住能执行', await clickItem('钉住标签'));
+    await ev('new Promise(r => setTimeout(r, 150))');
+    let state = await tabState();
+    const mt = state.find((x) => x.name === 'M.md');
+    ok('钉住后没有关闭键，换成钉子', mt && mt.ding && !mt.close && mt.pin, JSON.stringify(mt));
+    ok('钉与不钉之间标签宽度不跳（钉子占的就是关闭键那 18px）',
+      Math.abs((await tabW('M.md')) - wBefore) < 0.5, `${wBefore} → ${await tabW('M.md')}`);
+    ok('别的标签不受影响（还是各有关闭键）',
+      state.filter((x) => x.name !== 'M.md').every((x) => !x.ding && x.close), JSON.stringify(state));
+    ok('钉住写进会话，重启后还在',
+      await ev(`(localStorage.getItem('snp.session') || '').includes('"ding":true')`));
+
+    await rightTab('M.md');
+    const dingMenu = await menu();
+    ok('已钉住时菜单改口叫「取消钉住」，且自己这一项不可关闭',
+      !!dingMenu.find((i) => i.label === '取消钉住')
+        && dingMenu.find((i) => i.label === '关闭').disabled, JSON.stringify(dingMenu));
+
+    /* 中键走的是 closeTab —— 和 × / Ctrl+W / 菜单「关闭」同一条路 */
+    await ev(`(() => {
+      const b = [...document.querySelectorAll('.tab[data-id]')]
+        .find((x) => x.querySelector('.tab-name').textContent === 'M.md');
+      b.dispatchEvent(new MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 1 }));
+      return 1;
+    })()`);
+    await ev('new Promise(r => setTimeout(r, 150))');
+    ok('中键关不掉钉住的标签，并且说明原因',
+      (await names()).includes('M.md')
+        && await ev(`[...document.querySelectorAll('#toasts .toast')].some(b => b.textContent.includes('已钉住'))`));
+
+    /* 关闭左侧：左边的清掉，钉住的那颗留下 */
+    await rightTab('R.md');
+    ok('「关闭左侧」仍有可关的目标',
+      !(await menu()).find((i) => i.label === '关闭左侧').disabled);
+    ok('点「关闭左侧」（钉住场景）', await clickItem('关闭左侧'));
+    await ev('new Promise(r => setTimeout(r, 300))');
+    if (!(await dlgHidden())) await dlgKey('Y');
+    await ev('new Promise(r => setTimeout(r, 250))');
+    let n2 = await names();
+    ok('关闭左侧绕开钉住的标签：L / p0 关掉，M 还在',
+      n2.includes('M.md') && n2.includes('R.md') && !n2.includes('L.md') && !n2.includes('p0.md'),
+      JSON.stringify(n2));
+
+    await rightTab('R.md');
+    const rMenu = await menu();
+    ok('剩下的其它标签全被钉住时，「关闭其他」置灰（不是点了没反应）',
+      rMenu.find((i) => i.label === '关闭其他').disabled, JSON.stringify(rMenu));
+
+    await rightTab('M.md');
+    ok('没被钉住的方向照常可执行',
+      !(await menu()).find((i) => i.label === '关闭其他').disabled);
+    ok('点「关闭其他」（钉住场景）', await clickItem('关闭其他'));
+    await ev('new Promise(r => setTimeout(r, 300))');
+    n2 = await names();
+    ok('关闭其他只留下钉住的那颗', n2.length === 1 && n2[0] === 'M.md', JSON.stringify(n2));
+
+    /* 右侧全是钉子 → 「关闭右侧」置灰；自己没钉 → 「关闭」仍可点 */
+    await ev(`(() => { window.__snp.newTab('S.md', 'S', 'C:/tmp/S.md'); return 1; })()`);
+    await ev('new Promise(r => setTimeout(r, 150))');
+    await rightTab('S.md');
+    await clickItem('钉住标签');
+    await ev('new Promise(r => setTimeout(r, 150))');
+    await rightTab('M.md');
+    const mMenu2 = await menu();
+    ok('右侧只剩钉住的标签时「关闭右侧」置灰',
+      mMenu2.find((i) => i.label === '关闭右侧').disabled, JSON.stringify(mMenu2));
+    ok('钉住时自己那颗的「关闭」也跟着置灰',
+      mMenu2.find((i) => i.label === '关闭').disabled, JSON.stringify(mMenu2));
+
+    ok('取消钉住能执行', await clickItem('取消钉住'));
+    await ev('new Promise(r => setTimeout(r, 150))');
+    state = await tabState();
+    const mt2 = state.find((x) => x.name === 'M.md');
+    ok('取消钉住后关闭键回来，钉子消失', mt2 && !mt2.ding && mt2.close && !mt2.pin, JSON.stringify(mt2));
+
+    await rightTab('M.md');
+    const mMenu3 = await menu();
+    ok('自己没钉住时「关闭」照常可点，右侧全是钉子则「关闭右侧」还置灰',
+      !mMenu3.find((i) => i.label === '关闭').disabled
+        && mMenu3.find((i) => i.label === '关闭右侧').disabled, JSON.stringify(mMenu3));
+
+    /* 收拾干净，别把钉子留给后面的用例 */
+    await rightTab('S.md');
+    await clickItem('取消钉住');
+    await ev('new Promise(r => setTimeout(r, 150))');
   }
 
   // ---- 标签条竖线：一条缝一条线，右端收口 ----

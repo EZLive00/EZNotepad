@@ -1236,6 +1236,10 @@ struct TearoffTab {
     path: Option<String>,
     mode: Option<String>,
     dirty: bool,
+    /// 标签是不是钉住的（界面上没有关闭键、批量关闭绕开它）。老客户端不带这个
+    /// 字段也得能收，所以给默认值
+    #[serde(default)]
+    ding: bool,
 }
 
 /// 主窗口标签栏的屏幕矩形（CSS 像素，左上角原点）。

@@ -2565,6 +2565,88 @@ try {
     ok('真机：60 份新快照 + 2 份检查点代表 = 62 条', cpCount === 62, String(cpCount));
     await ev(`window.__snp.historyProbe.clear(${JSON.stringify(cpPath)})`);
   }
+
+  /* ---- 钉住（ding）----
+     放在最后：它要用「关闭其他」把别的标签一次扫掉，前面那些用例还要用它们。
+     真机这层只验两件离线验不到的：钉子真的画出来了（图标来自 index.html 的
+     精灵图，编译期内嵌，漏了构建就只剩一个空 18px 格子），以及关闭其他真的
+     没带走钉住的那颗。 */
+  {
+    const tabInfo = async (name) => JSON.parse(await ev(`(() => {
+      const b = [...document.querySelectorAll('.tab[data-id]')]
+        .find(x => (x.querySelector('.tab-name') || {}).textContent && x.querySelector('.tab-name').textContent.includes(${JSON.stringify(name)}));
+      if (!b) return 'null';
+      const pin = b.querySelector('.tab-pin');
+      const r = pin ? pin.getBoundingClientRect() : null;
+      const use = pin ? pin.querySelector('use') : null;
+      return JSON.stringify({
+        ding: b.classList.contains('ding'),
+        close: !!b.querySelector('.tab-close'),
+        pin: !!pin,
+        pinW: r ? Math.round(r.width) : 0,
+        href: use ? use.getAttribute('href') : null,
+      });
+    })()`));
+    const tabMenu = (name) => ev(`(() => {
+      const b = [...document.querySelectorAll('.tab[data-id]')]
+        .find(x => x.querySelector('.tab-name').textContent.includes(${JSON.stringify(name)}));
+      if (!b) return false;
+      b.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 200, clientY: 40 }));
+      return true;
+    })()`);
+    const menuClick = (label) => ev(`(() => {
+      const b = [...document.querySelectorAll('.ctx-menu .ctx-item')]
+        .find(x => (x.querySelector('.ctx-label') || {}).textContent === ${JSON.stringify(label)});
+      if (!b || b.disabled) return false;
+      b.click(); return true;
+    })()`);
+
+    await ev(`window.__snp.newTab('ding-a.md', 'A', null)`);
+    await sleep(200);
+    await ev(`window.__snp.newTab('ding-b.md', 'B', null)`);
+    await sleep(200);
+
+    ok('真机：右键标签弹得出菜单', await tabMenu('ding-a.md'));
+    await sleep(200);
+    ok('真机：点「钉住标签」能执行', await menuClick('钉住标签'));
+    await sleep(300);
+    const da = await tabInfo('ding-a.md');
+    ok('真机：钉住后没有关闭键，钉子真的画出来了（精灵图没漏）',
+      !!da && da.ding && !da.close && da.pin && da.pinW >= 10 && da.href === '#i-pin', JSON.stringify(da));
+
+    /* 单关这一条不走「关闭其他」：探针复用的数据目录里躺着四十来个脏标签，
+       一次批量关闭会先弹确认框（CDP 点不掉），验的就不是「绕开钉子」而是那个框。
+       批量口径在 run-app 的干净标签集里逐条验过；真机这层验单关 —— Ctrl+W 与
+       × 同一条路（closeTab），它挡住了，批量那条的过滤才谈得上意义。 */
+    await clickTabNamed('ding-a.md');          // closeTab 关的是活动标签，先站到它身上
+    await sleep(250);
+    ok('真机：钉住的标签自己也关不掉（closeTab 挡住 Ctrl+W 那条路）',
+      (await ev(`(() => { window.__snp.commands.closeTab(); return 1; })()`)) === 1);
+    await sleep(400);
+    ok('真机：关不掉时说明了原因，标签还在',
+      (await ev(`[...document.querySelectorAll('.tab[data-id] .tab-name')].some(n => n.textContent.includes('ding-a.md'))`))
+        && await ev(`[...document.querySelectorAll('#toasts .toast')].some(b => b.textContent.includes('已钉住'))`),
+      await ev(`JSON.stringify([...document.querySelectorAll('#toasts .toast')].map(b => b.textContent))`));
+
+    /* 收尾：取消钉住 —— 探针的数据目录是复用的，别给下一轮留个关不掉的标签 */
+    await tabMenu('ding-a.md');
+    await sleep(250);
+    ok('真机：钉住时右键菜单变「取消钉住」，自己那颗「关闭」置灰',
+      await ev(`(() => {
+        const it = [...document.querySelectorAll('.ctx-menu .ctx-item')];
+        const has = it.some(b => (b.querySelector('.ctx-label') || {}).textContent === '取消钉住');
+        const close = it.find(b => (b.querySelector('.ctx-label') || {}).textContent === '关闭');
+        return has && !!close && close.disabled;
+      })()`));
+    ok('真机：取消钉住能执行', await menuClick('取消钉住'));
+    await sleep(300);
+    ok('真机：钉子收起、关闭键回来', await ev(`(() => {
+      const b = [...document.querySelectorAll('.tab[data-id]')]
+        .find(x => x.querySelector('.tab-name').textContent.includes('ding-a.md'));
+      return !!b && !b.classList.contains('ding')
+        && !!b.querySelector('.tab-close') && !b.querySelector('.tab-pin');
+    })()`));
+  }
 } catch (e) {
   ok('探针执行完成', false, e.message);
 } finally {
