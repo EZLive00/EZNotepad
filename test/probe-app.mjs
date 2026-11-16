@@ -1539,15 +1539,59 @@ try {
       ok(`${label}：编辑区有语法着色`, n > 0, `${n} 个 span`);
     }
 
-    /* JSONL 不是合法 JSON（一行一条），预览必须走代码视图而不是「JSON 语法错误」 */
+    /* 非 md 的预览 = 同一个编辑器锁住输入。以前这里换成 <pre class="codeview">，
+       行号、滚动、查找全变成另一套 —— 用户要的只是「不能改」，不是「换个样子」。 */
     await ev(`window.__snp.newTab('pv.jsonl', '{"a": 1}\\n{"b": 2}', null)`);
+    await sleep(320);
+    await ev(`(() => { window.__cmBefore = document.querySelector('#editor .cm-editor'); return 1; })()`);
     await ev(`window.__snp.commands.modePreview()`);
     await sleep(320);
     const pv = await ev(`(() => {
-      const el = document.getElementById('preview');
-      return { code: !!el.querySelector('.codeview'), err: !!el.querySelector('.json-err') };
+      const ed = document.getElementById('editor');
+      const pane = document.getElementById('preview');
+      const cm = ed && ed.querySelector('.cm-editor');
+      return {
+        visible: !!cm && ed.offsetParent !== null,
+        same: window.__cmBefore === cm,
+        ce: cm ? cm.querySelector('.cm-content').getAttribute('contenteditable') : null,
+        gutters: ed ? ed.querySelectorAll('.cm-lineNumbers .cm-gutterElement').length : 0,
+        paneHidden: !pane || pane.offsetParent === null,
+        codeview: !!(pane && pane.querySelector('.codeview')),
+      };
     })()`);
-    ok('JSON Lines 预览按代码看，不当成坏 JSON', pv.code && !pv.err, JSON.stringify(pv));
+    ok('JSON Lines 预览不换 DOM：还是那个编辑器，行号还在',
+      pv.visible && pv.same && pv.gutters > 1 && pv.paneHidden && !pv.codeview, JSON.stringify(pv));
+    ok('JSON Lines 预览是只读的', pv.ce === 'false', String(pv.ce));
+
+    /* 真敲一下才作数：contenteditable 可能写着 false 却仍能改 */
+    const lineAt = async () => ev(`(() => {
+      const line = document.querySelector('#editor .cm-line');
+      const b = (line || document.getElementById('editor')).getBoundingClientRect();
+      return { x: Math.round(b.left + 24), y: Math.round(b.top + Math.round(b.height / 2)) };
+    })()`);
+    const clickEditor = async () => {
+      const p = await lineAt();
+      await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: p.x, y: p.y, button: 'left', clickCount: 1 });
+      await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: p.x, y: p.y, button: 'left', clickCount: 1 });
+      await sleep(150);
+    };
+    const cmText = () => ev(`document.querySelector('#editor .cm-content').textContent`);
+    const beforeText = await cmText();
+    await clickEditor();
+    await send('Input.insertText', { text: 'ZZZ' });
+    await sleep(260);
+    ok('只读预览里敲字改不动正文', (await cmText()) === beforeText, JSON.stringify(beforeText));
+
+    await ev(`window.__snp.commands.modeEdit()`);
+    await sleep(320);
+    const ed2 = await ev(`(() => {
+      const cm = document.querySelector('#editor .cm-editor');
+      return cm ? cm.querySelector('.cm-content').getAttribute('contenteditable') : null;
+    })()`);
+    await clickEditor();
+    await send('Input.insertText', { text: 'ZZZ' });
+    await sleep(260);
+    ok('切回编辑模式就又能写了', ed2 === 'true' && (await cmText()).includes('ZZZ'), String(ed2));
   }
 
   /* ---------- 新建文档：类型够多 + 自定义扩展名 ---------- */

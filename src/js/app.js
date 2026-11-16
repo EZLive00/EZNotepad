@@ -739,7 +739,7 @@ function focusNewTab(t) {
     } else {
       wys.root.focus();
     }
-  } else if (t.mode === 'edit') {
+  } else if (viewKindOf(t) === 'editor') {
     plain.focus();
   }
 }
@@ -784,9 +784,27 @@ function clearView() {
 let renderedTabId = null;
 
 /* ---------------- 模式 / 布局 ---------------- */
+
+/** 这一屏实际在显示什么形态：'wys' | 'editor' | 'preview' | 'none'
+ *
+ *  ⛔ 不能拿 `t.mode === 'preview'` 当「右侧预览 DOM 正显示着」用 —— 非 Markdown
+ *  的预览是只读编辑器（见 setMode 里的 inlinePreview），它的行号、滚动、查找
+ *  全在 CM6 那套里。凡是「按当前视图取内容 / 算位置 / 画高亮」的地方都要问它，
+ *  自己判 mode 就会去空的预览容器里查标题、把滚动量记到错的容器上。 */
+function viewKindOf(t = activeTab()) {
+  if (!t) return 'none';
+  if (t.mode === 'wysiwyg') return 'wys';
+  if (t.mode === 'preview' && detectKind(t.name) === 'md') return 'preview';
+  return 'editor';
+}
+
 function setMode(mode, opt = {}) {
   const t = activeTab();
   if (!t) return;
+  /* 这两条要在改动 t.mode / renderedTabId 之前取：后面的「恢复光标与滚动」
+     判的就是「编辑器里刚换了东西没有」 */
+  const cameFromOtherTab = renderedTabId !== t.id;
+  const prevView = viewKindOf(t);
   const kind = detectKind(t.name);
   const allowed = modesFor(kind);
   if (!allowed.includes(mode)) {
@@ -817,12 +835,22 @@ function setMode(mode, opt = {}) {
   el.modeLabel.textContent = modeMeta()[mode].short || modeMeta()[mode].label;
   setIcon(el.modeIcon, modeMeta()[mode].icon);
 
-  const split = settings.layout === 'split';
-  const showEditor = mode !== 'preview';
+  /* 双栏只对 Markdown 有意义：非 md 右侧那半只是同一份文字的第二个视图。
+     留着它，「预览」就会独占整宽 —— 切个模式宽度翻倍，正是要避免的形态变化。 */
+  const split = settings.layout === 'split' && kind === 'md';
+  /* 非 Markdown 没有「渲染后」这回事：预览就是同一个编辑器锁住输入。
+     以前这里不分类型，代码文件切预览会换成另一套 DOM（另一套行号样式、
+     另一套滚动容器、查找还得按 DOM 文字重算），用户看到的是「显示形态变了」，
+     而他要的只是「不能改」。所以非 md 的预览 = 编辑器的只读态：
+     行号、折行、滚动、高亮、查找全都还是原来那套。 */
+  const inlinePreview = mode === 'preview' && kind !== 'md';
+  const showEditor = mode !== 'preview' || inlinePreview;
   const showWys = mode === 'wysiwyg';
-  const showPreview = split || mode === 'preview';
+  const showPreview = !inlinePreview && (split || mode === 'preview');
 
   plain.setVisible(showEditor && !showWys);
+  /* 只读标记必须在 load 之前定：load 会按 this.readOnly 重建 state */
+  plain.setReadOnly(inlinePreview);
   el.wysiwyg.classList.toggle('hidden', !showWys);
   /* 预览模式下把整个编辑面板收掉：只藏里面那两个视图的话，
      这块 flex:1 的空壳还在，预览只占右半边，左半边一片空白。 */
@@ -838,7 +866,13 @@ function setMode(mode, opt = {}) {
     wys.setDocDir(docDir); renderWys(t.content);
   }
   else if (showEditor) {
-    plain.load(t.content, currentLang);
+    /* 同一个标签、同一份内容就不重建编辑器：只读预览和编辑是同一个视图，
+       唯一的差别是能不能打字。load() 会 setState，CM6 随后按锚点重新量一遍
+       再写 scrollTop —— 实测只按一下「预览」，滚动量从 1173 跳到 1445。
+       换了标签或内容真的变了才需要重装。 */
+    if (cameFromOtherTab || prevView !== 'editor' || plain.value !== t.content) {
+      plain.load(t.content, currentLang);
+    }
     /* 视图高亮跟着标签走：load() 会重建 state、把它清空，这里按标签重放，
        也不会把 A 的高亮带到 B。 */
     plain.setViewMarks(t.viewMarks || []);
@@ -856,18 +890,20 @@ function setMode(mode, opt = {}) {
      （预览走的也是 DOM 分支）。不重算的话，切模式后高亮要么落在空的、要么不出现 */
   if (!el.findbar.classList.contains('hidden')) {
     /* 「选区内」只对源码编辑有意义：DOM 模式按看得见的文字算，源码偏移套不上 */
-    if (mode !== 'edit') { $('findScope').disabled = true; $('findScope').checked = false; }
+    if (viewKindOf(t) !== 'editor') { $('findScope').disabled = true; $('findScope').checked = false; }
     runFind();
   }
-  if (mode === 'preview') el.preview.scrollTop = t.previewScroll || 0;
-  else if (showPreview) el.preview.scrollTop = t.previewScroll || 0;
-  /* 切回这个标签时把光标和滚动放回原处。只在「切标签」这条路上做，
-     手动换模式（Ctrl+2）不该把视图拽走 */
-  if (opt.fromActivate && showEditor && !showWys && t.caret != null) {
+  if (showPreview) el.preview.scrollTop = t.previewScroll || 0;
+  /* 切回这个标签时把光标和滚动放回原处。
+     `fromActivate` 不能当判据：工具栏、Ctrl+2、右键菜单全都带着它，于是每次
+     手动换模式都会拿标签里那个旧 scrollTop 覆盖编辑器刚保住的位置。非 md 的
+     「预览」和编辑是同一个滚动容器，一覆盖就成了「切预览跳回顶部」。
+     真正的判据是「编辑器里装的刚被换掉」：换了标签，或者刚才显示的不是编辑器。 */
+  if ((cameFromOtherTab || prevView !== 'editor') && showEditor && !showWys && t.caret != null) {
     const pos = Math.min(t.caret, plain.value.length);
     plain.setSelection(pos);
     plain.scrollTop = t.scrollTop || 0;
-  } else if (opt.fromActivate && showWys && t.scrollTop) {
+  } else if ((cameFromOtherTab || prevView !== 'wys') && showWys && t.scrollTop) {
     el.wysiwyg.scrollTop = t.scrollTop;
   }
   // 手柄只属于所见即所得：切到编辑/预览就收起来
@@ -1145,15 +1181,16 @@ function syncOutline() {
   if (!outlineItems.length) return;
 
   let cur = -1;
-  if (t.mode === 'wysiwyg' && wys.virtual) {
+  const view = viewKindOf(t);
+  if (view === 'wys' && wys.virtual) {
     /* 视口模式：DOM 里只有窗口那一小段，标题数量对不上。
        高亮改由块模型按滚动位置算（等价于原来的「标题顶 ≤ 基准线」二分）。 */
     cur = atScrollEnd(el.wysiwyg.scrollTop, el.wysiwyg.scrollHeight, el.wysiwyg.clientHeight)
       ? outlineItems.length - 1
       : wys.headingIndexAt();
-  } else if (t.mode === 'wysiwyg' || t.mode === 'preview') {
-    const box = t.mode === 'wysiwyg' ? el.wysiwyg : el.preview;
-    const heads = box.querySelectorAll(t.mode === 'wysiwyg' ? '.w-h' : 'h1,h2,h3,h4,h5,h6');
+  } else if (view === 'wys' || view === 'preview') {
+    const box = view === 'wys' ? el.wysiwyg : el.preview;
+    const heads = box.querySelectorAll(view === 'wys' ? '.w-h' : 'h1,h2,h3,h4,h5,h6');
     if (atScrollEnd(box.scrollTop, box.scrollHeight, box.clientHeight)) {
       cur = heads.length - 1;      // 到底了：最后一个标题就是当前章节
     } else {
@@ -1198,16 +1235,17 @@ function gotoLine(line, idx = null) {
   const t = activeTab();
   if (!t) return;
   // 大纲点击走「标题顶贴基准线」，和高亮判定共用 outlineBaseline，点谁谁亮
-  if (t.mode === 'wysiwyg' && idx != null) {
+  const view = viewKindOf(t);
+  if (view === 'wys' && idx != null) {
     if (wys.virtual) { wys.scrollToHeadingIndex(idx); return; }   // 窗口外的标题也得能跳
     const h = el.wysiwyg.querySelectorAll('.w-h')[idx];
     if (h) { scrollBoxToHeading(el.wysiwyg, h); return; }
   }
-  if (t.mode === 'preview' && idx != null) {
+  if (view === 'preview' && idx != null) {
     const h = el.preview.querySelectorAll('h1,h2,h3,h4,h5,h6')[idx];
     if (h) { scrollBoxToHeading(el.preview, h); return; }
   }
-  if (t.mode === 'wysiwyg') {          // 兜底：按行号数块（搜索结果跳转等无序号入口）
+  if (view === 'wys') {          // 兜底：按行号数块（搜索结果跳转等无序号入口）
     if (wys.virtual) { wys.scrollToLine(line); return; }
     let acc = 0;
     for (const blk of el.wysiwyg.children) {
@@ -1810,7 +1848,7 @@ function refreshStats() {
 function updateCursorPos() {
   const t = activeTab();
   if (!t) return;
-  if (t.mode === 'edit') {
+  if (viewKindOf(t) === 'editor') {
     const c = plain.cursor;
     el.stPos.textContent = tt('行 {line}，列 {col}', { line: c.line, col: c.col });
     el.stPos.hidden = false;
@@ -2209,7 +2247,7 @@ function focusQuickEnd(t) {
     const last = wys.root.lastElementChild;
     if (last) wys.focusBlock(last, true);
     else wys.root.focus();
-  } else if (t.mode === 'edit') {
+  } else if (viewKindOf(t) === 'editor') {
     plain.setSelection(plain.value.length);
     plain.revealOffset(plain.value.length);
     plain.focus();
@@ -2478,7 +2516,7 @@ const toLF = (s) => s.replace(/\r\n?/g, '\n');
 function readEditor(t) {
   if (!t) return '';
   if (t.mode === 'wysiwyg') return wys.toMarkdown();
-  if (t.mode === 'edit') return plain.value;
+  if (viewKindOf(t) === 'editor') return plain.value;
   return t.content;
 }
 
@@ -3162,7 +3200,7 @@ function openFind(expand) {
   el.findbar.classList.remove('hidden');
   if (expand != null) setFindExpanded(expand);
   // 「选区内」只在真的选了东西时才可用，否则勾了也没意义还让人困惑
-  const sel = t.mode === 'edit' ? plain.selectedText : '';
+  const sel = viewKindOf(t) === 'editor' ? plain.selectedText : '';
   $('findScope').disabled = !sel;
   if (!sel) $('findScope').checked = false;
   // 选中的文字直接填进查找框（含换行也行，跨块匹配现在支持）
@@ -3217,17 +3255,19 @@ function runFind() {
 
   /* 预览也是「渲染后的 DOM」：匹配必须按**看得见的文字**算，不能拿 md 源码的
      偏移去套（`**粗**` 在预览里只剩「粗」两个字）。以前预览落进下面的源码分支，
-     匹配数得出来、高亮却画不到预览上，表现就是「预览模式搜不到内容」。 */
-  if (t.mode === 'wysiwyg' || t.mode === 'preview') {
+     匹配数得出来、高亮却画不到预览上，表现就是「预览模式搜不到内容」。
+     非 md 的预览是只读编辑器，不算这一类 —— 它走源码分支（CM6 的高亮照旧）。 */
+  const view = viewKindOf(t);
+  if (view === 'wys' || view === 'preview') {
     find.dom = true;
-    if (t.mode === 'wysiwyg' && wys.virtual) {
+    if (view === 'wys' && wys.virtual) {
       /* 视口模式：匹配在块模型上算（DOM 里只有窗口内容），
          跳转时再把对应块搬进窗口、由 DOM 现算高亮范围 */
       find.model = true;
       find.matches = wys.findMatches(re) || [];
     } else {
       find.model = false;
-      find.matches = domfind.findInDom(t.mode === 'wysiwyg' ? el.wysiwyg : el.preview, re);
+      find.matches = domfind.findInDom(view === 'wys' ? el.wysiwyg : el.preview, re);
     }
     // 编辑正文触发的刷新不要把人踢回第一处匹配
     find.index = Math.min(prevIndex, Math.max(0, find.matches.length - 1));
@@ -3406,7 +3446,7 @@ function closeFind() {
   const t = activeTab();
   if (!t) return;
   if (t.mode === 'wysiwyg') el.wysiwyg.focus();
-  else if (t.mode === 'edit') plain.focus();
+  else if (viewKindOf(t) === 'editor') plain.focus();
 }
 
 /** 拖进来的图片文件：走「复制到 assets」那条路，和「插入图片」对话框一致 */
@@ -5362,7 +5402,10 @@ function persistCurrentView() {
   if (!t) return;
   /* 编辑器里显示的不是它：DOM 属于别的标签，序列化过来就是串档 */
   if (renderedTabId !== t.id) return;
-  if (t.mode === 'wysiwyg') {
+  /* 只读预览装的也是编辑器（非 md 的预览），滚动/光标同样要记 ——
+     按它按下的是哪个模式判会漏掉这一类，切走再切回来视图就跳回顶部。 */
+  const view = viewKindOf(t);
+  if (view === 'wys') {
     /* 渐进载入进行中 DOM 只有半截，序列化它会把残缺内容写进 t.content，
        标签随即变脏 —— 自动保存一触发就用残篇覆盖磁盘文件。跳过：
        t.content 保持完整源文本，下次激活时重渲染即可。 */
@@ -5373,7 +5416,7 @@ function persistCurrentView() {
     if (wys.pending()) { t.content = wys.toMarkdown(); wys.markCommitted(); }
     t.scrollTop = el.wysiwyg.scrollTop;
     t.caret = null;              // 所见即所得的 DOM 光标映射回源码偏移不可靠，只记住滚动位置
-  } else if (t.mode === 'edit') {
+  } else if (view === 'editor') {
     t.content = plain.value;
     t.scrollTop = plain.scrollTop;
     t.caret = plain.selection.from;

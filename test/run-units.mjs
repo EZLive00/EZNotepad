@@ -762,8 +762,8 @@ ok('语言表：新建类型够多', newDocTypes().length >= 24);
      预览落进「按 md 源码算偏移」的分支 —— 计数算得出来、高亮画不到预览上，
      用户看到的就是「预览模式搜不到内容」。 */
   ok('查找把预览也当 DOM 视图（匹配按看得见的文字算）',
-    app.includes("if (t.mode === 'wysiwyg' || t.mode === 'preview')")
-      && app.includes("domfind.findInDom(t.mode === 'wysiwyg' ? el.wysiwyg : el.preview, re)"));
+    app.includes("if (view === 'wys' || view === 'preview')")
+      && app.includes("domfind.findInDom(view === 'wys' ? el.wysiwyg : el.preview, re)"));
   ok('跳转的滚动容器跟着模式走（预览滚 #preview）',
     app.includes("domfind.scrollTo(find.matches[find.index], t.mode === 'wysiwyg' ? el.wysiwyg : el.preview)"));
   ok('换模式后重算匹配（DOM 整套换了，旧偏移全部作废）',
@@ -778,7 +778,7 @@ ok('语言表：新建类型够多', newDocTypes().length >= 24);
   ok('预览里替换先切回编辑模式（渲染结果写不回正文）',
     app.includes("if (t.mode === 'preview') {") && app.includes("toast(tt('替换需要编辑模式'))"));
   ok('「选区内」只在源码编辑时可勾（DOM 模式没有源码偏移可套）',
-    app.includes("const sel = t.mode === 'edit' ? plain.selectedText : '';"));
+    app.includes("const sel = viewKindOf(t) === 'editor' ? plain.selectedText : '';"));
 
   /* 侧栏刷新：放在「在文件列表中定位」左边，文件页在前台时重扫树 */
   ok('刷新按钮在「在文件列表中定位」左边',
@@ -789,6 +789,32 @@ ok('语言表：新建类型够多', newDocTypes().length >= 24);
   ok('有未保存改动时刷新先问一句',
     app.includes('当前有未保存的修改，重新载入会丢弃它们。继续？'));
   ok('刷新按钮已接线', app.includes('el.sideRefresh.onclick = refreshFromDisk;'));
+}
+
+/* ---------- 非 md 的「预览」= 同一个编辑器锁住输入 ----------
+   用户的原话：除了 md，其他文件的预览只是不能编辑，不要改变显示形态
+   （滚动、行号都得是原来那套）。所以判据是「谁被显示出来」，不是 mode。 */
+{
+  const app = fs.readFileSync(new URL('../src/js/app.js', import.meta.url), 'utf8');
+  ok('非 md 的预览复用编辑器，不换成渲染视图',
+    app.includes("const inlinePreview = mode === 'preview' && kind !== 'md';")
+      && app.includes("const showEditor = mode !== 'preview' || inlinePreview;")
+      && app.includes("const showPreview = !inlinePreview && (split || mode === 'preview');"));
+  ok('只读标记在 load 之前设（load 会按 this.readOnly 重建 state）',
+    /plain\.setReadOnly\(inlinePreview\);[\s\S]{0,900}?plain\.load\(/.test(app));
+  ok('视图形态由 viewKindOf 判：只有 md 的预览算渲染视图',
+    app.includes("function viewKindOf(t = activeTab())")
+      && app.includes("if (t.mode === 'preview' && detectKind(t.name) === 'md') return 'preview';"));
+  ok('大纲跟着视图走：只读预览按行号高亮，不去空的预览容器里找标题',
+    /const view = viewKindOf\(t\);[\s\S]{0,1500}?plain\.lineAtViewportY/.test(app));
+  ok('保存视图状态认只读预览（否则切走再回来跳回顶部）',
+    app.includes("} else if (view === 'editor') {"));
+  ok('同标签同内容不重建编辑器（CM6 的 measure 会把滚动量挤走）',
+    app.includes('if (cameFromOtherTab || prevView !== \'editor\' || plain.value !== t.content) {'));
+  ok('恢复光标/滚动按「编辑器刚换了没有」判，不按 fromActivate',
+    app.includes("if ((cameFromOtherTab || prevView !== 'editor') && showEditor"));
+  ok('双栏只对 Markdown 生效（非 md 单栏，切模式宽度不变）',
+    app.includes("const split = settings.layout === 'split' && kind === 'md';"));
 }
 
 /* ---------- YAML 头（属性区）与标签 ---------- */
