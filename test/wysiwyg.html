@@ -841,6 +841,143 @@ window.__run = () => {
   T.key('ArrowRight', { shiftKey: true });
   eq('Shift+→ 不接管', caretInCode(), true);
 
+  /* 19c7. 「有时候按 → 没反应」：码后面没有能写字的落点，但 DOM 里留了
+     不可见残留。判据必须是「后面没有**可写内容**」，不是「后面没有节点」——
+     尾随空格、Chromium 补的块尾占位 <br>、码里的零宽垫片，都曾让这条出口
+     悄悄失效（1.2.18 用户复报）。 */
+  T.reset('用 `npm i`');
+  {
+    const t = root.querySelector('.w-text');
+    t.appendChild(document.createTextNode(' '));   // markdown 原文的尾随空格
+    caretToCodeEnd(t.querySelector('code'));
+    T.key('ArrowRight');
+    eq('码后只有尾随空格 → 也走得出去', caretInCode(), false);
+    T.type('x');
+    eq('……字接在空格之后，不插到空格前面', T.out().trimEnd(), '用 `npm i` x');
+  }
+
+  T.reset('用 `npm i`');
+  {
+    const t = root.querySelector('.w-text');
+    t.appendChild(document.createElement('br'));   // Chromium 在块尾补的占位
+    caretToCodeEnd(t.querySelector('code'));
+    T.key('ArrowRight');
+    eq('块尾占位 <br> 不算内容', caretInCode(), false);
+    T.type('x');
+    eq('……字仍在码外', T.out(), '用 `npm i`x');
+  }
+
+  T.reset('用 ');
+  {
+    /* 点了行内码按钮还没打字：块尾一个只含零宽空格的空码，光标停在垫片前。
+       旧判据把垫片当「码里还有字」，第一下 → 只跨过它，看起来没反应 */
+    const t = root.querySelector('.w-text');
+    const code = document.createElement('code');
+    code.textContent = '\u200b';
+    t.appendChild(code);
+    root.focus();
+    const r = document.createRange();
+    r.setStart(code.firstChild, 0);
+    r.collapse(true);
+    const s = getSelection();
+    s.removeAllRanges();
+    s.addRange(r);
+    T.key('ArrowRight');
+    eq('码里只剩零宽垫片 → 一次就出去', caretInCode(), false);
+    eq('……空码不落进文件', T.out().includes('`'), false);
+  }
+
+  /* 码里的尾随空格是**看得见**的字符：→ 该在码内挪一格，不许一下跳出去。
+     这条和上面三条是一对——判据只剥零宽垫片，不剥空白 */
+  T.reset('用 `npm i `');
+  {
+    const code = root.querySelector('.w-block code');
+    root.focus();
+    const r = document.createRange();
+    r.setStart(code.firstChild, code.firstChild.nodeValue.length - 1);
+    r.collapse(true);
+    const s = getSelection();
+    s.removeAllRanges();
+    s.addRange(r);
+    T.key('ArrowRight');
+    eq('码内还剩一个空格 → 不接管', caretInCode(), true);
+  }
+
+  /* 列表项 / 引用里的行内码：宿主不是 .w-text 的那种块也要认 */  T.reset('- 用 `npm i`');
+  caretToCodeEnd(root.querySelector('.w-block code'));
+  T.key('ArrowRight');
+  eq('列表项里的行内码末尾也能出去', caretInCode(), false);
+
+  T.reset('> 用 `npm i`');
+  caretToCodeEnd(root.querySelector('.w-block code'));
+  T.key('ArrowRight');
+  eq('引用里的行内码末尾也能出去', caretInCode(), false);
+
+  /* 19c8. 行内码的开关必须幂等：选中一段已经带码的文字再点一次 = 取消，
+     绝不许套出 <code><code> —— 序列化会变成双反引号，再打开就满屏反引号。 */
+  const selectAroundCode = () => {
+    const t = root.querySelector('.w-text');
+    const r = document.createRange();
+    r.setStart(t.firstChild, t.firstChild.nodeValue.length);   // 「用 」之后
+    r.setEnd(t.lastChild, 0);                                  // 「 装」之前
+    const s = getSelection();
+    s.removeAllRanges();
+    s.addRange(r);
+  };
+
+  T.reset('用 `npm i` 装');
+  selectAroundCode();
+  ed.toggleInline('code');
+  eq('选中整段行内码再点一次 → 取消', T.out(), '用 npm i 装');
+  eq('……不留空壳', root.querySelectorAll('.w-text code').length, 0);
+  eq('……不套两层', root.querySelectorAll('code code').length, 0);
+
+  T.reset('用 `npm i` 装');
+  {
+    const t = root.querySelector('.w-text');
+    const r = document.createRange();
+    r.setStart(t.firstChild, 0);
+    r.setEnd(t.lastChild, t.lastChild.nodeValue.length);
+    const s = getSelection();
+    s.removeAllRanges();
+    s.addRange(r);
+    ed.toggleInline('code');
+  }
+  eq('整行再点一次 → 只有一层码', root.querySelectorAll('code code').length, 0);
+  eq('……普通文字也进码', T.out(), '`用 npm i 装`');
+
+  /* 纯文本设码 → 再点一次回纯文本：开关是同一套判据的两个方向 */
+  T.reset('用 npm i 装');
+  {
+    const t = root.querySelector('.w-text');
+    const r = document.createRange();
+    r.setStart(t.firstChild, 2);
+    r.setEnd(t.firstChild, 7);
+    const s = getSelection();
+    s.removeAllRanges();
+    s.addRange(r);
+    ed.toggleInline('code');
+  }
+  eq('整段设码', T.out(), '用 `npm i` 装');
+  selectAroundCode();
+  ed.toggleInline('code');
+  eq('再点一次回到纯文本', T.out(), '用 npm i 装');
+
+  /* 只选中码里的一半：拆成「码 + 纯文本」，不许整块消失或套两层 */
+  T.reset('用 `npm i` 装');
+  {
+    const code = root.querySelector('.w-block code');
+    const r = document.createRange();
+    r.setStart(code.firstChild, 0);
+    r.setEnd(code.firstChild, 3);
+    const s = getSelection();
+    s.removeAllRanges();
+    s.addRange(r);
+    ed.toggleInline('code');
+  }
+  eq('码内选一半再点 → 不套两层', root.querySelectorAll('code code').length, 0);
+  eq('……整段字一个不少', T.out().replace(/`/g, ''), '用 npm i 装');
+
   /* 19c2. 点末块下方空白：光标送回文末。只有末块是「带边界的块」
      （代码 / 公式 / 表格 / 分割线：块内没有可写的尾位）才补一行 ——
      以前无条件 insertEmptyAfter，每点一次空白多一个空行，越点越长 */

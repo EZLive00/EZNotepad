@@ -149,7 +149,13 @@ export function inlineToMd(node, brText = '') {
       case 'EM': case 'I': s += inner.trim() ? `_${inner}_` : inner; break;
       case 'DEL': case 'S': case 'STRIKE': s += inner.trim() ? `~~${inner}~~` : inner; break;
       case 'MARK': s += inner.trim() ? `==${inner}==` : inner; break;
-      case 'CODE': s += n.textContent ? '`' + n.textContent + '`' : ''; break;
+      case 'CODE': {
+        /* 零宽空格是光标垫片，不进文件；只剩垫片的空码整个不输出，
+           否则存回去是 ``` `` ```，再打开就成了一个字面反引号 */
+        const t = n.textContent.replace(/\u200b/g, '');
+        s += t ? '`' + t + '`' : '';
+        break;
+      }
       case 'A': s += inner ? `[${inner}](${n.getAttribute('href') || ''})` : ''; break;
       default: s += inner;
     }
@@ -759,15 +765,19 @@ function rawBlock(el) {
  * 块的序列化指纹：覆盖序列化会读取的全部输入。
  * - dataset：type/indent/num/list/checked/start/lang/callout/calloutTitle/
  *   bqStart/mathInline —— 前缀、标记全从这里来（aligns 在内层 table 上，单取）
- * - textContent：正文文字
- * - 行内标签结构：<code>/<strong>/<em>/<del>/<a>/<img>/<br> 的数量与图片
- *   地址、alt —— **粗** 和 \`码\` 的 textContent 完全相同，只看文字会漏
+ * - 正文文字
+ * - **行内标签的顺序**（图片地址 / alt / 尺寸、链接 href 随身带着）
  * 组装时逐块校验，不符就重算该块 —— 这是增量缓存的唯一正确性依据。
- * 成本：每块一次 querySelectorAll（C++ 子树遍历），整篇相当于一次全文扫描；
- * 纯文本块（段落/标题的常态，万块级文档里占绝大多数）走 childNodes 快路径跳过它。
+ *
+ * ⛔ 别只数标签个数（1.2.18 之前就是这么写的，撞了）：`用 <code>npm i</code> 装`
+ * 与 `<code>用 npm i 装</code>` 的 textContent 和 CODE 计数**完全一样**，
+ * 签名撞了缓存就当它没改 —— 用户点了行内码按钮，DOM 明明变了，存盘还是
+ * 旧的那份，看起来「点了没反应」。同理，改图片尺寸、改链接地址而文字不变，
+ * 也必须能区分，所以属性要进签名。
+ *
+ * 成本：纯文本块（段落 / 标题的常态，万块级文档里占绝大多数）走 childNodes
+ * 快路径；只有含行内标签的块才走一趟树 —— 与原来一次 querySelectorAll 同量级。
  */
-const SIG_TAGS = 'code,strong,em,del,mark,b,i,strike,a,img,br';
-
 function blockSig(el) {
   const ds = el.dataset;
   let s = (ds.type || '') + '|' + (ds.indent || '') + '|' + (ds.num || '') + '|'
@@ -784,14 +794,29 @@ function blockSig(el) {
   let simple = true;
   for (const n of t.childNodes) { if (n.nodeType !== 3) { simple = false; break; } }
   if (simple) return s + '\u0001' + el.textContent;
-  const counts = {};
-  for (const n of t.querySelectorAll(SIG_TAGS)) {
-    const k = n.tagName;
-    counts[k] = (counts[k] || 0) + 1;
-    if (k === 'IMG') s += '|' + (n.getAttribute('data-src') || '') + '#' + (n.getAttribute('alt') || '') + '@' + (n.getAttribute('width') || '');
-  }
-  for (const k in counts) s += '|' + k + counts[k];
-  return s + '\u0001' + el.textContent;
+
+  /* 慢路径：文字与标签按顺序编进同一个串。分隔符用控制字符，
+     正文里不会出现，不会和文字本身混淆。 */
+  let struct = '';
+  const walk = (n) => {
+    const kids = n.childNodes;
+    for (let i = 0; i < kids.length; i++) {
+      const c = kids[i];
+      if (c.nodeType === 3) { struct += c.nodeValue; continue; }
+      if (c.nodeType !== 1) continue;
+      struct += '\u0002' + c.tagName;
+      if (c.tagName === 'IMG') {
+        struct += '#' + (c.getAttribute('data-src') || '') + '#' + (c.getAttribute('alt') || '')
+          + '@' + (c.getAttribute('width') || '') + 'x' + (c.getAttribute('height') || '');
+      } else if (c.tagName === 'A') {
+        struct += '#' + (c.getAttribute('href') || '');
+      }
+      walk(c);
+      struct += '\u0003';
+    }
+  };
+  walk(t);
+  return s + '\u0001' + struct;
 }
 
 /**
@@ -1199,21 +1224,56 @@ function ensurePlaceholder(el) {
 }
 
 /**
- * `node` 之后、同一个父节点里还有没有「有内容的兄弟」。
- * 零宽空格是光标落脚用的垫片（序列化时被剥掉），不算内容 ——
- * 但它是个合法落点，所以调用方仍会把光标停在它里面。
- * 元素兄弟（`<br>`、链接、图片）一律算内容：那些位置浏览器自己有走法，
- * 不归我们接管。
+ * 一段文字里有没有**写得出来的字符**。
+ * 空白、零宽空格垫片、BOM 都不算：它们在 DOM 里占着一个节点，
+ * 但撑不出一个能点的落点，用户看不见也站不上去。
  */
-function hasContentAfter(node) {
+const hasVisibleText = (s) => String(s).replace(/[\s\u200b]/g, '') !== '';
+
+/**
+ * `node` 之后、同一个父节点里还有没有**能写字的内容**。
+ *
+ * 三种东西不算内容，它们正是「按 → 看起来没反应」的来源：
+ *   · 空白文本（markdown 原文里的尾随空格）；
+ *   · 零宽空格垫片（我们自己插的落脚点，序列化时剥掉）；
+ *   · `<br>`（Chromium 在块尾补的占位、`Shift+Enter` 的软换行）。
+ * `<br>` 后面若还有文字，遍历会继续看到那个文本节点 → 仍算有内容，
+ * 光标该落到下一行，交给浏览器。
+ *
+ * 其余元素兄弟（链接、图片、加粗壳……）一律算内容：那些位置浏览器
+ * 自己有走法，不归我们接管。
+ */
+function hasWritableAfter(node) {
   for (let n = node.nextSibling; n; n = n.nextSibling) {
     if (n.nodeType === 3) {
-      if (n.nodeValue.replace(/\u200b/g, '') !== '') return true;
+      if (hasVisibleText(n.nodeValue)) return true;
       continue;
     }
+    if (n.nodeType === 1 && n.tagName === 'BR') continue;
     return true;
   }
   return false;
+}
+
+/**
+ * 片段里**不在 `<code>` 之内**的文字。
+ * 行内码的开关靠它判语义：码外一个正经字都没有 → 这次点击是「取消码」；
+ * 夹着普通文字（哪怕只是码外的空格）→ 整段变码。
+ * 只跳过 CODE 子树，别的行内壳（strong / a / mark）要照常下去收文本，
+ * 否则「**粗** `码`」这种会被当成「码外没字」。
+ */
+function textOutsideCodes(root) {
+  let s = '';
+  const walk = (n) => {
+    for (let i = 0; i < n.childNodes.length; i++) {
+      const c = n.childNodes[i];
+      if (c.nodeType === 3) { s += c.nodeValue; continue; }
+      if (c.nodeType !== 1 || c.tagName === 'CODE') continue;
+      walk(c);
+    }
+  };
+  walk(root);
+  return s;
 }
 
 /* ============================================================
@@ -2690,6 +2750,14 @@ export class WysiwygEditor {
         if (caret0 && el.contains(caret0.startContainer)) caretInBlank = true;
         el.remove();
       });
+      /* 行内码只能一层。粘贴的富文本、旧版本留下的 <code><code>x</code></code>
+         会被序列化成双反引号，再打开就变成「反引号显示在字面上」的错乱。
+         入口（toggleInline）已经收敛，这里兜住所有别的来路。 */
+      t.querySelectorAll('code code').forEach((inner) => {
+        const parent = inner.parentNode;
+        while (inner.firstChild) parent.insertBefore(inner.firstChild, inner);
+        inner.remove();
+      });
       // 相邻同标签合并，避免 **a****b**
       for (const el of [...t.children]) {
         const prev = el.previousElementSibling;
@@ -3331,11 +3399,19 @@ export class WysiwygEditor {
    * 却是代码。这里只做一件事：把光标摆到码**外面**、同一个块里面，末尾垫一个
    * 零宽空格当落脚点（序列化时被剥掉，文档一字不变）。
    *
-   * 判据全读 DOM，不记状态：光标在码里、且从光标到块尾这一路（含套着码的
-   * strong / a / mark）都没有内容。后面还有字、链接、图片时浏览器本来就能走，
-   * 一律不抢——抢了会打乱折行与列对齐。
+   * 判据全读 DOM，不记状态，只看「后面有没有**能写字**的东西」：
+   *   · 光标在码里，且从光标到码尾只剩不可见字符（零宽垫片、空白）；
+   *   · 从码逐层往上到**正文宿主**（段落是 `.w-text`，单元格是 `td/th`），
+   *     每层后面的兄弟都不可写 —— 空白文本、零宽垫片、`<br>` 都跳过。
+   *     后面还有字、链接、图片时浏览器本来就能走，一律不抢（抢了会打乱
+   *     折行与列对齐）。
    *
-   * ⛔ 别扩大到「所有行内元素」：加粗/斜体末尾接字时，浏览器自己就能走，
+   * ⛔ 别用「后面有没有节点」当判据（1.2.18 就是这么写的，用户报「有时候
+   * 没反应」）：markdown 原文里的尾随空格、Chromium 在块尾补的 `<br>`、
+   * 点了行内码按钮还没打字时码里那个零宽空格，都会让这条路悄悄失效：
+   * 能站的位置和能看见的字不是一回事。
+   *
+   * ⛔ 也别扩大到「所有行内元素」：加粗/斜体末尾接字时，浏览器自己就能走，
    * 多拦一下只会让快捷键式的选区行为变得不可预期。用户报的就是行内码。
    */
   exitInlineCodeTail(e) {
@@ -3349,15 +3425,18 @@ export class WysiwygEditor {
     /* 代码块 / 公式块的正文用 .w-code / .w-tex 装着，不是行内码 */
     if (code.closest('.w-code, .w-tex')) return false;
 
-    /* 光标必须停在码**末尾**：码里剩下的部分还有字就交给浏览器（往右走一格） */
+    /* 光标必须停在码**末尾**：码里剩下的部分还有字就交给浏览器（往右走一格）。
+       剩下的只有零宽垫片时同样算「到头」—— 否则在空码里按 → 会先把垫片
+       跨过去，用户看到的是「第一下没反应」。码里的空格是**看得见**的，
+       仍然算内容（浏览器该在码内挪一格）。 */
     const rest = document.createRange();
     try {
       rest.setStart(r.startContainer, r.startOffset);
       rest.setEnd(code, code.childNodes.length);
     } catch { return false; }
-    if (rest.toString() !== '') return false;
+    if (rest.toString().replace(/\u200b/g, '') !== '') return false;
 
-    /* 逐层往上确认「每层之后都没有内容」，直到块的正文宿主为止 ——
+    /* 逐层往上确认「每层之后都没有能写字的内容」，直到块的正文宿主为止 ——
        脚下真正要落的点是宿主内部、最外层那个尾随包装之后。
        表格单元格没有 .w-text，格子本身就是宿主（否则会一路走到 <tr>，
        被旁边那一格拦下来，等于永远不接管）。 */
@@ -3368,18 +3447,30 @@ export class WysiwygEditor {
     let tail = code;
     let el = code.parentElement;
     while (el && el !== host) {
-      if (hasContentAfter(tail)) return false;
+      if (hasWritableAfter(tail)) return false;
       tail = el;
       el = el.parentElement;
     }
-    if (el !== host || hasContentAfter(tail)) return false;
+    if (el !== host || hasWritableAfter(tail)) return false;
 
-    /* 落地：复用已有的零宽空格垫片，没有再补一个。光标放在垫片**之后**，
-       下一个字符就是正文，不再是码。 */
+    /* 落地：光标放在同一行、码的**后面**。
+       落点必须是一个**非空白**的锚点 —— 零宽空格垫片。不能把光标摆到
+       尾随空格上：Chromium 认为行尾空白会被折叠，`insertText` 会把插入点
+       规范化到最近的可见文字，于是字又写回了码里（用户看到的就是
+       「光标显示在码外，打字却还进码」）。垫片序列化时剥掉，文件不变。
+       尾部已有的垫片复用它，不重复插；尾随空白跨过去，让字接在空格之后。 */
     let land = null;
-    for (let n = tail.nextSibling; n; n = n.nextSibling) if (n.nodeType === 3) land = n;
-    if (!land) { land = document.createTextNode(ZWSP); tail.after(land); }
-    else if (!land.nodeValue) land.nodeValue = ZWSP;
+    let at = tail;
+    for (let n = tail.nextSibling; n; n = n.nextSibling) {
+      if (n.nodeType === 3) {
+        if (n.nodeValue === ZWSP) { land = n; at = n; continue; }
+        if (hasVisibleText(n.nodeValue)) break;
+        at = n;              // 尾随空白：跨过去，别把字插在空格前面
+        continue;
+      }
+      break;                 // <br> / 其它元素：就停在这儿，不跨行
+    }
+    if (!land) { land = document.createTextNode(ZWSP); at.after(land); }
     e.preventDefault();
     placeCaret(land, land.nodeValue.length);
     return true;
@@ -4149,36 +4240,102 @@ export class WysiwygEditor {
     }
 
     const range = sel.getRangeAt(0);
-    const startEl = range.commonAncestorContainer.nodeType === 1
-      ? range.commonAncestorContainer
-      : range.commonAncestorContainer.parentElement;
-    const code = startEl && startEl.closest('code');
+    const elOf = (n) => (n && n.nodeType === 1 ? n : (n ? n.parentElement : null));
+    const codeAt = (node) => {
+      const el = elOf(node);
+      const c = el && el.closest ? el.closest('code') : null;
+      /* 代码块 / 公式块的正文用 .w-code / .w-tex 装着，不是行内码 */
+      return c && this.root.contains(c) && !c.closest('.w-code, .w-tex') ? c : null;
+    };
 
-    if (code) {
-      // 取消行内码：把 code 拆回文本
-      const text = document.createTextNode(code.textContent);
-      const host = code.parentElement;
-      code.replaceWith(text);
+    /* 没有选区：已经在码里就是「取消」，否则插一个占位码接着输入 */
+    if (range.collapsed) {
+      const code = codeAt(range.startContainer);
+      if (!code) {
+        const el = document.createElement('code');
+        el.textContent = ZWSP;
+        range.insertNode(el);
+        placeCaret(el.firstChild, 1);
+      } else {
+        /* 取消整个码，光标留在原内容末尾 —— 拆完再找原位置是找不到的 */
+        const text = document.createTextNode(code.textContent);
+        code.replaceWith(text);
+        placeCaret(text, text.nodeValue.length);
+      }
       this.hCoalesce = false;
       this.flush();
       return;
     }
 
-    if (range.collapsed) {
+    /* 有选区：跨块 / 跨格都不碰 —— extractContents 会把块结构一起搬走 */
+    const host = this.currentCell() || this.currentBlock();
+    if (!host) return;
+    const from = elOf(range.startContainer);
+    const to = elOf(range.endContainer);
+    if (!from || !to || !host.contains(from) || !host.contains(to)) return;
+
+    /* 统一切法：把选中的内容**取出来**，先剥掉里面所有的 `<code>` 外壳，
+       再决定「取消」还是「重新包一层」。这样不管怎么选都不会套出
+       `<code><code>`：整段本来是码 → 取消；夹着普通文字 → 整段变码。
+
+       ⛔ 别用 `commonAncestorContainer.closest('code')` 判「已经在码里」：
+       拖选时起点常停在前一个文本节点的末尾，选区明明只盖着码，判断却是
+       null —— 于是又包一层，用户看到的就是「两层行内码、样式错乱」。
+
+       ⛔ 也别让选区端点停在码里：`Range.insertNode` 插在 startContainer
+       处，端点落在码内时新元素会插进 `<code>` 里面，照样是两层。边界先
+       抬到这个码的外面 —— 顺带把「只选中码里一半」变成「整个码」，
+       语义正好是取消。 */
+    const lift = (node, atStart) => {
+      const c = codeAt(node);
+      if (!c) return null;
+      const parent = c.parentNode;
+      let i = 0;
+      for (let n = parent.firstChild; n && n !== c; n = n.nextSibling) i++;
+      return { node: parent, offset: i + (atStart ? 0 : 1) };
+    };
+    const ls = lift(range.startContainer, true);
+    const le = lift(range.endContainer, false);
+    if (ls) range.setStart(ls.node, ls.offset);
+    if (le) range.setEnd(le.node, le.offset);
+
+    const frag = range.extractContents();
+    const codes = [...frag.querySelectorAll('code')];
+    /* 码外一个正经字都没有 = 这次点击的语义是「取消码」 */
+    const unwrap = codes.length > 0 && !hasVisibleText(textOutsideCodes(frag));
+
+    /* 残留的嵌套（粘贴的富文本、旧版本存下的）一并拆平；被切开的码
+       （选中码里一部分）也在这里变成纯文本 */
+    for (let c = frag.querySelector('code'); c; c = frag.querySelector('code')) {
+      const parent = c.parentNode;
+      while (c.firstChild) parent.insertBefore(c.firstChild, c);
+      c.remove();
+    }
+
+    if (unwrap) {
+      const last = frag.lastChild;
+      range.insertNode(frag);
+      /* 光标落到原内容末尾：取消后多半是要接着改这段字 */
+      if (last) placeCaret(last, last.nodeType === 1 ? last.childNodes.length : last.nodeValue.length);
+    } else if (hasVisibleText(frag.textContent)) {
       const el = document.createElement('code');
-      el.textContent = ZWSP;
-      range.insertNode(el);
-      placeCaret(el.firstChild, 1);
-    } else {
-      const el = document.createElement('code');
-      el.appendChild(range.extractContents());
+      el.appendChild(frag);
       range.insertNode(el);
       const after = document.createRange();
-      after.setStartAfter(el);
-      after.collapse(true);
+      after.selectNodeContents(el);
       sel.removeAllRanges();
       sel.addRange(after);
+    } else {
+      /* 选中的全是空白：原样放回，别造出一个只有空格的行内码 */
+      range.insertNode(frag);
     }
+
+    /* extract 之后原地会留下空壳（选区正好盖住整个码时，原 code 被掏空）：
+       它的背景和内边距还在，视觉上就是一小块莫名的色块 */
+    for (const c of host.querySelectorAll('code')) {
+      if (!hasVisibleText(c.textContent)) c.remove();
+    }
+
     this.hCoalesce = false;
     this.flush();
   }

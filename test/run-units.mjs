@@ -573,14 +573,52 @@ ok('语言表：新建类型够多', newDocTypes().length >= 24);
   ok('只认行内码：代码块 / 公式块正文用 .w-code / .w-tex 排除在外',
     body.includes("from.closest('code')") && body.includes("code.closest('.w-code, .w-tex')")
       && !body.includes("closest('strong')"));
-  ok('判据：光标在码末尾 + 码之后没内容（逐层往上到正文宿主）',
-    body.includes('rest.toString() !== ') && body.includes('hasContentAfter(tail)')
+  ok('判据：光标在码末尾 + 码之后没有**可写内容**（逐层往上到正文宿主）',
+    body.includes("rest.toString().replace(/\\u200b/g, '') !== ''")
+      && body.includes('hasWritableAfter(tail)')
       && body.includes("code.closest('td, th') || textEl(block)"));
-  ok('落地用零宽空格垫片，且不 flush / 不改文档',
+  ok('不可见残留不算内容：尾随空格 / 块尾 <br> / 零宽垫片',
+    wys.includes("if (n.nodeType === 1 && n.tagName === 'BR') continue;")
+      && wys.includes('if (hasVisibleText(n.nodeValue)) return true;'));
+  ok('落地用零宽空格垫片，不拿尾随空格当锚点（Chromium 会把插入点规范回码内）',
     body.includes('document.createTextNode(ZWSP)') && body.includes('placeCaret(land, land.nodeValue.length)')
+      && body.includes('n.nodeValue === ZWSP')
       && !body.includes('this.flush(') && !body.includes('insertEmptyAfter'));
   ok('modifier 组合与扩选区一律不接管',
     body.includes('e.shiftKey || e.ctrlKey || e.metaKey || e.altKey'));
+}
+
+/* ---------- 行内码的开关（源码级不变量 107） ----------
+   选中一行已经带码的文字再点「行内代码」，旧实现看 commonAncestor 是不是
+   code：拖选时起点常停在前一个文本节点上，判断为「不在码里」→ 再包一层，
+   变成 <code><code>…，序列化成双反引号，再打开满屏反引号。
+   现在的切法是「取出来 → 剥壳 → 决定重包还是取消」，并且端点落在码里时
+   先把边界抬到码外（否则 Range.insertNode 会把新元素插进 <code> 里面）。 */
+{
+  const wys = fs.readFileSync('src/js/wysiwyg.js', 'utf8');
+  const at = wys.indexOf('  toggleInline(kind) {');
+  const body = wys.slice(at, wys.indexOf('  /** 高亮：<mark>'));
+
+  ok('行内码开关：先剥 code 外壳再决定重包 / 取消',
+    at > 0 && body.length > 0 && body.includes('extractContents()')
+      && body.includes("frag.querySelectorAll('code')")
+      && body.includes('textOutsideCodes(frag)'));
+  ok('不用 commonAncestorContainer 判「已在码里」（拖选起点会在码外）',
+    !body.includes('commonAncestorContainer.nodeType'));
+  ok('选区端点落在码里时先把边界抬到码外',
+    body.includes('range.setStart(ls.node, ls.offset)') && body.includes('range.setEnd(le.node, le.offset)'));
+  ok('空码不进文件（只剩零宽垫片的 <code> 输出空串）',
+    wys.includes("n.textContent.replace(/\\u200b/g, '')"));
+}
+
+/* ---------- 增量序列化的块签名（源码级不变量 108） ----------
+   只数标签个数会撞：`用 <code>npm i</code> 装` 与 `<code>用 npm i 装</code>`
+   的 textContent 和 CODE 计数一模一样，缓存当它没改 → 点了按钮 DOM 变了、
+   存盘还是旧的（用户看到「点了没反应」）。签名必须带**标签顺序**。 */
+{
+  const wys = fs.readFileSync('src/js/wysiwyg.js', 'utf8');
+  ok('块签名编进行内标签的顺序，而不只是个数',
+    wys.includes("struct += '\\u0002' + c.tagName") && !wys.includes('SIG_TAGS'));
 }
 
 /* ---------- 品牌标 / 应用图标：只有一份几何，别再各写各的 ----------

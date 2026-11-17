@@ -1090,6 +1090,79 @@ try {
       ok('插入的字落在码与后文之间', /^用 `npm i` ?x装$/.test(md), JSON.stringify(md));
     }
 
+    /* ---- I2c. 不可见残留与开关幂等（1.2.19 用户复报）----
+       「有时候 → 不生效」：码后面留了尾随空格 / 块尾占位 <br> / 码里的零宽垫片，
+       判据只看「有没有节点」就会漏。还有一个更隐蔽的：光标摆在行尾空格上时，
+       Chromium 会把 insertText 的插入点规范化到最近的可见文字（码内），
+       所以落点必须是零宽垫片。
+       「再次设置行内代码出现两层」：拖选起点常停在码外的文本节点上，
+       旧判据看 commonAncestor 就以为「不在码里」，于是又包一层。 */
+    await ev(`window.__snp.newTab('ic3.md', ${JSON.stringify('用 `npm i`')}, null)`);
+    await sleep(400);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(500);
+    await ev(`(() => {
+      const t = document.querySelector('.wysiwyg .w-text');
+      t.appendChild(document.createTextNode(' '));
+      const code = t.querySelector('code');
+      const r = document.createRange(); r.selectNodeContents(code); r.collapse(false);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      document.querySelector('.wysiwyg').focus();
+      return 1;
+    })()`);
+    await right();
+    ok('真机：码后只有尾随空格时 → 也送出码', (await caretInCode()) === false, '仍停在码内');
+    await send('Input.insertText', { text: 'x' });
+    await sleep(420);
+    {
+      const md = (await ev(`window.__snp.getEditorText()`)).trimEnd();
+      ok('真机：字接在空格之后，没被 Chromium 规范回码里', md === '用 `npm i` x', JSON.stringify(md));
+    }
+
+    /* 拖选整段行内码（起点落在码前的文本节点上）再点「行内代码」= 取消 */
+    const selectAroundCode = `(() => {
+      const t = document.querySelector('.wysiwyg .w-text');
+      const r = document.createRange();
+      r.setStart(t.firstChild, t.firstChild.nodeValue.length);
+      r.setEnd(t.lastChild, 0);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      document.querySelector('.wysiwyg').focus();
+      return 1;
+    })()`;
+    await ev(`window.__snp.newTab('ic4.md', ${JSON.stringify('用 `npm i` 装')}, null)`);
+    await sleep(400);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(500);
+    await ev(selectAroundCode);
+    await ev(`window.__snp.commands.inlineCode()`);
+    await sleep(420);
+    ok('真机：选中整段行内码再点一次 → 取消',
+      (await ev(`window.__snp.getEditorText()`)) === '用 npm i 装',
+      JSON.stringify(await ev(`window.__snp.getEditorText()`)));
+    ok('真机：没有两层行内码',
+      (await ev(`document.querySelectorAll('.wysiwyg code code').length`)) === 0);
+
+    /* 选区整段落在码内（拖选起点在码里）：同样按「取消」处理，不许往码里插 */
+    await ev(`window.__snp.newTab('ic5.md', ${JSON.stringify('用 `npm i` 装')}, null)`);
+    await sleep(400);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(500);
+    await ev(`(() => {
+      const code = document.querySelector('.wysiwyg code');
+      const r = document.createRange();
+      r.setStart(code.firstChild, 0);
+      r.setEnd(code.firstChild, code.firstChild.nodeValue.length);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      document.querySelector('.wysiwyg').focus();
+      return 1;
+    })()`);
+    await ev(`window.__snp.commands.inlineCode()`);
+    await sleep(420);
+    ok('真机：码内整段选中再点 → 取消',
+      (await ev(`window.__snp.getEditorText()`)) === '用 npm i 装',
+      JSON.stringify(await ev(`window.__snp.getEditorText()`)));
+    ok('真机：码内选中不套两层',
+      (await ev(`document.querySelectorAll('.wysiwyg code code').length`)) === 0);
     /* ---- I3. 出块提示线与 Ctrl+Enter 强制插入 ----
        方向键出块零文档改动是对的，但状态一直隐形：光标还在原位、或落进下一块，
        界面上没任何东西说「按回车会在这儿开一行」。这里在真 WebView2 里验
