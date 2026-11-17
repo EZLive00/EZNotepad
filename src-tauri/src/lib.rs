@@ -1891,10 +1891,33 @@ pub fn run() {
             }
             Ok(())
         })
-        .build(tauri::generate_context!())
+        .build(app_context())
         .expect("error while building tauri application");
 
     app.run(|_, _| {});
+}
+
+/// 建 Context 顺手把探针要的浏览器参数接上去。
+///
+/// 为什么不在前端/测试那边直接设 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`：
+/// 只要窗口配置里写了 `additionalBrowserArgs`（本仓库为了 `--disable-gpu-sandbox`
+/// 必须写），Windows 上那个环境变量就**整条被忽略** —— WebView2 只在「调用方没给
+/// AdditionalBrowserArguments」时才读环境变量。表现是探针连不上 CDP 端口、30s 后
+/// 报「端口仍未就绪」，而应用本身跑得好好的（实测 WebView2 157.0.4341.46）。
+///
+/// 所以改在这里：`EZNOTEPAD_BROWSER_ARGS` 里的东西追加到窗口参数后面。测试进程
+/// 设它，正式启动没人设 → 发布包里绝不会带一个开着的调试端口。
+fn app_context() -> tauri::Context {
+    let mut ctx = tauri::generate_context!();
+    let extra = std::env::var("EZNOTEPAD_BROWSER_ARGS").unwrap_or_default();
+    let extra = extra.trim();
+    if !extra.is_empty() {
+        for w in ctx.config_mut().app.windows.iter_mut() {
+            let base = w.additional_browser_args.take().unwrap_or_default();
+            w.additional_browser_args = Some(format!("{base} {extra}").trim().to_string());
+        }
+    }
+    ctx
 }
 
 /* ---------------- 后端单测 ----------------
