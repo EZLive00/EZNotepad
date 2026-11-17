@@ -746,6 +746,101 @@ window.__run = () => {
     eq('visibleEnd 报出不可见尾行', v.invisibleNL, true);
   }
 
+  /* 19c6. 行内码末尾的 →：码是块里最后一个行内元素时，后面没有文本节点，
+     浏览器没有「再往右一格」的落点（→ 变死键，接着打字会写进码里）。
+     → 应该把光标摆到码外面、同一个块里面。合成事件不触发浏览器默认移动，
+     所以「没接管」= 光标仍在码内。 */
+  const caretInCode = () => {
+    const s = getSelection();
+    if (!s.rangeCount) return null;
+    const n = s.anchorNode;
+    const el = n && (n.nodeType === 1 ? n : n.parentElement);
+    return !!(el && el.closest && el.closest('code'));
+  };
+  const caretCell = () => {
+    const s = getSelection();
+    const n = s.anchorNode;
+    const el = n && (n.nodeType === 1 ? n : n.parentElement);
+    return el && el.closest ? el.closest('td,th') : null;
+  };
+  /** 把光标放到块内第一个 <code> 的末尾（模拟点/End 落在码尾） */
+  const caretToCodeEnd = (code) => {
+    root.focus();
+    const t = code.lastChild;
+    const r = document.createRange();
+    r.setStart(t, t.nodeValue.length);
+    r.collapse(true);
+    const s = getSelection();
+    s.removeAllRanges();
+    s.addRange(r);
+  };
+
+  T.reset('用 `npm i`');
+  caretToCodeEnd(root.querySelector('.w-block code'));
+  eq('前置：光标确实落在码里', caretInCode(), true);
+  T.key('ArrowRight');
+  eq('码在块尾时 → 把光标送出码', caretInCode(), false);
+  eq('送出码不改文档', T.out(), '用 `npm i`');
+  eq('送出后光标仍在同一块', ed.caretState().blockIndex, 0);
+  T.type('x');
+  eq('送出后打的字是正文，不再写进码里', T.out(), '用 `npm i`x');
+
+  /* 码后面还有正文：浏览器本来就能往右走，不许抢 */
+  T.reset('用 `npm i` 装');
+  caretToCodeEnd(root.querySelector('.w-block code'));
+  T.key('ArrowRight');
+  eq('码后面还有正文时 → 不接管', caretInCode(), true);
+  eq('不接管时文档不变', T.out(), '用 `npm i` 装');
+
+  /* 码里还有字没走完：→ 该在码内挪一格 */
+  T.reset('用 `npm i`');
+  {
+    const code = root.querySelector('.w-block code');
+    root.focus();
+    const r = document.createRange();
+    r.setStart(code.firstChild, 2);
+    r.collapse(true);
+    const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+  }
+  T.key('ArrowRight');
+  eq('码中间按 → 不接管', caretInCode(), true);
+
+  /* 表格格里的行内码：走出去要停在**格内**，别一路跳到 tableExit */
+  T.reset('| `a` | b |\n| --- | --- |\n| 1 | 2 |');
+  {
+    const code = root.querySelector('.w-table code');
+    const cell = code.closest('td,th');
+    caretToCodeEnd(code);
+    T.key('ArrowRight');
+    eq('格内行内码末尾 → 停在码外', caretInCode(), false);
+    eq('走出了码、但还在这一格里', caretCell() === cell, true);
+    eq('表格内容不变', T.out(), '| `a` | b |\n| --- | --- |\n| 1 | 2 |');
+  }
+
+  /* 只认行内码：加粗末尾交给浏览器（范围守卫，别哪天扩成全行内元素） */
+  T.reset('说明 **粗**');
+  {
+    root.focus();
+    const strong = root.querySelector('.w-block strong');
+    const r = document.createRange();
+    r.setStart(strong.firstChild, strong.textContent.length);
+    r.collapse(true);
+    const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+  }
+  T.key('ArrowRight');
+  {
+    const s = getSelection();
+    const n = s.anchorNode;
+    const el = n && (n.nodeType === 1 ? n : n.parentElement);
+    eq('加粗末尾 → 不接管', !!(el && el.closest('strong')), true);
+  }
+
+  /* Shift+→ 是扩选区，不许被这一步吃掉 */
+  T.reset('用 `npm i`');
+  caretToCodeEnd(root.querySelector('.w-block code'));
+  T.key('ArrowRight', { shiftKey: true });
+  eq('Shift+→ 不接管', caretInCode(), true);
+
   /* 19c2. 点末块下方空白：光标送回文末。只有末块是「带边界的块」
      （代码 / 公式 / 表格 / 分割线：块内没有可写的尾位）才补一行 ——
      以前无条件 insertEmptyAfter，每点一次空白多一个空行，越点越长 */

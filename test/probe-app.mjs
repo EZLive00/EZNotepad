@@ -1039,6 +1039,57 @@ try {
     await right();
     ok('代码块后面已经空着一行，→ 不改文档', (await bl()).length === 2, JSON.stringify(await bl()));
 
+    /* ---- I2b. 行内码末尾的 →（用户报的「走不出行内代码」）----
+       行内码是块里最后一个行内元素时，它后面没有文本节点：浏览器没有「再往右
+       一格」的落点，→ 成死键，接着打字会继续写进码里。→ 必须把光标摆到码**外面**
+       （同一个块里），且一字不改文档。 */
+    const IC = '用 `npm i` 装';
+    const caretCodeEnd = () => ev(`(() => {
+      const code = document.querySelector('.wysiwyg code');
+      if (!code) return 0;
+      const r = document.createRange(); r.selectNodeContents(code); r.collapse(false);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      document.querySelector('.wysiwyg').focus();
+      return 1;
+    })()`);
+    const caretInCode = () => ev(`(() => {
+      const n = getSelection().anchorNode;
+      const el = n && (n.nodeType === 1 ? n : n.parentElement);
+      return !!(el && el.closest && el.closest('code'));
+    })()`);
+
+    await ev(`window.__snp.newTab('ic.md', ${JSON.stringify('用 `npm i`')}, null)`);
+    await sleep(400);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(500);
+    await caretCodeEnd();
+    ok('前置：光标落在行内码里', await caretInCode(), true);
+    await right();
+    ok('行内码在块尾时 → 把光标送出码', (await caretInCode()) === false, '仍停在码内');
+    ok('送出码不改 Markdown', (await ev(`window.__snp.getEditorText()`)) === '用 `npm i`', JSON.stringify(await ev(`window.__snp.getEditorText()`)));
+    await send('Input.insertText', { text: 'x' });
+    await sleep(420);
+    ok('送出后打的字是正文，不再写进码里',
+      (await ev(`window.__snp.getEditorText()`)) === '用 `npm i`x', JSON.stringify(await ev(`window.__snp.getEditorText()`)));
+
+    /* 码后面本来就有正文：浏览器自己能往右走，结果同样必须是「码外、块内」 */
+    await ev(`window.__snp.newTab('ic2.md', ${JSON.stringify(IC)}, null)`);
+    await sleep(400);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(500);
+    await caretCodeEnd();
+    await right();
+    ok('码后面有正文时 → 也走到码外', (await caretInCode()) === false, '仍停在码内');
+    ok('走码外不改 Markdown', (await ev(`window.__snp.getEditorText()`)) === IC, JSON.stringify(await ev(`window.__snp.getEditorText()`)));
+    await send('Input.insertText', { text: 'x' });
+    await sleep(420);
+    {
+      /* 浏览器往右走**一格**：光标跨过那个空格，x 落在「空格之后、后文之前」。
+         重点是它落在反引号外面（早先这里会写进码里变成 `npm ix`） */
+      const md = await ev(`window.__snp.getEditorText()`);
+      ok('插入的字落在码与后文之间', /^用 `npm i` ?x装$/.test(md), JSON.stringify(md));
+    }
+
     /* ---- I3. 出块提示线与 Ctrl+Enter 强制插入 ----
        方向键出块零文档改动是对的，但状态一直隐形：光标还在原位、或落进下一块，
        界面上没任何东西说「按回车会在这儿开一行」。这里在真 WebView2 里验

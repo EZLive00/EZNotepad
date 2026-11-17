@@ -554,6 +554,35 @@ ok('语言表：新建类型够多', newDocTypes().length >= 24);
     ["'插入空行'", "'按 Enter 在此插入一行'"].every((k) => dictSrc.includes(k) && dict.includes(k)));
 }
 
+/* ---------- 行内码末尾的 →（源码级不变量 106） ----------
+   `<code>` 顶到块尾时后面没有文本节点，浏览器就没有「再往右一格」的落点：
+   → 成死键，接着打字继续写进码里（用户报的「走不出行内代码」）。三条一起钉：
+   ① 判据排在 handleArrow 的单元格分支**之前**（晚一步就一路走到 tableExit，
+   把人送出整张表）；② 只认 code，代码块/公式块正文排除；③ 落地只用零宽空格
+   垫脚，方向键不许改文档。 */
+{
+  const wys = fs.readFileSync('src/js/wysiwyg.js', 'utf8');
+  const at = wys.indexOf('  handleArrow(e, block, cell) {');
+  const callAt = wys.indexOf('this.exitInlineCodeTail(e)', at);
+  const cellAt = wys.indexOf('if (cell) {', at);
+  const body = wys.slice(wys.indexOf('  exitInlineCodeTail(e) {'),
+    wys.indexOf('  /**\n   * 带边界的块的方向键出口'));
+
+  ok('行内码的 → 出口排在 handleArrow 的单元格分支之前',
+    at > 0 && callAt > at && cellAt > callAt && body.length > 0);
+  ok('只认行内码：代码块 / 公式块正文用 .w-code / .w-tex 排除在外',
+    body.includes("from.closest('code')") && body.includes("code.closest('.w-code, .w-tex')")
+      && !body.includes("closest('strong')"));
+  ok('判据：光标在码末尾 + 码之后没内容（逐层往上到正文宿主）',
+    body.includes('rest.toString() !== ') && body.includes('hasContentAfter(tail)')
+      && body.includes("code.closest('td, th') || textEl(block)"));
+  ok('落地用零宽空格垫片，且不 flush / 不改文档',
+    body.includes('document.createTextNode(ZWSP)') && body.includes('placeCaret(land, land.nodeValue.length)')
+      && !body.includes('this.flush(') && !body.includes('insertEmptyAfter'));
+  ok('modifier 组合与扩选区一律不接管',
+    body.includes('e.shiftKey || e.ctrlKey || e.metaKey || e.altKey'));
+}
+
 /* ---------- 品牌标 / 应用图标：只有一份几何，别再各写各的 ----------
    曾经标题栏 #i-brand（纯色橙底、白纸小、留白多）和 app-icon.svg（渐变橙底、
    白纸大、圆角小）是两份手写几何；改色时只重建了后者，于是任务栏和窗口

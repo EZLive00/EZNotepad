@@ -1198,6 +1198,24 @@ function ensurePlaceholder(el) {
   if (isEmptyText(el) && !el.querySelector('img')) el.innerHTML = '<br>';
 }
 
+/**
+ * `node` 之后、同一个父节点里还有没有「有内容的兄弟」。
+ * 零宽空格是光标落脚用的垫片（序列化时被剥掉），不算内容 ——
+ * 但它是个合法落点，所以调用方仍会把光标停在它里面。
+ * 元素兄弟（`<br>`、链接、图片）一律算内容：那些位置浏览器自己有走法，
+ * 不归我们接管。
+ */
+function hasContentAfter(node) {
+  for (let n = node.nextSibling; n; n = n.nextSibling) {
+    if (n.nodeType === 3) {
+      if (n.nodeValue.replace(/\u200b/g, '') !== '') return true;
+      continue;
+    }
+    return true;
+  }
+  return false;
+}
+
 /* ============================================================
  * 编辑器
  * ============================================================ */
@@ -3305,6 +3323,69 @@ export class WysiwygEditor {
   }
 
   /**
+   * → 从**行内码末尾**走出来。
+   *
+   * 行内码是块里最后一个行内元素时（「用 `npm i` 装」写成「用 `npm i`」这种结尾），
+   * 它后面没有文本节点，浏览器就没有「再往右一格」的落点：→ 成了死键，而用户
+   * 这时接着打字，字符会继续写进码里（变成 `npm ixyz`）—— 想改的是正文，改的
+   * 却是代码。这里只做一件事：把光标摆到码**外面**、同一个块里面，末尾垫一个
+   * 零宽空格当落脚点（序列化时被剥掉，文档一字不变）。
+   *
+   * 判据全读 DOM，不记状态：光标在码里、且从光标到块尾这一路（含套着码的
+   * strong / a / mark）都没有内容。后面还有字、链接、图片时浏览器本来就能走，
+   * 一律不抢——抢了会打乱折行与列对齐。
+   *
+   * ⛔ 别扩大到「所有行内元素」：加粗/斜体末尾接字时，浏览器自己就能走，
+   * 多拦一下只会让快捷键式的选区行为变得不可预期。用户报的就是行内码。
+   */
+  exitInlineCodeTail(e) {
+    if (e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return false;
+    const sel = window.getSelection();
+    if (!sel.rangeCount || !sel.isCollapsed) return false;
+    const r = sel.getRangeAt(0);
+    const from = r.startContainer.nodeType === 1 ? r.startContainer : r.startContainer.parentElement;
+    const code = from && from.closest ? from.closest('code') : null;
+    if (!code || !this.root.contains(code)) return false;
+    /* 代码块 / 公式块的正文用 .w-code / .w-tex 装着，不是行内码 */
+    if (code.closest('.w-code, .w-tex')) return false;
+
+    /* 光标必须停在码**末尾**：码里剩下的部分还有字就交给浏览器（往右走一格） */
+    const rest = document.createRange();
+    try {
+      rest.setStart(r.startContainer, r.startOffset);
+      rest.setEnd(code, code.childNodes.length);
+    } catch { return false; }
+    if (rest.toString() !== '') return false;
+
+    /* 逐层往上确认「每层之后都没有内容」，直到块的正文宿主为止 ——
+       脚下真正要落的点是宿主内部、最外层那个尾随包装之后。
+       表格单元格没有 .w-text，格子本身就是宿主（否则会一路走到 <tr>，
+       被旁边那一格拦下来，等于永远不接管）。 */
+    const block = code.closest('.w-block');
+    if (!block) return false;
+    const host = code.closest('td, th') || textEl(block);
+    if (!host.contains(code)) return false;
+    let tail = code;
+    let el = code.parentElement;
+    while (el && el !== host) {
+      if (hasContentAfter(tail)) return false;
+      tail = el;
+      el = el.parentElement;
+    }
+    if (el !== host || hasContentAfter(tail)) return false;
+
+    /* 落地：复用已有的零宽空格垫片，没有再补一个。光标放在垫片**之后**，
+       下一个字符就是正文，不再是码。 */
+    let land = null;
+    for (let n = tail.nextSibling; n; n = n.nextSibling) if (n.nodeType === 3) land = n;
+    if (!land) { land = document.createTextNode(ZWSP); tail.after(land); }
+    else if (!land.nodeValue) land.nodeValue = ZWSP;
+    e.preventDefault();
+    placeCaret(land, land.nodeValue.length);
+    return true;
+  }
+
+  /**
    * 带边界的块的方向键出口：光标已经在**块内最后一个可编辑位置**时，
    * ↓ 与 → 把光标送到块外（表格最后一格、代码块 / 公式块末行、引用与提示块末行、
    * 列表最后一项）。没有这条路的话，这些块只能靠鼠标点击才能离开。
@@ -3315,6 +3396,10 @@ export class WysiwygEditor {
    * 用户只是移动光标而已。
    */
   handleArrow(e, block, cell) {
+    /* → 在行内码末尾先走出去（见 exitInlineCodeTail）。必须排在单元格分支
+       之前：表格格里的行内码同样是「后面没内容就走不掉」，否则 → 会一路
+       走到 tableExit，直接把人送出整张表，跳过了「格内、码外」这个位置。 */
+    if (e.key === 'ArrowRight' && this.exitInlineCodeTail(e)) return;
     const exit = e.key === 'ArrowDown' || e.key === 'ArrowRight';
     if (cell) {
       /* ↑↓ 在格之间是「同一列上下走」。不接管的话浏览器按**阅读顺序**跳
