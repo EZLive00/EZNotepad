@@ -792,6 +792,56 @@ function focusNewTab(t) {
   }
 }
 
+/* ---------------- 切走再回来，光标要还在 ----------------
+   WebView2 在窗口失焦时把 DOM 焦点交还给 body，回来时**不会**自动还给它原来的
+   元素：不做点什么的话，切去别的软件看一眼再回来，敲字就进了空气（用户报的
+   「丢失本程序的光标」就是这个）。所以失焦时记一份光标位置，回来时只要焦点
+   确实掉在空处就还回去。
+
+   ⛔ 别无条件抢焦点：用户可能切回来就是为了继续在查找框、重命名框里打字。
+   只有 activeElement 是 body / html（没人接住）时才动，对话框开着时一律不动。 */
+let caretMemo = null;
+/* 只有「窗口真的失过焦」才值得还焦点。不加这个标记的话，任何一次 focus 事件
+   —— 页面内部把焦点挪到某个临时输入框、输入框用完被移除、焦点掉回 body ——
+   都会顺手把光标抢回正文，用户点开的东西就自己失焦了。 */
+let caretLostByBlur = false;
+
+function rememberCaret() {
+  caretLostByBlur = true;
+  const t = activeTab();
+  if (!t) { caretMemo = null; return; }
+  const v = viewKindOf(t);
+  caretMemo = {
+    tabId: t.id,
+    /* wys 的选区在 DOM Selection 里，切窗口后可能被清掉，所以自己存一份；
+       CM6 的选择区在 state 里，失焦不会丢，记下来只是免得 focus() 之后被重排挤走 */
+    wys: v === 'wys' ? wys.caretState() : null,
+    cm: v === 'editor' ? plain.selection : null,
+  };
+}
+
+function restoreEditorFocus() {
+  if (!caretLostByBlur) return;      // 没失过焦就别抢
+  caretLostByBlur = false;
+  const t = activeTab();
+  if (!t) return;
+  const ae = document.activeElement;
+  const idle = !ae || ae === document.body || ae === document.documentElement;
+  if (!idle) return;
+  const dlg = document.getElementById('dlgOverlay');
+  if (dlg && !dlg.classList.contains('hidden')) return;
+  const v = viewKindOf(t);
+  const memo = caretMemo && caretMemo.tabId === t.id ? caretMemo : null;
+  caretMemo = null;
+  if (v === 'wys') {
+    wys.root.focus();
+    if (memo && memo.wys) wys.restoreCaret(memo.wys);
+  } else if (v === 'editor') {
+    plain.focus();
+    if (memo && memo.cm) plain.setSelection(memo.cm.from, memo.cm.to);
+  }
+}
+
 function activate(id) {
   persistCurrentView();
   setActive(id);
@@ -2095,12 +2145,32 @@ const extChecking = new Set();
 async function checkExternalChange(tab) {
   const t = tab || activeTab();
   if (!t || !t.path || t.mtime == null || extChecking.has(t.id)) return;
+  /* 速记整条不参与这个比对。它没有「保存」这个动作，磁盘上那份就是它的镜像 ——
+     每一笔改动都是我们自己写下去的，拿 mtime 一比必然是「磁盘上更新了」，
+     等于自己提醒自己（用户报的就是这个：切去别的软件再回来，速记弹「文件已在
+     磁盘上更新」）。而且那条分支会走 reloadTab → 重建编辑器，光标和滚动都回不到
+     原处，用户看到的第二个症状就是「丢光标」。 */
+  if (t.quickNote) return;
   extChecking.add(t.id);
   t.extChanged = false;
   try {
     const m = await be.fileMtime(t.path);
     if (m == null || m === t.mtime) return;
     if (!isDirty(t)) {
+      /* 时间戳变了 ≠ 内容变了。我们自己刚写过（保存后再采样 mtime 的窗口期里，
+         事件/焦点检查可能先到一步）、两个标签指着同一个文件、或者别的程序把一个
+         字都没改的文件重新落了一遍盘 —— 这几种情况重载都是白折腾：内容一样，
+         提示是噪声，重建编辑器还会把光标挪走。
+         判断标准就一条：磁盘上的内容和我们手里的**逐字相同**，那就不是「更新」，
+         只把基准时间换掉。 */
+      const r = await be.readText(t.path).catch(() => null);
+      if (r && toLF(r.content) === t.content) {
+        t.mtime = m;
+        t.encoding = r.encoding;
+        t.eol = r.eol;
+        t.bom = r.bom;
+        return;
+      }
       await reloadTab(t, m);
       toast(tt('文件已在磁盘上更新，已重新载入'));
       return;
@@ -2499,7 +2569,9 @@ async function saveAllQuiet(list) {
         : t.content.replace(/\r\n?/g, '\n');
       await be.saveText({ path: t.path, content, encoding: t.encoding, bom: t.bom });
       t.savedContent = t.content;
-      t.mtime = cur;
+      /* 基准时间要取**写完之后**的。写之前采到的那个 cur 已经是旧的了，拿它当基准
+         等于每次批量保存都埋一个「磁盘变了」的假信号，下次切窗口回来就弹窗自问自答。 */
+      t.mtime = await be.fileMtime(t.path).catch(() => cur);
     } catch { /* 留给草稿 */ }
   }
   renderTabs();
@@ -4865,7 +4937,7 @@ function bindEvents() {
 
   /* 窗口失焦时让标题与窗口按钮变淡（Win11 原生标题栏就是这个行为） */
   const setBlur = (on) => document.body.classList.toggle('win-blur', on);
-  window.addEventListener('blur', () => setBlur(true));
+  window.addEventListener('blur', () => { setBlur(true); rememberCaret(); });
   window.addEventListener('focus', () => { setBlur(false); syncMaxState(); });
   document.addEventListener('visibilitychange', () => setBlur(document.hidden));
 
@@ -5577,7 +5649,11 @@ async function boot() {
     if (document.visibilityState === 'hidden' && !discardOnQuit) { persistCurrentView(); saveDraft(); }
   });
   /* 回到窗口时看一眼文件有没有被别的程序改过（延迟一点点，避开切换动画期间的 IO 抖动） */
-  window.addEventListener('focus', () => setTimeout(checkExternalChange, 250));
+  window.addEventListener('focus', () => setTimeout(() => {
+    /* 先把光标还给编辑区，再谈文件有没有变 —— 两件事都要在切回来这一下做完 */
+    restoreEditorFocus();
+    checkExternalChange();
+  }, 250));
 
   /* 文件变化监听：后端推过来的是「命中名单的绝对路径」。
      拿不到事件源也不影响任何编辑功能，所以静默失败即可。 */

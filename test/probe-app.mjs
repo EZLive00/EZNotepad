@@ -2566,6 +2566,54 @@ try {
     await ev(`window.__snp.historyProbe.clear(${JSON.stringify(cpPath)})`);
   }
 
+  /* ---- 自己写的不算「外部改动」----
+     用户在速记上报的那个 bug 的通用形态：文件内容一个字没变，只是 mtime 动了
+     （自己刚写完、别的程序原样重存一遍、两个标签指着同一个文件都算）。以前这种
+     会 reloadTab + toast「文件已在磁盘上更新」，顺带把光标和滚动挪走。
+     所以这里两条都要：内容一样 → 换个基准时间，一声不响；内容真变了 → 照旧提示。 */
+  {
+    const dir = path.join(os.tmpdir(), 'eznotepad-probe', 'ext-mtime');
+    fs.mkdirSync(dir, { recursive: true });
+    const f = path.join(dir, 'same.txt');
+    fs.writeFileSync(f, 'line1\nline2\n', 'utf8');
+    await ev(`window.__snp.openPath(${JSON.stringify(f)})`);
+    await sleep(600);
+    const m0 = await ev(`window.__snp.getActiveTab().mtime`);
+    ok('探针文件打开时记下了 mtime', typeof m0 === 'number', String(m0));
+
+    const toastsNow = () => ev(`JSON.stringify([...document.querySelectorAll('#toasts .toast')].map(n => n.textContent))`);
+    const hasDiskToast = async () => String(await toastsNow()).includes('文件已在磁盘上更新');
+
+    /* 1) 原样重写：内容逐字相同，mtime 让它新 5 秒 */
+    fs.writeFileSync(f, 'line1\nline2\n', 'utf8');
+    const future = Date.now() / 1000 + 5;
+    fs.utimesSync(f, future, future);
+    await ev(`window.dispatchEvent(new Event('focus'))`);
+    await sleep(1000);
+    ok('内容没变、只是 mtime 变了：不提示「文件已在磁盘上更新」', !(await hasDiskToast()), await toastsNow());
+    const m1 = await ev(`window.__snp.getActiveTab().mtime`);
+    ok('新时间戳被静默采纳（不然下次切窗口还要再判一遍）', m1 !== m0 && typeof m1 === 'number', `${m0} → ${m1}`);
+    ok('内容没被动过', (await ev(`window.__snp.getActiveTab().content`)) === 'line1\nline2\n');
+
+    /* 2) 真改了内容：该提示还得提示，别把这条能力一起修没了 */
+    fs.writeFileSync(f, 'line1\nline2\nline3\n', 'utf8');
+    const future2 = Date.now() / 1000 + 10;
+    fs.utimesSync(f, future2, future2);
+    await ev(`window.dispatchEvent(new Event('focus'))`);
+    await sleep(1200);
+    ok('内容真的变了：照旧提示已重新载入', await hasDiskToast(), await toastsNow());
+    ok('磁盘上的新内容进了编辑器',
+      (await ev(`window.__snp.getActiveTab().content`)) === 'line1\nline2\nline3\n');
+
+    /* 收尾：关掉这个标签（它是干净的，不会弹框） */
+    await ev(`(() => {
+      const t = [...document.querySelectorAll('.tab[data-id]')]
+        .find(x => (x.title || '').endsWith('same.txt'));
+      if (t) t.querySelector('.tab-close').click();
+    })()`);
+    await sleep(400);
+  }
+
   /* ---- 钉住（ding）----
      放在最后：它要用「关闭其他」把别的标签一次扫掉，前面那些用例还要用它们。
      真机这层只验两件离线验不到的：钉子真的画出来了（图标来自 index.html 的

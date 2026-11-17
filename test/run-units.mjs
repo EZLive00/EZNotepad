@@ -790,6 +790,25 @@ ok('语言表：新建类型够多', newDocTypes().length >= 24);
       && app.includes('await tree.search(q)') && app.includes('await reloadTab(t, m)'));
   ok('有未保存改动时刷新先问一句',
     app.includes('当前有未保存的修改，重新载入会丢弃它们。继续？'));
+
+  /* 自己写的不算「外部改动」：内容逐字相同就只换基准时间，不重载、不提示。
+     这条是用户在速记上报的那个 bug 的总闸 —— 速记每一笔都是自己写的，
+     以前切窗口回来就弹「文件已在磁盘上更新」，还顺带把光标挪走。 */
+  ok('速记整条不参与外部改动比对（自己写的不能提醒自己）',
+    /if \(!t \|\| !t\.path \|\| t\.mtime == null[\s\S]{0,600}?if \(t\.quickNote\) return;/.test(app));
+  ok('时间戳变了但内容逐字相同 → 静默采纳新基准，不重载不提示',
+    /const r = await be\.readText\(t\.path\)[\s\S]{0,220}?if \(r && toLF\(r\.content\) === t\.content\) \{[\s\S]{0,180}?t\.mtime = m;/
+      .test(app));
+  ok('批量保存取「写完之后」的 mtime（拿写之前的当基准会埋一个假信号）',
+    app.includes('t.mtime = await be.fileMtime(t.path).catch(() => cur);'));
+  ok('切走记光标、回来还回去（WebView2 回焦点只到 body）',
+    app.includes('window.addEventListener(\'blur\', () => { setBlur(true); rememberCaret(); });')
+      && /window\.addEventListener\('focus', \(\) => setTimeout\(\(\) => \{[\s\S]{0,220}?restoreEditorFocus\(\);/.test(app));
+  ok('只还「窗口失焦」丢掉的那次焦点（页面内部挪焦点不许抢回来）',
+    app.includes('let caretLostByBlur = false;')
+      && /function restoreEditorFocus\(\) \{\n  if \(!caretLostByBlur\) return;/.test(app));
+  ok('只在焦点掉在空处时才抢，对话框开着不抢',
+    /const idle = !ae \|\| ae === document\.body \|\| ae === document\.documentElement;[\s\S]{0,200}?dlg\.classList\.contains\('hidden'\)/.test(app));
   ok('刷新按钮已接线', app.includes('el.sideRefresh.onclick = refreshFromDisk;'));
 }
 
@@ -1021,6 +1040,9 @@ eq('没有标签给 null', tabSeed(null, false), null);
   ok('新窗口的 label 必须进 capabilities（否则窗口 API 静默失败）',
     /"tearoff-\*"/.test(fs.readFileSync('src-tauri/capabilities/default.json', 'utf8')));
   ok('文件监听按窗口取并集，别让后调的顶掉先调的', /by_window/.test(rust));
+  ok('探针的调试端口走 EZNOTEPAD_BROWSER_ARGS（WebView2 会忽略那个环境变量）',
+    rust.includes('EZNOTEPAD_BROWSER_ARGS') && /fn app_context\(\)/.test(rust)
+      && fs.readFileSync(new URL('../test/lib/appctl.mjs', import.meta.url), 'utf8').includes('EZNOTEPAD_BROWSER_ARGS'));
 }
 
 /* ---------- 钉住（ding）：关闭键让位、批量关闭绕开 ----------

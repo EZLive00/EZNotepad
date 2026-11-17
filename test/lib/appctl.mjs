@@ -3,11 +3,13 @@
 //
 // 以前开调试端口要临时改两处（tauri.conf.json 的 additionalBrowserArgs
 // 和 lib.rs::spawn_compare_window），测完再撤掉重打 —— 一轮就是两次全量重编。
-// WebView2 认 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`，而且是进程级的：
-// 主窗口和随后打开的对比窗口都会带上，所以改成启动时注入，零改动零重编。
+// 现在改成启动时注入 `EZNOTEPAD_BROWSER_ARGS`，由 lib.rs::app_context 追加到
+// 窗口的 additionalBrowserArgs 后面：零改动、零重编，发布包里也不会带调试端口。
 //
-// 注意：环境变量会覆盖窗口级参数，`tauri.conf.json` 里那串必须原样带上，
-// 漏掉 `--disable-gpu-sandbox` 就会重新踩到 WebView2 沙箱崩溃。
+// ⚠️ 不能用 WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS：窗口配置里一旦写了
+// additionalBrowserArgs（本仓库为 --disable-gpu-sandbox 必须写），WebView2
+// 就整条忽略那个环境变量（实测 157.0.4341.46）。表现是应用能起、CDP 端口
+// 永远不开，探针 30s 后报「端口仍未就绪」—— 看起来像应用起不来，其实是参数丢了。
 // ============================================================
 import fs from 'node:fs';
 import os from 'node:os';
@@ -171,7 +173,11 @@ export async function ensureApp(port = Number(process.env.CDP_PORT || 9333), { t
     env: {
       ...process.env,
       WEBVIEW2_USER_DATA_FOLDER: PROBE_PROFILE,
-      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `${CONF_ARGS} --remote-debugging-port=${port}`,
+      /* ⛔ 不要用 WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS：窗口配置里既然写了
+         additionalBrowserArgs（为 --disable-gpu-sandbox 必须写），WebView2 就
+         整条忽略那个环境变量，调试端口永远开不起来（表现为「端口仍未就绪」）。
+         应用启动时读 EZNOTEPAD_BROWSER_ARGS 追加到窗口参数后面，见 lib.rs::app_context。 */
+      EZNOTEPAD_BROWSER_ARGS: `${CONF_ARGS} --remote-debugging-port=${port}`,
       EZNOTEPAD_QUICKNOTE: PROBE_QUICKNOTE,
     },
   });

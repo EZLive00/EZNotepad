@@ -146,6 +146,37 @@ const afterSave = await c.ev(`({
 })`);
 ok('Ctrl+S 不弹保存框', afterSave.hidden === true, JSON.stringify(afterSave));
 
+/* ---------- 3b. 切去别的软件再回来 ----------
+   用户报的：改完内容切到别的程序，回来时速记弹「文件已在磁盘上更新」（自己提醒
+   自己），光标也没了。速记的每一笔都是我们自己写的，磁盘上那份是它的镜像，这条
+   比对对它整条不成立；而切窗口丢焦点是 WebView2 的行为，回来要自己还回去。 */
+await c.ev(`window.dispatchEvent(new Event('blur')); document.activeElement && document.activeElement.blur && document.activeElement.blur();`);
+await sleep(400);
+await c.ev(`window.dispatchEvent(new Event('focus'))`);
+await sleep(1000);
+
+const back = await c.ev(`(() => {
+  const ae = document.activeElement;
+  const toasts = [...document.querySelectorAll('#toasts .toast')].map((n) => n.textContent);
+  return JSON.stringify({
+    active: ae ? ae.tagName + '.' + String(ae.className || '').slice(0, 24) : null,
+    toasts,
+  });
+})()`);
+const backState = JSON.parse(back);
+ok('切走再回来，焦点回到编辑区（不是掉在 body 上）',
+  /cm-content|w-block|wysiwyg|contenteditable/i.test(String(backState.active)), back);
+ok('速记不会提示「文件已在磁盘上更新」',
+  !backState.toasts.some((x) => String(x).includes('文件已在磁盘上更新')), JSON.stringify(backState.toasts));
+
+/* 回来以后接着敲，字要落在末尾：焦点没还回去的话这里就丢字 */
+const beforeTail = (await editorText()).slice(-8);
+await type('BACK');
+await sleep(900);
+ok('回来以后敲的字接在末尾（光标没丢）',
+  (await editorText()).includes('BACK') && disk().includes('BACK'),
+  JSON.stringify({ beforeTail, tail: disk().slice(-12) }));
+
 /* ---------- 4. 关标签前最后几个字也要落地 ---------- */
 await type('ZZZ');
 /* 不等 350ms 防抖，立刻关 —— closeTab 里会先 flush */
@@ -323,6 +354,42 @@ ok('Ctrl+Shift+M 从任何标签打开速记', hot.quick === true && hot.path ==
 
 const recent = await c.ev(`JSON.parse(localStorage.getItem('snp.recent') || '[]')`);
 ok('速记不进「最近打开」', Array.isArray(recent) && !recent.includes(file), JSON.stringify(recent));
+
+/* ---------- 12. 所见即所得下同样要「回来还能接着写」 ----------
+   放在最后：切模式会重排整篇正文，前面那些「关标签前补写」「重新打开读回」的
+   用例要是跨过一次模式切换，验的就不是那件事了。 */
+await c.ev('window.__snp.openQuickNote()');
+await sleep(500);
+await c.ev('window.__snp.commands.modeWysiwyg()');
+await sleep(600);
+await c.ev(`(() => {
+  const ed = window.__snp.editor;
+  const blocks = [...ed.root.children].filter((b) => b.textContent.trim());
+  const last = blocks[blocks.length - 1] || ed.root.lastElementChild;
+  if (last) ed.placeCaretEnd(last);
+  return blocks.length;
+})()`);
+await sleep(300);
+await c.ev(`window.dispatchEvent(new Event('blur')); document.activeElement && document.activeElement.blur && document.activeElement.blur();`);
+await sleep(400);
+await c.ev(`window.dispatchEvent(new Event('focus'))`);
+await sleep(1000);
+const wysBack = await c.ev(`(() => {
+  const ae = document.activeElement;
+  return JSON.stringify({
+    tag: ae ? ae.tagName + '.' + String(ae.className || '').slice(0, 20) : null,
+    editable: !!(ae && ae.isContentEditable),
+    toasts: [...document.querySelectorAll('#toasts .toast')].map((n) => n.textContent),
+  });
+})()`);
+const wb = JSON.parse(wysBack);
+ok('所见即所得下切回来，焦点回到编辑区（contenteditable）', wb.editable === true, wysBack);
+ok('所见即所得下同样不提示「文件已在磁盘上更新」',
+  !wb.toasts.some((x) => String(x).includes('文件已在磁盘上更新')), JSON.stringify(wb.toasts));
+await type('WYSBACK');
+await sleep(1000);
+ok('所见即所得下切回来敲的字进了正文并落盘',
+  (await editorText()).includes('WYSBACK') && disk().includes('WYSBACK'), JSON.stringify(disk().slice(-20)));
 
 /* 收尾：把标签关掉，别把状态留给后面的探针 */
 await c.ev(`(() => {
