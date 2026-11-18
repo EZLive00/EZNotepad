@@ -89,6 +89,24 @@ try {
     await ev('window.__snp.commands.find()');
     ok('Ctrl+F 不收起已展开的替换行', !(await cls('#findReplaceRow')).includes('hidden'));
 
+    // ---- 1.1 宽度 ----
+    // 2026-11-18：查找框从 168 加长到 336（用户：太短了）。锁三件事：
+    // 真的变宽、两个输入框同宽同左沿、整条不溢出 —— 溢出时右侧按钮会被推出
+    // 面板（点不到），而 flex 会先把「替换」压成一列字，两种都不报错，只能量。
+    const geo = await ev(`(() => {
+      const r = (s) => document.querySelector(s).getBoundingClientRect();
+      const bar = document.querySelector('#findbar');
+      return {
+        find: Math.round(r('#findInput').width), rep: Math.round(r('#replaceInput').width),
+        lf: Math.round(r('#findInput').left), lr: Math.round(r('#replaceInput').left),
+        over: bar.scrollWidth - bar.clientWidth,
+        wrap: [...document.querySelectorAll('#findReplaceRow .fb')].some((b) => b.getBoundingClientRect().height > 30),
+      };
+    })()`);
+    ok('查找框加长到 336（原 168 的两倍）', geo.find >= 320, JSON.stringify(geo));
+    ok('替换框与查找框同宽、同左沿', geo.rep === geo.find && geo.lf === geo.lr, JSON.stringify(geo));
+    ok('查找条不溢出、替换按钮不折成竖排', geo.over <= 0 && geo.wrap === false, JSON.stringify(geo));
+
     // ---- 1.5 焦点 ----
     // 打开后焦点必须在查找框里；否则键盘还在编辑器，打字直接进正文。
     const afOpen = await ev(`document.activeElement.id`);

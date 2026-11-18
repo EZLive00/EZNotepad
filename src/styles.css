@@ -1210,15 +1210,23 @@ input[type="search"] { cursor: var(--cur-text), text; }
 
 .findbar.expanded .fb-arrow .ico { transform: rotate(90deg); }
 
-/* 输入框：单行起步，插了换行自己长高（最多四行，再高就内部滚动） */
+/* 输入框：单行起步，插了换行自己长高（最多四行，再高就内部滚动）。
+   宽度按 336 起（原 168 的两倍）—— 查找的常常是一整句，168 只露十来个字。
+   但不写死：查找条是右贴边的浮层，编辑器会被大纲栏 / 双栏挤窄（最小窗口
+   620、大纲 220 起，正文只剩 ~395），硬 336 会顶出面板。所以给目标宽度 +
+   `flex: 0 1 auto`，窄面板里只有它自己让位（下限 120）。
+   别改成 `flex-basis: 336px`：.findbar 是收缩适应宽度（shrink-to-fit），
+   basis 不参与它的 max-content 计算 —— 整条只有 472 宽，输入框反而缩到 149。 */
 .fb-field {
-  position: relative; display: flex; align-items: center; flex: none;
+  position: relative; display: flex; align-items: center;
+  width: 336px; flex: 0 1 auto; min-width: 120px;
   border: var(--bw) solid var(--line-strong); border-radius: var(--r-1);
   background: var(--bg);
 }
 .fb-field:focus-within { border-color: var(--accent); }
+/* 撑满这一格：宽度归 .fb-field 管，textarea 只管长高（宽度写死就撑不满） */
 .fb-field textarea {
-  width: 168px; height: 26px; padding: 3px 21px 3px 8px;
+  flex: 1 1 0; min-width: 0; height: 26px; padding: 3px 21px 3px 8px;
   border: none; outline: none; background: transparent; color: var(--fg);
   font-family: inherit; font-size: var(--fs-1); line-height: 20px;
   resize: none; overflow-x: auto; overflow-y: hidden; white-space: pre; display: block;
@@ -1250,11 +1258,14 @@ input[type="search"] { cursor: var(--cur-text), text; }
 .fb-toggle input:disabled + span { opacity: .42; cursor: default; }
 .fb-toggle input:focus-visible + span { outline: var(--ring); outline-offset: 2px; }
 
-.find-count { font-size: var(--fs-1); color: var(--fg-faint); min-width: 42px; text-align: center; line-height: 26px; font-variant-numeric: tabular-nums; }
+.find-count { font-size: var(--fs-1); color: var(--fg-faint); min-width: 42px; text-align: center; line-height: 26px; font-variant-numeric: tabular-nums; flex: none; }
+/* 按钮与方格一律不参与压缩：拿不到宽度时 flex 会把「替换」压成一列字，
+   而该让位的只有输入框（它有自己的下限）。 */
 .fb {
   height: 26px; min-width: 26px; padding: 0 7px; border-radius: var(--r-1);
   border: var(--bw) solid var(--line); background: var(--bg-chip); color: var(--fg-soft);
   display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+  flex: none; white-space: nowrap;
 }
 .fb .ico { width: 14px; height: 14px; }
 .fb.icon-only { padding: 0; width: 26px; }
