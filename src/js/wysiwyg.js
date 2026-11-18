@@ -116,9 +116,48 @@ export function inlineHtml(src) {
 }
 
 /** DOM -> 行内 Markdown。这是「不丢样式」的关键：逐个节点还原标记 */
+/** 这个节点会写成行内码吗（只剩垫片的空码整个不输出） */
+function emitsCode(n) {
+  return !!n && n.nodeType === 1 && n.tagName === 'CODE'
+    && n.textContent.replace(/\u200b/g, '') !== '';
+}
+
+/** 后面那个**真正有内容**的兄弟是不是行内码（中间可能夹着只剩垫片的文本节点） */
+function codeFollows(kids, i) {
+  for (let j = i + 1; j < kids.length; j++) {
+    const n = kids[j];
+    if (n.nodeType === 3) {
+      if ((n.nodeValue || '').replace(/[\s\u200b\u00a0]/g, '') === '') continue;
+      return false;
+    }
+    return emitsCode(n);
+  }
+  return false;
+}
+
+/**
+ * 字面反引号紧贴行内码时转义成 `\``。
+ *
+ * 不转义的话，``` `a` ``` 后面那个字面反引号会和闭合串粘成两连串：开串是 1、
+ * 后来这串是 2，CommonMark 认不成一对，**整段就不是码了** —— 重开一次样式静默消失
+ * （反方向同理：` ``a` ```）。解析端 splitCodeSpans 把 `\`` 读回字面反引号。
+ */
+function escTicks(v, lead, tail) {
+  let a = 0;
+  while (a < v.length && v.charCodeAt(a) === 96) a++;
+  if (a === v.length) return (lead || tail) ? v.replace(/`/g, '\\`') : v;
+  let b = v.length;
+  while (b > 0 && v.charCodeAt(b - 1) === 96) b--;
+  const head = lead ? v.slice(0, a).replace(/`/g, '\\`') : v.slice(0, a);
+  const end = tail ? v.slice(b).replace(/`/g, '\\`') : v.slice(b);
+  return head + v.slice(a, b) + end;
+}
+
 export function inlineToMd(node, brText = '') {
   let s = '';
   const kids = node.childNodes;
+  /* 上一个输出的是不是行内码：字面反引号贴着它就得转义 */
+  let afterCode = false;
   /* 用下标循环而不是 forEach：这个函数在每次击键时都要把整篇文档跑一遍，
      闭包分配和迭代器开销在大文档里是实打实的。字符串拼接前先判断再替换，
      因为绝大多数文本节点既没有 nbsp 也没有零宽空格。 */
@@ -126,13 +165,24 @@ export function inlineToMd(node, brText = '') {
     const n = kids[i];
     if (n.nodeType === 3) {
       const v = n.nodeValue;
-      s += (v.indexOf('\u00a0') < 0 && v.indexOf('\u200b') < 0)
+      const t = (v.indexOf('\u00a0') < 0 && v.indexOf('\u200b') < 0)
         ? v
         : v.replace(/\u00a0/g, ' ').replace(/\u200b/g, '');
+      if (!t) continue;              // 只有垫片：不算内容，别把 afterCode 清掉
+      /* 快路径：既不挨着码、首尾也不是反引号（绝大多数文本节点）→ 原样出去，
+         连邻居都不用看。inlineToMd 每次击键都要跑全文，这一下省得值。 */
+      if (!afterCode && t.charCodeAt(0) !== 96 && t.charCodeAt(t.length - 1) !== 96) {
+        s += t;
+        continue;
+      }
+      const nextCode = codeFollows(kids, i);
+      s += (afterCode || nextCode) ? escTicks(t, afterCode, nextCode) : t;
+      afterCode = false;
       continue;
     }
     if (n.nodeType !== 1) continue;
     const tag = n.tagName;             // 直接比大写，省掉每次 toLowerCase
+    afterCode = false;
     if (tag === 'BR') { s += brText; continue; }   // brText: 表格单元格里换行写 <br>，正文里丢弃
     // 图片：写回 Markdown 时用 data-src 里的原始地址（相对路径），
     // 不能用 src —— 那是展开成 asset:// 之后的显示用地址，存进去就搬不动了
@@ -157,7 +207,7 @@ export function inlineToMd(node, brText = '') {
         /* 零宽空格是光标垫片，不进文件；只剩垫片的空码整个不输出，
            否则存回去是空的 ``，再打开就成了一个字面反引号 */
         const t = n.textContent.replace(/\u200b/g, '');
-        if (t) s += codeSpanMd(t);
+        if (t) { s += codeSpanMd(t); afterCode = true; }
         break;
       }
       case 'A': s += inner ? `[${inner}](${n.getAttribute('href') || ''})` : ''; break;
@@ -2778,10 +2828,13 @@ export class WysiwygEditor {
         inner.remove();
       });
       // 相邻同标签合并，避免 **a****b**
+      /* code 也要合并：两个行内码紧挨着在 Markdown 里无法表达 —— 闭合串和下一个
+         开串会粘成更长的串，读回来变成「一条码、内容里多两个反引号」。
+         视觉上两条相邻的码本来就挨着，合并成一条看不出差别。 */
       for (const el of [...t.children]) {
         const prev = el.previousElementSibling;
         if (!prev || prev.nodeName !== el.nodeName) continue;
-        if (!['STRONG', 'EM', 'DEL', 'B', 'I', 'STRIKE'].includes(el.nodeName)) continue;
+        if (!['STRONG', 'EM', 'DEL', 'B', 'I', 'STRIKE', 'CODE'].includes(el.nodeName)) continue;
         while (el.firstChild) prev.appendChild(el.firstChild);
         el.remove();
       }
@@ -3051,6 +3104,24 @@ export class WysiwygEditor {
     r.setEnd(node, end);
     r.deleteContents();
     r.insertNode(el);
+
+    /* 紧挨着的行内码不能再起一条：Markdown 表达不了（闭合串会和下一个开串
+       粘成更长的串，读回来变成「一条码、内容里多两个反引号」）。并进已有的
+       那一条 —— 视觉上两条相邻的码本来就挨着，看不出差别。 */
+    if (el.tagName === 'CODE') {
+      const prev = el.previousElementSibling;
+      if (prev && prev.nodeName === 'CODE') {
+        const frag = document.createDocumentFragment();
+        while (prev.firstChild) frag.appendChild(prev.firstChild);
+        el.insertBefore(frag, el.firstChild);
+        prev.remove();
+      }
+      const next = el.nextElementSibling;
+      if (next && next.nodeName === 'CODE') {
+        while (next.firstChild) el.appendChild(next.firstChild);
+        next.remove();
+      }
+    }
 
     const tail = document.createTextNode(ZWSP);
     el.after(tail);

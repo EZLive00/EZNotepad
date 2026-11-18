@@ -9,7 +9,7 @@
 // ============================================================
 import fs from 'node:fs';
 import { freeUntitledName, moveById } from '../src/js/taborder.js';
-import { slugify, headingSlugs, inline, renderMarkdown, codeSpanMd } from '../src/js/markdown.js';
+import { slugify, headingSlugs, inline, renderMarkdown, codeSpanMd, splitCodeSpans } from '../src/js/markdown.js';
 import { extractOutline } from '../src/js/preview.js';
 import { diffLines, buildSideBySide, diffStats } from '../src/js/diff.js';
 import { blockItems, arrange, rangeText } from '../src/js/difflist.js';
@@ -85,6 +85,16 @@ eq('空码不生成 <code>', inline('``'), '``');
 for (const t of ['npm `i`', '`a', 'a`', 'a``b', ' x ', 'npm i']) {
   eq(`序列化与解析对称：${JSON.stringify(t)}`, inline(codeSpanMd(t)), `<code>${t}</code>`);
 }
+
+/* 字面反引号紧贴行内码：闭合串会和它粘成更长的串（开串 1、后面这串 2），
+   CommonMark 认不成一对 —— 整段就不是码了。序列化端因此要写 `\``。 */
+eq('码后面贴一个字面反引号 → 转义写出', inline('`a`\\`'), '<code>a</code>`');
+eq('码前面贴一个字面反引号 → 同理', inline('\\``a`'), '`<code>a</code>');
+eq('码后面贴两个 → 两个都转义', inline('`a`\\`\\`b'), '<code>a</code>``b');
+eq('……切成「码 + 文本」两段',
+  JSON.stringify(splitCodeSpans('`a`\\`')), JSON.stringify([{ code: true, text: 'a' }, { code: false, text: '`' }]));
+eq('普通文本里的转义反引号读回字面反引号', inline('a\\`b'), 'a`b');
+eq('不挨着行内码的两个反引号仍是纯文本', JSON.stringify(splitCodeSpans('a``b')), JSON.stringify([{ code: false, text: 'a``b' }]));
 
 /* ---------- 整篇渲染：标题 id 用 slug、块级公式跨越成 div ---------- */
 const html = renderMarkdown('# 快速开始\n\n行内 $x_1$ 结束\n\n$$\na + b\n$$\n');
@@ -649,7 +659,18 @@ ok('语言表：新建类型够多', newDocTypes().length >= 24);
     wys.includes('splitCodeSpans(String(src))') && wys.includes('codeSpanMd(t)')
       && !wys.includes('function extractCodeSpans'));
   ok('空码不进文件：只剩垫片的 <code> 不输出',
-    wys.includes("n.textContent.replace(/\\u200b/g, '')") && wys.includes('if (t) s += codeSpanMd(t);'));
+    wys.includes("n.textContent.replace(/\\u200b/g, '')") && wys.includes('if (t) { s += codeSpanMd(t); afterCode = true; }'));
+
+  /* 字面反引号贴着行内码：闭合串会和它粘成更长的串，整段就不再是码（实测丢过
+     样式）。序列化端转义成 `\``，解析端读回字面反引号 —— 两头缺一不可。 */
+  ok('字面反引号贴着行内码时转义写出',
+    wys.includes('function escTicks(') && wys.includes('escTicks(t, afterCode, nextCode)')
+      && wys.includes('function codeFollows('));
+  ok('解析端把 `\\`` 读成字面反引号、不当定界符',
+    md.includes('const escaped = (j) =>') && md.includes('tickFrom(')
+      && md.includes("replace(/\\\\`/g, '`')"));
+  ok('相邻两条行内码并成一条（Markdown 表达不了两条紧挨的）',
+    wys.includes("prev.nodeName === 'CODE'") && wys.includes("'STRIKE', 'CODE'"));
 
   /* 跨光标闭合：先把收尾符打在段末、再回头补开头那个，光标前只有一个开启符，
      闭合符还在光标后面。放行条件必须苛刻，否则会把后面一大截吞成码。 */

@@ -1054,6 +1054,43 @@ window.__run = () => {
   typeReal('`');
   eq('选中行内码打反引号 → 取消', T.out(), '用 npm i 装');
 
+  /* 19c11. 字面反引号紧贴行内码：存盘时必须转义成 `\``。
+     不转义的话闭合串和它粘成更长的串（开串 1、后面这串 2），CommonMark 认不成
+     一对 —— 重开一次整段就不是码了，样式静默消失。反方向（码前面贴一个）同理。 */
+  T.reset('');
+  typeReal('`'); typeReal('a'); typeReal('`'); typeReal('`');
+  eq('码后面多打一个反引号 → 存盘转义', T.out(), '`a`\\`');
+  T.reset('`a`\\`');
+  eq('……重开还是行内码', root.querySelectorAll('.w-text code').length, 1);
+  eq('……码里就一个 a', root.querySelector('.w-text code').textContent, 'a');
+  eq('……再存一次一个字节都不变', T.out(), '`a`\\`');
+
+  T.reset('');
+  typeReal('`'); typeReal('`'); typeReal('a'); typeReal('`');
+  eq('码前面贴一个字面反引号 → 也转义', T.out(), '\\``a`');
+  T.reset('\\``a`');
+  eq('……重开还是行内码', root.querySelectorAll('.w-text code').length, 1);
+
+  T.reset('');
+  typeReal('`'); typeReal('a'); typeReal('`'); typeReal('`'); typeReal('`'); typeReal('b');
+  eq('码后面贴两个反引号再接字 → 一串都转义', T.out(), '`a`\\`\\`b');
+  T.reset('`a`\\`\\`b');
+  eq('……重开还是行内码', root.querySelectorAll('.w-text code').length, 1);
+
+  T.reset('a``b');
+  eq('不挨着行内码的字面反引号 → 原样，不加转义', T.out(), 'a``b');
+
+  /* 两个行内码紧挨着（中间一个字符都没有）在 Markdown 里无法表达：闭合串会和
+     下一个开串粘成更长的串，读回来变成「一条码、内容里多两个反引号」。
+     normalize 的相邻合并要把 code 也带上。 */
+  T.reset('');
+  typeReal('`'); typeReal('a'); typeReal('`'); typeReal('`'); typeReal('b'); typeReal('`');
+  eq('紧挨着打第二条码 → 合并成一条', T.out(), '`ab`');
+  eq('……DOM 里只有一层 code', root.querySelectorAll('.w-text code').length, 1);
+  T.reset('`ab`');
+  eq('……重开还是同一条码', root.querySelectorAll('.w-text code').length, 1);
+  eq('……内容还是 ab', root.querySelector('.w-text code').textContent, 'ab');
+
   /* 19c2. 点末块下方空白：光标送回文末。只有末块是「带边界的块」
      （代码 / 公式 / 表格 / 分割线：块内没有可写的尾位）才补一行 ——
      以前无条件 insertEmptyAfter，每点一次空白多一个空行，越点越长 */
@@ -2354,6 +2391,7 @@ window.__run = () => {
       clearSelMatch();
     }
   }
+
 
   return R;
 };

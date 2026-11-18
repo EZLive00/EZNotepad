@@ -73,6 +73,10 @@ export function slugify(text) {
  * 内容首尾同时是空白、又不全空白时剥掉一层（规范如此）。序列化端 codeSpanMd
  * 按同一条规则加垫，两头对称 —— 这是「读回来一字不差」的唯一依据。
  *
+ * `\`` 读成一个**字面反引号**、不当定界符。编辑器只在一种情况下写它：字面反引号
+ * 紧贴着行内码（``` `a` `` ``` 这种），不转义的话闭合串会和它粘成两连串，
+ * 读回来整段就不是码了 —— 实测丢过样式。别的反斜杠转义编辑器不产出、这里也不处理。
+ *
  * @returns {Array<{code: boolean, text: string}>} 文本与代码交替出现的片段
  */
 export function splitCodeSpans(src) {
@@ -80,25 +84,34 @@ export function splitCodeSpans(src) {
   const s = String(src);
   const pushText = (t) => {
     if (!t) return;
+    if (t.indexOf('\\') >= 0) t = t.replace(/\\`/g, '`');
     const last = out[out.length - 1];
     if (last && !last.code) last.text += t;
     else out.push({ code: false, text: t });
   };
+  /* 被反斜杠转义的反引号不是定界符，找串时直接跳过 */
+  const escaped = (j) => j > 0 && s.charCodeAt(j - 1) === 92;
+  const tickFrom = (from) => {
+    for (let j = s.indexOf('`', from); j >= 0; j = s.indexOf('`', j + 1)) {
+      if (!escaped(j)) return j;
+    }
+    return -1;
+  };
   let i = 0;
   while (i < s.length) {
-    const open = s.indexOf('`', i);
+    const open = tickFrom(i);
     if (open < 0) { pushText(s.slice(i)); break; }
     let k = open;
-    while (k < s.length && s[k] === '`') k++;
+    while (k < s.length && s[k] === '`' && !escaped(k)) k++;
     const n = k - open;
     /* 往后找长度**恰好**为 n 的反引号串；更长的跳过（那是别人的定界符） */
     let p = k;
     let close = -1;
     while (p < s.length) {
-      const q = s.indexOf('`', p);
+      const q = tickFrom(p);
       if (q < 0) break;
       let e = q;
-      while (e < s.length && s[e] === '`') e++;
+      while (e < s.length && s[e] === '`' && !escaped(e)) e++;
       if (e - q === n) { close = q; break; }
       p = e;
     }

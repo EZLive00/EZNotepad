@@ -1242,6 +1242,30 @@ try {
       (await ev(`window.__snp.getEditorText()`)).trimEnd() === '`npm i`',
       JSON.stringify(await ev(`window.__snp.getEditorText()`)));
 
+    /* 字面反引号贴着行内码：闭合串会和它粘成更长的串，整段就不是码了
+       （重开丢样式，用户看不见任何提示）。序列化写成 `\``，解析端要认回来。
+       注意这里不靠「光标贴边界再打字」验收：Chromium 会把插入点规范化到最近的
+       可见文字（也就是码里），打出来的是码里的反引号 —— 状态本身由粘贴 / 删空格
+       之类产生，这里直接按存盘的样子打开来验两侧。 */
+    for (const [file, md, want, wantText] of [
+      ['ic9.md', '`a`\\`', 'a', 'a`'],
+      ['ic9c.md', '\\``a`', 'a', '`a'],
+    ]) {
+      await ev(`window.__snp.newTab(${JSON.stringify(file)}, ${JSON.stringify(md)}, null)`);
+      await sleep(400);
+      await ev(`window.__snp.commands.modeWysiwyg()`);
+      await sleep(500);
+      const inner = await ev(`(document.querySelector('.wysiwyg code') || {}).textContent`);
+      ok(`真机：${JSON.stringify(md)} 里贴着码的反引号算字面字符`,
+        inner === want, JSON.stringify(inner));
+      ok('……整段文字也对（码外的反引号还在）',
+        (await ev(`document.querySelector('.wysiwyg .w-text').textContent`)) === wantText,
+        JSON.stringify(await ev(`document.querySelector('.wysiwyg .w-text').textContent`)));
+      ok('……再存一次一个字节都不变',
+        (await ev(`window.__snp.getEditorText()`)).trimEnd() === md,
+        JSON.stringify(await ev(`window.__snp.getEditorText()`)));
+    }
+
     /* ---- I3. 出块提示线与 Ctrl+Enter 强制插入 ----
        方向键出块零文档改动是对的，但状态一直隐形：光标还在原位、或落进下一块，
        界面上没任何东西说「按回车会在这儿开一行」。这里在真 WebView2 里验
