@@ -63,14 +63,95 @@ export function slugify(text) {
   return s || 'section';
 }
 
+/**
+ * 按 CommonMark 的 code span 规则把一段行内文本拆成「文本 / 代码」片段。
+ *
+ * 定界符是**任意长度**的反引号串，闭合必须是**同样长**的一串 —— 于是
+ * ``a`b`` 里那个单反引号是内容、不是定界符。只认单反引号（老写法）会把
+ * 「码里带反引号」的那一段从中间切开：存下 ``npm `i``，预览 / 导出里只剩 npm。
+ *
+ * 内容首尾同时是空白、又不全空白时剥掉一层（规范如此）。序列化端 codeSpanMd
+ * 按同一条规则加垫，两头对称 —— 这是「读回来一字不差」的唯一依据。
+ *
+ * @returns {Array<{code: boolean, text: string}>} 文本与代码交替出现的片段
+ */
+export function splitCodeSpans(src) {
+  const out = [];
+  const s = String(src);
+  const pushText = (t) => {
+    if (!t) return;
+    const last = out[out.length - 1];
+    if (last && !last.code) last.text += t;
+    else out.push({ code: false, text: t });
+  };
+  let i = 0;
+  while (i < s.length) {
+    const open = s.indexOf('`', i);
+    if (open < 0) { pushText(s.slice(i)); break; }
+    let k = open;
+    while (k < s.length && s[k] === '`') k++;
+    const n = k - open;
+    /* 往后找长度**恰好**为 n 的反引号串；更长的跳过（那是别人的定界符） */
+    let p = k;
+    let close = -1;
+    while (p < s.length) {
+      const q = s.indexOf('`', p);
+      if (q < 0) break;
+      let e = q;
+      while (e < s.length && s[e] === '`') e++;
+      if (e - q === n) { close = q; break; }
+      p = e;
+    }
+    if (open > i) pushText(s.slice(i, open));
+    if (close < 0) { pushText(s.slice(open, k)); i = k; continue; }   // 没有闭合：原样留着
+    let c = s.slice(k, close);
+    if (c.length >= 2 && c.charCodeAt(0) === 32 && c.charCodeAt(c.length - 1) === 32 && c.trim()) {
+      c = c.slice(1, -1);
+    }
+    if (c) out.push({ code: true, text: c });
+    else pushText(s.slice(open, close + n));   // 空码：原样留成文本，不进 <code>
+    i = close + n;
+  }
+  return out;
+}
+
+/**
+ * 行内码的 Markdown 定界符（splitCodeSpans 的逆运算）。
+ *
+ * 内容里有反引号时必须用**更长**的一串，否则闭合串会撞上内容里的反引号，
+ * 整段被从中间切开 —— 用户在行内码里打一个反引号，存盘再打开就少一截。
+ * 首尾是反引号、或首尾同时是空白（又不全空白）时垫一个空格：解析端会剥掉
+ * 这一层，原文一字不差；不垫的话定界符会和内容粘成一串，闭合就找不到了。
+ */
+export function codeSpanMd(t) {
+  /* 快路径：绝大多数行内码里没有反引号，一个 indexOf 就够 */
+  if (t.indexOf('`') < 0) {
+    return (/^ .* $/.test(t) && t.trim()) ? '` ' + t + ' `' : '`' + t + '`';
+  }
+  let max = 0;
+  for (let i = 0; i < t.length;) {
+    if (t[i] !== '`') { i++; continue; }
+    let j = i;
+    while (j < t.length && t[j] === '`') j++;
+    if (j - i > max) max = j - i;
+    i = j;
+  }
+  const d = '`'.repeat(max + 1);
+  const pad = (t.charCodeAt(0) === 96 || t.charCodeAt(t.length - 1) === 96
+    || (/^ .* $/.test(t) && t.trim())) ? ' ' : '';
+  return d + pad + t + pad + d;
+}
+
 /** 行内元素渲染 */
 export function inline(text, imgResolver) {
   // 先保护行内代码，避免其中的 * _ 被误解析
   const codes = [];
-  let s = text.replace(/`([^`]+)`/g, (_, c) => {
-    codes.push(c);
-    return `\u0000C${codes.length - 1}\u0000`;
-  });
+  let s = '';
+  for (const seg of splitCodeSpans(text)) {
+    if (!seg.code) { s += seg.text; continue; }
+    codes.push(seg.text);
+    s += `\u0000C${codes.length - 1}\u0000`;
+  }
 
   /* 再保护公式，同样是为了不被强调语法吃掉：$x_1 * y$ 里的 _ 和 * 是下标与乘号，
      不是斜体。必须赶在 escapeHtml 之前取原文 —— 转义后 KaTeX 拿到的是 &lt; 而不是 <。 */

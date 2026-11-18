@@ -12,7 +12,7 @@
 //      在下次编辑时会被抹平成纯文本（** 丢了）。
 // ============================================================
 
-import { resolveDocImg, headingSlugs, CALLOUT_TYPES, RE_CALLOUT, normalizeCallout, splitImgAlt } from './markdown.js';
+import { resolveDocImg, headingSlugs, CALLOUT_TYPES, RE_CALLOUT, normalizeCallout, splitImgAlt, splitCodeSpans, codeSpanMd } from './markdown.js';
 import { splitFrontmatter } from './frontmatter.js';
 import { tt } from './i18n.js';
 import { codeText, refreshCode } from './codehilite.js';
@@ -70,11 +70,15 @@ const unescapeHtml = (s) => String(s)
 
 /** 行内 Markdown -> HTML（编辑视图里的即时样式） */
 export function inlineHtml(src) {
+  /* 行内码的切分规则与预览 / 导出共用一份（markdown.js），两边不会各认一套：
+     只认单反引号的老写法会把「码里带反引号」的段落从中间切开。 */
   const codes = [];
-  let t = String(src).replace(/`([^`]+)`/g, (_, c) => {
-    codes.push(c);
-    return `\u0001${codes.length - 1}\u0001`;
-  });
+  let t = '';
+  for (const seg of splitCodeSpans(String(src))) {
+    if (!seg.code) { t += seg.text; continue; }
+    codes.push(seg.text);
+    t += `\u0001${codes.length - 1}\u0001`;
+  }
 
   /* 公式：只染色，不渲染。
      真把 KaTeX 的 DOM 塞进 contenteditable，退格删不掉、光标会卡住，
@@ -151,9 +155,9 @@ export function inlineToMd(node, brText = '') {
       case 'MARK': s += inner.trim() ? `==${inner}==` : inner; break;
       case 'CODE': {
         /* 零宽空格是光标垫片，不进文件；只剩垫片的空码整个不输出，
-           否则存回去是 ``` `` ```，再打开就成了一个字面反引号 */
+           否则存回去是空的 ``，再打开就成了一个字面反引号 */
         const t = n.textContent.replace(/\u200b/g, '');
-        s += t ? '`' + t + '`' : '';
+        if (t) s += codeSpanMd(t);
         break;
       }
       case 'A': s += inner ? `[${inner}](${n.getAttribute('href') || ''})` : ''; break;
@@ -2596,6 +2600,21 @@ export class WysiwygEditor {
       if (t.startsWith('insert')) this.materializeGap();
       else this.clearGapAfter();
     }
+    /* 选中文字后打反引号：浏览器会**用 ` 直接替换整个选区**，选中的字当场就没了。
+       用户的意思显然是「把这段变成行内码」—— 走格式按钮同一条路（已选中码时
+       自然就变成取消）。代码块 / 公式块里不接管：那儿反引号就是普通字符。 */
+    if (e.inputType === 'insertText' && e.data === '`' && !e.isComposing) {
+      const sel = window.getSelection();
+      if (sel.rangeCount && !sel.isCollapsed && this.root.contains(sel.anchorNode)) {
+        const blk = this.currentBlock();
+        const ty = blk ? blk.dataset.type : '';
+        if (ty !== 'code' && ty !== 'math') {
+          e.preventDefault();
+          this.toggleInline('code');
+          return;
+        }
+      }
+    }
     if (!this._selAll) return;
     if (!this._selAllHeld()) { this._selAll = false; return; }
     const t = e.inputType || '';
@@ -2953,6 +2972,29 @@ export class WysiwygEditor {
     if (!textWrap || textWrap.classList.contains('w-code') || textWrap.classList.contains('w-tex')) return false;
 
     const before = node.nodeValue.slice(0, off);
+    const rest = node.nodeValue.slice(off);
+
+    /* 反引号的**另一种输入顺序**：先把收尾符打在段末，再回头补开头那个。
+       光标这时停在段首、前面只有一个孤零零的开启符，闭合符还在光标后面 ——
+       只看 before 的规则永远碰不到它，用户看到的就是「手动打反引号不生效」。
+
+       ⛔ 必须要求光标前**再没有别的反引号**（lead 里没有），否则在一段字面
+       反引号中间打字会把后面一大截顺手吞成码。
+       ⛔ 只认行内码：粗体 / 删除线要两头各打两个字符，路径不一样，先不扩大。 */
+    if (!parent.closest('code') && before.charCodeAt(off - 1) === 96) {
+      const lead = before.slice(0, -1);
+      if (lead.indexOf('`') < 0) {
+        const j = rest.indexOf('`');
+        const content = j > 0 ? rest.slice(0, j) : '';
+        if (content && content.indexOf('\n') < 0) {
+          const el = document.createElement('code');
+          el.textContent = content;
+          this.placeInlineAt(node, off - 1, off + j + 1, el);
+          return true;
+        }
+      }
+    }
+
     const rules = [
       { re: /\*\*([^*\n]+)\*\*$/, tag: 'strong' },
       { re: /__([^_\n]+)__$/, tag: 'strong' },
@@ -2973,10 +3015,6 @@ export class WysiwygEditor {
       if (rule.link && parent.closest('a')) continue;
 
       const start = off - m[0].length;
-      const r = document.createRange();
-      r.setStart(node, start);
-      r.setEnd(node, off);
-      r.deleteContents();
 
       let el;
       if (rule.img) {
@@ -2993,28 +3031,41 @@ export class WysiwygEditor {
         el = document.createElement(rule.tag);
         el.textContent = m[1];
       }
-      r.insertNode(el);
-
-      // 关键：在元素后面补一个空文本节点，把光标放进去。
-      // 否则 Chromium 会把紧接着输入的字符继续塞进 <strong> 里（看起来就像粗体没结束），
-      // 序列化出来就成了 **粗 尾**。
-      const tail = document.createTextNode(ZWSP);
-      el.after(tail);
-      const after = document.createRange();
-      after.setStart(tail, 1);
-      after.collapse(true);
-      sel.removeAllRanges();
-      sel.addRange(after);
-      // 浏览器在这个 input 事件收尾时还会再修一次选区，延后一个微任务再摆一次
-      queueMicrotask(() => {
-        const s2 = window.getSelection();
-        if (!s2.rangeCount || !tail.parentNode) return;
-        s2.removeAllRanges();
-        s2.addRange(after);
-      });
+      this.placeInlineAt(node, start, off, el);
       return true;
     }
     return false;
+  }
+
+  /**
+   * 把文本节点里的 `[start, end)` 换成 `el`，在它后面补一个零宽空格垫片，
+   * 光标摆到垫片之后。
+   *
+   * 垫片是关键的：不补的话 Chromium 会把紧接着打的字继续塞进刚建的元素里
+   * （看起来就像粗体 / 行内码没结束），序列化出来成了 `**粗 尾**`。
+   * 浏览器在这个 input 事件收尾时还会再修一次选区，所以延后一个微任务再摆一次。
+   */
+  placeInlineAt(node, start, end, el) {
+    const r = document.createRange();
+    r.setStart(node, start);
+    r.setEnd(node, end);
+    r.deleteContents();
+    r.insertNode(el);
+
+    const tail = document.createTextNode(ZWSP);
+    el.after(tail);
+    const at = document.createRange();
+    at.setStart(tail, 1);
+    at.collapse(true);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(at);
+    queueMicrotask(() => {
+      const s2 = window.getSelection();
+      if (!s2.rangeCount || !tail.parentNode) return;
+      s2.removeAllRanges();
+      s2.addRange(at);
+    });
   }
 
   /* ---------------- 键盘 ---------------- */

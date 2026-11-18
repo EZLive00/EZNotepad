@@ -1163,6 +1163,85 @@ try {
       JSON.stringify(await ev(`window.__snp.getEditorText()`)));
     ok('真机：码内选中不套两层',
       (await ev(`document.querySelectorAll('.wysiwyg code code').length`)) === 0);
+
+    /* ---- I2d. 行内码里的反引号（用户报「输入 ` 再次渲染时被截断」）----
+       ① 在码里打一个反引号：旧序列化一律拿单反引号包，存下 `npm `i`，
+          再打开只剩 npm —— 定界符必须跟着内容加长。
+       ② 选中一段字打反引号：浏览器默认会用它替换整个选区（字当场就没了），
+          这里要包成行内码。
+       ③ 先补后引号、再回头补开头那个：光标前只有一个孤零零的开启符，
+          闭合符还在光标后面，只看光标前的规则碰不到它。 */
+    await ev(`window.__snp.newTab('ic6.md', ${JSON.stringify('用 `npm i` 装')}, null)`);
+    await sleep(400);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(500);
+    await ev(`(() => {
+      const code = document.querySelector('.wysiwyg code');
+      /* 光标落在码中间（i 之前）：用户在码里打字的常态位置 */
+      const r = document.createRange();
+      r.setStart(code.firstChild, 4); r.collapse(true);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      document.querySelector('.wysiwyg').focus();
+      return 1;
+    })()`);
+    await send('Input.insertText', { text: '`' });
+    await sleep(420);
+    {
+      const md = (await ev(`window.__snp.getEditorText()`)).trimEnd();
+      ok('真机：码里打反引号 → 定界符加长成双反引号', md === '用 ``npm `i`` 装', JSON.stringify(md));
+      /* 拿刚存下的 md 重新开一份：解析端必须还认得出这一段码 */
+      await ev(`window.__snp.newTab('ic6b.md', ${JSON.stringify(md)}, null)`);
+      await sleep(400);
+      await ev(`window.__snp.commands.modeWysiwyg()`);
+      await sleep(500);
+      const inner = await ev(`(document.querySelector('.wysiwyg code') || {}).textContent`);
+      ok('真机：重开后码内容没被截断', inner === 'npm `i', JSON.stringify(inner));
+    }
+
+    await ev(`window.__snp.newTab('ic7.md', ${JSON.stringify('npm i')}, null)`);
+    await sleep(400);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(500);
+    await ev(`(() => {
+      const t = document.querySelector('.wysiwyg .w-text');
+      const r = document.createRange(); r.selectNodeContents(t);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      document.querySelector('.wysiwyg').focus();
+      return 1;
+    })()`);
+    await send('Input.insertText', { text: '`' });
+    await sleep(420);
+    ok('真机：选中一段字打反引号 → 包成码（字没被替换掉）',
+      (await ev(`window.__snp.getEditorText()`)).trimEnd() === '`npm i`',
+      JSON.stringify(await ev(`window.__snp.getEditorText()`)));
+
+    await ev(`window.__snp.newTab('ic8.md', ${JSON.stringify('npm i')}, null)`);
+    await sleep(400);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(500);
+    await ev(`(() => {
+      const t = document.querySelector('.wysiwyg .w-text');
+      const r = document.createRange();
+      r.setStart(t.firstChild, t.firstChild.nodeValue.length); r.collapse(true);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      document.querySelector('.wysiwyg').focus();
+      return 1;
+    })()`);
+    await send('Input.insertText', { text: '`' });
+    await sleep(300);
+    await ev(`(() => {
+      const t = document.querySelector('.wysiwyg .w-text');
+      const r = document.createRange(); r.setStart(t.firstChild, 0); r.collapse(true);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      document.querySelector('.wysiwyg').focus();
+      return 1;
+    })()`);
+    await send('Input.insertText', { text: '`' });
+    await sleep(420);
+    ok('真机：先补后引号、再补前引号 → 成码',
+      (await ev(`window.__snp.getEditorText()`)).trimEnd() === '`npm i`',
+      JSON.stringify(await ev(`window.__snp.getEditorText()`)));
+
     /* ---- I3. 出块提示线与 Ctrl+Enter 强制插入 ----
        方向键出块零文档改动是对的，但状态一直隐形：光标还在原位、或落进下一块，
        界面上没任何东西说「按回车会在这儿开一行」。这里在真 WebView2 里验

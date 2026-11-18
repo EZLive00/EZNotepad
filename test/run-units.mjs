@@ -9,7 +9,7 @@
 // ============================================================
 import fs from 'node:fs';
 import { freeUntitledName, moveById } from '../src/js/taborder.js';
-import { slugify, headingSlugs, inline, renderMarkdown } from '../src/js/markdown.js';
+import { slugify, headingSlugs, inline, renderMarkdown, codeSpanMd } from '../src/js/markdown.js';
 import { extractOutline } from '../src/js/preview.js';
 import { diffLines, buildSideBySide, diffStats } from '../src/js/diff.js';
 import { blockItems, arrange, rangeText } from '../src/js/difflist.js';
@@ -69,6 +69,22 @@ eq('==文字== 变成 mark', inline('==重点=='), '<mark>重点</mark>');
 eq('紧贴中文也认', inline('记住==重点==就好'), '记住<mark>重点</mark>就好');
 eq('行内代码里的 == 原样', inline('`a == b`'), '<code>a == b</code>');
 eq('没成对的不动', inline('a == b'), 'a == b');
+
+/* ---------- 行内码里带反引号：预览 / 导出与编辑视图共用一套定界符规则 ----------
+   CommonMark：定界符是任意长度的反引号串，闭合必须等长。只认单反引号的写法
+   会把「码里有反引号」的那段从中间切开 —— 编辑视图存下 ``npm `i``，预览里
+   只剩 npm。这里是用户报的「再次渲染时被截断」的另一半。 */
+eq('双反引号包着的码，内容里的反引号是内容',
+  inline('``npm `i``'), '<code>npm `i</code>');
+eq('单反引号仍是普通的码', inline('`npm i`'), '<code>npm i</code>');
+eq('内容以反引号收尾（定界符更长）', inline('`` a` ``'), '<code>a`</code>');
+eq('三段反引号包着的双反引号',
+  inline('```a``b```'), '<code>a``b</code>');
+eq('没闭合的定界符原样留着', inline('``npm i'), '``npm i');
+eq('空码不生成 <code>', inline('``'), '``');
+for (const t of ['npm `i`', '`a', 'a`', 'a``b', ' x ', 'npm i']) {
+  eq(`序列化与解析对称：${JSON.stringify(t)}`, inline(codeSpanMd(t)), `<code>${t}</code>`);
+}
 
 /* ---------- 整篇渲染：标题 id 用 slug、块级公式跨越成 div ---------- */
 const html = renderMarkdown('# 快速开始\n\n行内 $x_1$ 结束\n\n$$\na + b\n$$\n');
@@ -609,6 +625,51 @@ ok('语言表：新建类型够多', newDocTypes().length >= 24);
     body.includes('range.setStart(ls.node, ls.offset)') && body.includes('range.setEnd(le.node, le.offset)'));
   ok('空码不进文件（只剩零宽垫片的 <code> 输出空串）',
     wys.includes("n.textContent.replace(/\\u200b/g, '')"));
+}
+
+/* ---------- 行内码里的反引号（源码级不变量 109）
+   定界符必须跟着内容加长（CommonMark：闭合串长度与开启串相同），解析端也要
+   按同一套规则扫。两头只要有一头偷懒，用户就会看到「在行内码里打一个反引号，
+   存盘再打开少了一截」。预览 / 导出与编辑视图必须共用一份实现。 */
+{
+  const md = fs.readFileSync('src/js/markdown.js', 'utf8');
+  const wys = fs.readFileSync('src/js/wysiwyg.js', 'utf8');
+  const inlineAt = md.indexOf('export function inline(');
+  const inlineBody = md.slice(inlineAt, md.indexOf('/** 行内元素渲染', inlineAt + 10));
+
+  ok('预览的行内码也按等长定界符扫，不再只认单反引号',
+    md.includes('export function splitCodeSpans(')
+      && inlineBody.includes('splitCodeSpans(text)')
+      && !inlineBody.includes('/`([^`]+)`/'));
+  ok('序列化按内容里最长的反引号串加长定界符',
+    md.includes('export function codeSpanMd(') && md.includes("'`'.repeat(max + 1)"));
+  ok('首尾是反引号 / 空白时垫一个空格（解析端会剥掉）',
+    md.includes("(/^ .* $/.test(t) && t.trim())"));
+  ok('编辑视图复用同一份切分与序列化，不各写一套',
+    wys.includes('splitCodeSpans(String(src))') && wys.includes('codeSpanMd(t)')
+      && !wys.includes('function extractCodeSpans'));
+  ok('空码不进文件：只剩垫片的 <code> 不输出',
+    wys.includes("n.textContent.replace(/\\u200b/g, '')") && wys.includes('if (t) s += codeSpanMd(t);'));
+
+  /* 跨光标闭合：先把收尾符打在段末、再回头补开头那个，光标前只有一个开启符，
+     闭合符还在光标后面。放行条件必须苛刻，否则会把后面一大截吞成码。 */
+  const at = wys.indexOf('  applyInlineRule() {');
+  const ruleBody = wys.slice(at, wys.indexOf('  placeInlineAt('));
+  ok('跨光标闭合：关闭符在光标后面也能成码',
+    ruleBody.includes("rest.indexOf('`')") && ruleBody.includes('this.placeInlineAt('));
+  ok('……但光标前已经有反引号就不接管（防吞后文）',
+    ruleBody.includes("lead.indexOf('`') < 0"));
+  ok('……只认行内码，不在码里重复套',
+    ruleBody.includes("!parent.closest('code')"));
+
+  /* 选中文字后打反引号：浏览器会用 ` 替换选区，字就没了 */
+  const bi = wys.indexOf('  onBeforeInput(e) {');
+  const biBody = wys.slice(bi, wys.indexOf('  onCopy(e, isCut) {'));
+  ok('选中后打反引号 → 包成行内码，不让浏览器替换掉选区',
+    biBody.includes("e.data === '`'") && biBody.includes('!sel.isCollapsed')
+      && biBody.includes("this.toggleInline('code')"));
+  ok('……代码块 / 公式块里不接管（那儿反引号是普通字符）',
+    biBody.includes("ty !== 'code' && ty !== 'math'"));
 }
 
 /* ---------- 增量序列化的块签名（源码级不变量 108） ----------

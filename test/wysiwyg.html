@@ -94,9 +94,11 @@ window.__run = () => {
   /* headless 里 execCommand('insertText') 不派发 beforeinput，真实浏览器会。
      补这一下，打字路径才和真机一致（beforeinput 是「要写入了」的兜底口子）。 */
   const typeReal = (s) => {
-    root.dispatchEvent(new InputEvent('beforeinput', {
+    const ev = new InputEvent('beforeinput', {
       inputType: 'insertText', data: s, bubbles: true, cancelable: true,
-    }));
+    });
+    /* dispatchEvent 返回 false = 被 preventDefault 了；真实浏览器这时就不再插入 */
+    if (!root.dispatchEvent(ev)) return ed.toMarkdown();
     return T.type(s);
   };
   /* 把光标摆到「整个块的最后一个字符之后」：表格取最后一格，代码块取末行。
@@ -977,6 +979,80 @@ window.__run = () => {
   }
   eq('码内选一半再点 → 不套两层', root.querySelectorAll('code code').length, 0);
   eq('……整段字一个不少', T.out().replace(/`/g, ''), '用 npm i 装');
+
+  /* 19c9. 行内码里带反引号：定界符必须跟着加长（CommonMark 规则：闭合串长度
+     与开启串相同），否则 `npm `i`` 被解析成「码 npm + 文本 i`」，存盘再打开
+     就少一截 —— 用户报的「行内码里输入 ` 会被截断」。 */
+  const codeText = () => {
+    const c = root.querySelector('.w-text code');
+    return c ? c.textContent : '(无)';
+  };
+
+  T.reset('用 `npm i` 装');
+  T.caret(0, 6);
+  T.type('`');
+  eq('码里打一个反引号 → 用双反引号包', T.out(), '用 ``npm `i`` 装');
+  {
+    const md = T.out();
+    T.reset(md);
+    eq('……读回来码还是那一段', codeText(), 'npm `i');
+    eq('……往返幂等', T.out(), md);
+  }
+
+  /* 内容首尾是反引号：定界符加长之外还要垫一个空格，解析端会剥掉那一层 */
+  for (const [src, want] of [['`` `a ``', '`a'], ['`` a` ``', 'a`'], ['```a``b```', 'a``b']]) {
+    T.reset(src);
+    eq(`带反引号的码：${src} 解析`, codeText(), want);
+    eq('……序列化回原文', T.out(), src);
+  }
+
+  /* 内容首尾都是空格：垫一层，读回来不多不少 */
+  T.reset('`  x  `');
+  eq('首尾带空格的码：内容是一个空格包着的 x', codeText(), ' x ');
+  eq('……序列化回原文', T.out(), '`  x  `');
+
+  /* 只有一个开启符、后面没有闭合：不许接管（否则会把后面一截吞成码） */
+  T.reset('npm i');
+  T.caret(0, 0);
+  T.type('`');
+  eq('只打开启符 → 不转', T.out(), '`npm i');
+
+  /* 段首已经有一个字面反引号，再打一个不许吞后面 */
+  T.reset('`npm i');
+  T.caret(0, 0);
+  T.type('`');
+  eq('字面反引号前面再打一个 → 不吞后文', T.out(), '``npm i');
+
+  /* 19c10. 反引号的另一种输入顺序：先把收尾符打在段末、再回头补开头那个。
+     光标这时停在段首、前面只有一个孤零零的开启符，闭合符还在光标后面 ——
+     只看 before 的规则碰不到它，用户看到的就是「手动打反引号不生效」。 */
+  T.reset('npm i');
+  T.caret(0, 5);
+  T.type('`');
+  T.caret(0, 0);
+  T.type('`');
+  eq('先补后引号、再补前引号 → 变成码', T.out(), '`npm i`');
+  eq('……DOM 里只有一层 code', root.querySelectorAll('.w-text code').length, 1);
+
+  /* 选中文字后打反引号：浏览器默认会**用 ` 替换整个选区**（字当场就没了），
+     这里必须包成行内码 —— 和格式按钮同一条路 */
+  T.reset('npm i');
+  {
+    const t = root.querySelector('.w-text');
+    const r = document.createRange();
+    r.selectNodeContents(t);
+    const s = getSelection();
+    s.removeAllRanges();
+    s.addRange(r);
+    typeReal('`');
+  }
+  eq('选中一段字打反引号 → 包成码', T.out(), '`npm i`');
+  eq('……选中的字一个不少', root.querySelector('.w-text').textContent, 'npm i');
+
+  T.reset('用 `npm i` 装');
+  selectAroundCode();
+  typeReal('`');
+  eq('选中行内码打反引号 → 取消', T.out(), '用 npm i 装');
 
   /* 19c2. 点末块下方空白：光标送回文末。只有末块是「带边界的块」
      （代码 / 公式 / 表格 / 分割线：块内没有可写的尾位）才补一行 ——
