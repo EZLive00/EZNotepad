@@ -12,7 +12,7 @@
 // ============================================================
 
 /* ---- 状态 ---- */
-export { EditorState, Compartment, EditorSelection, StateEffect, StateField } from '@codemirror/state';
+export { EditorState, Compartment, EditorSelection, StateEffect, StateField, RangeSetBuilder } from '@codemirror/state';
 
 /* ---- 视图 ---- */
 export {
@@ -28,6 +28,11 @@ export {
   rectangularSelection,
   crosshairCursor,
   placeholder,
+  /* 行内所见即所得（live preview）要用的两件：ViewPlugin 每帧按可见范围
+     重算装饰，WidgetType 把「表格 / 图片 / 任务框」这类块换成 DOM。
+     它们本来就在 EditorView 的依赖里，多导出几乎不涨体积。 */
+  ViewPlugin,
+  WidgetType,
 } from '@codemirror/view';
 
 /* ---- 命令 ---- */
@@ -56,6 +61,9 @@ export {
   foldGutter,
   foldKeymap,
   StreamLanguage,
+  /* live preview 的唯一数据源：标记符号（` ** > # |）在语法树里都是
+     独立节点，装饰层只是「按位置把它们藏起来 / 显出来」。 */
+  syntaxTree,
 } from '@codemirror/language';
 
 /* ---- 自动补全括号 / 引号 ---- */
@@ -67,6 +75,13 @@ export { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
 export { highlightSelectionMatches } from '@codemirror/search';
 
 export { tags } from '@lezer/highlight';
+
+/* ---- GFM 扩展（表格 / 任务框 / 删除线 / 自动链接）----
+   默认的 markdown() 只认 CommonMark：`| a | b |` 会被当成普通段落，
+   语法树里没有 Table/TableCell，装饰层就拿不到单元格位置。
+   这四个交给 markdown({ extensions: [...] }) 打开。
+   ⚠️ 直接给 lezer 的 parser.configure 传扩展时是数组，不是 {extensions}。 */
+export { Table, TaskList, Strikethrough, Autolink } from '@lezer/markdown';
 
 /* ---- 具体语言（lezer 语法，增量解析） ---- */
 export { javascript } from '@codemirror/lang-javascript';
