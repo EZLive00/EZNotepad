@@ -47,7 +47,7 @@ Windows x64 only for now; the portable build uses the system WebView2 runtime (p
 
 | Mode | What it does | Shortcut |
 |---|---|---|
-| **WYSIWYG** | Type `# ` for a heading, `**bold**` turns bold as you type | `Ctrl+1` |
+| **WYSIWYG** | Type `# ` for a heading, `**bold**` turns bold as you type — the markers stay in the file, the view just hides them | `Ctrl+1` |
 | **Edit** | Raw Markdown / source, CodeMirror 6 with line numbers and folding | `Ctrl+2` |
 | **Preview** | Read-only rendering, built for reading | `Ctrl+3` |
 
@@ -59,8 +59,8 @@ New files ask for a type first (Markdown / Plain text / JSON / CSV / Code).
 
 | | |
 |---|---|
-| **Blocks** | `# ` heading, `- ` / `1. ` / `- [ ] ` list (6 levels), `> ` quote, ` ``` ` code, `---` rule — markers only need to sit at the start of a line |
-| **Inline** | `**bold**`, `*italic*`, `~~strike~~`, `` `code` ``, `[text](link)` render while you type |
+| **Blocks** | `# ` heading, `- ` / `1. ` / `- [ ] ` list (6 levels), `> ` quote, ` ``` ` code, `---` rule — markers only need to sit at the start of a line; clicking a rendered table, rule or code fence puts you back on its source |
+| **Inline** | `**bold**`, `*italic*`, `~~strike~~`, `` `code` ``, `[text](link)` render while you type; the syntax shows again when the caret is inside |
 | **Undo / redo** | The two arrows at the far left of the toolbar (grey at the ends), `Ctrl+Z` / `Ctrl+Y`; `Ctrl+Shift+Z` redoes too — WYSIWYG and plain text each keep their own history stack |
 | **Tables** | `Ctrl+Shift+T` inserts one; `Tab` walks cells, `Enter` goes to the same column below, right-click adds or removes rows and columns |
 | **Images** | Paste a screenshot, drag a file in, or **Insert → Image**: the file is copied to `assets/` next to the document. Drag the bottom-right corner to resize, or write `![alt\|300](a.png)` |
@@ -165,14 +165,17 @@ Measured locally (Windows 11, x64, release build):
 
 | Scenario | Metric |
 |---|---|
-| Typing in a 600-paragraph document | **9.1 ms** per keystroke |
-| Opening 10.8 MB / 77,866 blocks | **1.14 s**, ~48 blocks in the DOM, no freeze |
-| Typing / scrolling / undo in that document | p50 **0.3 ms** / ~**17 ms** per frame / **37 ms** per step |
+| Typing in a 500-paragraph document | **3.7 ms** per keystroke |
+| Opening 1.5 MB / 17k lines | **0.34 s** warm, **1.4 s** cold |
+| Opening 4.5 MB / 43k lines | **4.6 s**, then **11 ms** per keystroke, **7 ms** per caret move |
+| Switching to WYSIWYG on that 4.5 MB file | **132 ms** |
 | CodeMirror 6, plain text | 50k lines in **49 ms**, 100k lines in **20 ms** |
-| Memory / installer | ~**170 MB** on a clean start / **4.58 MB** |
+| Memory / installer | ~**170 MB** on a clean start / **4.7 MB** |
 
-Huge Markdown files use viewport rendering: only the visible blocks exist in the DOM, everything else is a record.
-Undo snapshots are record arrays, so a keystroke never copies the whole document.
+Rendering follows the viewport: only the visible lines are laid out, so a huge file does not build a huge DOM.
+The 1.2 kernel (its own windowed block renderer) opened a 10.8 MB file in 1.14 s; the 1.3 live-preview kernel
+trades some of that open time for a Markdown buffer that never has to be re-serialised, and keeps typing at
+around 10 ms on files of a few megabytes.
 
 ## Data
 
