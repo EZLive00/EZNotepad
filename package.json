@@ -1,7 +1,7 @@
 {
   "name": "simple-notepad",
   "packageManager": "pnpm@12.9.1",
-  "version": "1.2.21",
+  "version": "1.3.0+1",
   "private": true,
   "type": "module",
   "author": "EZNotepad",
@@ -25,7 +25,8 @@
     "test:units": "node test/run-units.mjs",
     "test:i18n": "node test/run-i18n.mjs",
     "build:katex": "node scripts/build-katex.mjs",
-    "shot:find": "node test/shot-find.mjs"
+    "shot:find": "node test/shot-find.mjs",
+    "shot:wys": "node test/shot-wys.mjs"
   },
   "devDependencies": {
     "@codemirror/autocomplete": "^6.20.4",
