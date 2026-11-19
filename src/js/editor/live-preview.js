@@ -30,13 +30,35 @@ import { tokenRanges, guessLang, TOKEN_MAX_CHARS } from '../codehilite.js';
 /* ---------------- 工具 ---------------- */
 
 /** 光标（或选区任一端）是否碰到了 [from, to] —— 触摸边界也算碰到。
- *  边界必须算：光标停在 `**粗**` 的右星号后面时，那个星号得看得见，
- *  否则 Backspace 删掉的是什么完全不可预期。 */
+ *  用于**块级**判断：光标在表格 / 分割线 / 代码块里，这一块就退回源码。
+ *  块级必须用闭区间：光标停在块的最后一行末尾时，那块仍然是「当前块」。 */
 function touched(ranges, from, to) {
   for (const r of ranges) {
     if (r.empty) {
       if (r.from >= from && r.from <= to) return true;
     } else if (r.from <= to && r.to >= from) return true;
+  }
+  return false;
+}
+
+/** 行内标记要不要显形。和 touched 的关键差别：**光标紧贴标记不算**。
+ *
+ *  为什么不能沿用 touched：用户打完 `` `code` `` 时光标正好停在第二个反引号
+ *  后面（pos = CodeMark.to），打完 `**粗**` 停在右星号后面 —— 闭区间判定于是
+ *  认为「碰到标记」，两个反引号一直亮着。用户的读数就是「根本没渲染，动一下
+ *  光标才变」。
+ *
+ *  正确的口径（Typora 同款）：标记只在
+ *    · 有选区且选区压到它，或
+ *    · 光标真的落在它内部（多字符标记才有内部）
+ *  时显形。单字符标记（`` ` `` / `*` / `~`）只能靠选中，这也正是用户想改
+ *  定界符时会做的动作；而「输入中途」永远看得见 —— 那时它还不是标记节点。
+ */
+function markActive(ranges, from, to) {
+  for (const r of ranges) {
+    if (r.empty) {
+      if (r.from > from && r.from < to) return true;
+    } else if (r.from < to && r.to > from) return true;
   }
   return false;
 }
@@ -356,14 +378,23 @@ function buildBlockDeco(state) {
           line(doc.line(ln).from, 'w-code cm-lp-code', { 'data-type': 'code' });
         }
         /* 空代码块（```js 紧跟 ```）没有任何内容行，再把围栏藏掉就整块消失了 ——
-           用户看不到它、点不进去，只能靠撤销。这种块一律按「光标在里面」处理：
-           连围栏一起按源码显示，至少是可见可点的 */
-        if (!bodyLines || touched(ranges, sp.from, sp.to)) {
+           用户看不到它、点不进去，只能靠撤销。这种块一律把围栏露出来，
+           至少是可见可点的 */
+        if (!bodyLines) {
           for (const ln of fenceLns) {
             line(doc.line(ln).from, 'w-code cm-lp-code cm-lp-fence', { 'data-type': 'code' });
           }
           return false;
         }
+        /* 光标是不是压在这一行围栏上。⛔ 判据必须是**单行**，不能是「任一围栏
+           命中就整块转源码」：用户打完收尾 ``` 时光标正好停在那一行，整块
+           （连同上面对代码的着色）会一起跳成源码态 —— 实测读数就是
+           「代码块渲染坏了 / 慢一步」。现在只露被压住的那一行围栏，
+           正文永远保持渲染。 */
+        const fenceHit = (ln) => {
+          const L = doc.line(ln);
+          return touched(ranges, L.from, L.to);
+        };
         /* 围栏行藏掉：内容换零宽 + 行高由 CSS（.cm-lp-fence-off）压到 0。
            ⛔ 别改回「整行 block replace 到下一行行首」那种写法：那样紧跟围栏的
            那一行，行装饰会被 CM6 静默丢掉 —— 实测代码块第一行没有 w-code、
@@ -391,6 +422,11 @@ function buildBlockDeco(state) {
         }
         for (const ln of fenceLns) {
           const L = doc.line(ln);
+          if (fenceHit(ln)) {
+            /* 只有被光标压住的那一行露出来（用户正在改它） */
+            line(L.from, 'w-code cm-lp-code cm-lp-fence', { 'data-type': 'code' });
+            continue;
+          }
           line(L.from, 'cm-lp-fence-off');
           items.push({ from: L.from, to: L.to, deco: Decoration.replace({}) });
         }
@@ -567,9 +603,11 @@ function buildInlineDeco(view) {
     enter(n) {
       if (n.name !== 'FencedCode' && n.name !== 'CodeBlock') return undefined;
       fences.push([n.from, n.to]);
-      /* 光标在块里 = 源码态：那时正文是原样的 Markdown，涂色反而看不清
-         自己在改哪个字符 */
-      if (n.name !== 'FencedCode' || touched(ranges, n.from, n.to)) return false;
+      /* 正文永远着色：块级那边已经把「整块转源码」换成了「只露被压住的那一行
+         围栏」，正文一直是渲染态，所以这里没有「在编辑中所以不涂色」这回事。
+         ⛔ 别再按光标位置整块关掉着色 —— 用户插完代码块会一直在里面打字，
+         那样他看到的永远是纯色原文。 */
+      if (n.name !== 'FencedCode') return false;
       const firstLn = doc.lineAt(n.from).number;
       const lastLn = doc.lineAt(Math.max(n.from, n.to - 1)).number;
       const f = fenceLines(doc, firstLn, lastLn);
@@ -616,13 +654,16 @@ function buildInlineDeco(view) {
       }
 
       switch (n.name) {
+        /* 这三个是行内定界符：用 markActive（光标紧贴不算）而不是 touched。
+           用 touched 的后果实测过：打完 `` `code` `` 光标停在第二个反引号后面，
+           反引号常亮 —— 用户读数就是「没渲染」。 */
         case 'CodeMark':
           if (inFence(n.from)) return undefined;
-          if (!active) hide(n.from, n.to);
+          if (!markActive(ranges, n.from, n.to)) hide(n.from, n.to);
           return undefined;
         case 'EmphasisMark':
         case 'StrikethroughMark':
-          if (!active) hide(n.from, n.to);
+          if (!markActive(ranges, n.from, n.to)) hide(n.from, n.to);
           return undefined;
         /* 块级标记（# 与 >）**始终**隐藏，连光标所在行也不露 —— 这是 Typora 的
            口径：标题就是标题，引用就是引用，改级别走工具栏/快捷键。
@@ -669,7 +710,11 @@ function buildInlineDeco(view) {
         case 'Link': {
           const marks = [];
           for (let c = n.node.firstChild; c; c = c.nextSibling) if (c.name === 'LinkMark') marks.push(c);
-          if (marks.length >= 4 && !active) {
+          /* 只看 `](url)` 那一段要不要露出来。
+             以前用整条 Link 的 touched：光标在**文字**里就整条变源码（`[文字](url)`
+             全露），点进链接想改个字都像回到源码模式。现在文字里就是链接的样子，
+             想把 URL 调出来，把光标往右挪进 `](` 之后即可。 */
+          if (marks.length >= 4 && !markActive(ranges, marks[1].from, n.to)) {
             /* `[文字](url)` 只留文字：隐藏开头的 `[`，再把 `](url)` 整段藏掉。
                只藏那四个 LinkMark 是不够的 —— 括号没了，URL 还留在正文里，
                一行链接变两行，读起来像 bug */
