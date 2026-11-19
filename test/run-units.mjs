@@ -875,8 +875,13 @@ ok('语言表：新建类型够多', newDocTypes().length >= 24);
       && app.includes("if (handleBlock.dataset.type === 'hr')"));
   ok('整批重渲染 / 清视图时块选中态作废',
     wys.includes('旧块已被整批换掉') && app.includes('wys.clearBlockSel();'));
-  ok('分割线有真实可点高度与独立选中态',
-    css.includes('padding: .9em 0') && css.includes('.wysiwyg .w-hr.w-sel'));
+  /* 新内核的分割线是一行 widget：高度靠行 padding 撑出来（否则整条线只有
+     1px，点不中），点一下由 HrWidget 把光标送进那一行、当场露出 `---`。
+     旧内核那套「块选中态 + .w-sel」随 wysiwyg.js 一起退役了。 */
+  ok('分割线有真实可点高度，点一下就把光标放进去',
+    css.includes('#wysiwyg .cm-lp-hr { padding: .85em 0; }')
+      && read('src/js/editor/live-preview.js').includes('class HrWidget')
+      && read('src/js/editor/live-preview.js').includes("addEventListener('mousedown'"));
 
   /* 自动保存 1.2s 一次，不合并就会把 60 份上限很快塞满逐秒的半成品 */
   const rust = read('src-tauri/src/lib.rs');

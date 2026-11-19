@@ -2068,12 +2068,12 @@ try {
     const DOC = ['前面一段', '', '```js', '甲', '乙', '```', '', '后面一段'].join('\n');
     await scene('up-code.md', DOC);
     const md0 = await ev('window.__snp.getEditorText()');
-    /* 光标放到代码块后面那一段的行首。三下 ↑ 才进到块里：空行、围栏各停一格
-       （新内核里空行、围栏都是文档里真实的行；光标停在围栏上时整块按源码
-       显示 —— 和点进代码块是同一个口径，所以那一格看得见、也编得了） */
+    /* 光标放到代码块后面那一段的行首，**两下** ↑ 就进到块里：空行停一格，
+       再一下直接到「乙」。中间那行围栏是零高的（见 styles.css 的
+       .cm-lp-fence-off），CM6 的竖直移动会跳过它 —— 围栏不可达，也就永远
+       不会在正文里露出 ``` 。这正是 Typora 的口径，不是漏了一格。 */
     await ev(`window.__snp.editor.setSelection(window.__snp.editor.toMarkdown().indexOf('后面一段'))`);
     await sleep(200);
-    await up();
     await up();
     await up();
     const hit = await lineOf();
