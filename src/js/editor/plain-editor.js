@@ -32,8 +32,12 @@ import {
   r, julia, haskell, clojure, erlang, groovy, protobuf, cmake, nginx, vb,
   verilog, vhdl, fortran, pascal, stex, http,
   kotlin, csharp, scala, dart, objectiveC,
+  /* GFM：表格 / 任务框 / 删除线 / 自动链接。默认 markdown() 只认 CommonMark，
+     表格在语法树里连节点都没有，live preview 就没法把它换成真表格。 */
+  Table, TaskList, Strikethrough, Autolink,
 } from '../../vendor/cm6.js';
 import { cmTheme, cmHighlight } from './theme.js';
+import { livePreview } from './live-preview.js';
 import { LANGS, normalizeLang } from '../langs.js';
 
 /**
@@ -69,7 +73,9 @@ const CM = {
   php: () => php(),
   sql: () => sql(),
   yaml: () => yaml(),
-  markdown: () => markdown(),
+  /* GFM 四个扩展跟着 markdown 一起装：表格 / 任务框 / 删除线 / 自动链接。
+     不开的话 `| a | b |` 只是一个普通段落，装饰层拿不到单元格位置。 */
+  markdown: () => markdown({ extensions: [Table, TaskList, Strikethrough, Autolink] }),
   java: () => java(),
   c: () => cpp(),
   cpp: () => cpp(),
@@ -181,13 +187,26 @@ export class PlainEditor {
        一个 Compartment 只能装「一个扩展」或扩展数组，所以「不换行」时塞空数组。 */
     this.wrapComp = new Compartment();
     this.wrap = opts.wrap !== false;
+    /* 行内所见即所得：同一个内核，只换「挂哪些扩展」。
+       文档模型不变 —— 仍然是原文，装饰只是「不画那几格标记」。 */
+    this.live = !!opts.livePreview;
+    this.lp = this.live ? livePreview({ docDir: opts.docDir || '' }) : null;
 
     const state = EditorState.create({
       doc: opts.value || '',
       extensions: this._exts(),
     });
 
+
+    /* 旧容器是 contenteditable 的 div，CM6 会往里面塞自己的 contentDOM：
+       不清掉的话浏览器把 `.cm-content` 也当成可编辑区，一个字符进两次。 */
+    if (this.live) {
+      host.removeAttribute('contenteditable');
+      host.innerHTML = '';
+    }
     this.view = new EditorView({ state, parent: host });
+    /* 装饰层要读文档目录（图片相对路径）；它自己不认识外部状态，由这里递进去 */
+    if (this.lp) this.lp.attach(this.view);
     /* 滚动回调：大纲要跟着滚（谁滚谁负责通知，外部不必知道滚动容器是谁） */
     this.view.scrollDOM.addEventListener('scroll', () => this.opts.onScroll?.(), { passive: true });
   }
@@ -195,20 +214,15 @@ export class PlainEditor {
   /* ---------------- 内部 ---------------- */
 
   _exts() {
-    return [
-      foldGutter(),                     // 折叠箭头在最左，然后是行号，和 VS Code 同序
+    /* 两种档位共用同一个内核与同一份文档，差别只在挂哪些扩展：
+       · 纯文本档：行号、折叠、活动行、括号匹配 —— 写代码要的
+       · 行内所见即所得档：这些全去掉（阅读版式没有行号），换上装饰层 */
+    const live = this.live;
+    const codeOnly = [
+      foldGutter(),
       lineNumbers(),
       highlightActiveLineGutter(),
       highlightActiveLine(),
-      highlightSpecialChars(),
-      history(),
-      drawSelection(),
-      /* 选中一段文字 → 文档里相同的文字一并标亮（纯视图装饰，不改文档）。
-         选项名是 minSelectionLength 而不是 minLength，写错了会被静默忽略。
-         中文一个字就是一个词，所以最小长度保持 1；maxMatches 与所见即所得
-         那侧的上限对齐，避免长文档里铺满一屏灰底。扩展只处理可见范围。 */
-      highlightSelectionMatches({ minSelectionLength: 1, maxMatches: 300 }),
-      dropCursor(),
       /* Alt + 拖动 = 竖着选一列（改对齐的表格、批量加前缀时用得上）；
          Alt 按住时光标变十字，提示这个模式存在 */
       rectangularSelection(),
@@ -219,10 +233,23 @@ export class PlainEditor {
       /* 打 ( 自动补 )：写代码和写 Markdown 链接都用得上。
          光标放在一对括号中间时，再打右括号是「跳过去」而不是插入一个 */
       closeBrackets(),
+    ];
+    const shared = [
+      highlightSpecialChars(),
+      history(),
+      drawSelection(),
+      /* 选中一段文字 → 文档里相同的文字一并标亮（纯视图装饰，不改文档）。
+         选项名是 minSelectionLength 而不是 minLength，写错了会被静默忽略。
+         中文一个字就是一个词，所以最小长度保持 1；maxMatches 与所见即所得
+         那侧的上限对齐，避免长文档里铺满一屏灰底。扩展只处理可见范围。 */
+      highlightSelectionMatches({ minSelectionLength: 1, maxMatches: 300 }),
+      dropCursor(),
       /* 长行折着显示是记事本的默认行为；关掉之后长行横向滚（见 setWrap）。
          放在 Compartment 里而不是写死，切换时撤销历史和选区都不会丢 */
       this.wrapComp.of(this.wrap ? EditorView.lineWrapping : []),
-      keymap.of([...closeBracketsKeymap, ...defaultKeymap, ...historyKeymap, ...foldKeymap, indentWithTab]),
+      keymap.of(live
+        ? [...defaultKeymap, ...historyKeymap, indentWithTab]
+        : [...closeBracketsKeymap, ...defaultKeymap, ...historyKeymap, ...foldKeymap, indentWithTab]),
       cmTheme,
       syntaxHighlighting(cmHighlight),
       this.langComp.of(this._langExt(this.langKey)),
@@ -246,7 +273,10 @@ export class PlainEditor {
         if (u.docChanged && !this.silent) this.opts.onChange?.();
         if (u.selectionSet || u.docChanged) this.opts.onCursor?.();
       }),
+      /* 调用方自己带进来的扩展（所见即所得层的查找高亮就挂在这儿） */
+      ...(this.opts.extraExt || []),
     ];
+    return live ? [this.lp.extensions, ...shared] : [...codeOnly, ...shared];
   }
 
   _langExt(key) {

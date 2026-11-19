@@ -1299,6 +1299,13 @@ input[type="search"] { cursor: var(--cur-text), text; }
 ::highlight(sn-find-cur) { background-color: var(--amber-9); color: var(--gray-12); }
 body[data-theme="dark"] ::highlight(sn-find) { background-color: color-mix(in srgb, var(--amber-9) 20%, transparent); }
 
+/* 所见即所得的查找高亮是 CM6 的目录装饰（不是 CSS Custom Highlight）：
+   匹配是按**源码偏移**算的，DOM 里只渲染视口那几行，建不出全部 Range。
+   颜色跟上面那两条保持一致，切换模式时观感不变。 */
+#wysiwyg .cm-find { background-color: color-mix(in srgb, var(--amber-9) 30%, transparent); border-radius: 2px; }
+#wysiwyg .cm-find-cur { background-color: var(--amber-9); color: var(--gray-12); border-radius: 2px; }
+body[data-theme="dark"] #wysiwyg .cm-find { background-color: color-mix(in srgb, var(--amber-9) 20%, transparent); }
+
 /* 选中一段文字时，把当前文档里相同的文字一并标出来（纯视图，不动 DOM）。
    和 CM6 的 .cm-selectionMatch 共用 --sel-match-bg，两种编辑模式看起来是一套；
    走中性灰而不是黄/橙：黄是文档里 ==高亮== 的语义，橙是选区，都不能抢。 */
@@ -2003,3 +2010,194 @@ body:not([data-nowrap]) .wysiwyg { overflow-wrap: break-word; }
   /* 预览里的 JSON 校验横幅不该进 PDF：那是屏幕上的提示，不是文档内容 */
   #printRoot .json-err { display: none !important; }
 }
+
+/* ============================================================================
+   行内所见即所得（CM6 live preview）
+   ----------------------------------------------------------------------------
+   这里的 DOM 是 CM6 的：每一行是一个 .cm-line，标记符号被装饰藏起来。
+   旧内核那套 .w-block / .w-text 的规则不再命中，所以这一节自成一体。
+
+   ⛔ 间距一律用 padding，不用 margin：CM6 按 getBoundingClientRect 量行高，
+      margin 不计入块高度，光标与点击定位会整体偏移半行。
+   ========================================================================== */
+/* 围栏行（``` / ~~~）：内容已经被换成零宽，这里把行高压掉，代码块上下不留空行。
+   用 height 而不是 display:none —— CM6 靠 getBoundingClientRect 量行高，
+   藏掉元素会让它的整篇坐标表错位（点击、光标、滚动全跟着偏）。 */
+#wysiwyg { padding: 0; overflow: hidden; }
+#wysiwyg .cm-line.cm-lp-fence-off {
+  height: 0; min-height: 0; padding: 0; margin: 0;
+  line-height: 0; font-size: 0; overflow: hidden;
+}
+#wysiwyg .cm-editor { height: 100%; background: transparent; }
+/* ⛔ overflow 必须两轴都给 `auto`：只写 overflow-y 时另一轴的计算值不是
+   `auto`（实测拿回来是 hidden），「不换行」下长行虽然撑出了 scrollWidth，
+   却没有滚动条可拖 —— 表现为「切了不换行，长行还是只能看到开头」。 */
+#wysiwyg .cm-scroller { overflow: auto; scrollbar-gutter: stable; }
+
+/* ---- 标题 ---- */
+#wysiwyg .cm-lp-h { font-weight: 680; color: var(--fg); }
+#wysiwyg .cm-lp-h1 { font-size: 1.9em; line-height: 1.3; letter-spacing: -.022em; padding: .85em 0 .2em; }
+#wysiwyg .cm-lp-h2 { font-size: 1.42em; line-height: 1.34; letter-spacing: -.012em; padding: .95em 0 .18em; font-weight: 660; }
+#wysiwyg .cm-lp-h3 { font-size: 1.16em; line-height: 1.42; padding: .8em 0 .15em; font-weight: 650; }
+#wysiwyg .cm-lp-h4,
+#wysiwyg .cm-lp-h5,
+#wysiwyg .cm-lp-h6 { font-size: 1.02em; line-height: 1.5; padding: .9em 0 .15em; font-weight: 650; }
+#wysiwyg .cm-content > .cm-line:first-child { padding-top: 0; }
+
+/* ---- 引用 / 提示块 ---- */
+#wysiwyg .cm-lp-bq {
+  border-left: 3px solid var(--line-strong);
+  padding-left: 14px; padding-right: 8px;
+  color: var(--fg-soft);
+}
+#wysiwyg .cm-lp-bq[data-callout] {
+  border-left: none; border-radius: var(--r-2);
+  background: var(--co-bg, var(--accent-soft));
+  padding-left: 16px; margin: 0;
+  color: var(--fg);
+}
+#wysiwyg .cm-lp-co-info    { --co-c: var(--co-info);   --co-bg: var(--co-info-bg); }
+#wysiwyg .cm-lp-co-warning { --co-c: var(--co-warn);   --co-bg: var(--co-warn-bg); }
+#wysiwyg .cm-lp-co-danger  { --co-c: var(--co-danger); --co-bg: var(--co-danger-bg); }
+#wysiwyg .cm-lp-co-success { --co-c: var(--co-ok);     --co-bg: var(--co-ok-bg); }
+#wysiwyg .cm-lp-co-note,
+#wysiwyg .cm-lp-co-tip,
+#wysiwyg .cm-lp-co-important,
+#wysiwyg .cm-lp-co-caution { --co-c: var(--accent);    --co-bg: var(--accent-soft); }
+/* 提示块的第一行要托住标题头 */
+#wysiwyg .cm-line[data-callout] { border-left-width: 0; }
+#wysiwyg .cm-lp-cohead {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-weight: 600; font-size: var(--fs-1); color: var(--co-c, var(--accent));
+  user-select: none;
+}
+#wysiwyg .cm-lp-coico {
+  width: 14px; height: 14px; flex: none;
+  fill: none; stroke: currentColor; stroke-width: 2;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+
+/* ---- 列表 ---- */
+#wysiwyg .cm-lp-li { padding-left: 2px; }
+/* 无序项的圆点（`- ` 已被换成 widget）。1.15em 右对齐和旧内核的项目符号同宽，
+   缩进由行首那些空格字符自己撑开，换层级不会整体位移 */
+#wysiwyg .cm-lp-bullet {
+  display: inline-block; width: 1.15em; text-align: right;
+  margin-right: .28em; color: var(--fg-faint); user-select: none;
+}
+
+/* ---- 代码块 ---- */
+#wysiwyg .cm-lp-code {
+  background: var(--code-bg);
+  font-family: var(--font-mono);
+  font-size: .92em;
+  white-space: pre-wrap;
+  padding: 2px 14px;
+  box-shadow: none;
+}
+#wysiwyg .cm-line.cm-lp-code:not(.cm-lp-code) { box-shadow: none; }
+/* 语言条：贴在代码块顶上的一条，左边语言名、右边复制。
+   背景与代码行同色，视觉上就是代码块的第 0 行 */
+#wysiwyg .cm-lp-codebar {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 3px 8px 3px 14px;
+  background: var(--code-bg);
+  border-radius: var(--r-2) var(--r-2) 0 0;
+  font-family: var(--font-mono); font-size: var(--fs-1);
+  letter-spacing: .06em; color: var(--fg-faint);
+  user-select: none;
+}
+#wysiwyg .cm-lp-lang { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#wysiwyg .cm-lp-copy {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: 0 0 auto; width: 22px; height: 22px; padding: 0;
+  border: 0; border-radius: var(--r-2); background: transparent;
+  color: var(--fg-faint); cursor: pointer; opacity: .5;
+}
+#wysiwyg .cm-lp-codebar:hover .cm-lp-copy,
+#wysiwyg .cm-lp-copy:focus-visible { opacity: 1; }
+#wysiwyg .cm-lp-copy:hover { background: var(--bg-hover); color: var(--fg); }
+#wysiwyg .cm-lp-copy .ico { width: 13px; height: 13px; stroke-width: 2; }
+#wysiwyg .cm-lp-copy .ico-done { display: none; color: var(--tok-str); }
+#wysiwyg .cm-lp-copy.done .ico { display: none; }
+#wysiwyg .cm-lp-copy.done .ico-done { display: block; }
+/* 代码块的最后一行收个圆角；靠 :has 找「后面紧跟围栏」的那一行 */
+#wysiwyg .cm-line.cm-lp-code:has(+ .cm-lp-fence-off) {
+  border-radius: 0 0 var(--r-2) var(--r-2);
+}
+/* 代码块里的普通文字要中性色。
+   cmHighlight 把 `tags.monospace` 整个标成 `--tok-str`（编辑模式里「一眼看出
+   这是代码」的用途），在所见即所得里会让整块代码泛绿、把词法颜色压没 ——
+   实测整段 `const a = 1;` 全是绿的，看不出哪个是关键字。
+   ⚠️ 结构是「tok-* 在外、CM6 的 ͼxx 在内」：`<span class="tok-key"><span
+   class="ͼ15">const</span></span>`。所以颜色是**内层**在起效，必须让内层
+   `inherit`（继承外层 tok-* 的颜色），光给外层定色是没用的。
+   ⛔ 别改成「整块一个颜色」：那样等于没有着色。 */
+#wysiwyg .cm-line.cm-lp-code > span:not([class*="tok-"]) { color: var(--fg); }
+#wysiwyg .cm-line.cm-lp-code [class*="tok-"] span { color: inherit; }
+
+/* ---- 行内码 ---- */
+#wysiwyg .cm-lp-codemark {
+  background: var(--code-bg);
+  border-radius: var(--r-1);
+  font-family: var(--font-mono);
+  font-size: .88em;
+  /* 空白是内容：折掉的话 `` ` ` `` 里就没有可停的插入点 */
+  white-space: pre-wrap;
+  box-shadow: inset 0 0 0 var(--bw) var(--line);
+  padding: .08em .28em;
+}
+
+/* ---- 行内标记 ---- */
+#wysiwyg .cm-lp-strong { font-weight: 680; }
+#wysiwyg .cm-lp-em { font-style: italic; }
+#wysiwyg .cm-lp-del { text-decoration: line-through; color: var(--fg-soft); }
+#wysiwyg .cm-lp-link { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+
+/* ---- 图片 ---- */
+#wysiwyg .cm-lp-img { display: inline-block; vertical-align: bottom; max-width: 100%; }
+#wysiwyg .cm-lp-img img { max-width: 100%; max-height: 320px; border-radius: var(--r-2); -webkit-user-drag: none; }
+#wysiwyg .cm-lp-img.is-broken {
+  font-family: var(--font-mono); font-size: .88em; color: var(--fg-faint);
+  background: var(--bg-soft); border-radius: var(--r-1); padding: 2px 6px;
+}
+
+/* ---- 任务框 ---- */
+#wysiwyg .cm-lp-task {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 15px; height: 15px; margin-right: 5px; padding: 0;
+  border: 0; background: none; vertical-align: -2px; cursor: pointer;
+  color: var(--fg-faint);
+}
+#wysiwyg .cm-lp-task svg { width: 15px; height: 15px; }
+#wysiwyg .cm-lp-task .box { fill: none; stroke: currentColor; stroke-width: 1.5; }
+#wysiwyg .cm-lp-task .tick { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; opacity: 0; }
+#wysiwyg .cm-lp-task.is-on { color: var(--accent); }
+#wysiwyg .cm-lp-task.is-on .tick { opacity: 1; }
+#wysiwyg .cm-lp-task:hover { color: var(--fg); }
+
+/* ---- 水平线 ---- */
+#wysiwyg .cm-lp-hr { padding: .85em 0; }
+#wysiwyg .cm-lp-hr hr { border: none; border-top: var(--bw) solid var(--line-strong); margin: 0; }
+
+/* ---- 表格 ---- */
+#wysiwyg .cm-lp-table {
+  border-collapse: collapse; width: 100%; margin: .6em 0;
+  font-size: .96em;
+}
+#wysiwyg .cm-lp-table th,
+#wysiwyg .cm-lp-table td {
+  border: var(--bw) solid var(--line-strong);
+  padding: 6px 10px; text-align: left; vertical-align: top;
+}
+#wysiwyg .cm-lp-table th { background: var(--bg-soft); font-weight: 650; }
+#wysiwyg .cm-lp-table tr:hover td { background: var(--bg-hover); }
+
+/* 表格源码态：竖线压淡，一眼看出还在编辑源码 */
+#wysiwyg .cm-lp-table-src { font-family: var(--font-mono); font-size: .92em; color: var(--fg-soft); background: var(--bg-soft); }
+
+/* ---- 重复行 ---- */
+#wysiwyg .cm-dup { background: var(--accent-soft); }
+
+/* ---- 选区：CM6 自己的那层不画，用系统高亮更贴近原生 ---- */
+#wysiwyg .cm-selectionBackground { background: var(--sel-bg, rgba(120, 130, 160, .28)) !important; }

@@ -541,7 +541,12 @@ export function renderMarkdown(md, opts = {}) {
       i < lines.length &&
       !/^\s*$/.test(lines[i]) &&
       !/^\s*(#{1,6})\s+/.test(lines[i]) &&
-      !/^\s*(```|~~~)/.test(lines[i]) &&
+      /* ⛔ 这里的「是不是围栏」必须和上面那条 fence 正则**逐字一致**。
+         写成宽松的 `/^\s*(```|~~~)/` 就会出现「两边都不认」的行：'```json{'
+         这种info string 带非 [\w#+-] 字符的行，围栏分支不匹配、段落分支又把它
+         排除掉，于是 i 一步也不动 —— 外层 while 原地转圈，整个预览渲染卡死
+         （实测：在空代码块的围栏行末尾粘贴多行文本，应用直接无响应）。 */
+      !/^\s*(```|~~~)\s*[\w#+-]*\s*$/.test(lines[i]) &&
       !/^\s*>\s?/.test(lines[i]) &&
       !/^\s*[-*+]\s+/.test(lines[i]) &&
       !/^\s*\d+[.)]\s+/.test(lines[i]) &&
@@ -552,6 +557,12 @@ export function renderMarkdown(md, opts = {}) {
       i++;
     }
     if (para.length) out.push(`<p>${para.join('\n')}</p>`);
+    /* 兜底：上面的条件一个都没命中时，也必须把这一行消耗掉。
+       循环里每个分支都要保证 i 前进 —— 漏一条就是一个卡死。 */
+    else {
+      out.push(`<p>${inline(lines[i], resolveImg)}</p>`);
+      i++;
+    }
   }
   flushList();
   return `<div class="md">${out.join('\n')}</div>`;

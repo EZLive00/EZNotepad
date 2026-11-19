@@ -10,7 +10,7 @@ import { renderPreview, extractOutline } from './preview.js';
 import { outlineFromMarkdown, headingSlugs } from './markdown.js';
 import { splitFrontmatter, parseFrontmatter, allTags } from './frontmatter.js';
 import { propsHtml } from './propbar.js';
-import { WysiwygEditor, relabelCallouts } from './wysiwyg.js';
+import { LiveEditor } from './editor/live-editor.js';
 import { PlainEditor } from './editor/plain-editor.js';
 import { toast, dialog, confirmBox, contextMenu } from './ui.js';
 import { MergeWizard } from './mergewizard.js';
@@ -148,7 +148,10 @@ function scheduleOutline() {
   outlineTimer = setTimeout(updateOutline, big ? 800 : 250);
 }
 
-const wys = new WysiwygEditor(el.wysiwyg, {
+const wys = new LiveEditor(el.wysiwyg, {
+  wrap: settings.wrap !== false,
+  /* 大纲跟随滚动：新内核的滚动量在 CM6 的 scrollDOM 上（#wysiwyg 不滚） */
+  onScroll: () => scheduleOutlineSync(),
   /* 每 10 视觉行一条浅色虚线（overlay），跟编辑区共用一个开关 */
   /* 点中分割线：它自己没有光标位，把块手柄的锚点直接钉到这一块上，
      别等 selectionchange 拿旧锚点把刚选中的块盖掉 */
@@ -783,9 +786,9 @@ function focusNewTab(t) {
     if (!t.content) {
       const first = wys.root.firstElementChild;   // 空文档解析出来就是一个空段落
       if (first) wys.focusBlock(first, false);
-      else wys.root.focus();
+      else wys.focus();
     } else {
-      wys.root.focus();
+      wys.focus();
     }
   } else if (viewKindOf(t) === 'editor') {
     plain.focus();
@@ -834,7 +837,7 @@ function restoreEditorFocus() {
   const memo = caretMemo && caretMemo.tabId === t.id ? caretMemo : null;
   caretMemo = null;
   if (v === 'wys') {
-    wys.root.focus();
+    wys.focus();
     if (memo && memo.wys) wys.restoreCaret(memo.wys);
   } else if (v === 'editor') {
     plain.focus();
@@ -946,6 +949,13 @@ function setMode(mode, opt = {}) {
   const showWys = mode === 'wysiwyg';
   const showPreview = !inlinePreview && (split || mode === 'preview');
 
+  /* 焦点会不会随视图一起消失：旧编辑器一 hidden，焦点就掉回 body，接着敲字
+     全进空气（用户看到的是「切成所见即所得后打不出字」）。只有「焦点本来就在
+     正文里 / 已经掉空」才搬，别抢查找框、重命名框的焦点。 */
+  const ae = document.activeElement;
+  const focusWasInDoc = !ae || ae === document.body
+    || el.editorPane.contains(ae) || el.wysiwyg.contains(ae);
+
   plain.setVisible(showEditor && !showWys);
   /* 只读标记必须在 load 之前定：load 会按 this.readOnly 重建 state */
   plain.setReadOnly(inlinePreview);
@@ -1002,12 +1012,21 @@ function setMode(mode, opt = {}) {
     plain.setSelection(pos);
     plain.scrollTop = t.scrollTop || 0;
   } else if ((cameFromOtherTab || prevView !== 'wys') && showWys && t.scrollTop) {
-    el.wysiwyg.scrollTop = t.scrollTop;
+    wys.scrollTop = t.scrollTop;
   }
   // 手柄只属于所见即所得：切到编辑/预览就收起来
   if (mode === 'wysiwyg') { anchorBlock = null; refreshHandle(); }
   else { closeBlockMenu(); hideHandle(); }
   syncPropBar();
+  /* 把焦点带进新视图（判断见上面的 focusWasInDoc）。对话框开着时不搬 ——
+     它的 Enter / Esc 绑在浮层上，抢走焦点会让快捷键失灵。 */
+  if (focusWasInDoc) {
+    const dlg = document.getElementById('dlgOverlay');
+    if (!dlg || dlg.classList.contains('hidden')) {
+      if (showWys) wys.focus();
+      else if (showEditor) plain.focus();
+    }
+  }
 }
 
 /* 预览不在屏幕上时把它那份 DOM 丢掉。display:none 只是不画，节点还在 ——
@@ -1283,7 +1302,8 @@ function syncOutline() {
   if (view === 'wys' && wys.virtual) {
     /* 视口模式：DOM 里只有窗口那一小段，标题数量对不上。
        高亮改由块模型按滚动位置算（等价于原来的「标题顶 ≤ 基准线」二分）。 */
-    cur = atScrollEnd(el.wysiwyg.scrollTop, el.wysiwyg.scrollHeight, el.wysiwyg.clientHeight)
+    /* CM6 只渲染视口：滚动量在 .cm-scroller 上，容器自身不滚 */
+    cur = wys.atScrollEnd()
       ? outlineItems.length - 1
       : wys.headingIndexAt();
   } else if (view === 'wys' || view === 'preview') {
@@ -1673,9 +1693,9 @@ function applyLang() {
   refreshStats();   // 状态栏「N 字」「N 字符」同属动态区
   updateStatus();
   tree.render();
-  /* 所见即所得的提示块标题是建 DOM 时写死的文本节点，schedulePreview()
-     只重画预览那一侧。这里就地改默认标题，不动正文、不动撤销栈。 */
-  relabelCallouts(el.wysiwyg);
+  /* 提示块的默认标题由装饰层在渲染时取当前语言；改语言后重建一次视图
+     （不重载文档内容，撤销栈会清空 —— 但语言切换本来就是低频操作）。 */
+  wys.relabel();
   schedulePreview();
   refreshTitle();
 }
@@ -2364,9 +2384,9 @@ async function quickFile() {
 function focusQuickEnd(t) {
   if (!t || activeTab() !== t) return;
   if (t.mode === 'wysiwyg') {
-    const last = wys.root.lastElementChild;
+    const last = wys.lastBlock();
     if (last) wys.focusBlock(last, true);
-    else wys.root.focus();
+    else wys.focus();
   } else if (viewKindOf(t) === 'editor') {
     plain.setSelection(plain.value.length);
     plain.revealOffset(plain.value.length);
@@ -3379,7 +3399,12 @@ function runFind() {
   const prevIndex = find.index;
   find.matches = [];
   find.index = 0;
-  if (!t || !re) { setFindCount(); domfind.clear(); return; }
+  /* 三个分支各自设置 dom/model，必须每次先归零 —— 上一轮是所见即所得
+     （model=true）、这一轮是编辑模式时，残留的 model 会让替换走到不显示的
+     那个编辑器上，症状就是「点替换，正文没动」。 */
+  find.dom = false;
+  find.model = false;
+  if (!t || !re) { setFindCount(); domfind.clear(); wys.clearFind(); return; }
 
   /* 预览也是「渲染后的 DOM」：匹配必须按**看得见的文字**算，不能拿 md 源码的
      偏移去套（`**粗**` 在预览里只剩「粗」两个字）。以前预览落进下面的源码分支，
@@ -3417,9 +3442,12 @@ function runFind() {
     const idx = find.matches.findIndex(([a]) => a >= pos);
     find.index = idx < 0 ? 0 : idx;
   }
+  /* 走到这里的「不是所见即所得模型分支」时，把上一轮画在 CM6 里的装饰收掉：
+     切到编辑/预览后它还留在（隐藏的）wys 视图里，切回来会是一屏旧高亮 */
+  if (!find.model) wys.clearFind();
   setFindCount();
   if (find.matches.length) locateMatch();
-  else domfind.clear();
+  else { domfind.clear(); wys.clearFind(); }
 }
 
 function locateMatch() {
@@ -3428,10 +3456,11 @@ function locateMatch() {
   if (find.dom) {
     // 高亮交给 CSS Custom Highlight，不动 DOM —— contenteditable 里插 <mark> 会毁掉光标
     if (find.model) {
+      /* 模型分支：匹配是**源码偏移**，DOM 里只渲染视口那几行，建不出全部 Range。
+         所以整批交给 CM6 当装饰画（它自己只渲染可见部分），当前那一处换实色。 */
+      wys.markFind(find.matches, find.index);
       const m = find.matches[find.index];
       if (m) wys.scrollToBlockIndex(m.block, true);
-      // 只画窗口内的：窗口外的匹配没有 DOM，无法建 Range
-      domfind.paint(domfind.findInDom(el.wysiwyg, buildRegex()), -1);
       return;
     }
     domfind.paint(find.matches, find.index);
@@ -3499,6 +3528,14 @@ async function replaceOne() {
     runFind();
     if (!find.matches.length) return;
   }
+  /* 所见即所得：文档就是 Markdown 原文，替换退回「按字符偏移改字」。
+     格式天然保住（`**粗体**` 里换掉两个字还是粗体），也就不存在
+     「跨格式匹配改不了」这类分支。 */
+  if (find.model) {
+    const m = find.matches[find.index];
+    if (m) { wys.replaceRange(m.start, m.end, rep); runFind(); }
+    return;
+  }
   if (find.dom) {
     if (replaceInDom(find.matches[find.index], rep)) { runFind(); return; }
     if (!(await switchToEditForReplace())) return;
@@ -3525,6 +3562,14 @@ async function replaceAll() {
 
   /* 所见即所得：从后往前就地替换，前面的偏移不会被改动影响。
      跨格式的那几处单独数出来，一个都不剩才不必退回编辑模式。 */
+  if (find.model) {
+    const list = find.matches.slice();
+    if (!list.length) { toast(tt('没有找到匹配项')); return; }
+    const n = wys.replaceRanges(list, rep);
+    toast(tt('已替换 {n} 处', { n }));
+    runFind();
+    return;
+  }
   if (find.dom) {
     const list = find.matches.slice();
     let ok = 0;
@@ -3569,6 +3614,7 @@ function closeFind() {
   const hadFocus = el.findbar.contains(document.activeElement);
   el.findbar.classList.add('hidden');
   domfind.clear();
+  wys.clearFind();
   find.matches = [];
   if (!hadFocus) return;
   const t = activeTab();
@@ -3720,6 +3766,9 @@ function applyWrap() {
   const on = settings.wrap !== false;
   document.body.toggleAttribute('data-nowrap', !on);
   plain.setWrap(on);
+  /* 三个视图各有一个 CM6 实例（编辑区的、所见即所得里那个），
+     都要摘挂 lineWrapping —— 只改 body 属性时所见即所得照样折行 */
+  wys.setWrap(on);
 }
 
 function gotoLinePrompt() {
@@ -4021,20 +4070,22 @@ const commands = {
   ul: () => wysCmd((w) => w.toggleList('ul')),
   ol: () => wysCmd((w) => w.toggleList('ol')),
   taskList: () => wysCmd((w) => w.toggleList('task')),
-  quote: () => wysCmd((w) => w.insertBlock('quote')),
+  quote: () => wysCmd((w) => w.convertBlock('quote')),
   /* 右键「引用」那排药丸里「普通」的意思是「切成普通引用」，不是「取消引用」：
      在提示块上应该只摘掉提示块样式，原先它跟 quote 走同一个命令，一点整个框
      就退成段落了。普通引用上再点一次仍然是取消（保持原来的开关手感） */
   plainQuote: () => wysCmd((w) => {
     const b = w.currentBlock();
     if (b && b.dataset.type === 'bq' && b.dataset.callout) { w.clearCallout(b); return; }
-    w.insertBlock('quote');
+    w.convertBlock('quote');
   }),
   calloutInfo: () => wysCmd((w) => w.setCallout('info')),
   calloutWarning: () => wysCmd((w) => w.setCallout('warning')),
   calloutDanger: () => wysCmd((w) => w.setCallout('danger')),
   calloutSuccess: () => wysCmd((w) => w.setCallout('success')),
-  codeBlock: () => wysCmd((w) => w.insertBlock('code')),
+  /* 代码块：光标这一块有内容就**原地换类型**（围栏包住内容），
+     空行才是「插一个空代码块」—— 两件事在 convertBlock 里是同一条路径 */
+  codeBlock: () => wysCmd((w) => w.convertBlock('code')),
   mathBlock: () => wysCmd((w) => w.insertBlock('math')),
   hr: () => wysCmd((w) => w.insertBlock('hr')),
   table: () => wysCmd((w) => w.insertTable(3, 3)),
@@ -4151,12 +4202,7 @@ const previewMode = () => !!(activeTab() && activeTab().mode === 'preview');
  *  不在所见即所得模式返回 -1 */
 const headingLevel = () => {
   if (!canWys()) return -1;
-  const b = wys.currentBlock();
-  if (!b) return 0;
-  if (b.classList.contains('w-h')) {
-    return parseInt(String(b.dataset.type || 'h1').replace('h', ''), 10) || 1;
-  }
-  return b.dataset.type === 'p' ? 0 : -2;
+  return wys.headingLevel();
 };
 
 /* 表格命令只在光标进了表格之后才需要 —— 全塞进菜单会让它常年长着一截
@@ -4167,9 +4213,7 @@ const noTable = () => !inTable();
     右键菜单的引用药丸拿它点亮当前值 */
 const bqCallout = () => {
   if (!canWys()) return null;
-  const b = wys.currentBlock();
-  if (!b || b.dataset.type !== 'bq') return null;
-  return b.dataset.callout || '';
+  return wys.calloutOf();
 };
 
 /** 光标所在表格列的当前对齐方式：'' | 'left' | 'center' | 'right'；不在表格里返回 null。
@@ -4479,7 +4523,12 @@ function kindOfBlock(b) {
 }
 
 function placeHandle(block) {
-  if (!block || !block.isConnected || !block.classList.contains('w-block')) return hideHandle();
+  /* 新内核的「块」是 CM6 的行（.cm-line），不是 .w-block —— 两种都要认，
+     否则块手柄永远不出现，/ 面板的「菜单能不能开」那道确认会直接把它挡掉 */
+  if (!block || !block.isConnected
+    || !(block.classList.contains('w-block') || block.classList.contains('cm-line'))) {
+    return hideHandle();
+  }
   /* 分割线也是独立块：从前这里直接藏掉手柄，它才「不算一个块」。
      现在由块选中态驱动，手柄给出「删除这一块」的入口。 */
   /* 引用整组是一个逻辑块，只该有一个 ⋮⋮，钉在组首。续行上若再冒一个手柄，
@@ -4679,28 +4728,12 @@ function restoreSlash() {
   /* 面板还开着的这期间用户可能切了模式/切了标签：那时编辑区里的内容已经不是
      「他打字时那一份」，再往里插字符只会插到别人身上。丢掉比分错地方好。 */
   if (!isWysMode()) return;
-  const block = s.block;
-  if (!block || !block.isConnected) return;
-  const t = block.querySelector('.w-text');
-  if (!t) return;
+  /* 字符偏移就是文档位置：不用再造 Range、不用管文本节点被谁合并了 */
+  if (!(s.pos >= 0 && s.pos <= wys.value.length)) return;
   /* 光标还停在原处（Esc / 打字触发关闭）才把光标推到斜杠后面；
-     已经点到别处的就别抢焦点。判据和开面板时同一套口径（能认「光标停在块上」）。 */
-  const stick = caretOffsetInBlock(block) === s.off;
-  const p = textPosAt(t, s.off);
-  const r = document.createRange();
-  try { r.setStart(p.node, p.off); } catch { return; }
-  r.collapse(true);
-  const ch = document.createTextNode('/');
-  r.insertNode(ch);
-  if (stick) {
-    const sel = window.getSelection();
-    const r2 = document.createRange();
-    r2.setStartAfter(ch);
-    r2.collapse(true);
-    sel.removeAllRanges();
-    sel.addRange(r2);
-  }
-  wys.flush();
+     已经点别处去了就别抢焦点 */
+  const stick = wys.head === s.pos;
+  wys.insertTextAt(s.pos, '/', stick);
 }
 
 function closeBlockMenu() {
@@ -4789,11 +4822,17 @@ function setupBlockHandle() {
        经过编辑区，这里若继续跑就会当场把菜单收掉（用户根本来不及点）。
        关菜单只认「点编辑区别处」「Esc」「滚动」三条路。 */
     if (blockMenuOpen()) return;
-    const b = e.target.closest ? e.target.closest('.w-block') : null;
-    /* 没压在任何块上（行间空隙、左右页边距、块内的 .w-text 之外）就不动锚点。
+    /* 新内核的块是 CM6 的行（.cm-line）：只认 .w-block 的话鼠标从未「压住」
+       任何块，锚点永远退回光标所在行 —— 悬停在引用组第三行时手柄不动，
+       看起来像是「跟着走」，其实是从没响应过 */
+    const b = e.target.closest ? e.target.closest('.w-block, .cm-line') : null;
+    /* 没压在任何块上（行间空隙、左右页边距、块内文字之外）就不动锚点。
        这是「只要不换行就不消失」的关键：以前这里会把 null 当成「离开」 */
-    if (!b || b === anchorBlock) return;
-    anchorBlock = b;
+    if (!b) return;
+    /* 压着的还是同一块也要重新定位：锚点身份不变不代表位置没变 —— 切模式时
+       排一次版，字体/图片落位后行高会再变，只记「同一个元素」就会让 ⋮⋮ 停在
+       上一次算出来的坐标上（实测差 13px，看着像是没对齐组首） */
+    if (b !== anchorBlock) anchorBlock = b;
     refreshHandle();
   });
   el.wysiwyg.addEventListener('mouseenter', () => { pointerInside = true; });
@@ -4829,15 +4868,10 @@ function setupBlockHandle() {
     if (e.isComposing || e.keyCode === 229) return;   // 组字中：标点归输入法
     if (!isWysMode() || blockMenuOpen()) return;
     const block = wys.currentBlock();
-    if (!block || wys.currentCell()) return;
+    if (!block) return;
     if (!/^(p|h[1-6]|li|bq)$/.test(block.dataset.type || '')) return;
-    const t = block.querySelector('.w-text');
-    if (!t) return;
-    /* 用 block 口径读偏移：删空一行之后光标会停在 .w-block 上（不在 .w-text 里），
-       非空口径会直接判 -1 —— 「打了字再删掉就唤不出面板」正是这个原因 */
-    const off = caretOffsetInBlock(block);
-    if (off < 0) return;
-    const before = t.textContent.slice(0, off).replace(/\u200b/g, '');
+    /* 行内偏移直接由文档算：没有文本节点，也就不存在「光标停在块元素上」那种边界 */
+    const before = wys.lineText.slice(0, wys.head - wys.lineStart);
     if (!/(^|\s)$/.test(before)) return;
     /* 先确认菜单真能开（手柄落到这一块上），能开才吞掉这个字符 ——
        否则 "/" 被 preventDefault 掉了、菜单又没出来，字符就凭空没了 */
@@ -4845,7 +4879,7 @@ function setupBlockHandle() {
     placeHandle(block);
     if (handleBlock !== block) return;
     e.preventDefault();
-    slashAt = { block, off };
+    slashAt = { pos: wys.head };
     openBlockMenu('insert', true);
   }, true);
 
@@ -5545,7 +5579,7 @@ function persistCurrentView() {
        凭空造出一个脏标记。真编辑过的标签 pending() 必然为真。
        落账后立刻清标记：切到下一个标签时那次迟到的 blur 不该再冲一遍。 */
     if (wys.pending()) { t.content = wys.toMarkdown(); wys.markCommitted(); }
-    t.scrollTop = el.wysiwyg.scrollTop;
+    t.scrollTop = wys.scrollTop;
     t.caret = null;              // 所见即所得的 DOM 光标映射回源码偏移不可靠，只记住滚动位置
   } else if (view === 'editor') {
     t.content = plain.value;

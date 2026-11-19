@@ -222,3 +222,51 @@ export function clear() {
   if (!live()) return;
   for (const cls of CLS) CSS.highlights.delete(PREFIX + cls);
 }
+
+/* ---------------- 给 CM6 内核的入口（1.3.0） ----------------
+
+   新内核的代码块是 CM6 的行，DOM 由 CM6 管，插不了 `<span>`（会被下一次
+   渲染抹掉），也没有 `Range` 可以喂给 CSS Custom Highlight —— 那边靠
+   `Decoration.mark`。但**分词只许有一套**：这里复用同一个 `highlight()` +
+   `tokenSpans()`，只把「源码偏移」原样交出去，由调用方转成装饰。
+
+   ⛔ 别在 live-preview 里另写一份正则分词：预览、导出、编辑三处颜色一旦
+   分叉，同一段代码在两个视图里不一样，最难查。 */
+
+/** 超过这个长度就不上色（与 refreshCode 的上限一致）：几万字的块每键重分词会卡 */
+export const TOKEN_MAX_CHARS = MAX_CHARS;
+
+/**
+ * 一段代码 → `[{start, end, cls}]`（偏移以代码文本计，不含围栏）。
+ *
+ * ⚠️ **语言未知时返回空数组，绝不在这里自动识别**：`highlight()` 认不出语言时
+ * 会走 `detectLang`，那是 2 KB 约 150 ms 的开销，挂在装饰计算里就是每敲一个字
+ * 卡一下。自动识别由调用方排队（`guessLang`）后带着语言名再调回来。
+ *
+ * @param {string} code
+ * @param {string} lang 围栏上写的语言名，或识别出来的结果
+ */
+export function tokenRanges(code, lang) {
+  const text = String(code ?? '');
+  const id = normalizeLang(lang);
+  if (!id || !text || text.length > MAX_CHARS) return [];
+  return tokenSpans(highlight(text, id));
+}
+
+/** 这段文本是不是一份完整 JSON（几毫秒的事，不必等自动识别排队） */
+export function wholeJson(text) {
+  const t = String(text || '').trim();
+  if (!t) return false;
+  if (t[0] !== '{' && t[0] !== '[') return false;
+  try { JSON.parse(t); return true; } catch { return false; }
+}
+
+/** 自动识别语言（贵：2 KB 约 150 ms）。调用方必须自己防抖 + 缓存 */
+export function guessLang(text) {
+  const t = String(text || '');
+  if (!t) return '';
+  if (wholeJson(t)) return 'json';
+  if (t.length > AUTO_SAMPLE) return '';
+  return detectLang(t);
+}
+
