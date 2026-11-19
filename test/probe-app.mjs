@@ -939,6 +939,7 @@ try {
     };
     const down = () => arrow('ArrowDown', 'ArrowDown', 40);
     const right = () => arrow('ArrowRight', 'ArrowRight', 39);
+    const left = () => arrow('ArrowLeft', 'ArrowLeft', 37);
     const enter = async () => {
       await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r', unmodifiedText: '\r' });
       await send('Input.dispatchKeyEvent', { type: 'char', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r', unmodifiedText: '\r' });
@@ -1263,6 +1264,46 @@ try {
         JSON.stringify(await ev(`document.querySelector('.wysiwyg .w-text').textContent`)));
       ok('……再存一次一个字节都不变',
         (await ev(`window.__snp.getEditorText()`)).trimEnd() === md,
+        JSON.stringify(await ev(`window.__snp.getEditorText()`)));
+    }
+
+    /* ---- I2e. 码里只有一个空格（用户 11-19 报「光标进不去」）----
+       行内码里的空白是**内容**，可 HTML 默认会把它折掉：`` ` ` `` 的盒子
+       靠 padding 撑出宽度、里面却没有可停的插入点，← 一步跨过整条码。
+       这属于「不报错、只能量」的一类，所以三条都测：盒子有宽度、← 能进、
+       进去且一个字都不改。按用户的操作顺序来 —— 手动敲三个键，不拿现成
+       的 md 渲染（那条路上紧跟其后的空白会参与 Chromium 的插入点合并，
+       与本条要守的东西无关）。 */
+    await ev(`window.__snp.newTab('ic10.md', ${JSON.stringify('x')}, null)`);
+    await sleep(400);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(500);
+    await ev(`(() => {
+      const t = document.querySelector('.wysiwyg .w-text');
+      const r = document.createRange();
+      r.setStart(t.firstChild, t.firstChild.nodeValue.length); r.collapse(true);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      document.querySelector('.wysiwyg').focus();
+      return 1;
+    })()`);
+    for (const ch of ['`', ' ', '`']) {
+      await send('Input.insertText', { text: ch });
+      await sleep(160);
+    }
+    await sleep(300);
+    {
+      ok('真机：手敲 ` + 空格 + ` 存成码',
+        (await ev(`window.__snp.getEditorText()`)).trimEnd() === 'x` `',
+        JSON.stringify(await ev(`window.__snp.getEditorText()`)));
+      const w = await ev(`(() => {
+        const c = document.querySelector('.wysiwyg code');
+        return c ? Math.round(c.getBoundingClientRect().width) : -1;
+      })()`);
+      ok('真机：码里只有一个空格也有可见宽度', w > 8, String(w));
+      await left();
+      ok('真机：← 能走进「只有一个空格」的行内码', await caretInCode(), '仍停在外面');
+      ok('……进去这一步不改 Markdown',
+        (await ev(`window.__snp.getEditorText()`)).trimEnd() === 'x` `',
         JSON.stringify(await ev(`window.__snp.getEditorText()`)));
     }
 

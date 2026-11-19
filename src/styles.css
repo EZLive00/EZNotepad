@@ -1088,9 +1088,14 @@ input[type="search"] { cursor: var(--cur-text), text; }
 .md p { margin: .9em 0; }
 .md a { color: var(--accent); text-decoration: none; border-bottom: var(--bw) solid transparent; }
 .md a:hover { border-bottom-color: var(--accent); }
+/* 行内码内的空白是**内容**，不能被 HTML 折叠：`` ` ` ``（码里只有一个空格）
+   折完之后零宽，Chromium 那边就没有可停的插入点 —— ←/→ 直接跨过整条码，
+   用户看到的是「光标怎么都进不去」。pre-wrap 让空格有真实宽度，顺带把
+   `` `a  b` `` 的两个空格如实显示（原先预览里也会被折成一个）。
+   ⛔ 别改成 normal 省宽度，那正是这个 bug 的来源。 */
 .md code {
   font-family: var(--font-mono); font-size: .88em; background: var(--code-bg);
-  padding: .16em .42em; border-radius: var(--r-1);
+  padding: .16em .42em; border-radius: var(--r-1); white-space: pre-wrap;
 }
 .md pre {
   background: var(--code-bg); border-radius: var(--r-2);
@@ -1853,7 +1858,9 @@ body[data-zen="1"] .win-title { color: var(--fg-faint); }
 .wysiwyg .cc-copy.done .cc-ico-done { display: block; }
 .wysiwyg .w-text { outline: none; }
 .wysiwyg .w-code { display: block; white-space: pre-wrap; font-family: var(--font-mono); font-size: var(--fs-2); line-height: 1.68; padding: 12px 14px; }
-.wysiwyg code { background: var(--code-bg); padding: .12em .4em; border-radius: var(--r-1); font-family: var(--font-mono); font-size: .88em; box-shadow: inset 0 0 0 var(--bw) var(--line); }
+/* white-space: pre-wrap 与 .md code 同一个理由：码里的空格是内容，折没了光标
+   就进不去（见 .md code 上方那段）。三处（所见即所得 / 预览 / 导出）必须同值 */
+.wysiwyg code { background: var(--code-bg); padding: .12em .4em; border-radius: var(--r-1); font-family: var(--font-mono); font-size: .88em; white-space: pre-wrap; box-shadow: inset 0 0 0 var(--bw) var(--line); }
 .wysiwyg a { color: var(--accent); }
 .wysiwyg .w-img { max-width: 100%; max-height: 320px; border-radius: var(--r-2); margin: .3em 0; }
 /* 手动指定了尺寸就按尺寸来，别再被 320px 的天花板压回去 */
@@ -1902,9 +1909,13 @@ body[data-nowrap] .wysiwyg {
   padding-left: var(--read-gutter);
   padding-right: var(--read-gutter);
 }
-/* 自己声明过 white-space 的块不会继承容器，逐个改回不折行的那一档 */
+/* 自己声明过 white-space 的块不会继承容器，逐个改回不折行的那一档。
+   行内码也要跟上：它现在是 pre-wrap（为了空格不被折没），不覆盖的话
+   长行不折、只有码里的空格在折，画面更怪 */
 body[data-nowrap] .wysiwyg .w-code,
 body[data-nowrap] .wysiwyg .w-mathblock,
+body[data-nowrap] .wysiwyg code,
+body[data-nowrap] .md code,
 body[data-nowrap] .plainview { white-space: pre; }
 
 /* 自动换行时，超长的「词」也要折：一长串没有空格的 URL / ID / 日志行，
