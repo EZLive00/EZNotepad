@@ -1175,11 +1175,17 @@ try {
       const btn = bar && bar.querySelector('.cm-lp-copy');
       const r = btn && btn.getBoundingClientRect();
       return {
-        lang: lang ? lang.textContent : null,
+        /* 语言条是个 <select>：textContent 会把全部几十个选项连起来，
+           要读的是 value（送进着色）和当前选中项的文字（给人看） */
+        lang: lang ? lang.value : null,
+        shown: lang ? ((lang.selectedOptions[0] || {}).textContent || '') : null,
+        opts: lang ? lang.options.length : 0,
         btn: !!btn, w: r ? Math.round(r.width) : 0,
       };
     })()`);
-    ok('代码块有语言条，语言名取 info string', cinfo.lang === 'js', JSON.stringify(cinfo.lang));
+    ok('代码块有语言条，语言名取 info string', cinfo.lang === 'js' && cinfo.shown === 'JavaScript',
+      JSON.stringify(cinfo));
+    ok('语言条是个能改语言的下拉（不是死文字）', cinfo.opts > 10, String(cinfo.opts));
     ok('语言条上有复制按钮，且有实际尺寸（不是 0×0 的画外元素）',
       cinfo.btn === true && cinfo.w >= 12, JSON.stringify(cinfo));
 
@@ -1225,7 +1231,10 @@ try {
     await ev(`window.__snp.editor.setSelection(0)`);
     await sleep(300);
     ok('没标语言时语言条写「代码」',
-      (await ev(`document.querySelector('#wysiwyg .cm-lp-lang')?.textContent`)) === '代码');
+      (await ev(`(() => {
+        const s = document.querySelector('#wysiwyg .cm-lp-lang');
+        return s ? ((s.selectedOptions[0] || {}).textContent || '') : '';
+      })()`)) === '代码');
 
     /* Ctrl+A：新内核是标准编辑器语义，第一下就全选。
        旧内核「先选本块、再选全篇」是 DOM 块模型的产物（块是独立元素，
@@ -1665,11 +1674,11 @@ try {
       String(after).includes('A 的内容') && !String(after).includes('B 的内容'), JSON.stringify(after));
   }
 
-  /* ---------- 表格：只读渲染 + 点一下回源码 ----------
-     旧内核的表格是 contenteditable 单元格，于是有一整类「单元格里选中后加不上
-     格式」的问题（选区落在 <td> 里，命令见到单元格就整条返回）。新内核里表格
-     是只读 widget，点一下整块退回源码 —— 之后就是普通的行内编辑，格式和正文
-     走同一条路，不需要单元格那一套特例。 */
+  /* ---------- 表格：渲染成真表格 + 点格子就地改 ----------
+     旧内核的表格是 contenteditable 单元格，于是有一整类「单元格里选中后
+     加不上格式」的问题。新内核里表格是只读 widget，在它上面盖一层输入框
+     来改单格（live-preview 的 openCell）：写回只替换那一格的字符区间，
+     表格不塌、别的字节不动。想看竖线走右键「编辑源码」。 */
   {
     await ev(`window.__snp.newTab('cell-mark.md', '', null, { mode: 'wysiwyg' })`);
     await sleep(400);
@@ -1678,7 +1687,7 @@ try {
     await ev(`window.__snp.setContent('前\\n\\n| 姓名 | 城市 |\\n| --- | --- |\\n| 张三 | 北京 |\\n\\n后\\n')`);
     await sleep(700);
 
-    /* 光标移出表格：光标在表里时整块按源码显示（那是编辑入口） */
+    /* 光标移出表格：光标严格在表内时才按源码显示（那是「编辑源码」入口） */
     await ev(`window.__snp.editor.setSelection(0)`);
     await sleep(400);
     const tbl = await ev(`(() => {
@@ -1692,15 +1701,63 @@ try {
     ok('表格渲染成真表格（表头 + 单元格）',
       tbl.has && tbl.ths.join('|') === '姓名|城市' && tbl.tds.join('|') === '张三|北京', JSON.stringify(tbl));
 
-    /* 点一下表格 → 退回源码，可以按字改 */
-    const tg = await ev(`(() => {
-      const r = document.querySelector('#wysiwyg .cm-lp-table').getBoundingClientRect();
-      return { x: Math.round(r.left + 20), y: Math.round(r.top + r.height / 2) };
+    /* 点格子 → 就地编辑（不是整表塌成源码） */
+    const cellRect = (row, col) => ev(`(() => {
+      const el = document.querySelector('#wysiwyg .cm-lp-table [data-row="${row}"][data-col="${col}"]');
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
     })()`);
-    await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: tg.x, y: tg.y, button: 'left', clickCount: 1 });
-    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: tg.x, y: tg.y, button: 'left', clickCount: 1 });
-    await sleep(350);
-    ok('点一下表格回源码（可以直接改字）',
+    const c1 = await cellRect(1, 0);
+    await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: c1.x, y: c1.y, button: 'left', clickCount: 1 });
+    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: c1.x, y: c1.y, button: 'left', clickCount: 1 });
+    await sleep(400);
+    const ed = await ev(`(() => {
+      const i = document.querySelector('#wysiwyg .cm-lp-cell');
+      return {
+        open: !!i,
+        val: i ? i.value : null,
+        table: !!document.querySelector('#wysiwyg .cm-lp-table'),
+        src: document.querySelectorAll('#wysiwyg .cm-lp-table-src').length,
+      };
+    })()`);
+    ok('点格子就地编辑：输入框里是这一格的原文', ed.open && ed.val === '张三', JSON.stringify(ed));
+    ok('……表格没有塌成源码', ed.table === true && ed.src === 0, JSON.stringify(ed));
+
+    /* 打一个字 + Tab：落账后跳到下一格，写回只动这一格 */
+    await send('Input.insertText', { text: '三' });
+    await sleep(140);
+    await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
+    await sleep(360);
+    const md1 = await ev(`window.__snp.getEditorText()`);
+    ok('Tab 落账：文件里只多了这一个字，别处一个字节没动',
+      md1 === '前\n\n| 姓名 | 城市 |\n| --- | --- |\n| 张三三 | 北京 |\n\n后\n', JSON.stringify(md1));
+    ok('……编辑框跳到下一格（北京）',
+      (await ev(`(document.querySelector('#wysiwyg .cm-lp-cell') || {}).value`)) === '北京');
+
+    /* Esc 收起编辑框（这一格的改动不写回） */
+    await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+    await sleep(250);
+    ok('Esc 收起编辑框', (await ev(`!!document.querySelector('#wysiwyg .cm-lp-cell')`)) === false);
+
+    /* 右键格子 → 「编辑源码」：渲染态下想看竖线走这条路 */
+    await ev(`(() => {
+      const el = document.querySelector('#wysiwyg .cm-lp-table [data-row="1"][data-col="0"]');
+      const r = el.getBoundingClientRect();
+      el.dispatchEvent(new MouseEvent('mousedown', {
+        bubbles: true, cancelable: true, button: 2,
+        clientX: r.left + 8, clientY: r.top + 8,
+      }));
+      return 1;
+    })()`);
+    await sleep(200);
+    ok('右键格子之后 isInTable 认得这一格',
+      (await ev(`window.__snp.editor.isInTable()`)) === true);
+    await ev(`window.__snp.commands.tableSource()`);
+    await sleep(400);
+    ok('「编辑源码」把这张表退回竖线原文',
       (await ev(`!!document.querySelector('#wysiwyg .cm-lp-table-src')`)) === true);
 
     /* 源码态：选中「张三」加高亮，写回 ==…== */

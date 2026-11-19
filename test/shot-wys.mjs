@@ -95,5 +95,26 @@ for (const theme of ['light', 'dark']) {
   await ev(`(() => { const s = document.querySelector('#wysiwyg .cm-scroller'); s.scrollTop = s.scrollHeight; })()`);
   await sleep(500);
   await shot(path.join(OUT, `wys-${theme}-bottom.png`));
+
+  /* 表格格内编辑：点开某格之后的样子。这个状态只能看图判断 ——
+     输入框浮在格子上，字体、行高、内边距对不对齐，断言测不出来 */
+  await ev(`(() => {
+    const td = document.querySelector('#wysiwyg .cm-lp-table [data-row="1"][data-col="1"]');
+    if (!td) return 0;
+    td.scrollIntoView({ block: 'center' });
+    const r = td.getBoundingClientRect();
+    td.dispatchEvent(new MouseEvent('mousedown', {
+      bubbles: true, cancelable: true, button: 0,
+      clientX: r.left + 10, clientY: r.top + 10,
+    }));
+    return 1;
+  })()`);
+  await sleep(450);
+  await shot(path.join(OUT, `wys-${theme}-cell.png`));
+  await ev(`(() => {
+    const i = document.querySelector('#wysiwyg .cm-lp-cell');
+    if (i) i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  })()`);
+  await sleep(250);
 }
 process.exit(0);

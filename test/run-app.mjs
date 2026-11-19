@@ -643,10 +643,11 @@ try {
       (await ev('window.__snp.getEditorText()')) === '这是==重点==文字',
       JSON.stringify(await ev('window.__snp.getEditorText()')));
 
-    /* ---- 9. 表格：渲染成真表格，点一下回到源码 ----
-       换内核后表格不再是 contenteditable 的 <table>：文档里就是那几行 `|`。
-       光标不在表内时换成只读表格（Tab 走格、↑↓ 走列这些浏览器行为随之消失），
-       点一下回到源码编辑。 */
+    /* ---- 9. 表格：渲染成真表格，点格子就地改 ----
+       换内核后表格不再是 contenteditable 的 <table>：文档里就是那几行 `|`，
+       渲染态是一个只读 widget（光标进不去源码）。想在渲染态下改字，靠的是
+       一层浮在格子上的输入框（live-preview 的 openCell），写回只替换那一格
+       的字符区间 —— 表格不塌、别的字节不动。 */
     const TBL = ['| 甲 | 乙 | 丙 |', '| --- | --- | ---: |', '| 丁 | 戊 | 己 |', '| 庚 | 辛 | 壬 |', ''].join('\n');
     await ev(`window.__snp.newTab('tbl.md', ${JSON.stringify(TBL)}, null)`);
     await ev('window.__snp.commands.modeWysiwyg()');
@@ -677,20 +678,61 @@ try {
     ok('列对齐跟着分隔行（第三列右对齐）', !!tbl && tbl.align === 'right', String(tbl && tbl.align));
     ok('光标不在表内时不显示源码行', !!tbl && tbl.srcLines === 0, String(tbl && tbl.srcLines));
 
-    /* 点表格 = 把光标放进表内，该表转成源码，可以直接改 */
-    await ev(`(() => {
-      const t = document.querySelector('#wysiwyg .cm-lp-table');
-      t.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
-      return 1;
+    /* 点格子 = **就地编辑那一格**：表格不塌，写回只替换这一格的字符区间。
+       1.3.0+1 的口径是「点一下整表塌成源码」，用户的原话是「这种交互不是
+       我想要的，Typora 并不是这样的」—— 这一条钉住新口径，别再退回去。 */
+    const clickCell = (row, col) => ev(`(() => {
+      const td = document.querySelector('#wysiwyg .cm-lp-table [data-row="${row}"][data-col="${col}"]');
+      if (!td) return 'no-cell';
+      const r = td.getBoundingClientRect();
+      td.dispatchEvent(new MouseEvent('mousedown', {
+        bubbles: true, cancelable: true, button: 0,
+        clientX: r.left + 8, clientY: r.top + 8,
+      }));
+      return 'ok';
     })()`);
-    await ev('new Promise(r => setTimeout(r, 240))');
-    const srcLines = await ev(`document.querySelectorAll('#wysiwyg .cm-lp-table-src').length`);
-    ok('点一下表格回到源码编辑', srcLines === 4, String(srcLines));
-    ok('……源码就是文件里那几行，没有被改写',
+
+    await clickCell(1, 0);
+    await nap(220);
+    const cell = JSON.parse(await ev(`(() => {
+      const i = document.querySelector('#wysiwyg .cm-lp-cell');
+      return JSON.stringify({
+        open: !!i,
+        val: i ? i.value : null,
+        focused: i ? document.activeElement === i : false,
+        table: !!document.querySelector('#wysiwyg .cm-lp-table'),
+        src: document.querySelectorAll('#wysiwyg .cm-lp-table-src').length,
+      });
+    })()`));
+    ok('点格子就地编辑：输入框里是这一格的原文', cell.open && cell.val === '丁', JSON.stringify(cell));
+    ok('……焦点在输入框上，不抢正文的光标', cell.focused, JSON.stringify(cell));
+    ok('……表格仍然渲染着（不再塌成源码）', !!cell.table && cell.src === 0, JSON.stringify(cell));
+    ok('……打开输入框本身不改文档',
       (await ev('window.__snp.editor.toMarkdown()')) === TBL,
       JSON.stringify(await ev('window.__snp.editor.toMarkdown()')));
-    ok('……而且源码状态下不再画表格',
-      (await ev(`!!document.querySelector('#wysiwyg .cm-lp-table')`)) === false);
+
+    /* 打字 + Tab：落账后跳到下一格。写回只替换被编辑那一格，别的字节一个不动 */
+    await send('Input.insertText', { text: '改' });
+    await nap(140);
+    await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
+    await nap(280);
+    const afterTab = await ev('window.__snp.editor.toMarkdown()');
+    ok('Tab 落账：只改了被编辑的那一格',
+      afterTab === TBL.replace('| 丁 |', '| 丁改 |'), JSON.stringify(afterTab));
+    ok('……编辑框跳到下一格（戊）',
+      (await ev(`(document.querySelector('#wysiwyg .cm-lp-cell') || {}).value`)) === '戊');
+
+    /* Esc = 放弃这一格：打进去的字不写回 */
+    await send('Input.insertText', { text: '丢掉' });
+    await nap(120);
+    await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+    await nap(220);
+    ok('Esc 收起编辑框，打进去的字不写回',
+      (await ev('window.__snp.editor.toMarkdown()')) === afterTab
+      && (await ev(`!!document.querySelector('#wysiwyg .cm-lp-cell')`)) === false,
+      JSON.stringify(await ev('window.__snp.editor.toMarkdown()')));
 
     /* 真实按键：合成事件走不到浏览器的默认行为，「接管 vs 放行」这类判断只能这么测 */
     const press = async (key, code, vk, text) => {
