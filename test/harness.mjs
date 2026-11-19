@@ -224,7 +224,14 @@ export async function runPage(o) {
 
   const ev = async (expr) => {
     const r = await send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true });
-    if (r.exceptionDetails) return { __err: r.exceptionDetails.exception?.description || r.exceptionDetails.text };
+    if (r.exceptionDetails) {
+      /* 注入的这段代码炸了 —— 调用方拿到的是 {__err}，很容易被当成「空结果」
+         吞掉（真实案例：模板串里的 \n 没转义，newTab 根本没建标签，
+         断言却只报「内容不对」）。所以这里必须留一行痕迹，否则就是假绿。 */
+      const msg = String(r.exceptionDetails.exception?.description || r.exceptionDetails.text || '');
+      process.stderr.write('[ev] ' + msg.split('\n')[0] + '\n     ' + expr.replace(/\s+/g, ' ').slice(0, 160) + '\n');
+      return { __err: msg };
+    }
     return r.result.value;
   };
 
