@@ -4102,6 +4102,7 @@ const commands = {
   tableDelRow: () => wysCmd((w) => w.tableCommand('delRow')),
   tableDelCol: () => wysCmd((w) => w.tableCommand('delCol')),
   tableDel: () => wysCmd((w) => w.tableCommand('delTable')),
+  tableSource: () => wysCmd((w) => w.tableSource()),
   tableAlignLeft: () => wysCmd((w) => alignColumn(w, 'left')),
   tableAlignCenter: () => wysCmd((w) => alignColumn(w, 'center')),
   tableAlignRight: () => wysCmd((w) => alignColumn(w, 'right')),
@@ -5121,6 +5122,9 @@ function bindEvents() {
             { label: tt('右'), hint: tt('本列右对齐'), checked: () => colAlign() === 'right', action: () => commands.tableAlignRight() },
             { label: tt('默认'), hint: tt('本列取消对齐'), checked: () => colAlign() === '', action: () => commands.tableAlignNone() },
           ] },
+          /* 表格渲染态下竖线是看不见的：想整段改（比如某行列数写错了）
+             得有一条进源码的路，否则只能切到「编辑」模式再找回来 */
+          { label: tt('编辑源码'), hint: 'Markdown', action: () => commands.tableSource() },
           { lead: tt('删除'), danger: true, row: [
             { label: tt('本行'), hint: tt('删除光标所在行'), action: () => commands.tableDelRow() },
             { label: tt('本列'), hint: tt('删除光标所在列'), action: () => commands.tableDelCol() },

@@ -1926,7 +1926,25 @@ body:not([data-nowrap]) .preview-body{ overflow-wrap: break-word; }
   letter-spacing: .06em; color: var(--fg-faint);
   user-select: none;
 }
-#wysiwyg .cm-lp-lang { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 语言名是个 <select>：围栏行零高、光标到不了，改语言只能从这里点。
+   用原生下拉而不是自绘菜单 —— 自绘要处理点外关闭、键盘导航、滚动跟随，
+   而这里只需要一个值改变事件。小三角用两层线性渐变画，省一张图。 */
+#wysiwyg .cm-lp-lang {
+  appearance: none; -webkit-appearance: none;
+  max-width: 14em; margin: 0; padding: 1px 14px 1px 4px;
+  border: 0; border-radius: var(--r-1);
+  background-color: transparent; color: inherit;
+  font: inherit; letter-spacing: inherit; cursor: pointer;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  background-image:
+    linear-gradient(45deg, transparent 50%, currentColor 50%),
+    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: right 6px center, right 2px center;
+  background-size: 4px 4px, 4px 4px;
+  background-repeat: no-repeat;
+}
+#wysiwyg .cm-lp-lang:hover { background-color: var(--bg-hover); color: var(--fg); }
+#wysiwyg .cm-lp-lang option { color: var(--fg); background: var(--bg); }
 #wysiwyg .cm-lp-copy {
   display: inline-flex; align-items: center; justify-content: center;
   flex: 0 0 auto; width: 22px; height: 22px; padding: 0;
@@ -2000,6 +2018,9 @@ body:not([data-nowrap]) .preview-body{ overflow-wrap: break-word; }
 #wysiwyg .cm-lp-hr hr { border: none; border-top: var(--bw) solid var(--line-strong); margin: 0; }
 
 /* ---- 表格 ---- */
+/* 单元格输入框是**绝对定位在 .cm-editor 上的一层**（不是 <td> 的子节点：
+   widget 一重建就把输入框连同焦点、输入法组字一起弄丢）。所以要一个定位锚点。 */
+#wysiwyg .cm-editor { position: relative; }
 #wysiwyg .cm-lp-table {
   border-collapse: collapse; width: 100%; margin: .6em 0;
   font-size: .96em;
@@ -2011,6 +2032,23 @@ body:not([data-nowrap]) .preview-body{ overflow-wrap: break-word; }
 }
 #wysiwyg .cm-lp-table th { background: var(--bg-soft); font-weight: 650; }
 #wysiwyg .cm-lp-table tr:hover td { background: var(--bg-hover); }
+/* 正在编辑的那一格：把格子的高亮收掉，免得和输入框的描边叠成两层 */
+#wysiwyg .cm-lp-table td.is-editing,
+#wysiwyg .cm-lp-table th.is-editing { background: transparent; color: transparent; }
+#wysiwyg .cm-lp-table td.is-editing *,
+#wysiwyg .cm-lp-table th.is-editing * { visibility: hidden; }
+
+/* 盖在格子上的输入框。尺寸由脚本按格子的 rect 现算，这里只管长相：
+   字体、行高、内边距都对齐 <td>，光标落进去时看不出「换了控件」 */
+#wysiwyg .cm-lp-cell {
+  position: absolute; z-index: 8; box-sizing: border-box;
+  margin: 0; padding: 5px 9px;
+  border: var(--bw) solid var(--accent); border-radius: var(--r-1);
+  background: var(--bg); color: var(--fg);
+  font-family: var(--font-read); font-size: .96em; line-height: 1.78;
+  resize: none; overflow: auto; outline: none;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, .10);
+}
 
 /* 表格源码态：竖线压淡，一眼看出还在编辑源码 */
 #wysiwyg .cm-lp-table-src { font-family: var(--font-mono); font-size: .92em; color: var(--fg-soft); background: var(--bg-soft); }

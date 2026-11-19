@@ -12,6 +12,7 @@ import {
   EditorView, syntaxTree, StateEffect, StateField, Decoration,
 } from '../../vendor/cm6.js';
 import { PlainEditor } from './plain-editor.js';
+import { currentTableCell, commitTableCell, clearTableCell } from './live-preview.js';
 import { outlineFromMarkdown } from '../markdown.js';
 
 /* ---------------- 查找高亮 ----------------
@@ -595,6 +596,21 @@ export class LiveEditor {
 
   /** 删除整块：表格 / 代码块 / 引用组一起删，普通行删一行 */
   deleteBlock(block) {
+    /* 表格里没有“光标所在的块” —— 整块是 widget，光标进不去。走「刚才那一格」
+       记下的表边界，否则「整表」这一项点了没反应。 */
+    const sess = currentTableCell();
+    if (sess && !block) {
+      const doc = this.view.state.doc;
+      const clamp = (p) => Math.max(0, Math.min(doc.length, p));
+      const first = doc.lineAt(clamp(sess.tableFrom)).number;
+      const last = Math.max(first, doc.lineAt(clamp(sess.tableTo)).number);
+      const from = doc.line(first).from;
+      const to = last < doc.lines ? doc.line(last + 1).from : doc.line(last).to;
+      clearTableCell();
+      this.view.dispatch({ changes: { from, to }, selection: { anchor: Math.max(0, from) } });
+      return;
+    }
+
     const pos = block ? this._posOfLineEl(block) : this.head;
     if (pos < 0) return;
     const doc = this.view.state.doc;
@@ -613,81 +629,123 @@ export class LiveEditor {
     this.view.dispatch({ changes: { from, to }, selection: { anchor: Math.max(0, from) } });
   }
 
-  /* ---------------- 表格 ---------------- */
+  /* ---------------- 表格 ----------------
 
-  /** 光标所在表格的信息：{ table, colIdx, rowIdx, aligns }；不在表格里返回 null */
-  tableInfo() {
-    const pos = this.head;
+     1.3.0 起表格是**块级 widget**：整块被替换成真 <table>，光标进不去源码。
+     所以「当前是哪一格」不能从 this.head 推，只能问装饰层
+     （currentTableCell —— 点格子时它会记下来）。行列命令全走这一份，
+     否则菜单里点了没反应。 */
+
+  /** 表格边界（行号 1 基）+ 当前行号（0 基，表头是 0）+ 当前列 */
+  _tableBounds() {
     const doc = this.view.state.doc;
-    const line = doc.lineAt(pos);
+    const clamp = (p) => Math.max(0, Math.min(doc.length, p));
+    const sess = currentTableCell();
+    if (sess) {
+      const first = doc.lineAt(clamp(sess.tableFrom)).number;
+      const last = Math.max(first, doc.lineAt(clamp(sess.tableTo)).number);
+      return { first, last, row: Math.max(0, sess.row | 0), col: Math.max(0, sess.col | 0) };
+    }
+    const line = doc.lineAt(this.head);
     if (!line.text.includes('|')) return null;
-
-    /* 往上找表头：第一行 + 下一行是分隔行 */
-    let head = line.number;
-    while (head > 1 && doc.line(head - 1).text.includes('|') && !isSep(doc.line(head).text)) head--;
-    if (!isSep(doc.line(head + 1 <= doc.lines ? head + 1 : head).text)) return null;
-
-    const sep = doc.line(head + 1);
-    const aligns = sep.text.replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|')
-      .map((c) => { const t = c.trim(); const l = t.startsWith(':'); const r = t.endsWith(':'); return l && r ? 'center' : r ? 'right' : l ? 'left' : ''; });
-
-    const colIdx = (line.text.slice(0, pos - line.from).match(/\|/g) || []).length
+    let first = line.number;
+    while (first > 1 && doc.line(first - 1).text.includes('|') && !isSep(doc.line(first).text)) first--;
+    if (first + 1 > doc.lines || !isSep(doc.line(first + 1).text)) return null;
+    let last = first + 1;
+    while (last < doc.lines && doc.line(last + 1).text.includes('|')) last++;
+    const col = (line.text.slice(0, this.head - line.from).match(/\|/g) || []).length
       - (line.text.trimStart().startsWith('|') ? 1 : 0);
+    return { first, last, row: line.number - first, col: Math.max(0, col) };
+  }
 
+  /** 当前表格的信息：{ table, colIdx, rowIdx, aligns }；不在表格里返回 null */
+  tableInfo() {
+    const b = this._tableBounds();
+    if (!b) return null;
+    const doc = this.view.state.doc;
+    const sep = doc.line(b.first + 1);
+    const aligns = sep.text.replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|')
+      .map((c) => {
+        const t = c.trim();
+        const l = t.startsWith(':');
+        const r = t.endsWith(':');
+        return l && r ? 'center' : r ? 'right' : l ? 'left' : '';
+      });
     /* app 的 colAlign 读 table.dataset.aligns —— 给它当前渲染的那张表 */
     const el = this.host.querySelector('.cm-lp-table');
     if (el) el.dataset.aligns = aligns.join(',');
-
-    return { table: el || { dataset: { aligns: aligns.join(',') } }, colIdx: Math.max(0, colIdx), rowIdx: line.number - head, aligns };
+    return {
+      table: el || { dataset: { aligns: aligns.join(',') } },
+      colIdx: b.col,
+      rowIdx: b.row,
+      aligns,
+    };
   }
 
   isInTable() { return !!this.tableInfo(); }
 
   currentCell() { return null; }
 
+  /** 把光标送进表格源码：渲染态下点格子是编辑，想看竖线、想整段改走这里 */
+  tableSource() {
+    commitTableCell();
+    const b = this._tableBounds();
+    if (!b) return false;
+    const doc = this.view.state.doc;
+    const line = doc.line(b.first);
+    const at = Math.min(line.to, line.from + 2);
+    this.view.dispatch({ selection: { anchor: at }, scrollIntoView: true });
+    this.focus();
+    clearTableCell();
+    return true;
+  }
+
   /** 改列对齐：改分隔行里那一段 */
   setColAlign(align) {
-    const info = this.tableInfo();
-    if (!info) return;
+    commitTableCell();
+    const b = this._tableBounds();
+    if (!b) return;
     const doc = this.view.state.doc;
-    const line = doc.lineAt(this.head);
-    let head = line.number;
-    while (head > 1 && doc.line(head - 1).text.includes('|') && !isSep(doc.line(head).text)) head--;
-    const sep = doc.line(head + 1);
+    const sep = doc.line(b.first + 1);
     const parts = sep.text.replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|');
-    const k = Math.min(parts.length - 1, Math.max(0, info.colIdx));
+    const k = Math.min(parts.length - 1, b.col);
     parts[k] = align === 'center' ? ':---:' : align === 'right' ? '---:' : align === 'left' ? ':---' : '---';
     const lead = sep.text.trimStart().startsWith('|') ? '| ' : '';
     const tail = sep.text.trimEnd().endsWith('|') ? ' |' : '';
     this._replaceLine(sep, lead + parts.map((p) => p.trim()).join(' | ') + tail);
+    clearTableCell();
   }
 
   tableCommand(cmd) {
+    /* 结构一变，格子偏移全废：先把正在编辑的那一格落账。
+       命令跑完再清掉「哪一格」—— 行数/列数变了，旧坐标已经没意义。 */
+    commitTableCell();
+    const b = this._tableBounds();
+    if (!b) return;
     const doc = this.view.state.doc;
-    const line = doc.lineAt(this.head);
-    if (!line.text.includes('|')) return;
-
-    let head = line.number;
-    while (head > 1 && doc.line(head - 1).text.includes('|') && !isSep(doc.line(head).text)) head--;
-    let last = head + 1;
-    while (last < doc.lines && doc.line(last + 1).text.includes('|')) last++;
+    const { first, last, row, col } = b;
 
     const rowsText = [];
-    for (let i = head; i <= last; i++) rowsText.push(doc.line(i).text);
+    for (let i = first; i <= last; i++) rowsText.push(doc.line(i).text);
     const cols = Math.max(1, rowsText[0].replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|').length);
-    const info = this.tableInfo();
-    const col = info ? info.colIdx : 0;
 
     const padRow = (cells) => '| ' + cells.join(' | ') + ' |';
     const emptyRow = () => padRow(Array.from({ length: cols }, () => '   '));
     const at = (i) => rowsText[i].replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|');
 
-    if (cmd === 'rowAbove' || cmd === 'rowBelow') {
-      const i = cmd === 'rowAbove' ? head : Math.max(head + 1, line.number);
-      rowsText.splice(i, 0, emptyRow());
+    /* rowsText 里**含分隔行**：表头是 0、分隔行是 1、第一条数据行是 2。
+       而行下标（0 起）把分隔行排除在外，所以两个坐标系差一格，
+       ⛔ 直接拿 row 当下标会插到上一行去（实测「下方插入」变成插在中间）。 */
+    const ri = row === 0 ? 0 : row + 1;
+
+    if (cmd === 'rowAbove') {
+      rowsText.splice(ri, 0, emptyRow());
+    } else if (cmd === 'rowBelow') {
+      /* 表头下面的「下一行」必须越过分隔行，否则表格结构当场坏掉 */
+      rowsText.splice(ri === 0 ? 2 : ri + 1, 0, emptyRow());
     } else if (cmd === 'delRow') {
-      if (line.number <= head + 1) return;          // 表头行不动
-      rowsText.splice(line.number - head, 1);
+      if (row <= 0) return;                     // 表头行不动
+      rowsText.splice(ri, 1);
     } else if (cmd === 'colBefore' || cmd === 'colAfter') {
       const k = cmd === 'colBefore' ? col : col + 1;
       for (let i = 0; i < rowsText.length; i++) {
@@ -704,14 +762,16 @@ export class LiveEditor {
       }
     } else if (cmd === 'delTable') {
       this.deleteBlock();
+      clearTableCell();
       return;
     } else {
       return;
     }
 
-    const from = doc.line(head).from;
+    const from = doc.line(first).from;
     const to = last < doc.lines ? doc.line(last + 1).from : doc.line(last).to;
     this.view.dispatch({ changes: { from, to, insert: rowsText.join('\n') + (last < doc.lines ? '\n' : '') } });
+    clearTableCell();
   }
 
   insertTable(rows = 3, cols = 3) {
@@ -726,7 +786,9 @@ export class LiveEditor {
     const doc = this.view.state.doc;
     const line = doc.lineAt(this.head);
     const at = line.to;
-    const insert = (line.text ? '\n\n' : '\n') + lines.join('\n');
+    /* 表后留一行空行、光标停在那儿：停在表格末尾的话，接下来敲的字会直接
+       粘进最后一行，把表结构改掉 */
+    const insert = (line.text ? '\n\n' : '\n') + lines.join('\n') + '\n';
     this.view.dispatch({ changes: { from: at, insert }, selection: { anchor: at + insert.length } });
   }
 

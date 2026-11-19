@@ -26,6 +26,7 @@ import { CALLOUT_TYPES, RE_CALLOUT, normalizeCallout, resolveDocImg, inline as m
 import { writeClipboard } from '../clipboard.js';
 import { tt } from '../i18n.js';
 import { tokenRanges, guessLang, TOKEN_MAX_CHARS } from '../codehilite.js';
+import { LANGS, normalizeLang } from '../langs.js';
 
 /* ---------------- 工具 ---------------- */
 
@@ -55,6 +56,21 @@ function touched(ranges, from, to) {
  *  定界符时会做的动作；而「输入中途」永远看得见 —— 那时它还不是标记节点。
  */
 function markActive(ranges, from, to) {
+  for (const r of ranges) {
+    if (r.empty) {
+      if (r.from > from && r.from < to) return true;
+    } else if (r.from < to && r.to > from) return true;
+  }
+  return false;
+}
+
+/** 光标是不是**严格落在** [from, to] 里面（两端都不算）。
+ *
+ *  表格用这一条判断「要不要退回源码」：光标停在表格前后都不算「在表内」，
+ *  否则 insertTable、Esc 退出编辑、点表格上方这些动作都会把整张表塌成源码 ——
+ *  而它们恰恰是用户最常做的。真正需要看源码的场景（查找跳进某一格、
+ *  右键「编辑源码」）落点必然在中间，用这条判据仍然成立。 */
+function strictInside(ranges, from, to) {
   for (const r of ranges) {
     if (r.empty) {
       if (r.from > from && r.from < to) return true;
@@ -163,20 +179,59 @@ class BulletWidget extends WidgetType {
   }
 }
 
-/** 代码块左上角那条：语言名 + 复制。
+/** 代码块左上角那条：语言名（可点开改）+ 复制。
  *  旧内核把这条做在 contenteditable 的块外壳上；新内核里它必须是块级 widget ——
  *  正文是文本，没有「块外壳」可以挂 DOM。 */
 class CodeBarWidget extends WidgetType {
-  constructor(lang, code) { super(); this.lang = lang; this.code = code; }
-  eq(o) { return o.lang === this.lang && o.code === this.code; }
-  toDOM() {
+  constructor(lang, code, infoFrom, infoTo) {
+    super();
+    this.lang = lang;
+    this.code = code;
+    this.infoFrom = infoFrom;
+    this.infoTo = infoTo;
+  }
+  eq(o) {
+    return o.lang === this.lang && o.code === this.code
+      && o.infoFrom === this.infoFrom && o.infoTo === this.infoTo;
+  }
+  toDOM(view) {
     const bar = document.createElement('div');
     bar.className = 'cm-lp-codebar';
     bar.contentEditable = 'false';
-    const name = document.createElement('span');
+    /* 语言名做成下拉：围栏行现在是零高的、光标到不了，没有这个入口
+       ` ```js ` 就只能一开始写对。用原生 <select> 而不是自绘菜单 ——
+       自绘要处理点外关闭、键盘、滚动跟随，而这里只需要一个值改变事件。 */
+    const name = document.createElement('select');
     name.className = 'cm-lp-lang';
-    /* 没标语言时写「代码」：一条空白条会让人以为坏了 */
-    name.textContent = this.lang || tt('代码');
+    name.tabIndex = -1;                 // Tab 在编辑器里有含义，别让它落进控件
+    name.title = tt('代码');
+    name.setAttribute('aria-label', tt('代码'));
+    const addOpt = (v, label) => {
+      const o = document.createElement('option');
+      o.value = v;
+      o.textContent = label;
+      name.appendChild(o);
+    };
+    const cur = (this.lang || '').trim();
+    const id = normalizeLang(cur);
+    /* 认不出来的写法（`text`、`console`…）原样列一条，别把用户写的东西吃掉 */
+    if (cur && (!id || id !== cur)) addOpt(cur, cur);
+    addOpt('', tt('代码'));
+    for (const [key, def] of Object.entries(LANGS)) {
+      if (!def.hljs) continue;          // 没有语法可高亮的语言不列，选了也没颜色
+      addOpt(key, def.label);
+    }
+    name.value = cur;
+    if (name.value !== cur && cur) name.value = cur;
+    name.addEventListener('change', () => {
+      const doc = view.state.doc;
+      const from = Math.max(0, Math.min(this.infoFrom, doc.length));
+      const to = Math.max(from, Math.min(this.infoTo, doc.length));
+      /* 位置过期（这一帧里文档被改过）就不写：写到别的字上比不写更难查 */
+      if (doc.sliceString(from, to) !== cur) return;
+      view.dispatch({ changes: { from, to, insert: name.value } });
+      view.focus();
+    });
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'cm-lp-copy';
@@ -198,7 +253,10 @@ class CodeBarWidget extends WidgetType {
     bar.append(name, btn);
     return bar;
   }
-  /* true = 编辑器别管这块 DOM：条上的点击归按钮自己处理，别顺手把光标搬走 */
+  /* true = 编辑器别管这块 DOM。⛔ 必须返回 true：返回 false 时 CM6 会把
+     mousedown 收走（焦点被它塞回 .cm-content），原生 <select> 根本展不开 ——
+     实测点下去之后 activeElement 是 .cm-content，下拉毫无反应。
+     复制按钮自己 preventDefault，不受影响。 */
   ignoreEvent() { return true; }
 }
 
@@ -218,51 +276,88 @@ class CalloutHeadWidget extends WidgetType {
   }
 }
 
-/** 表格：只读渲染。点一下把光标放进表内 → 该表转为源码，可以直接编辑。
- *  为什么不做 contenteditable 单元格：widget 一旦文档变化就会重建，
- *  单元格输入时焦点必丢（CM6 的 widget 没有「部分更新」）。 */
+/** 表格：渲染成真表格，**点格子就地改**。
+ *
+ *  CM6 里这张表是块级 widget —— 整块被替换掉了，文档里那段 `| a | b |` 在
+ *  视口里没有 DOM，光标根本进不去。所以「点格子里直接打字」只有一条路：
+ *  在格子上盖一个真输入框，把改动写回**那一格的字符区间**。
+ *
+ *  为什么不直接把 `<input>` 放进 `<td>` 里：widget 在文档一变就被整体重建，
+ *  输入框连同焦点、输入法组字状态一起没了。输入框必须浮在 widget **外面**
+ *  （挂在 view.dom 上），由我们自己开关（见下面的 openCell）。
+ *
+ *  ⛔ 别改成「点一下整表塌成源码」那种旧行为：那是 1.3.0+1 的形态，用户
+ *  的原话是「这种交互不是我想要的，Typora 并不是这样的」。 */
 class TableWidget extends WidgetType {
   constructor(spec) { super(); this.spec = spec; }
   eq(o) {
+    /* 比对原文而不是逐格文本：只改空格（`| a |` → `|  a  |`）时逐格文本
+       一模一样，但每格的偏移已经变了 —— 那会让写回落在错的位置 */
     const a = this.spec, b = o.spec;
-    if (a.from !== b.from || a.rows.length !== b.rows.length) return false;
-    for (let i = 0; i < a.rows.length; i++) {
-      if (a.rows[i].join('\u0001') !== b.rows[i].join('\u0001')) return false;
-    }
-    return a.aligns.join() === b.aligns.join();
+    return a.from === b.from && a.to === b.to && a.raw === b.raw;
   }
   toDOM(view) {
-    const { rows, aligns, from } = this.spec;
+    const { rows, aligns, from, cols, cells } = this.spec;
     const table = document.createElement('table');
     table.className = 'cm-lp-table';
-    const head = rows[0] || [];
+    /* 给「提交之后重新打开下一格」用：文档一变 widget 就换了一个 DOM，
+       只能靠这个标号把新表找回来 */
+    table.dataset.from = String(from);
+    table.dataset.aligns = aligns.join(',');
+    table._cmTable = this;
     const thead = document.createElement('thead');
     const tbody = document.createElement('tbody');
     table.append(thead, tbody);
 
-    const mkRow = (cells, tag, host) => {
+    const mkRow = (r, tag, host) => {
       const tr = document.createElement('tr');
-      for (let c = 0; c < head.length; c++) {
+      const cs = cells[r] || [];
+      for (let c = 0; c < cols; c++) {
         const cell = document.createElement(tag);
         const al = aligns[c];
         if (al) cell.style.textAlign = al;
+        const src = cs[c];
         /* 单元格里的 <br> 是换行约定，和 renderMarkdown 一致 */
-        cell.innerHTML = cellHtml(cells[c] || '');
+        cell.innerHTML = cellHtml(src ? src.text : '');
+        /* 只有源码里真有这一格才可编辑：短行（GFM 允许少写几格）没有对应的
+           字符区间，硬开输入框等于凭空造一格，写回时会把整行结构搞乱 */
+        if (src) {
+          cell.dataset.row = String(r);
+          cell.dataset.col = String(c);
+        }
         tr.appendChild(cell);
       }
       host.appendChild(tr);
     };
-    mkRow(head, 'th', thead);
-    for (let r = 1; r < rows.length; r++) mkRow(rows[r], 'td', tbody);
+    mkRow(0, 'th', thead);
+    for (let r = 1; r < rows.length; r++) mkRow(r, 'td', tbody);
 
     table.addEventListener('mousedown', (e) => {
+      const td = e.target && e.target.closest ? e.target.closest('[data-row]') : null;
+      if (!td || !table.contains(td)) return;
+      const row = Number(td.dataset.row);
+      const col = Number(td.dataset.col);
+      if (e.button !== 0) {
+        /* 右键：不能在这里 preventDefault —— 那会把 contextmenu 一起吞掉，
+           右键菜单就再也出不来了。只把「现在说的是哪一格」记下来，
+           菜单里的行列增删、对齐都靠它定位。 */
+        commitCell();
+        markCell(this.spec, row, col);
+        return;
+      }
       e.preventDefault();
-      view.dispatch({ selection: { anchor: from + 2 }, scrollIntoView: true });
-      view.focus();
+      openCell(view, table, this, row, col, false);
     });
     return table;
   }
+  /* 事件归我们自己的监听器处理，CM6 不用管（但也不阻止默认行为：
+     右键要靠它冒泡到 app 的 contextmenu） */
   ignoreEvent() { return true; }
+  destroy(dom) {
+    /* widget 被替换（文档被别处改了、切换标签）时把浮层收掉 —— 锚点已经
+       不在文档里，留着就是一块飘在正文上的白框 */
+    if (cellEdit && cellEdit.tableEl === dom) closeCell();
+  }
 }
 
 /** 单元格内的行内语法走 markdown.js 的 inline()，和预览/导出一致 */
@@ -270,6 +365,281 @@ function cellHtml(s) {
   return mdInline(String(s).replace(/<br\s*\/?>/gi, '\u0001BR\u0001'))
     .replace(/\u0001BR\u0001/g, '<br>');
 }
+
+/* ---------------- 表格：浮在格子上的那个输入框 ----------------
+
+   状态只有两份：
+     · cellEdit —— 输入框开着，焦点在它身上
+     · cellMark —— 最近落点的格子；输入框关掉之后仍然留着，因为右键菜单里的
+       行列增删 / 对齐是在**焦点已经离开输入框**之后才执行的，那时还得知道
+       「刚才说的是哪一格」。它会在这些时刻作废：用户在正文里重新点了光标、
+       文档被别处改了、换了标签。
+
+   写回只替换**这一格**的字符区间（`| a | b |` 里的 `b`），不重排整表：
+   Obsidian 会把整表按列宽重排，好处是好看，代价是每改一格都会改写其他行的
+   空白，git diff 里一片红。我们的口径是「用户没碰的地方一个字节都不动」。
+
+   ⛔ 输入框不能放进 `<td>` 里：widget 在文档一变就整体重建，输入框会连着
+   焦点、输入法组字状态一起消失（表现是「打一半的字没了」）。它必须挂在
+   view.dom 上，由我们自己开关。 */
+
+const CELL_CLS = 'cm-lp-cell';
+let cellEdit = null;
+let cellMark = null;
+/* 我们自己派发的事务计数：用来区分「文档被我改了」和「文档被别处改了」。
+   后者意味着格子偏移已经不可信，正在编辑的那一格必须收手 */
+let selfChange = 0;
+
+/** 记下「现在说的是哪一格」（右键用，不打开输入框） */
+function markCell(spec, row, col) {
+  const cell = (spec.cells[row] || [])[col];
+  if (!cell) return;
+  cellMark = {
+    tableFrom: spec.from, tableTo: spec.to, row, col,
+    from: cell.from, to: cell.to, text: cell.text,
+    aligns: spec.aligns, cols: spec.cols, rows: spec.rows.length,
+  };
+}
+
+/** 把输入框摆到格子上。位置每次现算：滚动、窗口缩放、字号变化都不用另接监听 */
+function placeCell() {
+  const s = cellEdit;
+  if (!s) return false;
+  const { view, input, cellEl } = s;
+  if (!cellEl.isConnected) { closeCell(); return false; }
+  const r = cellEl.getBoundingClientRect();
+  const sc = view.scrollDOM.getBoundingClientRect();
+  /* 整格滚出可视区就落账收起来：浮层不在滚动容器里，不会跟着滚走，
+     留着会变成悬在别的正文上的一块白框 */
+  if (r.bottom <= sc.top || r.top >= sc.bottom) { commitCell(); return false; }
+  const base = view.dom.getBoundingClientRect();
+  input.style.left = `${Math.round(r.left - base.left)}px`;
+  input.style.top = `${Math.round(r.top - base.top)}px`;
+  input.style.width = `${Math.round(r.width)}px`;
+  input.style.height = `${Math.round(r.height)}px`;
+  /* 字号 / 行高 / 内边距 / 对齐照抄这一格算出来的值。
+     ⛔ 别在 CSS 里写死 em：表格的字号是 .96em，但它的 em 基数是
+     `--fs-editor`（13.5），而输入框挂在 .cm-editor 上，基数是 `--fs-3`（15）
+     —— 同一个 `.96em` 量出来是 12.96 和 14.4，字会明显大一圈、基线也偏。 */
+  const cs = getComputedStyle(cellEl);
+  input.style.fontSize = cs.fontSize;
+  input.style.lineHeight = cs.lineHeight;
+  input.style.fontFamily = cs.fontFamily;
+  input.style.fontWeight = cs.fontWeight;
+  input.style.padding = cs.padding;
+  input.style.textAlign = cs.textAlign;
+  /* 内容和格子一样高时不要滚动条：行高 23.07px 配 23px 内容盒会溢出
+     零点几像素，浏览器就画一条竖滚动条（看着像输入框坏了）。
+     留 2px 余量：真多行（格子里有 <br>）才给滚动条。 */
+  input.style.overflowY = input.scrollHeight > input.clientHeight + 2 ? 'auto' : 'hidden';
+  return true;
+}
+
+/** 单元格里写的裸 `|` 会把一格切成两格；换行在表格里是 `<br>`。
+ *  已经转义过的不再动（lookbehind），否则反复编辑同一格会越加越多反斜杠。 */
+function escapeCellText(t) {
+  return String(t)
+    .replace(/\r\n?/g, '\n')
+    .replace(/\n/g, '<br>')
+    .replace(/(?<!\\)\|/g, '\\|');
+}
+
+function closeCell() {
+  const s = cellEdit;
+  if (!s) return;
+  cellEdit = null;
+  s.input._dead = true;
+  try { s.cellEl.classList.remove('is-editing'); } catch { /* 节点已经换掉 */ }
+  try { s.view.scrollDOM.removeEventListener('scroll', s.onScroll); } catch { /* view 已销毁 */ }
+  window.removeEventListener('resize', s.onScroll);
+  s.input.remove();
+}
+
+/** 落账：把输入框里的字写回那一格。
+ *  文档在编辑期间被别处改过（偏移对不上）时**放弃写入** —— 宁可不写，
+ *  也不能写到别的字上。 */
+function commitCell() {
+  const s = cellEdit;
+  if (!s) return;
+  const { view, ctx, input } = s;
+  const text = input.value;
+  closeCell();
+  if (text === ctx.text) return;
+  const doc = view.state.doc;
+  if (ctx.to > doc.length || doc.sliceString(ctx.from, ctx.to) !== ctx.text) return;
+  /* 空格子写进内容时两边各补一个空格：`|     |` 直接写会变成 `|新     |`，
+     虽然合法但看着像把分隔符吃了 */
+  const insert = ctx.text === ''
+    ? (text ? ` ${escapeCellText(text)} ` : '')
+    : escapeCellText(text);
+  const delta = insert.length - (ctx.to - ctx.from);
+  selfChange++;
+  try {
+    view.dispatch({ changes: { from: ctx.from, to: ctx.to, insert } });
+  } finally { selfChange--; }
+  /* 位置跟着挪：同一行后面的格子、以及表格末尾都会平移这么多 */
+  cellMark = { ...ctx, to: ctx.from + insert.length, text, tableTo: ctx.tableTo + delta };
+}
+
+/** 放弃这一格（Esc）：改动不写回，焦点还给编辑区 */
+function cancelCell() {
+  const s = cellEdit;
+  if (!s) return;
+  const view = s.view;
+  closeCell();
+  cellMark = null;
+  view.focus();
+}
+
+/** 找当前渲染出来的某张表（按块的起点认，同一屏可能有好几张表） */
+function tableElOf(view, tableFrom) {
+  const list = view.dom.querySelectorAll('.cm-lp-table');
+  for (const el of list) if (Number(el.dataset.from) === tableFrom) return el;
+  return null;
+}
+
+function openCellAt(view, tableFrom, row, col, selectAll) {
+  const table = tableElOf(view, tableFrom);
+  if (!table || !table._cmTable) return false;
+  return openCell(view, table, table._cmTable, row, col, selectAll);
+}
+
+/** 打开某一格。selectAll：Tab 进来时选中原文，直接打字就是覆盖 */
+function openCell(view, tableEl, widget, row, col, selectAll) {
+  const spec = widget.spec;
+  const cell = (spec.cells[row] || [])[col];
+  if (!cell) return false;
+  if (cellEdit && cellEdit.view === view && cellEdit.ctx.row === row && cellEdit.ctx.col === col) {
+    /* 同一格又点了一次：只把焦点还回去，别把正在输入的内容重置成原文 */
+    cellEdit.input.focus();
+    if (selectAll) cellEdit.input.select();
+    return true;
+  }
+  /* ⚠️ 先落账再开新的：中间不能有 dispatch 之外的等待，否则上一格的字会丢 */
+  commitCell();
+  const cellEl = tableEl.querySelector(`[data-row="${row}"][data-col="${col}"]`);
+  if (!cellEl) return false;
+  cellEl.classList.add('is-editing');
+  const input = document.createElement('textarea');
+  input.className = CELL_CLS;
+  input.rows = 1;
+  input.value = cell.text;
+  input.spellcheck = false;
+  input.setAttribute('aria-label', tt('编辑'));
+  view.dom.appendChild(input);
+  const ctx = {
+    tableFrom: spec.from, tableTo: spec.to, row, col,
+    from: cell.from, to: cell.to, text: cell.text,
+    aligns: spec.aligns, cols: spec.cols, rows: spec.rows.length,
+  };
+  const onScroll = () => { placeCell(); };
+  cellEdit = { view, ctx, input, cellEl, tableEl, spec, onScroll };
+  cellMark = ctx;
+  view.scrollDOM.addEventListener('scroll', onScroll, { passive: true });
+  /* 窗口缩放会改排版：格子的 rect 变了，浮层得跟着挪（不然会脱开格子） */
+  window.addEventListener('resize', onScroll);
+  input.addEventListener('keydown', onCellKey);
+  input.addEventListener('blur', onCellBlur);
+  placeCell();
+  input.focus();
+  if (selectAll) input.select();
+  else input.setSelectionRange(input.value.length, input.value.length);
+  return true;
+}
+
+function onCellBlur(e) {
+  const s = cellEdit;
+  if (!s || e.target !== s.input || s.input._dead) return;
+  commitCell();
+}
+
+/** 光标落到表格后面那一行：Enter 结束编辑时的落点。
+ *  不这么做的话光标留在「进表格之前」的位置（可能整篇开头），
+ *  用户按下 Enter 会觉得「跳到别处去了」。 */
+function caretAfterTable(view, tableFrom) {
+  const doc = view.state.doc;
+  const first = doc.lineAt(Math.min(Math.max(0, tableFrom), doc.length)).number;
+  let last = first;
+  while (last < doc.lines && doc.line(last + 1).text.includes('|')) last++;
+  const at = last < doc.lines ? doc.line(last + 1).from : doc.line(last).to;
+  view.dispatch({ selection: { anchor: at } });
+  view.focus();
+}
+
+function onCellKey(e) {
+  const s = cellEdit;
+  if (!s || e.target !== s.input) return;
+  /* 输入法组字期间的 Enter / Tab 是「选字」，不是命令 —— 这一条漏了，
+     中文用户只要按空格选词就会把格子关掉 */
+  if (e.isComposing) return;
+  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancelCell(); return; }
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    const tableFrom = s.ctx.tableFrom;
+    commitCell();
+    caretAfterTable(s.view, tableFrom);
+    return;
+  }
+  if (e.key === 'Tab') { e.preventDefault(); e.stopPropagation(); moveCell(e.shiftKey ? -1 : 1); return; }
+  /* Ctrl+Z 不拦：textarea 自己有原生撤销栈，用户想撤的是「这一格里刚打的字」 */
+}
+
+/** 在表格末尾补一行空行，返回新行的下标（行下标里表头是 0，分隔行不算） */
+function appendRow(view, tableFrom, cols) {
+  const doc = view.state.doc;
+  const first = doc.lineAt(Math.min(Math.max(0, tableFrom), doc.length)).number;
+  let last = first;
+  while (last < doc.lines && doc.line(last + 1).text.includes('|')) last++;
+  const row = '\n| ' + Array.from({ length: cols }, () => '   ').join(' | ') + ' |';
+  selfChange++;
+  try { view.dispatch({ changes: { from: doc.line(last).to, insert: row } }); } finally { selfChange--; }
+  /* 表格这几行里有一行是分隔行，它不占行下标 —— 所以要减 1 */
+  return last - first;
+}
+
+/** Tab / Shift+Tab：落账后跳到相邻那一格；最后一格再按 Tab 补一行 */
+function moveCell(delta) {
+  const s = cellEdit;
+  if (!s) return;
+  const { view, ctx, spec } = s;
+  const cols = spec.cols;
+  const rowsN = spec.rows.length;
+  const idx = ctx.row * cols + ctx.col + delta;
+  if (idx < 0) { commitCell(); return; }
+  if (idx >= rowsN * cols) {
+    commitCell();
+    const newRow = appendRow(view, ctx.tableFrom, cols);
+    requestAnimationFrame(() => openCellAt(view, ctx.tableFrom, newRow, 0, true));
+    return;
+  }
+  const nr = Math.floor(idx / cols);
+  const nc = idx % cols;
+  commitCell();
+  /* 换格要等这一帧渲染完：提交会重建整张表，DOM 得先换新的 */
+  requestAnimationFrame(() => openCellAt(view, ctx.tableFrom, nr, nc, true));
+}
+
+/** 当前「在说哪一格」：优先输入框里那一格，其次是最近点过的。
+ *  LiveEditor.tableInfo() 靠它把行列命令接到正确的表格上 —— 光标永远进不了
+ *  表格（整块是 widget），没有这一份，那些命令会静默失效。 */
+export function currentTableCell() {
+  return cellEdit ? cellEdit.ctx : cellMark;
+}
+
+/** 命令要改表格结构之前必须先把这一格落账（列数一变，格子偏移全变）。
+ *  只落账、**不清**「说的是哪一格」—— 后面紧接着要用它定位行号列号 */
+export function commitTableCell() { commitCell(); }
+
+/** 这一格说完了：关掉输入框，连「哪一格」一起作废（结构改完之后调） */
+export function clearTableCell() { closeCell(); cellMark = null; }
+
+/** 换文档 / 换视图时清干净：偏移是另一份文档的，留着会写到别人身上 */
+function resetTableState(view) {
+  if (cellEdit && cellEdit.view !== view) closeCell();
+  cellMark = null;
+}
+
+/* ---------------- 表格：源码 ↔ 渲染 ---------------- */
 
 /* ---------------- 共用 ---------------- */
 
@@ -291,28 +661,76 @@ function frontmatterEnd(doc) {
   return -1;
 }
 
-/** 从 Table 节点整理出渲染需要的东西：每行每格的文本 + 对齐 */
-function parseTable(doc, node) {
-  const text = doc.sliceString(node.from, node.to);
-  const lines = text.split('\n');
-  if (lines.length < 2) return null;
-  const splitCells = (line) => {
-    let s = String(line == null ? '' : line).trim();
-    if (s.startsWith('|')) s = s.slice(1);
-    if (s.endsWith('|')) s = s.slice(0, -1);
-    return s.split('|').map((c) => c.trim());
+/** 按**未转义**的 `|` 切一行，返回带文档偏移的格子。
+ *
+ *  偏移是写回的锚点：改一格只替换那一格的字符区间，不重排整表。
+ *  首尾竖线可有可无（GFM 允许），但**收尾竖线不能算出一格空单元格** ——
+ *  按「切完把最后一个空段丢掉」那种写法，`| a | b |` 和 `|   |   |`
+ *  会得到不同结果：后者最后一格真是空的，丢掉就把列数算少一格。
+ *  所以先把收尾竖线剥掉，再在剩下的区间里切。 */
+function splitCells(doc, lineNo) {
+  const line = doc.line(lineNo);
+  const s = line.text;
+  let end = s.length;
+  while (end > 0 && /\s/.test(s[end - 1])) end--;
+  let body = end;
+  let closed = false;
+  if (body > 0 && s[body - 1] === '|' && !(body > 1 && s[body - 2] === '\\')) {
+    body--;
+    closed = true;
+  }
+  let i = 0;
+  while (i < body && /\s/.test(s[i])) i++;
+  if (i < body && s[i] === '|') i++;
+  const out = [];
+  let start = i;
+  const push = (a, b) => {
+    let x = a;
+    let y = b;
+    while (x < y && /\s/.test(s[x])) x++;
+    while (y > x && /\s/.test(s[y - 1])) y--;
+    /* 整格都是空格：落点放回分隔符后面那一格的开头。否则 from/to 会被两端
+       一起推到格尾，写回去的字贴着右边那个空格，渲染成 `|     新|` */
+    if (x >= y) { x = a; y = a; }
+    out.push({ from: line.from + x, to: line.from + y, text: s.slice(x, y) });
   };
-  const aligns = splitCells(lines[1]).map((c) => {
-    const l = c.startsWith(':');
-    const r = c.endsWith(':');
+  for (; i < body; i++) {
+    if (s[i] === '\\') { i++; continue; }   // `\|` 是正文里的竖线，不是分隔
+    if (s[i] === '|') { push(start, i); start = i + 1; }
+  }
+  /* 收尾竖线后面没有内容：那一格不存在 */
+  if (!(closed && start >= body)) push(start, body);
+  return out;
+}
+
+/** 从 Table 节点整理出渲染 + 写回所需的一切：每行的格子（含偏移）、对齐、原文 */
+function tableModel(doc, node) {
+  const first = doc.lineAt(node.from).number;
+  const lastNo = doc.lineAt(Math.max(node.from, Math.min(node.to - 1, doc.length))).number;
+  if (lastNo <= first) return null;
+  const sep = splitCells(doc, first + 1);
+  if (!sep.length) return null;
+  /* 第 2 行必须是分隔行；不是的话这张「表」其实是普通段落里的几根竖线 */
+  if (!sep.every((c) => /^:?-+:?$/.test(c.text.replace(/\s+/g, '')))) return null;
+  const cols = sep.length;
+  const aligns = sep.map((c) => {
+    const t = c.text.replace(/\s+/g, '');
+    const l = t.startsWith(':');
+    const r = t.endsWith(':');
     return l && r ? 'center' : r ? 'right' : l ? 'left' : '';
   });
-  const rows = [splitCells(lines[0])];
-  for (let i = 2; i < lines.length; i++) {
-    if (!lines[i].includes('|')) continue;
-    rows.push(splitCells(lines[i]));
-  }
-  return { from: node.from, rows, aligns };
+  const cells = [splitCells(doc, first)];
+  for (let ln = first + 2; ln <= lastNo; ln++) cells.push(splitCells(doc, ln));
+  return {
+    from: doc.line(first).from,
+    to: doc.line(lastNo).to,
+    /* 比对原文而不是逐格文本：只改空格时逐格文本一样，偏移却变了 */
+    raw: doc.sliceString(doc.line(first).from, doc.line(lastNo).to),
+    rows: cells.map((cs) => cs.map((c) => c.text)),
+    aligns,
+    cells,
+    cols,
+  };
 }
 
 /* ---------------- 块级装饰（StateField） ----------------
@@ -406,7 +824,11 @@ function buildBlockDeco(state) {
            两边取同一处才不会出现「条上写 json，着色按纯文本」。 */
         if (fenceLns.length) {
           const f0 = doc.line(fenceLns[0]);
-          const info = doc.sliceString(f0.from, f0.to).match(/^\s*(?:```|~~~)\s*([^\s`]+)?/);
+          const m = doc.sliceString(f0.from, f0.to).match(/^\s*(?:```|~~~)\s*([^\s`]+)?/);
+          const info = m && m[1] ? m[1] : '';
+          /* info string 的字符区间：语言下拉选完之后就替换这一段 */
+          const infoEnd = f0.from + (m ? m[0].length : 3);
+          const infoStart = infoEnd - info.length;
           const body = [];
           for (let ln = firstLn; ln <= sp.lastLine; ln++) {
             if (isFence(ln)) continue;
@@ -415,7 +837,7 @@ function buildBlockDeco(state) {
           items.push({
             from: f0.from, to: f0.from,
             deco: Decoration.widget({
-              widget: new CodeBarWidget(info && info[1] ? info[1] : '', body.join('\n')),
+              widget: new CodeBarWidget(info, body.join('\n'), infoStart, infoEnd),
               block: true, side: -1,
             }),
           });
@@ -434,16 +856,23 @@ function buildBlockDeco(state) {
       }
 
       if (n.name === 'Table') {
-        if (!active) {
-          const spec = parseTable(doc, n.node);
-          if (spec) {
-            const sp = blockSpan(doc, n.from, n.to);
-            items.push({ from: sp.from, to: sp.to, deco: Decoration.replace({ widget: new TableWidget(spec), block: true }) });
-          }
-        } else {
+        const spec = tableModel(doc, n.node);
+        if (spec) {
           const sp = blockSpan(doc, n.from, n.to);
-          for (let ln = doc.lineAt(sp.from).number; ln <= sp.lastLine; ln++) {
-            line(doc.line(ln).from, 'w-table cm-lp-table-src', { 'data-type': 'table' });
+          /* 只在「光标严格落在表内」时退回源码 —— 查找跳进某一格、右键
+             「编辑源码」属于这一类。点在格子上不会动光标（widget 自己拦了），
+             所以日常看到的永远是表格。
+             ⛔ 别改回 touched()：它两端都算命中，insertTable 之后光标正好停在
+             表格末尾，整张表会当场塌成源码。 */
+          if (strictInside(ranges, n.from, n.to)) {
+            for (let ln = doc.lineAt(sp.from).number; ln <= sp.lastLine; ln++) {
+              line(doc.line(ln).from, 'w-table cm-lp-table-src', { 'data-type': 'table' });
+            }
+          } else {
+            items.push({
+              from: sp.from, to: sp.to,
+              deco: Decoration.replace({ widget: new TableWidget(spec), block: true }),
+            });
           }
         }
         return false;
@@ -817,6 +1246,9 @@ export function livePreview(opts = {}) {
   const inlinePlugin = ViewPlugin.fromClass(class {
     constructor(view) {
       view.lpOpts = options;
+      /* 换了一份文档（切标签、重建 state）：上一份文档里的格子偏移在这里
+         已经是别的字的位置了，必须作废 */
+      resetTableState(view);
       /* 一处语法怪例不该把整层装饰打崩（ViewPlugin 构造抛错 = 整篇变源码）。
          降级成「这一帧不装饰」，下一次更新会重算。 */
       try { this.decorations = buildInlineDeco(view); } catch { this.decorations = Decoration.none; }
@@ -836,7 +1268,24 @@ export function livePreview(opts = {}) {
     /* ⛔ 别在这里加 EditorView.lineWrapping：换行开关是 plain-editor 的
        wrapComp 管的（setWrap 要能把它摘掉，让长行横向滚）。这里硬塞一份，
        重配 compartment 也摘不掉它 —— 表现是「切到不换行，正文照样折着」。 */
-    extensions: [LP_THEME, blockDeco, inlinePlugin],
+    extensions: [LP_THEME, blockDeco, inlinePlugin,
+      /* 表格那一格的生死簿：文档被别处改了 / 光标被挪走了，都得把状态收掉。
+         这两件事都不该由调用方逐个记 —— 漏一处的表现是「命令打在了别处的
+         表格上」，查起来极难。 */
+      EditorView.updateListener.of((u) => {
+        if (u.docChanged && !selfChange) {
+          const s = cellEdit;
+          if (s) {
+            const doc = u.state.doc;
+            if (s.ctx.to > doc.length || doc.sliceString(s.ctx.from, s.ctx.to) !== s.ctx.text) {
+              closeCell();
+              cellMark = null;
+            }
+          }
+        }
+        if (u.selectionSet && !cellEdit) cellMark = null;
+      }),
+    ],
     setDocDir(view, dir) {
       /* 只换变量，不派发事务：改目录一定伴随一次文档载入（切换标签时 render），
          那次 docChanged 会把装饰连同新的图片路径一起重算。 */
