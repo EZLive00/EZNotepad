@@ -4956,8 +4956,14 @@ function setupGrip() {
     if (!block || !block.isConnected) return;
     e.preventDefault();
     /* Shift+点 = 选中这一块（再 Shift 点别块扩成范围），不进拖拽、不开菜单：
-       这一下的意思是「我要对这一块做点什么」，菜单会挡住要选的目标 */
-    if (e.shiftKey) { wys.selectBlock(block, { additive: true }); return; }
+       这一下的意思是「我要对这一块做点什么」，菜单会挡住要选的目标。
+       顺手记时间戳：pointerup 之后浏览器还会派发一次 click，那条兜底路径
+       会立刻把菜单打开 —— Shift 选完弹菜单正是最烦人的那种。 */
+    if (e.shiftKey) {
+      gripMenuTs = performance.now();
+      wys.selectBlock(block, { additive: true });
+      return;
+    }
     gripDrag = { block, list: wys.dragGroup(block), y0: e.clientY, y: e.clientY, moved: false, target: null };
     try { grip.setPointerCapture(e.pointerId); } catch { /* 老宿主没有捕获也能拖 */ }
   });
@@ -4984,7 +4990,10 @@ function setupGrip() {
     for (const b of g.list) b.classList.remove('w-dragging');
     el.editWrap.classList.remove('w-dragging-active');
     if (dropLine) dropLine.classList.add('hidden');
-    if (!g.moved) { gripMenuTs = performance.now(); openBlockMenu('convert'); return; }   // 没拖动 = 一次点击
+    /* 这一下 pointer 序列已经处理完了（拖完 / 点了一下 / 取消）。
+       记时间戳挡住随后那次 click —— 否则拖完松手会顺手把菜单弹出来。 */
+    gripMenuTs = performance.now();
+    if (!g.moved) { openBlockMenu('convert'); return; }   // 没拖动 = 一次点击
     if (!commit || !g.target) return;
     if (wys.dropBlocks(g.list, g.target.block, g.target.after)) {
       /* 搬完让手柄跟到搬走的那一块上，别停在原来的位置 */

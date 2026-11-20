@@ -517,13 +517,33 @@ const shiftClickAt = async (x, y) => {
   await sleep(40);
   await call('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1, buttons: 0, modifiers: 8 });
 };
-/** 悬停第 i 块 → 等手柄贴上去 → 返回抓手中心 */
+/** 悬停第 i 块 → 等手柄**真的贴上**它 → 返回抓手中心。
+ *  固定 sleep 不够：release 产物比 debug 快，160ms 时手柄偶尔还在上一块上，
+ *  接着 Shift+点就成了「点锚块 = 取消选中」，测试红得莫名其妙。 */
 const gripAt = async (i) => {
   const p = await nthBlock(i);
   if (!p) return null;
-  await moveTo(p.x, p.y);
-  await sleep(160);
-  return btnCenter('whMenu');
+  const anchoredAt = () => ev(`(() => {
+    const h = document.getElementById('wHandle');
+    if (h.classList.contains('hidden')) return -1;
+    const y = h.getBoundingClientRect().top;
+    const bs = [...document.querySelectorAll('.wysiwyg > .w-block')];
+    let best = -1, bd = 1e9;
+    bs.forEach((b, n) => {
+      const d = Math.abs(b.getBoundingClientRect().top - y);
+      if (d < bd) { bd = d; best = n; }
+    });
+    return best;
+  })()`);
+  let anchor = -1;
+  for (let k = 0; k < 8; k++) {
+    await moveTo(p.x, p.y);
+    await sleep(80);
+    anchor = await anchoredAt();
+    if (anchor === i) break;
+  }
+  const btn = await btnCenter('whMenu');
+  return btn ? { ...btn, anchor, want: i } : null;
 };
 const pressKey = (k, mods = {}) => ev(`(() => {
   const el = document.getElementById('wysiwyg');
@@ -542,7 +562,11 @@ const g2 = await gripAt(2);
 if (g2) {
   await shiftClickAt(g2.x, g2.y);
   await sleep(180);
-  ok('再 Shift+点第三块：扩成连续三段', (await selCount()) === 3, String(await selCount()));
+  const dbg2 = await ev(`(() => ({
+    sel: [...document.querySelectorAll('.w-sel')].map((b) => (b.textContent || '').replace(/\\u200b/g, '').slice(0, 4)),
+    menu: !document.getElementById('wBlockMenu').classList.contains('hidden'),
+  }))()`);
+  ok('再 Shift+点第三块：扩成连续三段', (await selCount()) === 3, `${await selCount()} ${JSON.stringify(dbg2)}`);
 }
 ok('块选中不改正文', (await md()).trim() === '一段\n\n二段\n\n三段', JSON.stringify(await md()));
 ok('块选中时抓手仍在（它是选中态的操作入口）',
