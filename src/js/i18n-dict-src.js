@@ -1,6 +1,14 @@
 // 词条源：键是简体中文原文，值是 [English, 日本語, 한국어, Français, Deutsch, Español, Português]
 // 繁体（zh-TW）不在这里手写，由 tools/build-i18n-dict.py 用 OpenCC s2twp 生成。
 export const SRC = {
+  '折叠': ["Collapse", "折りたたむ", "접기", "Replier", "Einklappen", "Contraer", "Recolher"],
+  '展开': ["Expand", "展開する", "펼치기", "Déplier", "Ausklappen", "Expandir", "Expandir"],
+  '已打开': ["Open", "開いている", "열림", "Ouverts", "Geöffnet", "Abiertos", "Abertos"],
+  '尚未保存': ["Not saved", "未保存", "저장 안 됨", "Non enregistré", "Nicht gespeichert", "Sin guardar", "Não salvo"],
+  '最近使用': ["Recent", "最近", "최근", "Récents", "Zuletzt", "Recientes", "Recentes"],
+  '跳到标题': ["Jump to heading", "見出しへ移動", "제목으로 이동", "Aller au titre", "Zu Überschrift springen", "Ir al título", "Ir para o título"],
+  '搜索命令、文件或标题…': ["Search commands, files or headings…", "コマンド・ファイル・見出しを検索…", "명령, 파일, 제목 검색…", "Rechercher commandes, fichiers ou titres…", "Befehle, Dateien oder Überschriften suchen…", "Buscar comandos, archivos o títulos…", "Pesquisar comandos, arquivos ou títulos…"],
+  '输入 / 唤起块菜单，或直接开始写': ["Type / for the block menu, or just start writing", "「/」でブロックメニュー、そのまま書いても始められます", "/로 블록 메뉴를 열거나 그냥 입력하세요", "Tapez / pour le menu de blocs, ou commencez à écrire", "Tippe / für das Blockmenü oder schreibe einfach los", "Escribe / para el menú de bloques, o empieza a escribir", "Digite / para o menu de blocos, ou comece a escrever"],
   '所见即所得': ["WYSIWYG", "WYSIWYG", "위지윅", "WYSIWYG", "WYSIWYG", "WYSIWYG", "WYSIWYG"],
   '编辑模式': ["Edit mode", "編集モード", "편집 모드", "Mode édition", "Bearbeitungsmodus", "Modo edición", "Modo edição"],
   '编辑': ["Edit", "編集", "편집", "Éditer", "Bearbeiten", "Editar", "Editar"],

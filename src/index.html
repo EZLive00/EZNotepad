@@ -465,6 +465,7 @@
         <!-- 行首块手柄：放在编辑流之外，浏览器选不中、退格删不到。
              位置由 app.js 按当前块的行盒算，left 落在 .wysiwyg 的左侧留白里 -->
         <div class="w-handle hidden" id="wHandle">
+          <button class="wh-btn wh-fold hidden" id="whFold" tabindex="-1" title="折叠" data-i18n-title="折叠"><svg class="ico" aria-hidden="true"><use href="#i-chevron-right" /></svg></button>
           <button class="wh-btn" id="whAdd" tabindex="-1" title="在下方插入" data-i18n-title="在下方插入"><svg class="ico" aria-hidden="true"><use href="#i-plus" /></svg></button>
           <button class="wh-btn wh-grip" id="whMenu" tabindex="-1" title="块类型" data-i18n-title="块类型"><svg class="ico" aria-hidden="true"><use href="#i-grip-vertical" /></svg></button>
         </div>

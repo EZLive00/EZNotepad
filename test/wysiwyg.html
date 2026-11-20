@@ -2427,6 +2427,70 @@ window.__run = () => {
       oddHost.remove();
       clearSelMatch();
     }
+
+    /* ---------------- 块选中 / 整块移动 / 标题折叠 ---------------- */
+    {
+      T.reset('# 一\n\n甲\n\n乙\n\n## 二\n\n丙\n');
+      eq('块选中：初始没有选中块', ed.blockSelSet.size, 0);
+
+      ed.selectBlock(root.children[0]);
+      eq('块选中：单选后只有一块', ed.blockSelSet.size, 1);
+      has('块选中：块上有 .w-sel', root.children[0].classList.contains('w-sel'));
+
+      ed.selectBlock(root.children[2], { additive: true });
+      eq('块选中：Shift 扩成范围（两端都含）', ed.blockSelSet.size, 3);
+      eq('块选中：selectedBlocks 按文档顺序', ed.selectedBlocks().length, 3);
+
+      /* 带修饰键的整组下移：被选的三块与下一块（h2）换位 */
+      T.key('ArrowDown', { ctrlKey: true, shiftKey: true });
+      eq('整组下移：顺序正确',
+        T.blocks().join(','), 'h2=二,h1=一,p=甲,p=乙,p=丙');
+      eq('整组下移：仍是这三块选中', ed.blockSelSet.size, 3);
+
+      /* 没有块选中时，Ctrl+Shift+↑/↓ 搬光标所在的那一块 */
+      T.reset('甲\n\n乙\n\n丙\n');
+      T.caret(1, 0);
+      T.key('ArrowUp', { ctrlKey: true, shiftKey: true });
+      eq('单块上移：光标所在块与上一块换位', T.blocks().join(','), 'p=乙,p=甲,p=丙');
+      eq('单块上移：光标还在原来那块里', ed.currentBlock().textContent, '乙');
+
+      /* 整组删除 */
+      T.reset('甲\n\n乙\n\n丙\n');
+      ed.selectBlock(root.children[0]);
+      ed.selectBlock(root.children[1], { additive: true });
+      ed.deleteSelection();
+      eq('块删除：选中两块一起删掉', T.out(), '丙\n');
+      eq('块删除：删完不留选中态', ed.blockSelSet.size, 0);
+
+      /* 折叠是视图状态：md 一个字节都不该变 */
+      T.reset('# 一\n\n甲\n\n## 二\n\n乙\n\n丙\n');
+      const h1 = root.children[0];
+      ed.toggleFold(h1);
+      has('折叠：标题后面的块被藏起来', root.children[1].classList.contains('w-fold-hide'));
+      has('折叠：末块也藏起来', root.children[4].classList.contains('w-fold-hide'));
+      eq('折叠：Markdown 与展开时完全一致', T.out(), '# 一\n\n甲\n\n## 二\n\n乙\n\n丙\n');
+
+      /* 嵌套：折了 h2 之后再展开 h1，h2 那一节仍该是折着的 */
+      const h2 = root.children[2];
+      ed.toggleFold(h2);
+      ed.toggleFold(h1);
+      has('折叠：展开外层后内层标题重新可见', !h2.classList.contains('w-fold-hide'));
+      has('折叠：内层管的块仍然藏着', root.children[3].classList.contains('w-fold-hide'));
+
+      /* 按记住的键重新折叠（整篇重渲染后走这条路） */
+      ed.expandAllFolds();
+      ed.applyFolds(new Set([ed.foldKey(h1)]));
+      has('applyFolds：按 key 重新折上', root.children[1].classList.contains('w-fold-hide'));
+      eq('applyFolds：没记的标题不折', ed.blockSelSet.size, 0);
+
+      /* 折叠后方向键不进入看不见的块 */
+      T.reset('# 一\n\n甲\n\n乙\n');
+      ed.toggleFold(root.children[0]);
+      root.focus();
+      ed.placeCaretEnd(root.children[0]);
+      T.key('ArrowDown');
+      eq('折叠后 ↓ 不跑进隐藏块', ed.currentBlock().textContent, '一');
+    }
   }
 
 

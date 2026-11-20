@@ -1560,11 +1560,18 @@ body[data-zen="1"] .win-title { color: var(--fg-faint); }
 }
 .palette-item.on { background: var(--accent-soft); color: var(--fg); }
 .palette-item.off { opacity: .42; }
-.palette-item .p-group { font-size: var(--fs-1); color: var(--fg-faint); }
+/* 文件行左侧点一个小方块区分类型：命令 / 文件 / 标题混在一张表里，
+   只靠文字颜色分不出来（何况高亮之后颜色还会变） */
 .palette-item .p-kbd {
   margin-left: auto; font-family: var(--font-mono); font-size: var(--fs-1); color: var(--fg-faint);
 }
-.palette-item.on .p-group, .palette-item.on .p-kbd { color: var(--accent); }
+.palette-item.on .p-kbd { color: var(--accent); }
+/* 分组小标题：不是可执行行，退到背景里，只用来切段 */
+.palette-head {
+  padding: 8px 10px 4px; font-size: var(--fs-1); color: var(--fg-faint);
+  letter-spacing: .02em;
+}
+.palette-list > .palette-head:first-child { padding-top: 2px; }
 .palette-empty { padding: 18px; text-align: center; font-size: var(--fs-1); color: var(--fg-faint); }
 
 /* 一行多个：左侧 lead 说明这一行管什么，后面是同一族动作 */
@@ -1598,6 +1605,11 @@ body[data-zen="1"] .win-title { color: var(--fg-faint); }
    cv:auto 块内 execCommand 后选区被重置，复核未能复现（视口内外插入选区
    均正常），但小文档没有收益，维持默认不开。 */
 .wysiwyg .w-block { position: relative; }
+/* 悬停把整块铺一层极淡的底：手柄指哪一块，眼睛能直接对上一整行。
+   用 color-mix 而不是 --bg-hover —— 后者是按钮的灰，铺在正文上太重；
+   4% 前景色在浅色下是淡灰、深色下是淡白，两边强度正好对称。
+   块选中态（.w-sel）写在后面，同权重后者胜，悬停不会盖掉选中色。 */
+.wysiwyg .w-block:hover { background: color-mix(in srgb, var(--fg) 4%, transparent); border-radius: 4px; }
 .wysiwyg.cv-auto .w-block {
   content-visibility: auto;
   contain-intrinsic-size: auto 28px;
@@ -1644,6 +1656,34 @@ body[data-zen="1"] .win-title { color: var(--fg-faint); }
    viewBox 24 缩到 16px 后 1.75 的线宽实际只剩 1.17px，六个点糊成一层浅灰。
    加粗到 3 才有 2px 的实心点；加号是长线，不动 */
 .wh-btn.wh-grip .ico { stroke-width: 3; }
+/* 折叠三角：展开时朝下（▾，表示「点它收起来」），折起来时朝右（▸）。
+   图标源是 chevron-right，所以展开态靠旋转 90° —— 别去换图标，
+   换图标会在切换瞬间闪一下，旋转是连续的。 */
+.wh-btn.wh-fold .ico { stroke-width: 2.4; transform: rotate(90deg); transition: transform .12s ease; }
+.wh-btn.wh-fold.folded .ico { transform: rotate(0deg); }
+/* 冻结折叠隐藏的块：只是看不见，DOM 还在 —— 序列化读的是全部块，
+   所以存盘内容与展开时完全一致（这就是「折叠不进 md」的实现方式） */
+.wysiwyg .w-block.w-fold-hide { display: none; }
+/* 空文档：只有一块空段落时贴一行淡字，新建之后不是一块白板。
+   绝对定位在块盒左上角，和光标同一位置 —— placeholder 本来就该在那儿 */
+.wysiwyg.w-empty-doc > .w-block::before {
+  content: attr(data-ph);
+  position: absolute; left: 0; top: 0; color: var(--fg-faint);
+  pointer-events: none; user-select: none;
+}
+
+/* ---- 拖块排序 ----
+   指示线挂在 .edit-wrap 上（和插入线同一层），坐标按块盒算，不占编辑流。
+   被拖的块只降透明度、原地留着当占位 —— 直接摘掉它，下面的块会立刻上移，
+   落点线跟着乱跳，手感比不拖还差。 */
+.w-drop-line {
+  position: absolute; z-index: 7; height: 2px; border-radius: 1px;
+  background: var(--accent); pointer-events: none; display: block;
+}
+.w-drop-line.hidden { display: none; }
+.wysiwyg .w-block.w-dragging { opacity: .45; }
+.edit-wrap.w-dragging-active { cursor: grabbing; }
+.edit-wrap.w-dragging-active .wysiwyg { cursor: grabbing; }
 
 /* ---- 块类型菜单 ---- */.w-bmenu {
   position: absolute; z-index: 60; min-width: 190px; padding: 6px;
@@ -1818,7 +1858,10 @@ body[data-zen="1"] .win-title { color: var(--fg-faint); }
    不和「鼠标悬浮」的灰底混。 */
 .wysiwyg .w-hr { margin: 1.2em 0; padding: .9em 0; cursor: pointer; user-select: none; }
 .wysiwyg .w-hr hr { border: none; border-top: var(--bw) solid var(--line-strong); }
-.wysiwyg .w-hr.w-sel { background: var(--accent-soft); border-radius: 4px; }
+/* 块选中（Shift+点手柄 / 点分割线）：整块淡底，和文字选区互斥。
+   box-shadow 往四周多铺 3px，让「这一块被选中」看起来是一整行而不是紧贴文字的色块；
+   它不占布局，所以选中/取消都不会让正文抖一下。 */
+.wysiwyg .w-block.w-sel { background: var(--accent-soft); border-radius: 4px; box-shadow: 0 0 0 3px var(--accent-soft); }
 .wysiwyg .w-hr.w-sel hr { border-top-color: var(--accent); }
 /* 所见即所得里的公式只染色：真渲染交给预览（往 contenteditable 塞 KaTeX
    的 DOM，退格删不掉、光标会卡住）。染色是为了让人一眼认出这是公式而不是排版符号 */

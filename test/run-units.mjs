@@ -848,9 +848,24 @@ ok('语言表：新建类型够多', newDocTypes().length >= 24);
     !wys.includes("prev.dataset.type === 'hr') { prev.remove()")
       && !wys.includes("next.dataset.type === 'hr') { next.remove()")
       && wys.includes('this.selectBlock(prev)') && wys.includes('this.selectBlock(next)'));
-  ok('分割线有显式块选中态，currentBlock 优先认它',
-    wys.includes('this.blockSel = null') && wys.includes('selectBlock(block)')
+  ok('块选中支持单选与范围（Shift 扩展），currentBlock 优先认锚块',
+    wys.includes('this.blockSelSet = new Set()') && wys.includes('selectBlock(block, opt = {})')
+      && wys.includes('selectBlockRange(to)') && wys.includes('this.blockSelSet.add(block)')
       && wys.includes('if (this.blockSel && this.blockSel.isConnected && this.root.contains(this.blockSel)) return this.blockSel;'));
+  ok('块选中的批量操作只走一份展开逻辑（引用整组算一块）',
+    wys.includes('selectedBlocks()') && wys.includes('for (const x of this.bqGroupOf(b)) want.add(x)')
+      && wys.includes('deleteSelection()') && wys.includes('moveSelection(dir)'));
+  ok('Ctrl+Shift+↑/↓ 既能搬选中的组，也能搬光标所在的那一块',
+    wys.includes('moveCurrentBlock(dir)') && wys.includes("e.key === 'ArrowUp' || e.key === 'ArrowDown'")
+      && wys.includes("this.moveSelection(e.key === 'ArrowUp' ? -1 : 1)"));
+  ok('标题折叠是视图状态：隐藏块只加类，序列化不滤任何块',
+    wys.includes("b.classList.add('w-fold-hide')") && css.includes('.w-block.w-fold-hide { display: none; }')
+      && !wys.includes("classList.contains('w-fold-hide')) continue;"));
+  ok('折叠按「级别+标题文字」记，不按块下标',
+    wys.includes('foldKey(block)') && wys.includes("return lv + '|' + t;") && wys.includes('applyFolds(keys)'));
+  ok('折叠隐藏的块不会被方向键 / 点空白走进去',
+    wys.includes('siblingVisible(el, dir)') && wys.includes('lastVisible()')
+      && wys.includes('const last = this.lastVisible();'));
   ok('块选中态的按键由 document 捕获层接管，不赌焦点在哪',
     wys.includes('handleBlockSelKey(e)') && wys.includes("document.addEventListener('keydown'")
       && wys.includes('e.stopPropagation()'));

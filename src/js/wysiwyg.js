@@ -1355,10 +1355,14 @@ export class WysiwygEditor {
     // 菜单/工具栏点击时焦点可能暂时离开编辑区，记住最后所在块以保持命令有目标
     this.lastBlock = null;
     this.lastCell = null;
-    /* 没有光标位的块（目前只有分割线）靠「块选中」承载操作单元：点中它、
-       块手柄、删除、块菜单都以这一块为准。它和文字选区互斥、不进文档模型，
-       整篇重渲染时一并作废。 */
+    /* 「块选中」：把若干块当成一个操作单元（Notion 的 block selection）。
+       和文字选区互斥、不进文档模型，整篇重渲染时一并作废。
+       blockSel 是**锚块**（最先选中的那一块，单块命令都以它为准），
+       blockSelSet 是全集（Shift 扩展出来的连续范围也在这里）。
+       分割线没有光标位，从 1.2 起就是靠这套状态承载删除的；
+       现在它同时服务「Shift+点手柄选一段 → 整组删除 / 移动 / 换类型」。 */
     this.blockSel = null;
+    this.blockSelSet = new Set();
     this.onBlockSelect = opts.onBlockSelect || null;
 
     /* ---- 增量序列化 ----
@@ -1442,11 +1446,16 @@ export class WysiwygEditor {
       /* 中文输入法起手也是「要输入了」：先把块后那一行建出来，组字文本
          才会落在它里面，而不是写进下一块的正文。 */
       if (this.gapAfter) this.materializeGap();
-      /* 分割线被选中时同样要在它下方开一行，否则组字无处落脚 */
+      /* 分割线被选中时同样要在它下方开一行，否则组字无处落脚；
+         多选时整组被这次输入顶掉（与「选中后打字」同一口径） */
       if (this.blockSel) {
-        const p = this.insertEmptyAfter(this.blockSel);
-        this.clearBlockSel();
-        this.placeCaretStart(p);
+        if (this.blockSelSet.size > 1) {
+          this.deleteSelection();
+        } else {
+          const p = this.insertEmptyAfter(this.blockSel);
+          this.clearBlockSel();
+          this.placeCaretStart(p);
+        }
       }
     });
     root.addEventListener('compositionend', () => { this.composing = false; this.onInput(); });
@@ -1561,6 +1570,7 @@ export class WysiwygEditor {
     this.hIndex = 0;
     this.hLast = 0;
     this.hCoalesce = false;
+    this.syncEmptyHint();
   }
 
   /* 空闲时把块序列化预热进缓存；全部热完后组装一次与源文本核对基线。 */
@@ -1605,6 +1615,7 @@ export class WysiwygEditor {
     this.lastBlock = null;
     this.lastCell = null;
     this.blockSel = null;      // 旧块已被整批换掉，块选中态一并作废
+    this.blockSelSet.clear();
     /* 大文档（>1MB）走视口渲染：块只存记录、DOM 里只留视口附近几十个。
        中小文档维持原路径（DOM 即模型），行为一字不变。 */
     if (md.length > BIG_DOC_CHARS) {
@@ -2373,38 +2384,180 @@ export class WysiwygEditor {
     return i >= 0 ? heads[i] : null;
   }
 
-  /* ---------------- 块选中（没有光标位的块） ----------------
+  /* ---------------- 块选中（块级操作单元） ----------------
      分割线 contentEditable=false，浏览器不会给它选区。过去只能靠「下面垫一个
      空段落 + 退格特判删线」绕，结果空行与线的生命周期绑死：删空行把线一起
-     删了，线自己反倒点不中。这里给它一份显式的块选中态，与文字选区互斥。 */
+     删了，线自己反倒点不中。这里给它一份显式的块选中态，与文字选区互斥。
+     同一套状态现在也服务「Shift+点手柄选一段 → 整组删除 / 移动 / 换类型」。
 
-  /** 只给无光标位的块用；选中后 currentBlock() 恒返回这一块 */
-  selectBlock(block) {
-    if (!block || !this.root.contains(block) || block.dataset.type !== 'hr') return;
-    this.clearBlockSel();
+     两个字段分工：blockSel 是锚块（单块命令与手柄定位都看它），
+     blockSelSet 是全集（批量命令看它）。只选一块时两者相同。 */
+
+  /** 选中一块。opt.additive（Shift）= 从锚块扩展到这一块；再点锚块本身则取消。 */
+  selectBlock(block, opt = {}) {
+    if (!block || !this.root.contains(block)) return;
+    if (opt.additive && this.blockSel && this.blockSel.isConnected) {
+      if (block === this.blockSel) {
+        if (this.blockSelSet.size > 1) this.selectBlockRange(block);   // 收回成单块
+        else this.clearBlockSel();
+        return;
+      }
+      this.selectBlockRange(block);
+      return;
+    }
+    for (const b of this.blockSelSet) b.classList.remove('w-sel');
+    this.blockSelSet.clear();
+    this.blockSelSet.add(block);
     this.blockSel = block;
-    this.lastBlock = block;
     block.classList.add('w-sel');
+    this._afterBlockSel();
+  }
+
+  /** 从锚块到 to 的连续范围（按文档顺序，两端都含） */
+  selectBlockRange(to) {
+    if (!to || !this.root.contains(to)) return;
+    const a = this.blockSel && this.blockSel.isConnected ? this.blockSel : to;
+    const kids = [...this.root.children];
+    let i = kids.indexOf(a);
+    let j = kids.indexOf(to);
+    if (i < 0 || j < 0) { this.selectBlock(to); return; }
+    if (i > j) [i, j] = [j, i];
+    for (const b of this.blockSelSet) b.classList.remove('w-sel');
+    this.blockSelSet.clear();
+    for (let k = i; k <= j; k++) { this.blockSelSet.add(kids[k]); kids[k].classList.add('w-sel'); }
+    this.blockSel = a;                  // 锚块不动：再 Shift 点别处是从它往外量
+    this._afterBlockSel();
+  }
+
+  /** 块选中之后统一收尾：钉住编辑宿主焦点 + 通知外层（手柄要跟过去） */
+  _afterBlockSel() {
+    this.lastBlock = this.blockSel;
     /* 别把选区清空：没有 Range 时 Chromium 会把焦点甩回 body，之后 keydown
        根本到不了编辑区（「点中线再按 Delete」毫无反应）。在 root 上放一个
        折叠 Range 把编辑宿主钉住 —— 它不可见、不产生文字高亮，块选中态由
        currentBlock() 优先返回，不受这个落点影响。 */
     const sel = window.getSelection();
-    const at = [...this.root.children].indexOf(block);
+    const at = [...this.root.children].indexOf(this.blockSel);
     const r = document.createRange();
     r.setStart(this.root, Math.max(0, at));
     r.collapse(true);
     sel.removeAllRanges();
     sel.addRange(r);
     this.root.focus({ preventScroll: true });
-    if (this.onBlockSelect) this.onBlockSelect(block);
+    if (this.onBlockSelect) this.onBlockSelect(this.blockSel);
+  }
+
+  /** 选中的块，按文档顺序展开（引用整组算在内）。批量命令都走这一份。 */
+  selectedBlocks() {
+    if (!this.blockSelSet.size) return [];
+    const want = new Set();
+    for (const b of this.blockSelSet) {
+      if (!b.isConnected) continue;
+      for (const x of this.bqGroupOf(b)) want.add(x);
+    }
+    return [...this.root.children].filter((b) => want.has(b));
+  }
+
+  /** 把一组连续块上移 / 下移一位。返回是否真的动了 —— 到顶/到底要能
+     告诉调用方，否则「按了没反应」会被当成快捷键没生效。 */
+  _shiftBlocks(list, dir) {
+    if (!list.length) return false;
+    const first = list[0];
+    const last = list[list.length - 1];
+    const inSel = new Set(list);
+    let moved = false;
+    if (dir < 0) {
+      const prev = first.previousElementSibling;
+      if (prev) {
+        /* 引用是三四行一个逻辑块：整组搬，不能只搬第一行。
+           bqGroupOf 对非引用块返回 [自己]，两种情况一条路径 */
+        const pg = this.bqGroupOf(prev).filter((b) => !inSel.has(b));
+        if (pg.length) { last.after(...pg); moved = true; }
+      }
+    } else {
+      const next = last.nextElementSibling;
+      if (next) {
+        const ng = this.bqGroupOf(next).filter((b) => !inSel.has(b));
+        if (ng.length) { first.before(...ng); moved = true; }
+      }
+    }
+    if (!moved) return false;
+    this.renumber();
+    this.hCoalesce = false;
+    this.flush();
+    first.scrollIntoView({ block: 'nearest' });
+    return true;
+  }
+
+  /** 块选中态整体上移 / 下移一位 */
+  moveSelection(dir) {
+    return this._shiftBlocks(this.selectedBlocks(), dir);
+  }
+
+  /** 没有块选中时，移动光标所在的那一块（引用整组跟着走），光标留在块里。
+   *  这是 Ctrl+Shift+↑/↓ 最常用的形态 —— 用户不会为了挪一行先去选块。 */
+  moveCurrentBlock(dir) {
+    if (this.blockSelSet.size) return this.moveSelection(dir);
+    const block = this.currentBlock();
+    if (!block || !this.root.contains(block)) return false;
+    const group = this.bqGroupOf(block);
+    const off = offsetIn(textEl(block));
+    if (!this._shiftBlocks(group, dir)) return false;
+    /* DOM 节点被整体搬走之后 Chromium 会把选区丢到 root，
+       手动把光标放回原来的字位 —— 否则挪完一行就没法接着打字了 */
+    if (off >= 0 && block.isConnected) setCaretOffset(textEl(block), off);
+    return true;
+  }
+
+  /** 删除全部选中的块。光标落到原位置上方那一块末尾，删光了补一个空段落。 */
+  deleteSelection() {
+    const list = this.selectedBlocks();
+    if (!list.length) return;
+    const prev = list[0].previousElementSibling;
+    const next = list[list.length - 1].nextElementSibling;
+    this.clearBlockSel();
+    for (const b of list) b.remove();
+    const land = prev && prev.isConnected ? prev : (next && next.isConnected ? next : null);
+    if (land && land.dataset.type === 'hr') this.selectBlock(land);
+    else if (land) this.placeCaretEnd(land);
+    else this.placeCaretStart(this.root.appendChild(mkPara('')));
+    this.renumber();
+    this.hCoalesce = false;
+    this.flush();
+  }
+
+  /** 拖拽要搬的块：手柄所在块在选中集里就搬整组，否则搬它自己（引用整组）。 */
+  dragGroup(block) {
+    if (!block) return [];
+    if (this.blockSelSet.has(block)) return this.selectedBlocks();
+    return this.bqGroupOf(block);
+  }
+
+  /** 把 list 整体搬到 target 之前 / 之后（拖拽松手时调用）。
+   *  落点落在要搬的那组里面时不动 —— 那等于把组拆开再塞回去，没有意义。 */
+  dropBlocks(list, target, after) {
+    const nodes = (list || []).filter((b) => b && b.isConnected && this.root.contains(b));
+    if (!nodes.length || !target || !this.root.contains(target)) return false;
+    if (nodes.includes(target)) return false;
+    /* 一次搬一个 DocumentFragment：逐个 insertBefore 会产生中间态，
+       列表编号、引用成组这些「依赖相邻关系」的判定在中间态里会算错一次 */
+    const frag = document.createDocumentFragment();
+    for (const b of nodes) frag.appendChild(b);
+    if (after) target.after(frag);
+    else target.before(frag);
+    this.renumber();
+    this.hCoalesce = false;
+    this.flush();
+    return true;
   }
 
   clearBlockSel() {
-    if (!this.blockSel) return;
-    this.blockSel.classList.remove('w-sel');
+    if (!this.blockSelSet.size && !this.blockSel) return;
+    for (const b of this.blockSelSet) b.classList.remove('w-sel');
+    this.blockSelSet.clear();
+    const had = this.blockSel;
     this.blockSel = null;
-    if (this.onBlockSelect) this.onBlockSelect(null);
+    if (had && this.onBlockSelect) this.onBlockSelect(null);
   }
 
   currentBlock() {
@@ -2709,9 +2862,26 @@ export class WysiwygEditor {
        放在 flush 里而不是 input 里，是因为所有改动路径最后都走这里。 */
     this.clearDuplicates();
     this._edited = true;
+    this.syncEmptyHint();
     const md = this.toMarkdown();
     this.pushHistory(md);
     this.onChange(md);
+  }
+
+  /** 空文档（只有一个空段落）时给一行淡提示：新建之后不是一块白板。
+   *  判据放在 flush / render 之后，而不是靠 CSS 的 :empty —— 空段落里有 <br>，
+   *  它永远不是 :empty。 */
+  syncEmptyHint() {
+    const kids = this.root.children;
+    const only = kids.length === 1 ? kids[0] : null;
+    const empty = !!only && (only.dataset.type || 'p') === 'p' && this.isEmptyBlock(only);
+    const had = this.root.classList.contains('w-empty-doc');
+    if (empty === had) return;
+    this.root.classList.toggle('w-empty-doc', empty);
+    /* 文案挂在**块**上，不是 root：::before 的 attr() 只读它自己所属元素的
+       属性，写在 root 上取不到。 */
+    if (empty) only.dataset.ph = tt('输入 / 唤起块菜单，或直接开始写');
+    else if (only) delete only.dataset.ph;
   }
 
   /* ---------------- DOM 规范化 ---------------- */
@@ -3142,21 +3312,43 @@ export class WysiwygEditor {
   /* ---------------- 键盘 ---------------- */
 
   /**
-   * 块选中态的按键（只给没有光标位的块用）。返回 true 表示这一下已经消费，
+   * 块选中态的按键。返回 true 表示这一下已经消费，
    * 调用方别再往下派发 —— document capture 与 root 的 handleKey 共用这一份。
    */
   handleBlockSelKey(e) {
     if (!this.blockSel || !this.blockSel.isConnected) return false;
     const b = this.blockSel;
     const plain = !e.ctrlKey && !e.metaKey && !e.altKey;
+    /* 整组上移/下移：Ctrl+Shift+↑/↓（Notion 同款）。放在最前面 ——
+       它带修饰键，下面的 plain 分支都不会命中，但必须抢在浏览器
+       「Ctrl+Shift+↑ 扩展选区到文档头」之前。 */
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+      e.preventDefault();
+      this.moveSelection(e.key === 'ArrowUp' ? -1 : 1);
+      return true;
+    }
     if (plain && (e.key === 'Backspace' || e.key === 'Delete')) {
       e.preventDefault();
-      this.clearBlockSel();
-      this.deleteBlock(b);
+      this.deleteSelection();
       return true;
     }
     if (plain && (e.key === 'Enter' || (e.key.length === 1 && !e.isComposing))) {
-      const p = this.insertEmptyAfter(b);
+      /* 多选 + 打字 = 整组被这个字顶掉（Notion 的行为）。单选照旧「在下面开一行」。 */
+      if (this.blockSelSet.size > 1 && e.key.length === 1) {
+        const list = this.selectedBlocks();
+        const prev = list[0].previousElementSibling;
+        for (const x of list) x.remove();
+        this.clearBlockSel();
+        let p;
+        if (prev && prev.isConnected) p = this.insertEmptyAfter(prev);
+        else { p = mkPara(''); this.root.prepend(p); }
+        this.renumber();
+        this.hCoalesce = false;
+        this.placeCaretStart(p);
+        return true;      // 不 preventDefault：字符随后落进刚建好的段落
+      }
+      const last = this.selectedBlocks().slice(-1)[0] || b;
+      const p = this.insertEmptyAfter(last);
       this.clearBlockSel();
       this.placeCaretStart(p);
       if (e.key === 'Enter') { e.preventDefault(); this.flush(); return true; }
@@ -3166,13 +3358,20 @@ export class WysiwygEditor {
     }
     if (plain && /^Arrow(Up|Down|Left|Right)$/.test(e.key)) {
       const up = e.key === 'ArrowUp' || e.key === 'ArrowLeft';
-      const near = up ? b.previousElementSibling : b.nextElementSibling;
+      /* 多选时先把选中收缩到对应的那一端，再往外走一步 —— 这样
+         「选了三块 → 按 ↓」落到第四块，而不是从锚块（可能在中间）跳。 */
+      const list = this.selectedBlocks();
+      const edge = up ? list[0] : list[list.length - 1];
+      const from = edge || b;
+      const near = up ? from.previousElementSibling : from.nextElementSibling;
       if (near && near.dataset.type !== 'hr') {
         e.preventDefault();
         this.clearBlockSel();
         if (up) this.placeCaretEnd(near); else this.placeCaretStart(near);
         return true;
       }
+      this.clearBlockSel();
+      return true;
     }
     if (e.key === 'Escape' || e.key === 'Tab') {
       e.preventDefault();
@@ -3186,6 +3385,17 @@ export class WysiwygEditor {
     if (this.loading) { e.preventDefault(); return; }   // 大文档分块载入期间不响应
     if (e.isComposing) return;
     if (this.handleBlockSelKey(e)) return;
+
+    /* Ctrl+Shift+↑/↓：整块移动（Notion 同款）。有块选中时上面已经消费掉了，
+       这里管「光标在块里、没选块」这条更常用的路。表格里不接管 ——
+       那里的上下是在格子间走，搬走整张表不是用户的意思。 */
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+      if (!this.currentCell()) {
+        e.preventDefault();
+        this.moveCurrentBlock(e.key === 'ArrowUp' ? -1 : 1);
+        return;
+      }
+    }
 
     /* 出块时记下的「块后还缺一行」，只在用户真的要写入时才兑现。
        方向键 / 退格 / Tab / 快捷键一律让它失效 —— 移动光标不该改文档。 */
@@ -3686,7 +3896,7 @@ export class WysiwygEditor {
    */
   arrowIntoBlock(e, block) {
     if (!block) return false;
-    const prev = block.previousElementSibling;
+    const prev = this.siblingVisible(block, -1);
     if (!prev || (prev.dataset.type !== 'code' && prev.dataset.type !== 'math')) return false;
     const { host, end, invisibleNL } = this.visibleEnd(prev);
     if (!invisibleNL || !this.onFirstVisualLine(block)) return false;
@@ -3829,7 +4039,7 @@ export class WysiwygEditor {
 
   /** 保证 block 后面有一个可写的空段落：已有就复用，没有才新建并落库 */
   forceGapAfter(block) {
-    const next = block.nextElementSibling;
+    const next = this.siblingVisible(block, 1);
     if (next && (next.dataset.type || 'p') === 'p' && this.isEmptyBlock(next)) {
       this.clearGapAfter();
       this.placeCaretStart(next);
@@ -3862,7 +4072,7 @@ export class WysiwygEditor {
    * 吸回表格最后一格。要落脚点就建真段落，且只在该建的时候建。
    */
   caretAfterBlock(block) {
-    const next = block.nextElementSibling;
+    const next = this.siblingVisible(block, 1);
     if (next && (next.dataset.type || 'p') === 'p' && this.isEmptyBlock(next)) {
       this.clearGapAfter();
       this.placeCaretStart(next);
@@ -4224,12 +4434,103 @@ export class WysiwygEditor {
     return group;
   }
 
+  /* ---------------- 标题折叠 ----------------
+     折叠是**视图状态**，一个字节都不进 md：Markdown 没有「折叠」这个语法，
+     把它写进文件只会制造假 diff。折叠时给后续块挂 .w-fold-hide（display:none），
+     DOM 不动、序列化照常读全部块 —— 存盘内容与展开时完全一致。
+
+     记忆的键是「级别 + 标题文字」而不是块下标：下标会因为前面插一行而全部错位。
+     代价是改了标题文字就自然展开 —— 那本来也是另一节了，不算错误。 */
+
+  foldKey(block) {
+    const lv = +(String(block.dataset.type || '').slice(1)) || 1;
+    const t = (textEl(block).textContent || '').replace(/\u200b/g, '').trim();
+    return lv + '|' + t;
+  }
+
+  /** 这一标题管辖到哪一块为止（下一个同级或更高级的标题）；到文档尾返回 null */
+  foldStop(block, level) {
+    let b = block.nextElementSibling;
+    while (b) {
+      const m = /^h([1-6])$/.exec(b.dataset.type || '');
+      if (m && +m[1] <= level) return b;
+      b = b.nextElementSibling;
+    }
+    return null;
+  }
+
+  collapseFold(block) {
+    const lv = +(String(block.dataset.type || '').slice(1));
+    if (!lv) return;
+    const stop = this.foldStop(block, lv);
+    block.dataset.folded = '1';
+    let b = block.nextElementSibling;
+    while (b && b !== stop) { b.classList.add('w-fold-hide'); b = b.nextElementSibling; }
+  }
+
+  expandFold(block) {
+    const lv = +(String(block.dataset.type || '').slice(1)) || 1;
+    delete block.dataset.folded;
+    const stop = this.foldStop(block, lv);
+    let b = block.nextElementSibling;
+    while (b && b !== stop) {
+      b.classList.remove('w-fold-hide');
+      /* 里面还嵌着别的折叠标题：它自己管的那段继续藏着，直接跳过，
+         否则「展开外层」会把内层的折叠一起展开 */
+      if (b.dataset.folded === '1' && /^h[1-6]$/.test(b.dataset.type || '')) {
+        b = this.foldStop(b, +b.dataset.type.slice(1));
+        continue;
+      }
+      b = b.nextElementSibling;
+    }
+  }
+
+  toggleFold(block) {
+    if (!block || !/^h[1-6]$/.test(block.dataset.type || '')) return false;
+    if (block.dataset.folded === '1') { this.expandFold(block); return false; }
+    this.collapseFold(block);
+    return true;
+  }
+
+  expandAllFolds() {
+    for (const b of this.root.children) {
+      if (b.dataset.folded === '1') delete b.dataset.folded;
+      b.classList.remove('w-fold-hide');
+    }
+  }
+
+  /** 按记住的键重新折叠（切标签 / 重开文件 / 整篇重渲染之后调用） */
+  applyFolds(keys) {
+    this.expandAllFolds();
+    if (!keys || !keys.size) return;
+    for (const b of [...this.root.children]) {
+      if (!/^h[1-6]$/.test(b.dataset.type || '')) continue;
+      if (keys.has(this.foldKey(b))) this.collapseFold(b);
+    }
+  }
+
+  /** 下一块 / 上一块，跳过被折叠隐藏的（display:none 的块光标进不去，
+   *  方向键如果直接取 previousElementSibling 会把光标丢进看不见的地方） */
+  siblingVisible(el, dir) {
+    let b = dir < 0 ? el.previousElementSibling : el.nextElementSibling;
+    while (b && b.classList.contains('w-fold-hide')) {
+      b = dir < 0 ? b.previousElementSibling : b.nextElementSibling;
+    }
+    return b;
+  }
+
+  lastVisible() {
+    let b = this.root.lastElementChild;
+    while (b && b.classList.contains('w-fold-hide')) b = b.previousElementSibling;
+    return b;
+  }
+
   /** 块级删除：普通块删一块，引用删整组，表格 / 代码块删整块。
    *  光标落到相邻块末尾；删光了就补一个空段落并站进去。 */
   deleteBlock(block = null) {
     if (!block) block = this.currentBlock();
     if (!block || !this.root.contains(block)) return;
-    if (block === this.blockSel) this.clearBlockSel();
+    if (this.blockSelSet.has(block) || block === this.blockSel) this.clearBlockSel();
     const group = this.bqGroupOf(block);
     const first = group[0];
     const last = group[group.length - 1];
@@ -5386,7 +5687,7 @@ export class WysiwygEditor {
       const under = document.elementFromPoint(e.clientX, e.clientY);
       if (under && under.closest && under.closest('.w-block')) return;
       this.root.focus();
-      const last = this.root.lastElementChild;
+      const last = this.lastVisible();
       if (!last) return;
       this.hideInsertLine();
       /* 末块本身能落脚（段落 / 标题 / 引用末行 / 列表末项 / 那个空段落），
@@ -5419,7 +5720,7 @@ export class WysiwygEditor {
      亮线会骗人 —— 用户会以为点一下能加行，点了却没有。 */
   hoverInsertLine(e) {
     const ind = this.insertLine;
-    const last = this.root.lastElementChild;
+    const last = this.lastVisible();
     if (!last || !this.needsLineBelow(last)) { this.hideInsertLine(); return; }
     const lastRect = last.getBoundingClientRect();
     if (e.clientY <= lastRect.bottom + 2) { this.hideInsertLine(); return; }

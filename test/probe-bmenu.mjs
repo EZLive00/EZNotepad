@@ -82,7 +82,7 @@ const DOC = `# 手柄测试
 第二个段落，菜单里的「转换」应该作用在它上面。
 `;
 
-const { ws, ev, moveTo, dragTo, click } = await connect();
+const { ws, ev, call, moveTo, dragTo, click } = await connect();
 
 /** 启动时可能弹「恢复草稿」，它的遮罩会吃掉所有真实点击 —— 先点掉 */
 async function dismissOverlay() {
@@ -430,11 +430,15 @@ await openDoc('slash-f.md', '丁段\n\n');
 await caretIn();
 await slash(); await sleep(220);
 const keys = await ev(`[...document.querySelectorAll('#wBlockMenu .bm-item')].map(b => b.dataset.key)`);
-ok('面板每一项都带选择键', keys.length >= 18 && keys.every(Boolean), `${keys.length} 项 / ${JSON.stringify(keys)}`);
-ok('选择键互不重复', new Set(keys).size === keys.length);
+const real = keys.filter(Boolean);
+/* 1.5.0 起插入面板顶部多了一段「最近使用」：那一组故意不带选择键 ——
+   同一个 id 在下面的正式分组里还会出现一次，键只该命中一个。 */
+ok('面板里可直达的项都有选择键', real.length >= 18, `${keys.length} 项 / 带键 ${real.length}`);
+ok('选择键互不重复', new Set(real).size === real.length, JSON.stringify(real));
 ok('键位按语义分段（0 正文 / 1-3 标题 / w 警告 / t 表格）',
-  keys[0] === '0' && keys[1] === '1' && keys[3] === '3' && keys.includes('w') && keys.includes('t'),
-  JSON.stringify(keys));
+  real[0] === '0' && real[1] === '1' && real[3] === '3' && real.includes('w') && real.includes('t'),
+  JSON.stringify(real));
+ok('最近使用组不带选择键', keys.length > real.length, `${keys.length - real.length} 项无键`);
 await key('Escape'); await sleep(240);
 
 /* ---------- 7. 图标对比度（两套主题都量） ---------- */
@@ -492,6 +496,163 @@ if (blankItem) {
   ok('点「插入空行」真的多出一个块', false, '菜单项没找到');
   ok('新块是空段落，光标落在里面', false, '菜单项没找到');
 }
+
+/* ---------- 9. Shift+点抓手 = 块选中；整组移动；拖动排序；标题折叠 ----------
+   这一组全是要「真的按下去、真的拖过去」才成立的交互：块选中靠 pointerdown
+   的 shiftKey、拖动靠 pointer 捕获 + 落点线，jsdom 里都没有。 */
+await openDoc('blocks.md', '一段\n\n二段\n\n三段\n');
+const blockTexts = () => ev(`[...document.querySelectorAll('.wysiwyg > .w-block')].map(b => (b.textContent || '').replace(/\\u200b/g, '').trim())`);
+const selCount = () => ev(`document.querySelectorAll('.wysiwyg > .w-block.w-sel').length`);
+const nthBlock = (i) => ev(`(() => {
+  const bs = [...document.querySelectorAll('.wysiwyg > .w-block')];
+  const b = bs[${i}];
+  if (!b) return null;
+  const r = b.getBoundingClientRect();
+  return { x: r.left + Math.min(30, Math.max(8, r.width / 2)), y: r.top + r.height / 2,
+           left: r.left, right: r.right, top: r.top, bottom: r.bottom };
+})()`);
+/** Shift+点：CDP 的 modifiers 8 = Shift */
+const shiftClickAt = async (x, y) => {
+  await call('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1, buttons: 1, modifiers: 8 });
+  await sleep(40);
+  await call('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1, buttons: 0, modifiers: 8 });
+};
+/** 悬停第 i 块 → 等手柄贴上去 → 返回抓手中心 */
+const gripAt = async (i) => {
+  const p = await nthBlock(i);
+  if (!p) return null;
+  await moveTo(p.x, p.y);
+  await sleep(160);
+  return btnCenter('whMenu');
+};
+const pressKey = (k, mods = {}) => ev(`(() => {
+  const el = document.getElementById('wysiwyg');
+  el.dispatchEvent(new KeyboardEvent('keydown', Object.assign({ key: ${JSON.stringify(k)}, bubbles: true, cancelable: true }, ${JSON.stringify(mods)})));
+  return true;
+})()`);
+
+const g0 = await gripAt(0);
+ok('悬停段落时抓手可点', !!g0, JSON.stringify(g0));
+if (g0) {
+  await shiftClickAt(g0.x, g0.y);
+  await sleep(180);
+  ok('Shift+点抓手选中这一块', (await selCount()) === 1, String(await selCount()));
+}
+const g2 = await gripAt(2);
+if (g2) {
+  await shiftClickAt(g2.x, g2.y);
+  await sleep(180);
+  ok('再 Shift+点第三块：扩成连续三段', (await selCount()) === 3, String(await selCount()));
+}
+ok('块选中不改正文', (await md()).trim() === '一段\n\n二段\n\n三段', JSON.stringify(await md()));
+ok('块选中时抓手仍在（它是选中态的操作入口）',
+  await ev(`!document.getElementById('wHandle').classList.contains('hidden')`),
+  await ev(`document.getElementById('wHandle').className`));
+
+/* 清掉选中，测「单块键盘上移」 */
+await pressKey('Escape');
+await sleep(120);
+ok('Esc 取消块选中', (await selCount()) === 0);
+
+const g1 = await gripAt(1);
+if (g1) await shiftClickAt(g1.x, g1.y);
+await sleep(140);
+await pressKey('ArrowUp', { ctrlKey: true, shiftKey: true });
+await sleep(260);
+ok('Ctrl+Shift+↑ 把选中的块上移一位',
+  (await blockTexts()).join(',') === '二段,一段,三段', (await blockTexts()).join(','));
+
+/* 拖动排序：从第一段的抓手按下去，拖到第三段下半部分，松手 */
+await pressKey('Escape');
+await sleep(100);
+const gTop = await gripAt(0);
+const pBottom = await nthBlock(2);
+if (gTop && pBottom) {
+  await call('Input.dispatchMouseEvent', { type: 'mousePressed', x: gTop.x, y: gTop.y, button: 'left', clickCount: 1, buttons: 1 });
+  await sleep(60);
+  const yTo = pBottom.bottom - 4;
+  for (let i = 1; i <= 8; i++) {
+    await call('Input.dispatchMouseEvent', {
+      type: 'mouseMoved', x: gTop.x + 6, y: gTop.y + (yTo - gTop.y) * i / 8, buttons: 0,
+    });
+    await sleep(20);
+  }
+  await sleep(80);
+  await call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: gTop.x + 6, y: yTo, button: 'left', clickCount: 1, buttons: 0 });
+  await sleep(320);
+  /* 拖动前顺序是「二段,一段,三段」（上一条用例刚把二段提到最前），
+     所以拖走第一块之后应该剩「一段,三段,二段」 */
+  ok('拖抓手把第一块搬到最后', (await blockTexts()).join(',') === '一段,三段,二段', (await blockTexts()).join(','));
+} else {
+  ok('拖抓手把第一块搬到最后', false, '抓手或目标块没找到');
+}
+
+/* 标题折叠：三角只在标题块上出现，折起来是一行不差的「只是看不见」 */
+await openDoc('fold.md', '# 标题一\n\n正文甲\n\n## 标题二\n\n正文乙\n');
+const hb = await nthBlock(0);
+await moveTo(hb.x, hb.y);
+await sleep(200);
+const foldBtn = await btnCenter('whFold');
+ok('标题块的手柄里出现折叠三角', !!foldBtn);
+if (foldBtn) {
+  await click(foldBtn.x, foldBtn.y);
+  await sleep(220);
+  ok('点三角：后续块全部不可见', await ev(`(() => {
+    const bs = [...document.querySelectorAll('.wysiwyg > .w-block')];
+    return bs.length > 1 && bs.slice(1).every((b) => getComputedStyle(b).display === 'none');
+  })()`));
+  ok('折叠不改 Markdown（视图状态不进文件）', (await md()).includes('## 标题二'), JSON.stringify(await md()));
+  /* 折起来之后手柄还贴在这个标题上，再点一次就是展开 */
+  await moveTo(hb.x, hb.y);
+  await sleep(150);
+  const foldBtn2 = await btnCenter('whFold');
+  if (foldBtn2) await click(foldBtn2.x, foldBtn2.y);
+  await sleep(220);
+  ok('再点一次展开：正文重新可见', await ev(`(() => {
+    const bs = [...document.querySelectorAll('.wysiwyg > .w-block')];
+    return bs.slice(1).every((b) => getComputedStyle(b).display !== 'none');
+  })()`));
+} else {
+  ok('点三角：后续块全部不可见', false, '三角没找到');
+  ok('折叠不改 Markdown（视图状态不进文件）', false, '三角没找到');
+}
+
+/* 命令面板：一次输入框里同时找得到「文件 / 标题 / 命令」 */
+await ev('window.__snp.commands.palette()');
+await sleep(260);
+const palInfo = await ev(`(() => {
+  const box = document.querySelector('.palette');
+  if (!box) return null;
+  return {
+    heads: [...box.querySelectorAll('.palette-head')].map((h) => h.textContent),
+    kinds: [...new Set([...box.querySelectorAll('.palette-item')].map((r) => r.dataset.kind))],
+    items: box.querySelectorAll('.palette-item').length,
+  };
+})()`);
+ok('命令面板打开并分了三组', !!palInfo && palInfo.heads.length >= 3, JSON.stringify(palInfo));
+ok('…三组分别是文件 / 标题 / 命令',
+  !!palInfo && ['file', 'head', 'cmd'].every((k) => palInfo.kinds.includes(k)), JSON.stringify(palInfo?.kinds));
+
+/* 输入标题关键词：过滤结果里第一条必须是标题，且能真的跳过去 */
+await ev(`(() => {
+  const i = document.querySelector('.palette-input');
+  i.value = '标题二';
+  i.dispatchEvent(new Event('input', { bubbles: true }));
+  return true;
+})()`);
+await sleep(180);
+const palFirst = await ev(`(() => {
+  const r = document.querySelector('.palette-item.on');
+  return r ? { kind: r.dataset.kind, label: r.querySelector('.p-label').textContent } : null;
+})()`);
+ok('输入标题名第一条就是那个标题', palFirst?.kind === 'head' && palFirst.label === '标题二', JSON.stringify(palFirst));
+await ev(`(() => {
+  const i = document.querySelector('.palette-input');
+  i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  return true;
+})()`);
+await sleep(320);
+ok('回车跳到那一节，面板关掉', await ev(`!document.querySelector('.palette')`));
 
 /* ---------- 汇总 ---------- */
 console.log('');

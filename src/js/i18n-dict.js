@@ -2,6 +2,14 @@
 // 值顺序：[繁體中文, English, 日本語, 한국어, Français, Deutsch, Español, Português]
 // 键是简体中文原文（gettext 风格），简体直接用键，所以这里不含简体列。
 export const DICT = {
+  '折叠': ['摺疊', 'Collapse', '折りたたむ', '접기', 'Replier', 'Einklappen', 'Contraer', 'Recolher'],
+  '展开': ['展開', 'Expand', '展開する', '펼치기', 'Déplier', 'Ausklappen', 'Expandir', 'Expandir'],
+  '已打开': ['已開啟', 'Open', '開いている', '열림', 'Ouverts', 'Geöffnet', 'Abiertos', 'Abertos'],
+  '尚未保存': ['尚未儲存', 'Not saved', '未保存', '저장 안 됨', 'Non enregistré', 'Nicht gespeichert', 'Sin guardar', 'Não salvo'],
+  '最近使用': ['最近使用', 'Recent', '最近', '최근', 'Récents', 'Zuletzt', 'Recientes', 'Recentes'],
+  '跳到标题': ['跳到標題', 'Jump to heading', '見出しへ移動', '제목으로 이동', 'Aller au titre', 'Zu Überschrift springen', 'Ir al título', 'Ir para o título'],
+  '搜索命令、文件或标题…': ['搜尋命令、檔案或標題…', 'Search commands, files or headings…', 'コマンド・ファイル・見出しを検索…', '명령, 파일, 제목 검색…', 'Rechercher commandes, fichiers ou titres…', 'Befehle, Dateien oder Überschriften suchen…', 'Buscar comandos, archivos o títulos…', 'Pesquisar comandos, arquivos ou títulos…'],
+  '输入 / 唤起块菜单，或直接开始写': ['輸入 / 喚起塊選單，或直接開始寫', 'Type / for the block menu, or just start writing', '「/」でブロックメニュー、そのまま書いても始められます', '/로 블록 메뉴를 열거나 그냥 입력하세요', 'Tapez / pour le menu de blocs, ou commencez à écrire', 'Tippe / für das Blockmenü oder schreibe einfach los', 'Escribe / para el menú de bloques, o empieza a escribir', 'Digite / para o menu de blocos, ou comece a escrever'],
   '所见即所得': ['所見即所得', 'WYSIWYG', 'WYSIWYG', '위지윅', 'WYSIWYG', 'WYSIWYG', 'WYSIWYG', 'WYSIWYG'],
   '编辑模式': ['編輯模式', 'Edit mode', '編集モード', '편집 모드', 'Mode édition', 'Bearbeitungsmodus', 'Modo edición', 'Modo edição'],
   '编辑': ['編輯', 'Edit', '編集', '편집', 'Éditer', 'Bearbeiten', 'Editar', 'Editar'],

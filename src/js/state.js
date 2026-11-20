@@ -76,6 +76,10 @@ export function createTab(name = tt('未命名.md'), content = '', path = null) 
     quickNote: false,           // 是不是那份固定位置的速记（见 app.js openQuickNote）
     ding: false,                // 钉住：不画关闭键，批量关闭也绕开它（见 app.js setDing）
     mtime: null,                // 上次读/写这个文件时的修改时间（毫秒），用于发现外部改动
+    /* 折叠了哪些标题：键是「级别 + 标题文字」（见 wysiwyg.js 的 foldKey）。
+       纯视图状态，不写进文件、不算脏、不进撤销栈 —— 但它跟标签走，
+       切走再切回来、换模式再换回来，标题还是折着的。 */
+    folds: new Set(),
   };
 }
 

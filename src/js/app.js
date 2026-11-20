@@ -73,6 +73,7 @@ const el = {
   editWrap: $('editWrap'),
   propBar: $('propBar'),
   wHandle: $('wHandle'),
+  whFold: $('whFold'),
   whAdd: $('whAdd'),
   whMenu: $('whMenu'),
   wBlockMenu: $('wBlockMenu'),
@@ -154,7 +155,15 @@ const wys = new WysiwygEditor(el.wysiwyg, {
      别等 selectionchange 拿旧锚点把刚选中的块盖掉 */
   onBlockSelect: (block) => {
     if (!block) { anchorBlock = null; hideHandle(); return; }
-    anchorBlock = block; placeHandle(block);
+    /* 范围选中时「锚块」是范围起点（可能在文档另一头）。手柄跟着锚块跳，
+       会当场从鼠标底下溜走 —— 生成一次 mouseleave，220ms 后自己收起来，
+       恰好在用户想接着 Shift 点第二块的时候消失。
+       所以手柄优先留在鼠标当前压着的那一块（它确实进了选中集），
+       只有它不在选中集里时才退回锚块。 */
+    const keep = handleBlock && handleBlock.isConnected && block.classList.contains('w-block')
+      && wys.blockSelSet.has(handleBlock) ? handleBlock : block;
+    anchorBlock = keep;
+    placeHandle(keep);
   },
   /* 大文档分块载入的进度：状态栏行数位临时显示百分比。
      完成时（done === total）调度一次统计，把「载入中 x%」换回真实行数 ——
@@ -197,6 +206,9 @@ function renderWys(content, caret) {
   const t = activeTab();
   wys.ownerTabId = t ? t.id : null;
   wys.render(content, caret);
+  /* 折叠是视图状态、存在标签上（见 state.js 的 folds）。整篇重渲染会重建
+     全部块，折叠类也跟着没了 —— 渲染完按记下的键重新折一遍。 */
+  if (t && t.folds) wys.applyFolds(t.folds);
 }
 
 /* ---------------- 标签 ---------------- */
@@ -4441,6 +4453,19 @@ const blockInserts = () => [
 ];
 const SELF_INSERTING = new Set(['table', 'tablePrompt', 'image', 'link', 'hr']);
 
+/* 最近用过的块类型（最多 5 个），存在 localStorage。Notion 的斜杠菜单顶上
+   就有这么一段 —— 常用块不必每次在十几项里重新找。只记 id，标签与图标
+   仍然从两张表里取，将来改了文案/图标不会留下过期记录。 */
+const BM_RECENT_KEY = 'bmRecent';
+function bmRecent() {
+  const v = LS.get(BM_RECENT_KEY, []);
+  return Array.isArray(v) ? v.filter((x) => typeof x === 'string').slice(0, 5) : [];
+}
+function rememberBlockKind(id) {
+  if (!id || id === 'deleteBlock') return;      // 删除是一次性动作，不该占推荐位
+  LS.set(BM_RECENT_KEY, [id, ...bmRecent().filter((x) => x !== id)].slice(0, 5));
+}
+
 /* 手柄锚在哪个块上。Notion 式：鼠标悬停哪一行，手柄就贴哪一行；鼠标离开那一行
    （行间空隙、页边距、编辑区外）就收起。不再「钉在最后确定的那一行」——
    那样加了新行、鼠标没动时，按钮会尴尬地留在上一行。
@@ -4507,10 +4532,24 @@ function placeHandle(block) {
   }
   handleBlock = block;
   anchorBlock = block;              // placeHandle 是唯一真源，锚点跟它同步
+  /* 标题块多给一个折叠三角的位置：按钮组整体往左让一格，三角就成了
+     「从正文往左划出来第一个碰到的东西」。文档末尾的标题后面没有内容，
+     不给三角 —— 点它什么都不会发生，那是一个骗人的按钮。 */
+  const foldable = /^h[1-6]$/.test(block.dataset.type || '')
+    && !wys.virtual && !!nextFoldableSibling(block);
+  el.whFold.classList.toggle('hidden', !foldable);
+  const folded = block.dataset.folded === '1';
+  el.whFold.classList.toggle('folded', folded);
+  el.whFold.title = folded ? tt('展开') : tt('折叠');
   el.wHandle.classList.remove('hidden');
   // 贴着首行：块可能是多行，手柄只对齐第一行
   el.wHandle.style.top = Math.round(Math.max(2, r.top - host.top + 2)) + 'px';
-  el.wHandle.style.left = Math.round(Math.max(2, r.left - host.left - 45)) + 'px';
+  el.wHandle.style.left = Math.round(Math.max(2, r.left - host.left - (foldable ? 66 : 45))) + 'px';
+}
+
+/** 这个标题下面还有块吗（折叠三角只在「折得起来」时出现） */
+function nextFoldableSibling(block) {
+  return !!block.nextElementSibling;
 }
 
 function hideHandle() {
@@ -4525,8 +4564,14 @@ function hideHandle() {
 function scheduleHandleHide() {
   clearTimeout(handleIdleTimer);
   if (blockMenuOpen()) return;      // 菜单开着，手柄是它的锚点，绝不收
+  if (gripDrag) return;             // 正在拖块：手柄是指针捕获的目标，收掉就断了
+  /* 块选中期间手柄是唯一入口（Shift+点出来的一段，只能从这儿删除/移动/
+     换类型）。这时鼠标必然会在「正文 → 按钮」之间来回穿，按 hover 语义收掉
+     等于把用户刚选好的东西的操作入口藏了。 */
+  if (wys.blockSelSet && wys.blockSelSet.size) return;
   handleIdleTimer = setTimeout(() => {
-    if (blockMenuOpen()) return;
+    if (blockMenuOpen() || gripDrag) return;
+    if (wys.blockSelSet && wys.blockSelSet.size) return;
     hideHandle();
   }, HANDLE_HIDE_DELAY);
 }
@@ -4607,6 +4652,18 @@ function openBlockMenu(mode, fromSlash = false) {
     head(tt('分割线'));
     item({ id: 'deleteBlock', label: tt('删除这一块'), icon: 'trash-2', danger: true }, false, false);
   } else {
+    /* 最近用过的块排在最前（Notion 的 Recently used）。只给插入面板 ——
+       转换面板的项本来就少，多一段反而要往下找。这一组的项不给选择键：
+       同一个 id 在下面还会出现一次，键盘直达只该命中一个。 */
+    if (mode === 'insert') {
+      const all = [...blockInserts(), ...blockKinds()];
+      const rec = bmRecent().map((id) => all.find((x) => x.id === id)).filter(Boolean);
+      if (rec.length) {
+        head(tt('最近使用'));
+        rec.forEach((it) => item({ ...it, key: '' }, false));
+        sep();
+      }
+    }
     head(mode === 'insert' ? tt('在下方插入') : tt('转换这一块'));
     let prevGroup = '';
     blockKinds().forEach((it) => {
@@ -4771,6 +4828,7 @@ function bmRun(id) {
   const block = handleBlock;
   const mode = bmMode;
   const fromSlash = bmFromSlash;
+  rememberBlockKind(id);
   /* 选定了就不再补斜杠：那个 "/" 是触发符，跟菜单里的项一起消费掉 */
   slashAt = null;
   closeBlockMenu();
@@ -4805,10 +4863,154 @@ function bmRun(id) {
   }, 0);
 }
 
+/* ---------------- 手柄拖动排序 ----------------
+   Notion 的 grip：按住往上/下拖 = 搬动这一块（选中的话搬整组），松手落下；
+   不拖 = 就是点了一下，开块菜单。用 pointer 事件而不是 HTML5 drag ——
+   后者在 WebView2 里拖影子图与 setPointerCapture 会互相打架，也没法做到
+   「松手才提交」。 */
+let gripDrag = null;          // { block, list, y0, y, moved, target }
+let dropLine = null;
+let dragScrollRaf = 0;
+/* 上次「pointerup 判定为点击」的时刻。合成 click（辅助技术、键盘 Enter、
+   测试脚本）不走 pointer 序列，需要一条兜底路径；用时间戳把两条路去重，
+   否则真实点击会开一次、click 再开一次 = 点开又立刻收起。 */
+let gripMenuTs = 0;
+
+function ensureDropLine() {
+  if (dropLine && dropLine.isConnected) return dropLine;
+  dropLine = document.createElement('div');
+  dropLine.className = 'w-drop-line hidden';
+  el.editWrap.appendChild(dropLine);
+  return dropLine;
+}
+
+/** 落点指示线：画在目标块的上边或下边，横跨它的宽度 */
+function paintDropLine(t) {
+  const line = ensureDropLine();
+  if (!t || !t.block.isConnected) { line.classList.add('hidden'); return; }
+  const host = el.editWrap.getBoundingClientRect();
+  const r = t.block.getBoundingClientRect();
+  const y = (t.after ? r.bottom : r.top) - host.top + el.wysiwyg.scrollTop;
+  line.style.top = Math.round(y - 1) + 'px';
+  line.style.left = Math.round(r.left - host.left) + 'px';
+  line.style.width = Math.round(r.width) + 'px';
+  line.classList.remove('hidden');
+}
+
+/** 指针落点 → { block, after }。跳过正在拖的那几块：拖着自己划过去时
+    不该出现「插到自己前面」这种落点（dropBlocks 也会拒，但线不该先骗人）。 */
+function dropTargetAt(clientY) {
+  const skip = new Set(gripDrag ? gripDrag.list : []);
+  const kids = [...el.wysiwyg.children].filter((b) => b.classList.contains('w-block') && !skip.has(b));
+  if (!kids.length) return null;
+  for (const b of kids) {
+    const r = b.getBoundingClientRect();
+    if (clientY < r.top + r.height / 2) return { block: b, after: false };
+  }
+  return { block: kids[kids.length - 1], after: true };
+}
+
+/** 拖到视口上下边缘时自动滚，滚完落点跟着变 —— 长文档里不滚就等于搬不远 */
+function dragAutoScroll(clientY) {
+  const host = el.editWrap.getBoundingClientRect();
+  const edge = 48;
+  let d = 0;
+  if (clientY < host.top + edge) d = -(host.top + edge - clientY) / 3;
+  else if (clientY > host.bottom - edge) d = (clientY - host.bottom + edge) / 3;
+  if (!d) return false;
+  const before = el.wysiwyg.scrollTop;
+  el.wysiwyg.scrollTop = before + Math.max(-28, Math.min(28, d));
+  return el.wysiwyg.scrollTop !== before;
+}
+
+/** 拖拽中的 rAF：指针停在边缘不动时 pointermove 不再来，只能自己循环 */
+function dragLoop() {
+  if (!gripDrag) return;
+  if (dragAutoScroll(gripDrag.y)) {
+    gripDrag.target = dropTargetAt(gripDrag.y);
+    paintDropLine(gripDrag.target);
+  }
+  dragScrollRaf = requestAnimationFrame(dragLoop);
+}
+
+/** 指针移动：超过 5px 才算拖（手抖不算），之后每帧更新落点线 */
+function onGripMove(clientY) {
+  gripDrag.y = clientY;
+  if (!gripDrag.moved) {
+    if (Math.abs(clientY - gripDrag.y0) < 5) return;
+    gripDrag.moved = true;
+    for (const b of gripDrag.list) b.classList.add('w-dragging');
+    el.editWrap.classList.add('w-dragging-active');
+    clearTimeout(handleIdleTimer);
+    dragScrollRaf = requestAnimationFrame(dragLoop);
+  }
+  gripDrag.target = dropTargetAt(clientY);
+  paintDropLine(gripDrag.target);
+}
+
+function setupGrip() {
+  const grip = el.whMenu;
+  grip.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || !isWysMode()) return;
+    const block = handleBlock;
+    if (!block || !block.isConnected) return;
+    e.preventDefault();
+    /* Shift+点 = 选中这一块（再 Shift 点别块扩成范围），不进拖拽、不开菜单：
+       这一下的意思是「我要对这一块做点什么」，菜单会挡住要选的目标 */
+    if (e.shiftKey) { wys.selectBlock(block, { additive: true }); return; }
+    gripDrag = { block, list: wys.dragGroup(block), y0: e.clientY, y: e.clientY, moved: false, target: null };
+    try { grip.setPointerCapture(e.pointerId); } catch { /* 老宿主没有捕获也能拖 */ }
+  });
+
+  grip.addEventListener('pointermove', (e) => {
+    if (!gripDrag) return;
+    onGripMove(e.clientY);
+  });
+
+  /* move / up 挂在 document 上而不是手柄上：setPointerCapture 在个别宿主里
+     会失败（合成事件、指针被别的层抢走），那时手柄收不到后续事件，
+     拖到一半就断了。挂 document 只靠 gripDrag 状态判断，两条路都能走。 */
+  document.addEventListener('pointermove', (e) => {
+    if (!gripDrag) return;
+    onGripMove(e.clientY);
+  });
+
+  const finish = (commit) => {
+    if (!gripDrag) return;
+    const g = gripDrag;
+    gripDrag = null;
+    cancelAnimationFrame(dragScrollRaf);
+    dragScrollRaf = 0;
+    for (const b of g.list) b.classList.remove('w-dragging');
+    el.editWrap.classList.remove('w-dragging-active');
+    if (dropLine) dropLine.classList.add('hidden');
+    if (!g.moved) { gripMenuTs = performance.now(); openBlockMenu('convert'); return; }   // 没拖动 = 一次点击
+    if (!commit || !g.target) return;
+    if (wys.dropBlocks(g.list, g.target.block, g.target.after)) {
+      /* 搬完让手柄跟到搬走的那一块上，别停在原来的位置 */
+      anchorBlock = g.list[g.list.length - 1];
+      const first = g.list[0];
+      if (first) first.scrollIntoView({ block: 'nearest' });
+      refreshHandle();
+    }
+  };
+  document.addEventListener('pointerup', () => finish(true));
+  document.addEventListener('pointercancel', () => finish(false));
+  /* 键盘 Enter/空格与辅助技术走的是 click，没有 pointer 序列；
+     pointerup 那一路已经在同一瞬间开过菜单，用时间戳把它让开。 */
+  grip.addEventListener('click', () => {
+    if (performance.now() - gripMenuTs < 500) return;
+    openBlockMenu('convert');
+  });
+  /* 指针捕获期间 pointerup 一定回到 grip；但窗口失焦时不会，兜一层 */
+  window.addEventListener('blur', () => { if (gripDrag) finish(false); });
+}
+
 function setupBlockHandle() {
   if (!el.wHandle) return;
   el.wysiwyg.addEventListener('mousemove', (e) => {
     if (!isWysMode()) return;
+    if (gripDrag) return;            // 拖块时手柄钉在拖拽起点，不跟着鼠标跑
     pointerInside = true;
     /* 菜单开着时一律不响应：手柄和菜单之间有缝，鼠标从按钮挪到菜单必然
        经过编辑区，这里若继续跑就会当场把菜单收掉（用户根本来不及点）。
@@ -4890,9 +5092,27 @@ function setupBlockHandle() {
      进出手柄本身要接管这个收起计时：进来取消、出去重新开始，按钮才点得到。 */
   el.wHandle.addEventListener('mouseenter', cancelHandleHide);
   el.wHandle.addEventListener('mouseleave', scheduleHandleHide);
-  for (const b of [el.whAdd, el.whMenu]) b.addEventListener('mousedown', (e) => e.preventDefault());
+  for (const b of [el.whAdd, el.whMenu, el.whFold]) b.addEventListener('mousedown', (e) => e.preventDefault());
   el.whAdd.onclick = () => openBlockMenu('insert');
-  el.whMenu.onclick = () => openBlockMenu('convert');
+  /* 折起来 / 展开：纯视图状态，存在标签上（folds），一个字节都不进 md */
+  el.whFold.addEventListener('click', () => {
+    const b = handleBlock;
+    if (!b || !b.isConnected) return;
+    const t = activeTab();
+    const folded = wys.toggleFold(b);
+    const key = wys.foldKey(b);
+    if (t) {
+      if (!t.folds) t.folds = new Set();
+      if (folded) t.folds.add(key); else t.folds.delete(key);
+    }
+    /* 光标如果在刚被藏起来的那几块里，它会跟着 display:none 一起消失 ——
+       把光标收回标题末尾，用户接着打字还在原地。 */
+    const cur = wys.currentBlock();
+    if (cur && cur.classList.contains('w-fold-hide')) wys.focusBlock(b, true);
+    anchorBlock = b;
+    placeHandle(b);
+  });
+  setupGrip();
 
   document.addEventListener('mousedown', (e) => {
     if (el.wBlockMenu.classList.contains('hidden')) return;
@@ -5216,7 +5436,12 @@ function bindEvents() {
 /* ---------------- 命令面板 ----------------
    命令表里已经有一百多条，靠菜单一层层找太慢。Ctrl+Shift+P 打开，
    输几个字就定位。列表直接从 MENU_TREE 抽 —— 以后菜单加了新命令，
-   这里自动就有，不用维护第二份清单。 */
+   这里自动就有，不用维护第二份清单。
+
+   1.5.0 起它同时是「跳转」入口（Notion 的 Ctrl+P 干的就是这件事）：
+   除命令之外还并进「已打开的文件 / 最近打开 / 本文档的标题」。
+   三类结果共用一个输入框、一套打分 —— 想找什么直接打，
+   不用先想「这是命令还是文件」。 */
 const pal = { el: null, sel: 0 };
 
 function paletteItems() {
@@ -5230,10 +5455,12 @@ function paletteItems() {
       seen.add(it.id);
       out.push({
         id: it.id,
+        kind: 'cmd',
         label: String(it.label || it.id).replace(/…$/, ''),
         group,
         kbd: it.kbd || '',
         off: typeof it.disabled === 'function' ? !!it.disabled() : !!it.disabled,
+        run: () => commands[it.id]?.(),
       });
     }
   };
@@ -5242,6 +5469,83 @@ function paletteItems() {
     walk(typeof m.items === 'function' ? m.items() : m.items, m.label);
   }
   return out;
+}
+
+/** 面板里的文件：已打开的标签 + 最近打开。
+ *  不扫目录 —— 扫盘是异步的，面板要能立刻出来；想找没打开的旧文件，
+ *  「最近打开」和文件树都够用，为它把面板做成异步加载不值得。 */
+function paletteFiles() {
+  const out = [];
+  const seen = new Set();
+  for (const t of tabs) {
+    const p = t.path || '';
+    if (p && seen.has(p)) continue;
+    if (p) seen.add(p);
+    out.push({
+      id: 'tab:' + t.id,
+      kind: 'file',
+      label: tabLabel(t),
+      group: tt('已打开'),
+      kbd: '',
+      hint: p || tt('尚未保存'),
+      run: () => { activate(t.id); },
+    });
+  }
+  for (const p of LS.get('recent', []).filter(Boolean).slice(0, 10)) {
+    if (seen.has(p)) continue;
+    seen.add(p);
+    out.push({
+      id: 'recent:' + p,
+      kind: 'file',
+      label: be.baseName(p) || p,
+      group: tt('最近使用'),
+      kbd: '',
+      hint: p,
+      run: () => { openPath(p); },
+    });
+  }
+  return out;
+}
+
+/** 面板里的标题：当前文档的大纲。直接算，不依赖侧栏大纲面板是否打开
+ *  （updateOutline 在侧栏隐藏时是早退的，那时 outlineItems 是旧文档的）。 */
+function paletteHeadings() {
+  const t = activeTab();
+  if (!t) return [];
+  let items = [];
+  try { items = extractOutline(detectKind(t.name), t.content || ''); } catch { return []; }
+  return items.map((it, i) => ({
+    id: 'head:' + i,
+    kind: 'head',
+    label: it.text || tt('（无标题）'),
+    group: tt('跳到标题'),
+    kbd: 'H' + it.level,
+    hint: '',
+    run: () => jumpToHeading(i, it),
+  }));
+}
+
+/** 跳到第 i 个标题。三种模式三条路：所见即所得按块、编辑按行、预览按元素 */
+function jumpToHeading(i, item) {
+  if (canWys()) {
+    if (wys.virtual) { wys.scrollToHeadingIndex(i); return; }
+    const hs = [...el.wysiwyg.querySelectorAll('.w-h')];
+    const b = hs[i];
+    if (!b) return;
+    /* 目标被折叠藏起来了：跳过去也看不见，先把折叠全部展开。
+       这是「用户明确要去那一节」的时刻，展开比保持折叠更符合意图。 */
+    if (b.classList.contains('w-fold-hide')) {
+      wys.expandAllFolds();
+      const t = activeTab();
+      if (t && t.folds) t.folds.clear();
+    }
+    wys.focusBlock(b);
+    b.scrollIntoView({ block: 'start' });
+    return;
+  }
+  if (viewKindOf(activeTab()) === 'editor') { gotoLine(item.line + 1); return; }
+  const hs = [...el.preview.querySelectorAll('h1,h2,h3,h4,h5,h6')];
+  hs[i]?.scrollIntoView({ block: 'start' });
 }
 
 /** 子序列打分：连续命中、词首都加分。中文按字匹配，和拼音输入法一样「打几个字就行」 */
@@ -5271,11 +5575,13 @@ function closePalette() {
 
 function openPalette() {
   if (pal.el) { closePalette(); return; }
-  const items = paletteItems();
+  const cmds = paletteItems();
+  const files = paletteFiles();
+  const heads = paletteHeadings();
   const wrap = document.createElement('div');
   wrap.className = 'palette';
   wrap.innerHTML = `<div class="palette-box" role="dialog" aria-label="${tt('命令面板')}">
-      <input class="palette-input" placeholder="${tt('输入命令名…')}" spellcheck="false">
+      <input class="palette-input" placeholder="${tt('搜索命令、文件或标题…')}" spellcheck="false">
       <div class="palette-list"></div>
     </div>`;
   const input = wrap.querySelector('.palette-input');
@@ -5283,33 +5589,52 @@ function openPalette() {
   let rows = [];
   let sel = 0;
 
+  /** 现在高亮的是第几个**可执行行**（分组小标题不算行，不能被选中） */
   const mark = () => {
-    [...list.children].forEach((c, i) => c.classList.toggle('on', i === sel));
-    list.children[sel]?.scrollIntoView({ block: 'nearest' });
+    const els = [...list.querySelectorAll('.palette-item')];
+    els.forEach((c, i) => c.classList.toggle('on', i === sel));
+    els[sel]?.scrollIntoView({ block: 'nearest' });
   };
 
   const draw = () => {
     const q = input.value.trim();
-    rows = items
-      .map((it) => ({ it, s: fuzzyScore(it.label + ' ' + it.group, q) }))
-      .filter((r) => r.s > 0)
-      .sort((a, b) => b.s - a.s || a.it.label.length - b.it.label.length)
-      .slice(0, 14)
-      .map((r) => r.it);
+    if (!q) {
+      /* 空查询：三类各出一小段，按「最可能想干的事」排 ——
+         打开面板的多半是要跳到某处或打开某个文件，命令跟在后面。 */
+      rows = [...files.slice(0, 8), ...heads.slice(0, 8), ...cmds.slice(0, 10)];
+    } else {
+      rows = [...files, ...heads, ...cmds]
+        .map((it) => ({ it, s: fuzzyScore(it.label + ' ' + it.group, q) }))
+        .filter((r) => r.s > 0)
+        .sort((a, b) => b.s - a.s || a.it.label.length - b.it.label.length)
+        .slice(0, 20)
+        .map((r) => r.it);
+    }
     if (sel >= rows.length) sel = Math.max(0, rows.length - 1);
     list.innerHTML = '';
     if (!rows.length) {
       list.innerHTML = '<div class="palette-empty">' + tt('没有匹配的命令') + '</div>';
       return;
     }
+    let lastGroup = '';
     rows.forEach((it, i) => {
+      /* 分组小标题只在「换组」时插一次；有查询时结果混排，同一组常常只出现
+         一两项，那时候标题反而比条目还多 —— 所以只给连续的同组结果加标题。 */
+      if (it.group && it.group !== lastGroup) {
+        lastGroup = it.group;
+        const h = document.createElement('div');
+        h.className = 'palette-head';
+        h.textContent = it.group;
+        list.append(h);
+      }
       const row = document.createElement('button');
       row.type = 'button';
       row.className = 'palette-item' + (i === sel ? ' on' : '') + (it.off ? ' off' : '');
-      row.innerHTML = '<span class="p-label"></span><span class="p-group"></span><span class="p-kbd"></span>';
+      row.dataset.kind = it.kind || '';
+      if (it.hint) row.title = it.hint;
+      row.innerHTML = '<span class="p-label"></span><span class="p-kbd"></span>';
       row.querySelector('.p-label').textContent = it.label;
-      row.querySelector('.p-group').textContent = it.group;
-      row.querySelector('.p-kbd').textContent = it.kbd;
+      row.querySelector('.p-kbd').textContent = it.kbd || '';
       row.addEventListener('mouseenter', () => { sel = i; mark(); });
       row.addEventListener('click', () => run(i));
       list.append(row);
@@ -5321,7 +5646,7 @@ function openPalette() {
     if (!it) return;
     if (it.off) { toast(tt('「{name}」在当前状态下不可用', { name: it.label })); return; }
     closePalette();
-    commands[it.id]?.();
+    it.run ? it.run() : commands[it.id]?.();
   };
 
   input.addEventListener('input', () => { sel = 0; draw(); });
