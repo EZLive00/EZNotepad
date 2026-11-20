@@ -291,15 +291,18 @@ try {
     ev(`[...document.querySelectorAll('.outline-item')].find(b => b.textContent === '${label}')?.click()`);
   await ev(`window.__snp.commands.modeWysiwyg()`);
   await sleep(300);
+  const boxState = (id) => ev(`(() => { const b=document.getElementById('${id}'); return {st:Math.round(b.scrollTop),sh:Math.round(b.scrollHeight),ch:Math.round(b.clientHeight),end:(b.scrollHeight-b.scrollTop-b.clientHeight)<2}; })()`);
   await clickOutline('第 15 节');
   await waitUntil(async () => (await outlineActiveText()) === '第 15 节');
-  ok('wysiwyg 点击大纲项，滚完该项点亮', (await outlineActiveText()) === '第 15 节');
+  ok('wysiwyg 点击大纲项，滚完该项点亮', (await outlineActiveText()) === '第 15 节',
+    JSON.stringify({ now: await outlineActiveText(), box: await boxState('wysiwyg') }));
 
   await ev(`window.__snp.commands.modePreview()`);
   await sleep(300);
   await clickOutline('第 8 节');
   await waitUntil(async () => (await outlineActiveText()) === '第 8 节');
-  ok('预览模式点击大纲项，滚完该项点亮', (await outlineActiveText()) === '第 8 节');
+  ok('预览模式点击大纲项，滚完该项点亮', (await outlineActiveText()) === '第 8 节',
+    JSON.stringify({ now: await outlineActiveText(), box: await boxState('preview') }));
 
   await ev(`window.__snp.commands.modeEdit()`);
   await sleep(300);

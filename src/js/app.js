@@ -1292,7 +1292,10 @@ function syncOutline() {
     if (atScrollEnd(box.scrollTop, box.scrollHeight, box.clientHeight)) {
       cur = heads.length - 1;      // 到底了：最后一个标题就是当前章节
     } else {
-      const top = box.getBoundingClientRect().top + outlineBaseline(box);
+      /* +1px 抵消 scrollBy 的取整误差：点击跳转把标题顶落到基准线上，但 scrollTop
+         取整后标题可能停在基准线下方零点几像素（实测落点 96.4 vs 基准 96），严格
+         `<=` 会判成上一节（点第 15 节亮第 14 节）。高亮判定必须和点击跳转同口径。 */
+      const top = box.getBoundingClientRect().top + outlineBaseline(box) + 1;
       /* 标题在文档里自上而下排列，顶部坐标单调递增，可以二分。
          以前是 forEach 逐个量 —— 600 个标题就是 600 次布局查询，滚动时每 70ms 一轮。 */
       let lo = 0, hi = heads.length - 1, found = -1;
@@ -4821,8 +4824,10 @@ function setupBlockHandle() {
   });
 
   /* ---- "/" 起一个插入面板（手不离键盘） ----
-     只认「行首或空白之后」：日期 2026/11、路径 a/b、分数 1/2 都不该弹面板。
-     代码块 / 公式块 / 表格单元格里也不弹 —— 那里的 "/" 是正文里的字符。 */
+     只认「空行」：这一块里没有任何文字时敲 "/" 才弹面板。行里已经写了东西
+     （哪怕光标在行首、或前面是空白）都不弹 —— 日期 2026/11、路径 a/b、分数 1/2、
+     "先写正文再补斜杠" 都归正常输入。代码块 / 公式块 / 表格单元格里也不弹 ——
+     那里的 "/" 是正文里的字符。 */
   el.wysiwyg.addEventListener('keydown', (e) => {
     if (e.defaultPrevented || e.key !== '/') return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
@@ -4837,8 +4842,9 @@ function setupBlockHandle() {
        非空口径会直接判 -1 —— 「打了字再删掉就唤不出面板」正是这个原因 */
     const off = caretOffsetInBlock(block);
     if (off < 0) return;
-    const before = t.textContent.slice(0, off).replace(/\u200b/g, '');
-    if (!/(^|\s)$/.test(before)) return;
+    /* 只有真正空的行才弹。用整块判空而不是「光标前是空白」——后者会让
+       "已写好的文字 " 后面再敲 "/" 也弹出来，打断正常输入。 */
+    if (!wys.isEmptyBlock(block) || t.querySelector('img')) return;
     /* 先确认菜单真能开（手柄落到这一块上），能开才吞掉这个字符 ——
        否则 "/" 被 preventDefault 掉了、菜单又没出来，字符就凭空没了 */
     anchorBlock = block;

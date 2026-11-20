@@ -398,6 +398,20 @@ await caretIn();
 await slash(); await sleep(220);
 ok('"/" 前不是空白（日期 2026/11/05）不弹面板', !(await menuOpen()));
 
+/* 只在「空行」弹：行里有文字了，哪怕光标在行首 / 前面是空白，也不弹 */
+await openDoc('slash-c2.md', '已经有正文了\n');
+await ev(`(() => {
+  const b = [...document.querySelectorAll('.w-block')].at(-1);
+  window.__snp.editor.focusBlock(b, false);   // 光标到这一行开头
+  return 1;
+})()`);
+await slash(); await sleep(220);
+ok('非空行行首打 "/" 不弹面板（不像空白之后那样误触发）', !(await menuOpen()));
+await openDoc('slash-c3.md', '段尾文字 \n');
+await caretIn();
+await slash(); await sleep(220);
+ok('文字后带空格再打 "/" 不弹面板', !(await menuOpen()), JSON.stringify(await md()));
+
 /* 代码块里的 "/" 是正文字符 */
 await openDoc('slash-d.md', '```\n/a\n```\n');
 await caretIn(0);
