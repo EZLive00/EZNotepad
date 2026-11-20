@@ -5,7 +5,6 @@ export const DICT = {
   '所见即所得': ['所見即所得', 'WYSIWYG', 'WYSIWYG', '위지윅', 'WYSIWYG', 'WYSIWYG', 'WYSIWYG', 'WYSIWYG'],
   '编辑模式': ['編輯模式', 'Edit mode', '編集モード', '편집 모드', 'Mode édition', 'Bearbeitungsmodus', 'Modo edición', 'Modo edição'],
   '编辑': ['編輯', 'Edit', '編集', '편집', 'Éditer', 'Bearbeiten', 'Editar', 'Editar'],
-  '编辑源码': ['編輯原始碼', 'Edit source', 'ソースを編集', '소스 편집', 'Modifier la source', 'Quelltext bearbeiten', 'Editar código fuente', 'Editar código-fonte'],
   '排序': ['排序', 'Sort', '並べ替え', '정렬', 'Trier', 'Sortieren', 'Ordenar', 'Ordenar'],
   '把两侧的行按字典序重排，空行留在末尾（Ctrl+Z 撤销）': ['把兩側的行按字典序重排，空行留在末尾（Ctrl+Z 撤銷）', 'Re-sort both sides alphabetically; blank lines stay at the end (Ctrl+Z to undo)', '両側の行を辞書順に並べ替え、空行は末尾に残す（Ctrl+Z で元に戻す）', '양쪽 행을 사전순으로 정렬하고 빈 줄은 끝에 둡니다 (Ctrl+Z로 실행 취소)', 'Trie les deux côtés par ordre alphabétique ; les lignes vides restent à la fin (Ctrl+Z pour annuler)', 'Beide Seiten alphabetisch sortieren; Leerzeilen bleiben am Ende (Strg+Z zum Rückgängigmachen)', 'Ordena ambos lados por orden alfabético; las líneas vacías quedan al final (Ctrl+Z para deshacer)', 'Ordena os dois lados por ordem alfabética; as linhas vazias ficam no fim (Ctrl+Z para desfazer)'],
   '已按字典序排序，Ctrl+Z 可撤销': ['已按字典序排序，Ctrl+Z 可撤銷', 'Sorted. Ctrl+Z to undo', '辞書順に並べ替えました。Ctrl+Z で元に戻せます', '사전순으로 정렬했습니다. Ctrl+Z로 실행 취소할 수 있습니다', 'Trié. Ctrl+Z pour annuler', 'Sortiert. Strg+Z macht es rückgängig', 'Ordenado. Ctrl+Z para deshacer', 'Ordenado. Ctrl+Z para desfazer'],

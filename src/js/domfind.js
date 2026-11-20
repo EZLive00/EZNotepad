@@ -29,11 +29,6 @@ const NL = '\n';
  * 以前只认 `.w-block`，于是预览 DOM 里一个块都扫不出来，查找在预览模式下永远 0 命中。
  */
 function blocksOf(root) {
-  /* CM6 live preview：正文是 .cm-line，外面还套着 .cm-editor / .cm-content。
-     不认这一层的话 blocksOf 只能拿到 .cm-editor 一个「块」，
-     高亮与滚动都会按整篇算。 */
-  const cm = root.querySelectorAll('.cm-line');
-  if (cm.length) return [...cm];
   const kids = [...root.children];
   const wys = kids.filter((b) => b.classList.contains('w-block'));
   if (wys.length) return wys;

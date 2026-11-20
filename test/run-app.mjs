@@ -198,14 +198,14 @@ try {
     const text8 = await ev('window.__snp.getEditorText()');
     ok('就地替换保住加粗', text8 === '一段 **粗字** 文字', JSON.stringify(text8));
 
-    /* 查找按**源码**匹配（Typora / Obsidian 同一口径）：中间隔着 `**` 的两个字
-       不算连在一起，也就不会出现「命中却改不了」的那类跨格式歧义。 */
+    // 命中劈开加粗边界时不能瞎改，应该弹确认框退回编辑模式
     await typeIn('#findInput', '一段 粗字');
-    await ev('new Promise(r => setTimeout(r, 200))');
-    ok('跨格式（中间隔着 **）按源码查找不命中',
-      (await ev(`document.querySelector('#findCount').textContent`)) === '0/0',
-      await ev(`document.querySelector('#findCount').textContent`));
-    ok('内容没有被改动', (await ev('window.__snp.getEditorText()')) === '一段 **粗字** 文字');
+    await click('#findReplaceOne');
+    await ev('new Promise(r => setTimeout(r, 250))');
+    ok('跨格式匹配先弹确认框', !(await cls('#dlgOverlay')).includes('hidden'));
+    await click('#dlgFoot button:last-child');
+    await ev('new Promise(r => setTimeout(r, 150))');
+    ok('取消后内容没被改动', (await ev('window.__snp.getEditorText()')) === '一段 **粗字** 文字');
 
     // ---- 9. 预览模式查找（渲染后的 DOM，不是 md 源码） ----
     /* 以前 runFind 只给 wysiwyg 开 DOM 分支，预览落进「按 md 源码算偏移」那条：
@@ -495,11 +495,7 @@ try {
     // ---- 7. ==高亮==：同一个命令能标上，也能撤掉 ----
     /* 按「第几个字符」选：块里的文字可能已经被拆成 文本 + <mark> + 文本 三个节点，
        直接拿 firstChild 当文本节点第二次就选不动了 */
-    /* CM6 的选区在它自己的 state 里，DOM Selection 改了它不认 ——
-       直接调编辑器 API，和用户拖选的效果一致 */
     const selectInBlock = (a, b) => ev(`(() => {
-      const ed = window.__snp.editor;
-      if (ed && ed.setSelection) { ed.setSelection(${a}, ${b}); return true; }
       const t = document.querySelector('.wysiwyg .w-text');
       if (!t) return false;
       const walk = document.createTreeWalker(t, NodeFilter.SHOW_TEXT);
@@ -534,20 +530,10 @@ try {
     await ev('new Promise(r => setTimeout(r, 200))');
     ok('选中后高亮写回 ==重点==', (await ev('window.__snp.getEditorText()')) === '这是==重点==文字',
       JSON.stringify(await ev('window.__snp.getEditorText()')));
-    /* 新内核没有 <mark> 元素：`==` 就是文档里的两个字符，被装饰藏起来了。
-       光标停在标记上时按设计要显形，所以先把它挪开再断言。 */
-    await ev(`window.__snp.editor.setSelection(0)`);
-    await ev('new Promise(r => setTimeout(r, 180))');
-    ok('视觉上 == 已经看不见，只剩高亮底色',
-      (await ev(`(() => {
-        const host = document.getElementById('wysiwyg');
-        return !host.textContent.includes('==')
-          && !!host.querySelector('.cm-lp-mark');
-      })()`)) === true,
-      JSON.stringify(await ev(`document.getElementById('wysiwyg').textContent`)));
+    ok('DOM 里真的变成 mark', (await ev(`!!document.querySelector('.wysiwyg .w-text mark')`)) === true);
 
-    /* 再点一次要能撤掉。注意偏移：加完 `==` 之后「重点」从 2 挪到了 4 */
-    await selectInBlock(4, 6);
+    /* 再点一次要能撤掉：这次选中范围落在 <mark> 里面 */
+    await selectInBlock(2, 4);
     await ev('window.__snp.commands.highlight(); 0');
     await ev('new Promise(r => setTimeout(r, 200))');
     ok('再点一次取消高亮', (await ev('window.__snp.getEditorText()')) === '这是重点文字',
@@ -567,29 +553,23 @@ try {
     await ev('new Promise(r => setTimeout(r, 200))');
     ok('再点一次清掉标记', (await ev(`document.querySelectorAll('.cm-dup').length`)) === 0);
 
-    /* 切走再回来：标记是**视图状态**（CM6 的 StateField 装饰），换模式不换
-       wys 自己的 state，所以它还在 —— 菜单的勾读的也是这份状态，两边一致，
-       不会出现「勾还亮着、正文里其实已经没有了，点一下只是把勾去掉」。
-       一旦正文改过，切回来会重新载入 state，标记跟着作废（行号已经不作数）。 */
+    /* 切模式（整篇重渲）会把标记连节点一起换掉，菜单的勾必须跟着消失：
+       留一个假「开着」的状态，第一次点击就只是把勾去掉，看着像没反应 */
     await ev(`window.__snp.newTab('dup2.md', '一\\n二\\n一\\n', null)`);
     await ev('window.__snp.commands.modeWysiwyg()');
     await ev('new Promise(r => setTimeout(r, 260))');
     await ev('window.__snp.commands.dupLines(); 0');
     await ev('new Promise(r => setTimeout(r, 200))');
-    ok('所见即所得里标出 2 处重复', (await ev(`document.querySelectorAll('#wysiwyg .cm-dup').length`)) === 2,
-      String(await ev(`document.querySelectorAll('#wysiwyg .cm-dup').length`)));
+    ok('所见即所得里标出 2 处重复', (await ev(`document.querySelectorAll('.w-dup').length`)) === 2,
+      String(await ev(`document.querySelectorAll('.w-dup').length`)));
     await ev('window.__snp.commands.modeEdit()');
     await ev('new Promise(r => setTimeout(r, 260))');
     await ev('window.__snp.commands.modeWysiwyg()');
     await ev('new Promise(r => setTimeout(r, 260))');
-    ok('转一圈回来标记还在（正文没改，行号仍然作数）',
-      (await ev(`document.querySelectorAll('#wysiwyg .cm-dup').length`)) === 2,
-      String(await ev(`document.querySelectorAll('#wysiwyg .cm-dup').length`)));
     await ev('window.__snp.commands.dupLines(); 0');
     await ev('new Promise(r => setTimeout(r, 200))');
-    ok('……再点一次就是取消，不是「点一下没反应」',
-      (await ev(`document.querySelectorAll('#wysiwyg .cm-dup').length`)) === 0,
-      String(await ev(`document.querySelectorAll('#wysiwyg .cm-dup').length`)));
+    ok('转一圈回来第一次点击就能标亮', (await ev(`document.querySelectorAll('.w-dup').length`)) === 2,
+      String(await ev(`document.querySelectorAll('.w-dup').length`)));
 
     /* ---- 8b. 非 Markdown 文件的高亮：== 不是这些文件的语法 ----
        用户反馈「只有前后出现 ==，并没有显示高亮」。修法：不写标记，只给
@@ -643,122 +623,133 @@ try {
       (await ev('window.__snp.getEditorText()')) === '这是==重点==文字',
       JSON.stringify(await ev('window.__snp.getEditorText()')));
 
-    /* ---- 9. 表格：渲染成真表格，点格子就地改 ----
-       换内核后表格不再是 contenteditable 的 <table>：文档里就是那几行 `|`，
-       渲染态是一个只读 widget（光标进不去源码）。想在渲染态下改字，靠的是
-       一层浮在格子上的输入框（live-preview 的 openCell），写回只替换那一格
-       的字符区间 —— 表格不塌、别的字节不动。 */
-    const TBL = ['| 甲 | 乙 | 丙 |', '| --- | --- | ---: |', '| 丁 | 戊 | 己 |', '| 庚 | 辛 | 壬 |', ''].join('\n');
-    await ev(`window.__snp.newTab('tbl.md', ${JSON.stringify(TBL)}, null)`);
-    await ev('window.__snp.commands.modeWysiwyg()');
-    await ev('new Promise(r => setTimeout(r, 320))');
-    /* 光标挪到最后一行：停在表内会显示源码，看不到 widget */
-    await ev(`window.__snp.editor.setSelection(${TBL.length})`);
-    await ev('new Promise(r => setTimeout(r, 220))');
-
-    const tbl = await ev(`(() => {
-      const t = document.querySelector('#wysiwyg .cm-lp-table');
-      if (!t) return null;
-      const tds = [...t.querySelectorAll('td')];
-      return {
-        rows: t.querySelectorAll('tr').length,
-        ths: t.querySelectorAll('th').length,
-        tds: tds.length,
-        head: [...t.querySelectorAll('th')].map((x) => x.textContent),
-        body: tds.map((x) => x.textContent),
-        align: tds[2] ? tds[2].style.textAlign : '',
-        srcLines: document.querySelectorAll('#wysiwyg .cm-lp-table-src').length,
-      };
-    })()`);
-    ok('表格渲染成真表格（1 表头 + 2 数据行）',
-      !!tbl && tbl.rows === 3 && tbl.ths === 3 && tbl.tds === 6, JSON.stringify(tbl));
-    ok('单元格文本与顺序都对',
-      !!tbl && tbl.head.join('') === '甲乙丙' && tbl.body.join('') === '丁戊己庚辛壬',
-      JSON.stringify(tbl && tbl.body));
-    ok('列对齐跟着分隔行（第三列右对齐）', !!tbl && tbl.align === 'right', String(tbl && tbl.align));
-    ok('光标不在表内时不显示源码行', !!tbl && tbl.srcLines === 0, String(tbl && tbl.srcLines));
-
-    /* 点格子 = **就地编辑那一格**：表格不塌，写回只替换这一格的字符区间。
-       1.3.0+1 的口径是「点一下整表塌成源码」，用户的原话是「这种交互不是
-       我想要的，Typora 并不是这样的」—— 这一条钉住新口径，别再退回去。 */
-    const clickCell = (row, col) => ev(`(() => {
-      const td = document.querySelector('#wysiwyg .cm-lp-table [data-row="${row}"][data-col="${col}"]');
-      if (!td) return 'no-cell';
-      const r = td.getBoundingClientRect();
-      td.dispatchEvent(new MouseEvent('mousedown', {
-        bubbles: true, cancelable: true, button: 0,
-        clientX: r.left + 8, clientY: r.top + 8,
-      }));
-      return 'ok';
-    })()`);
-
-    await clickCell(1, 0);
-    await nap(220);
-    const cell = JSON.parse(await ev(`(() => {
-      const i = document.querySelector('#wysiwyg .cm-lp-cell');
-      return JSON.stringify({
-        open: !!i,
-        val: i ? i.value : null,
-        focused: i ? document.activeElement === i : false,
-        table: !!document.querySelector('#wysiwyg .cm-lp-table'),
-        src: document.querySelectorAll('#wysiwyg .cm-lp-table-src').length,
-      });
-    })()`));
-    ok('点格子就地编辑：输入框里是这一格的原文', cell.open && cell.val === '丁', JSON.stringify(cell));
-    ok('……焦点在输入框上，不抢正文的光标', cell.focused, JSON.stringify(cell));
-    ok('……表格仍然渲染着（不再塌成源码）', !!cell.table && cell.src === 0, JSON.stringify(cell));
-    ok('……打开输入框本身不改文档',
-      (await ev('window.__snp.editor.toMarkdown()')) === TBL,
-      JSON.stringify(await ev('window.__snp.editor.toMarkdown()')));
-
-    /* 打字 + Tab：落账后跳到下一格。写回只替换被编辑那一格，别的字节一个不动 */
-    await send('Input.insertText', { text: '改' });
-    await nap(140);
-    await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
-    await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
-    await nap(280);
-    const afterTab = await ev('window.__snp.editor.toMarkdown()');
-    ok('Tab 落账：只改了被编辑的那一格',
-      afterTab === TBL.replace('| 丁 |', '| 丁改 |'), JSON.stringify(afterTab));
-    ok('……编辑框跳到下一格（戊）',
-      (await ev(`(document.querySelector('#wysiwyg .cm-lp-cell') || {}).value`)) === '戊');
-
-    /* Esc = 放弃这一格：打进去的字不写回 */
-    await send('Input.insertText', { text: '丢掉' });
-    await nap(120);
-    await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
-    await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
-    await nap(220);
-    ok('Esc 收起编辑框，打进去的字不写回',
-      (await ev('window.__snp.editor.toMarkdown()')) === afterTab
-      && (await ev(`!!document.querySelector('#wysiwyg .cm-lp-cell')`)) === false,
-      JSON.stringify(await ev('window.__snp.editor.toMarkdown()')));
-
-    /* 真实按键：合成事件走不到浏览器的默认行为，「接管 vs 放行」这类判断只能这么测 */
+    /* ---- 9. 表格里的 ↑↓ 是上下走一格，不是横向跳 ----
+       必须用真实按键：这条逻辑分的是「浏览器默认行为」和「我们的接管」，
+       合成事件根本走不到浏览器的默认那一步。 */
     const press = async (key, code, vk, text) => {
       await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key, code, windowsVirtualKeyCode: vk, text, unmodifiedText: text });
       if (text) await send('Input.dispatchKeyEvent', { type: 'char', key, code, windowsVirtualKeyCode: vk, text, unmodifiedText: text });
       await send('Input.dispatchKeyEvent', { type: 'keyUp', key, code, windowsVirtualKeyCode: vk });
       await ev('new Promise(r => setTimeout(r, 200))');
     };
-
-    /* ---- 10. 空行里打 "/" 唤出插入面板 ----
-       新内核没有「光标停在块元素上」这种边界态：文档就是文本，偏移永远算得出来。
-       这一条保留的是行为本身 —— 空行里打 / 要弹面板，且斜杠不能落进正文。 */
-    await ev(`window.__snp.newTab('slash-del.md', '甲段\\n\\n', null)`);
-    await ev('new Promise(r => setTimeout(r, 200))');
+    const cellAt = () => ev(`(() => {
+      const info = window.__snp.editor.tableInfo();
+      if (!info) return null;
+      return info.rowIdx + ',' + info.colIdx + ',' + ((info.cell.textContent || '').replace(/\\u200b/g, ''));
+    })()`);
+    const TBL = ['| 甲 | 乙 | 丙 |', '| --- | --- | --- |', '| 丁 | 戊 | 己 |', '| 庚 | 辛 | 壬 |', ''].join('\n');
+    await ev(`window.__snp.newTab('tbl.md', ${JSON.stringify(TBL)}, null)`);
     await ev('window.__snp.commands.modeWysiwyg()');
     await ev('new Promise(r => setTimeout(r, 320))');
-    const endPos = await ev('window.__snp.editor.toMarkdown().length');
-    await ev(`window.__snp.editor.setSelection(${endPos})`);
+    await ev(`(() => { window.__snp.editor.focusCell(document.querySelector('.w-block[data-type=table]'), 1, 1); return 1; })()`);
+    await ev('new Promise(r => setTimeout(r, 160))');
+    ok('起点在中间格（1,1）', (await cellAt()) === '1,1,戊', String(await cellAt()));
+    await press('ArrowDown', 'ArrowDown', 40);
+    ok('↓ 走到同一列的下一行（1,1 → 2,1），不是右边的格', (await cellAt()) === '2,1,辛', String(await cellAt()));
+    await press('ArrowUp', 'ArrowUp', 38);
+    ok('↑ 回同一列的上一行（2,1 → 1,1）', (await cellAt()) === '1,1,戊', String(await cellAt()));
+    await press('ArrowRight', 'ArrowRight', 39);
+    ok('→ 仍在格内逐字走，不再等于 ↓', (await ev(`(() => {
+      const r = getSelection().getRangeAt(0);
+      return window.__snp.editor.tableInfo().rowIdx + ':' + window.__snp.editor.tableInfo().colIdx + ':' + r.startOffset;
+    })()`)) === '1:1:1');
+    await press('ArrowDown', 'ArrowDown', 40);
+    await press('ArrowDown', 'ArrowDown', 40);
+    ok('最后一行按 ↓ 停在原地，不绕回别处', (await cellAt()) === '2,1,辛', String(await cellAt()));
+
+    /* ---- 9b. 空表头 / 空单元格 / 格内换行：↑↓ 永远只上下 ----
+       旧实现把 mkCell 给空格子垫的占位 <br> 算成「格内还有下一行」，于是
+       放行给浏览器；浏览器在 contenteditable 表格里按阅读顺序走，↓ 就变成
+       往右跳。mkTable 的默认表头是空串数组，所以「表头按 ↓」几乎必中。
+       同一个空格子光标在 <br> 前 / 后还会表现不同 —— 正是「有时候上下、
+       有时候左右」。这里全部用真实按键复现，合成事件到不了浏览器默认那一步。 */
+    const TBL2 = ['|  |  |  |', '| --- | --- | --- |', '|  | 戊 |  |', '|  |  |  |', ''].join('\n');
+    await ev(`window.__snp.newTab('tbl-blank.md', ${JSON.stringify(TBL2)}, null)`);
+    await ev('window.__snp.commands.modeWysiwyg()');
+    await ev('new Promise(r => setTimeout(r, 320))');
+    const blankCell = (r, c) => ev(`(() => {
+      const b = document.querySelector('.w-block[data-type=table]');
+      const rows = b.querySelectorAll('tr').length;
+      window.__snp.editor.focusCell(b, ${r}, ${c});
+      return rows;
+    })()`);
+    const rowCount = await blankCell(0, 0);
+    ok('空表头表格渲染出 3 行（表头 + 2 行数据）', rowCount === 3, String(rowCount));
+    ok('起点在空表头 (0,0)', (await cellAt()) === '0,0,', String(await cellAt()));
+    await press('ArrowDown', 'ArrowDown', 40);
+    ok('空表头按 ↓ 只下移一行，不往右跑', (await cellAt()) === '1,0,', String(await cellAt()));
+    await press('ArrowUp', 'ArrowUp', 38);
+    ok('↑ 从首行数据回空表头同一列', (await cellAt()) === '0,0,', String(await cellAt()));
+
+    await blankCell(0, 1);
+    await ev('new Promise(r => setTimeout(r, 140))');
+    await press('ArrowDown', 'ArrowDown', 40);
+    ok('表头中间列 ↓ 到 (1,1)，不是右边一格', (await cellAt()) === '1,1,戊', String(await cellAt()));
+
+    await blankCell(1, 0);
+    await ev('new Promise(r => setTimeout(r, 140))');
+    await press('ArrowDown', 'ArrowDown', 40);
+    ok('空数据格 ↓ 只下移，不往右跑', (await cellAt()) === '2,0,', String(await cellAt()));
+    await press('ArrowDown', 'ArrowDown', 40);
+    ok('末行 ↓ 停在同一列', (await cellAt()) === '2,0,', String(await cellAt()));
+
+    /* 光标停在占位 <br> **之前**（点空格子左侧、或把字删空后 Chromium 的落点）。
+       focusCell 用的是 setCaretOffset，空格子没有文本节点会落到 <br> 之后；
+       两种落点在旧实现里一个接管、一个放行，正是「有时候上下、有时候左右」。 */
+    await ev(`(() => {
+      const b = document.querySelector('.w-block[data-type=table]');
+      const c = b.querySelectorAll('tr')[1].children[0];
+      const r = document.createRange(); r.setStart(c, 0); r.collapse(true);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      return 1;
+    })()`);
+    await ev('new Promise(r => setTimeout(r, 140))');
+    ok('空格子光标确实落在占位 <br> 前', (await cellAt()) === '1,0,', String(await cellAt()));
+    await press('ArrowDown', 'ArrowDown', 40);
+    ok('占位 <br> 前的 ↓ 也只下移，不往右跑', (await cellAt()) === '2,0,', String(await cellAt()));
+    await press('ArrowUp', 'ArrowUp', 38);
+    ok('占位 <br> 前的 ↑ 也只上移', (await cellAt()) === '1,0,', String(await cellAt()));
+
+    /* 格内 Shift+Enter 换过行：↓ 先走格内那一行，走完才跨到下一行同列。
+       设计承诺见《功能设计》表格光标一节，不能为了修横向跳把它删掉。 */
+    await ev(`(() => {
+      const b = document.querySelector('.w-block[data-type=table]');
+      b.querySelectorAll('tr')[1].children[1].innerHTML = '甲<br>乙';
+      window.__snp.editor.focusCell(b, 1, 1);
+      return 1;
+    })()`);
+    await ev('new Promise(r => setTimeout(r, 160))');
+    const inCell = () => ev(`(() => {
+      const i = window.__snp.editor.tableInfo();
+      const pre = document.createRange(); pre.selectNodeContents(i.cell);
+      const r = getSelection().getRangeAt(0);
+      pre.setEnd(r.startContainer, r.startOffset);
+      return i.rowIdx + ',' + i.colIdx + ',' + pre.toString().length;
+    })()`);
+    ok('格内两行起点在第一行', (await inCell()) === '1,1,0', String(await inCell()));
+    await press('ArrowDown', 'ArrowDown', 40);
+    ok('格内两行时 ↓ 先走格内下一行', (await inCell()) === '1,1,1', String(await inCell()));
+    await press('ArrowDown', 'ArrowDown', 40);
+    ok('格内走完 ↓ 才到下一行同一列', (await cellAt()).startsWith('2,1,'), String(await cellAt()));
+
+    /* ---- 10. 删空一行之后 "/" 还能唤出插入面板 ----
+       真 bug：删掉最后一个字，光标被 Chromium 提到 .w-block 上、.w-text 只剩 <br>，
+       严格按 .w-text 读偏移得到 -1，面板那道门直接 return。 */
+    await ev(`window.__snp.newTab('slash-del.md', '甲段\\n\\n', null)`);
+    await ev('window.__snp.commands.modeWysiwyg()');
+    await ev('new Promise(r => setTimeout(r, 320))');
+    await ev(`(() => { const b = [...document.querySelectorAll('.wysiwyg > .w-block')].at(-1); window.__snp.editor.focusBlock(b, true); return 1; })()`);
     await send('Input.insertText', { text: 'x' });
-    await ev('new Promise(r => setTimeout(r, 220))');
+    await ev('new Promise(r => setTimeout(r, 260))');
     await press('Backspace', 'Backspace', 8);
-    ok('删空后文档回到原来的内容',
-      (await ev('window.__snp.editor.toMarkdown()')) === '甲段\n\n',
-      JSON.stringify(await ev('window.__snp.editor.toMarkdown()')));
+    ok('删空后光标停在块元素上（这正是问题现场）',
+      (await ev(`(() => {
+        const b = document.querySelector('.wysiwyg > .w-block:last-child');
+        const r = getSelection().getRangeAt(0);
+        return r.startContainer === b && (b.querySelector('.w-text').textContent || '') === '';
+      })()`)) === true);
     await press('/', 'Slash', 191, '/');
-    ok('空行里打 / 照样弹出插入面板',
+    ok('删空之后再打 / 照样弹出插入面板',
       (await ev(`!document.getElementById('wBlockMenu').classList.contains('hidden')`)) === true);
     ok('…斜杠没有落进正文', !(await ev('window.__snp.editor.toMarkdown()')).includes('/'),
       JSON.stringify(await ev('window.__snp.editor.toMarkdown()')));
@@ -768,16 +759,11 @@ try {
      真 bug：CALLOUT_TYPES.label 在模块加载时把 tt() 算成中文固定住了，
      换语言后所见即所得里「警告」还是中文。自定义标题是用户正文，不许被翻。 */
   {
-    const coMd = '> [!warning]\n> 注意内容\n\n> [!danger] 我自己的标题\n> 内容\n\n';
+    const coMd = '> [!warning]\n> 注意内容\n\n> [!danger] 我自己的标题\n> 内容';
     await ev(`window.__snp.newTab('co.md', ${JSON.stringify(coMd)}, null)`);
     await ev('window.__snp.commands.modeWysiwyg()');
     await ev('new Promise(r => setTimeout(r, 320))');
-    /* 提示块头是装饰层渲染的：光标停在块里会显示源码，先把光标挪到文末 */
-    const heads = async () => {
-      await ev(`window.__snp.editor.setSelection(window.__snp.editor.toMarkdown().length)`);
-      await ev('new Promise(r => setTimeout(r, 220))');
-      return ev(`[...document.querySelectorAll('#wysiwyg .cm-lp-cohead span')].map(s => s.textContent)`);
-    };
+    const heads = () => ev(`[...document.querySelectorAll('.wysiwyg .w-co-head span')].map(s => s.textContent)`);
     const zh = await heads();
     ok('中文下默认标题是「警告」，自定义标题原样保留',
       zh[0] === '警告' && zh[1] === '我自己的标题', JSON.stringify(zh));
@@ -842,11 +828,10 @@ try {
       await ev(`(() => { document.getElementById('wBlockMenu').classList.add('hidden'); document.querySelectorAll('.ctx-menu').forEach(m => m.remove()); return 1; })()`);
     };
 
-    /* 手柄归一：鼠标挪到续行上，⋮⋮ 仍钉在组首（位置与挪到组首时一致）。
-       新内核里「块」就是 CM6 的行（.cm-line），标签里是行号顺序 */
+    /* 手柄归一：鼠标挪到续行上，⋮⋮ 仍钉在组首（位置与挪到组首时一致） */
     await fresh('blocks-handle.md');
     const topAt = async (idx) => ev(`(() => {
-      const b = document.querySelectorAll('#wysiwyg .cm-line')[${idx}];
+      const b = document.querySelectorAll('.wysiwyg > .w-block')[${idx}];
       const r = b.getBoundingClientRect();
       b.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: r.left + 20, clientY: r.top + 6 }));
       return document.getElementById('wHandle').style.top;
@@ -883,7 +868,7 @@ try {
     /* 右键菜单：同一项，光标落在续行上也要回溯到组首 */
     await fresh('blocks-ctx.md');
     await ev(`(() => {
-      const b = document.querySelectorAll('#wysiwyg .cm-line')[2];
+      const b = document.querySelectorAll('.wysiwyg > .w-block')[2];
       window.__snp.editor.focusBlock(b, true);
       b.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 240, clientY: 240 }));
       return 1;

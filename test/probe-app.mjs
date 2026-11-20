@@ -31,20 +31,9 @@ ws.addEventListener('message', (e) => {
 });
 await new Promise((r, j) => { ws.addEventListener('open', r); ws.addEventListener('error', j); });
 
-/* 每条 CDP 求值都带超时：渲染进程卡死 / 崩溃时 `Runtime.evaluate` 永远不回，
-   整个探针会静默挂住（实测过一次，日志停在半句上，看不出是哪一条）。
-   超时当成一条正常错误抛出去，至少能定位到具体那一步。 */
-const EV_TIMEOUT = Number(process.env.EV_TIMEOUT || 20000);
 const ev = (expr) => new Promise((res, rej) => {
   const id = ++seq;
-  const timer = setTimeout(() => {
-    pending.delete(id);
-    rej(new Error(`CDP 求值超时（${EV_TIMEOUT}ms，渲染进程可能卡死）：${String(expr).replace(/\s+/g, ' ').slice(0, 120)}`));
-  }, EV_TIMEOUT);
-  pending.set(id, {
-    res: (v) => { clearTimeout(timer); res(v); },
-    rej: (e) => { clearTimeout(timer); rej(e); },
-  });
+  pending.set(id, { res, rej });
   ws.send(JSON.stringify({
     id, method: 'Runtime.evaluate',
     params: { expression: expr, awaitPromise: true, returnByValue: true },
@@ -55,14 +44,7 @@ const ev = (expr) => new Promise((res, rej) => {
 });
 
 const out = [];
-/* 每条断言**当场**打一行：探针跑到一半卡住 / 崩掉时，末尾那份汇总根本印不出来，
-   现场只剩一个空日志。即时输出让它变成「最后一行就是卡住的地方」。 */
-const ok = (name, pass, extra = '') => {
-  const r = { name, pass: !!pass, extra };
-  out.push(r);
-  console.log(`  ${r.pass ? 'ok  ' : 'FAIL'} ${r.name}${r.extra ? '  → ' + r.extra : ''}`);
-  return r.pass;
-};
+const ok = (name, pass, extra = '') => out.push({ name, pass: !!pass, extra });
 const sleep = (ms) => ev(`new Promise(r => setTimeout(r, ${ms}))`);
 /* 等一个条件成立（上限 timeout）。点击大纲项后编辑区是 smooth 滚动，
    滚多远取决于窗口高度 —— 固定 sleep 迟早碰运气，宁可轮询到点上为止。 */
@@ -203,14 +185,7 @@ try {
     (await ev(`document.getElementById('wysiwyg').classList.contains('hidden')`)) === false);
   ok('匹配计数正确', (await ev(`document.getElementById('findCount').textContent`)) === '1/3',
     await ev(`document.getElementById('findCount').textContent`));
-  /* 所见即所得的高亮是 CM6 的目录装饰：匹配按源码偏移算，
-     DOM 里只渲染视口那几行，建不出全部 Range（所以不再走 CSS Custom Highlight） */
-  ok('高亮已画上（当前这一处是实色）',
-    (await ev(`document.querySelectorAll('#wysiwyg .cm-find-cur').length`)) === 1,
-    String(await ev(`document.querySelectorAll('#wysiwyg .cm-find-cur').length`)));
-  ok('其余匹配也标了淡色',
-    (await ev(`document.querySelectorAll('#wysiwyg .cm-find').length`)) >= 1,
-    String(await ev(`document.querySelectorAll('#wysiwyg .cm-find').length`)));
+  ok('高亮已注册', (await ev(`!!(CSS.highlights && CSS.highlights.get('sn-find-cur'))`)) === true);
   ok('DOM 没被插入 mark 标记', (await ev(`document.getElementById('wysiwyg').querySelectorAll('mark').length`)) === 0);
 
   // 下一个匹配
@@ -281,9 +256,8 @@ try {
   ok('大纲收录了全部 30 节', outlineTotal === 30, String(outlineTotal));
   ok('初始高亮在第一项', (await ev(`document.querySelector('.outline-item.active')?.textContent`)) === '第 1 节');
 
-  /* 滚动容器是 CM6 的 .cm-scroller（#wysiwyg 只是挂载点，滚它没用） */
   await ev(`(() => {
-    const w = document.querySelector('#wysiwyg .cm-scroller');
+    const w = document.getElementById('wysiwyg');
     w.scrollTop = w.scrollHeight;
   })()`);
   await sleep(400);
@@ -292,9 +266,7 @@ try {
     JSON.stringify({
       active: lastActive || null,
       idx: await ev(`window.__snp.outlineActive()`),
-      st: await ev(`document.querySelector('#wysiwyg .cm-scroller')?.scrollTop ?? -1`),
-      sh: await ev(`document.querySelector('#wysiwyg .cm-scroller')?.scrollHeight ?? -1`),
-      ch: await ev(`document.querySelector('#wysiwyg .cm-scroller')?.clientHeight ?? -1`),
+      st: await ev(`document.getElementById('wysiwyg').scrollTop`),
       listTop: await ev(`Math.round(document.getElementById('outlineList').scrollTop)`),
     }));
   /* 高亮项必须真的被铺出来 —— 窗口化之后「算对了但没渲染」是一种独立的坏法 */
@@ -736,11 +708,9 @@ try {
     await sleep(300);
 
     const geo = () => ev(`(() => {
-      /* #wysiwyg 只是挂载点，真正滚的是里面的 .cm-scroller（白拿它的
-         scrollWidth 永远是 clientWidth，会把「不换行没生效」和自己骗成一回事） */
       const cm = document.querySelector('#editor .cm-scroller');
       const pv = document.getElementById('preview');
-      const wys = document.querySelector('#wysiwyg .cm-scroller');
+      const wys = document.getElementById('wysiwyg');
       const m = (el) => (el && el.offsetParent !== null)
         ? { sw: el.scrollWidth, cw: el.clientWidth, ws: getComputedStyle(el).whiteSpace }
         : null;
@@ -848,10 +818,12 @@ try {
     ok('切回自动换行，连编辑器一起复原', (await geo()).nowrap === false);
   }
 
-  /* ---- H. 真鼠标跨块拖选 与 代码块内粘贴 ----
-     离线套件用合成事件盖住了这两条，这里按真鼠标 / 真 paste 再走一遍。
-     新内核里选区由 CM6 自己维护（document 的 Selection 只是它的投影），
-     所以判据从「DOM 选区跨了几个块」改成「CM6 的 state.selection 跨了几行」。 */
+  /* ---- H. 跨块拖选 与 代码块内粘贴 ----
+     两件事都只在真机上才看得见：
+     ①跨块拖选松手后浏览器把 click 派发给「按下点与松开点的最近公共祖先」，
+       也就是编辑区根节点 —— 和「点了正文空白」完全是同一个事件形状；
+     ②代码块里粘贴多行，走的是 paste 事件 + 真实选区。
+     离线套件里用合成事件盖住了这两条，这里再按真鼠标 / 真粘贴走一遍。 */
   {
     const SRC = [
       '第一段文字，用来拖选的起点。', '',
@@ -865,21 +837,22 @@ try {
     await ev(`(() => { const b = document.getElementById('findClose'); if (b && !document.getElementById('findbar').classList.contains('hidden')) b.click(); })()`);
     await sleep(150);
 
-    /* 起止点要真的落在段首：拿首字符的 Range 矩形算坐标，别用 left + 20 ——
-       窗口一窄，20px 就跨过好几个汉字，测的就不是「从段首开始拖」了 */
+    /* 起止点要真的落在段首。原来取 getBoundingClientRect().left + 20 —— 窗口一窄，
+       20px 就跨过好几个汉字，选区跟着变，于是「第一段整段被删掉」必然红：
+       不是删除错了，是压根没从段首开始选。用 Range 把字符位置算成坐标。 */
     const pts = await ev(`(() => {
       const atStart = (blk) => {
-        const node = blk.firstChild;
+        const t = blk.querySelector('.w-text') || blk;
+        const node = t.firstChild;
         if (!node) return null;
         const r = document.createRange();
         r.setStart(node, 0); r.setEnd(node, 0);
         const b = r.getBoundingClientRect();
         return { x: Math.round(b.left + 1), y: Math.round(b.top + Math.round(b.height / 2)) };
       };
-      return [...document.querySelectorAll('#wysiwyg .cm-line')].map(atStart);
+      return [...document.querySelectorAll('.wysiwyg > .w-block')].map(atStart);
     })()`);
-    const linesBefore = await ev(`document.querySelectorAll('#wysiwyg .cm-line').length`);
-    const a = pts[0], z = pts[4];
+    const a = pts[0], z = pts[2];
     await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: a.x, y: a.y, buttons: 0 });
     await sleep(60);
     await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: a.x, y: a.y, button: 'left', clickCount: 1, buttons: 1 });
@@ -892,23 +865,16 @@ try {
     await sleep(300);
 
     const sel = await ev(`(() => {
-      const v = window.__snp.editor.view;
-      const r = v.state.selection.main;
-      const d = v.state.doc;
-      return {
-        empty: r.empty,
-        fromLine: d.lineAt(r.from).number, toLine: d.lineAt(r.to).number,
-        len: r.to - r.from,
-        domText: String(getSelection() || '').length,
-      };
+      const s = getSelection(); const r = s.rangeCount ? s.getRangeAt(0) : null;
+      const bl = [...document.querySelectorAll('.wysiwyg > .w-block')];
+      return { collapsed: s.isCollapsed, len: String(s).length, spanning: r ? bl.filter((b) => r.intersectsNode(b)).length : 0, blocks: bl.length };
     })()`);
-    ok('真鼠标跨块拖选：CM6 拿到了非空选区', sel.empty === false && sel.len > 10, JSON.stringify(sel));
-    ok('……选区从第 1 段跨到第 3 段', sel.fromLine === 1 && sel.toLine === 5, JSON.stringify(sel));
-    ok('拖选不往文档里加行',
-      (await ev(`document.querySelectorAll('#wysiwyg .cm-line').length`)) === linesBefore,
-      String(linesBefore));
+    ok('跨块拖选：松手后选区还在', sel.collapsed === false && sel.len > 10, JSON.stringify(sel));
+    ok('跨块拖选：选区真的跨了 3 个块', sel.spanning === 3, String(sel.spanning));
+    ok('跨块拖选：没有凭空补一个空段落', sel.blocks === 3, String(sel.blocks));
 
-    /* 选中的字要真能删 —— 只看选区长度，容易被「选中了但键盘不动」骗过去 */
+    /* 选中的字要真能删 —— 只看选区长度，容易被「选中了但键盘不动」骗过去。
+       选区是从第 1 段开头到第 3 段开头，删完只剩第 3 段（按内容判，别钉子符数） */
     await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', windowsVirtualKeyCode: 8, code: 'Backspace', key: 'Backspace' });
     await send('Input.dispatchKeyEvent', { type: 'keyUp', windowsVirtualKeyCode: 8, code: 'Backspace', key: 'Backspace' });
     await sleep(400);
@@ -916,127 +882,733 @@ try {
     ok('跨块拖选后按退格，整段真的删掉了',
       after.includes('第三段') && !after.includes('第一段') && !after.includes('第二段'), JSON.stringify(after));
 
-    /* 代码块里粘贴多行 JSON：块必须还在，内容必须进块。
-       paste 事件交给 CM6 处理，所以光标要先落进它自己的选区里 */
-    const CB = ['前一段', '', '```json', '', '```', '', '后一段', ''].join('\n');
+    /* 代码块里粘贴多行 JSON：块必须还在，内容必须进块 */
+    const CB = ['前一段', '', '```json', '```', '', '后一段', ''].join('\n');
     await ev(`window.__snp.newTab('paste.md', ${JSON.stringify(CB)}, null)`);
     await sleep(400);
     await ev(`window.__snp.commands.modeWysiwyg()`);
-    await sleep(520);
-    /* 空代码块的两条围栏按源码显示（见 live-preview 里的注释），光标放进围栏之间。
-       位置在 Node 这边算：反引号写进模板串会当场把字符串截断 */
-    const mdNow = await ev('window.__snp.getEditorText()');
-    /* +7 是围栏行末尾，+8 才是围栏之间那条空内容行的起点 —— 要测的是「光标在块内」 */
-    const inner = mdNow.indexOf('```json') + 8;
-    await ev(`window.__snp.editor.setSelection(${inner})`);
-    await sleep(200);
+    await sleep(500);
+    await ev(`(() => {
+      const c = document.querySelector('.w-code');
+      const r = document.createRange();
+      r.selectNodeContents(c);
+      r.collapse(true);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      document.querySelector('.wysiwyg').focus();
+    })()`);
+    await sleep(150);
     await ev(`(() => {
       const dt = new DataTransfer();
       dt.setData('text/plain', '{\\n  "b": 2,\\n  "c": [1, 2]\\n}');
-      document.querySelector('#wysiwyg .cm-content').dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+      document.querySelector('.w-code').dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
     })()`);
     await sleep(500);
 
+    const types = await ev(`(() => [...document.querySelectorAll('.wysiwyg > .w-block')].map((b) => b.dataset.type))()`);
+    ok('空代码块里粘贴多行：代码块还在', JSON.stringify(types) === '["p","code","p"]', JSON.stringify(types));
     const saved = await ev(`window.__snp.getEditorText()`);
-    ok('空代码块里粘贴多行：内容进了代码块（没变成块外段落）',
+    ok('粘贴内容进了代码块（没有跑到块外变成段落）',
       saved === '前一段\n\n```json\n{\n  "b": 2,\n  "c": [1, 2]\n}\n```\n\n后一段\n', JSON.stringify(saved));
-    ok('……粘贴后代码块仍然闭合（围栏成对）',
-      (saved.match(/```/g) || []).length === 2, JSON.stringify(saved.match(/```/g)));
-  }
 
-    /* ---- I. 方向键 / 退格：文本内核里它们只动光标和行 ----
-       旧内核有一整套「块后待插入」（gapAfter）：块里没有「更靠后的光标位」，
-       出块时先记一笔、等用户真打字才补行 —— 那是 contenteditable 里光标跳不出
-       块逼出来的补丁，连带一堆「按 ↓ 会不会加行」「连按会不会攒空行」的断言。
-       CM6 里光标就是字符偏移，方向键永远只移动它，文档一个字节都不改；
-       所以这里只守契约本身，不再验那套机制的内部状态。 */
+    /* ---- I. 带范围的块末尾：↓ / → 只移动光标，绝不改文档 ----
+       表格和代码块内部没有「更靠后的光标位」，走到头就得走出去。但方向键只是
+       移动光标：出块时若后面已有空行就停进去，否则把光标送到下一块开头（文末
+       保持原位）并记下一次性的「块后待插入」；用户按回车 / 打字 / 粘贴时才真的
+       在块后插一个空段落。1.2.6 之前是出块即插行，按一下方向键文档就变脏。 */
+    const TB = ['| 甲 | 乙 |', '| --- | --- |', '| 丙 | 丁 |', ''].join('\n');
+    const bl = () => ev(`(() => [...document.querySelectorAll('.wysiwyg > .w-block')].map((b) => (b.dataset.type || 'p') + ':' + (b.textContent || '').replace(/\\u200b/g, '')))()`);
+    const caretWhere = () => ev(`(() => {
+      const n = getSelection().anchorNode;
+      const el = n && (n.nodeType === 1 ? n : n.parentElement);
+      const b = el && el.closest ? el.closest('.wysiwyg > .w-block') : null;
+      return b ? JSON.stringify({ idx: [...b.parentElement.children].indexOf(b),
+        type: b.dataset.type || 'p', text: (b.textContent || '').split('\u200b').join('') }) : null;
+    })()`).then((s) => s ? JSON.parse(s) : null);
+    const caretEndOf = (sel) => ev(`(() => {
+      const all = [...document.querySelectorAll(${JSON.stringify(sel)})];
+      const el = all[all.length - 1];
+      if (!el) return;
+      const r = document.createRange(); r.selectNodeContents(el); r.collapse(false);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      document.querySelector('.wysiwyg').focus();
+    })()`);
+    const arrow = async (key, code, vk) => {
+      await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key, code, windowsVirtualKeyCode: vk });
+      await send('Input.dispatchKeyEvent', { type: 'keyUp', key, code, windowsVirtualKeyCode: vk });
+      await sleep(320);
+    };
+    const down = () => arrow('ArrowDown', 'ArrowDown', 40);
+    const right = () => arrow('ArrowRight', 'ArrowRight', 39);
+    const left = () => arrow('ArrowLeft', 'ArrowLeft', 37);
+    const enter = async () => {
+      await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r', unmodifiedText: '\r' });
+      await send('Input.dispatchKeyEvent', { type: 'char', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r', unmodifiedText: '\r' });
+      await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+      await sleep(360);
+    };
+    /* 两张表相邻时 caretEndOf 会选到第二张表的最后一格；这里只摆到第一张表 */
+    const caretEndOfFirstTable = () => ev(`(() => {
+      const t = document.querySelector('.w-table');
+      const td = [...t.querySelectorAll('td')].pop();
+      const r = document.createRange(); r.selectNodeContents(td); r.collapse(false);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      document.querySelector('.wysiwyg').focus();
+    })()`);
+    /* 代码块正文末尾带换行时，那个 \n 在 pre-wrap 下不生成可点击的行，真实点击
+       只会把光标落在它**前面**。模拟用户点最后一行末尾：退回所有尾部 \n / ZWSP。 */
+    const caretBeforeTrailingNewline = () => ev(`(() => {
+      const el = document.querySelector('.w-code');
+      if (!el) return;
+      const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+      let n, last = null;
+      while ((n = w.nextNode())) last = n;
+      if (!last) return;
+      let off = last.nodeValue.length;
+      while (off > 0 && (last.nodeValue[off - 1] === '\\n' || last.nodeValue[off - 1] === '\\u200b')) off--;
+      const r = document.createRange(); r.setStart(last, off); r.collapse(true);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      document.querySelector('.wysiwyg').focus();
+    })()`);
+    const gapPending = () => ev(`!!window.__snp.editor.gapAfter`);
+    const isAtEnd = () => ev(`(() => { const b = document.querySelector('.w-block[data-type="code"]'); return b ? window.__snp.editor.isCaretAtEnd(b) : null; })()`);
+
+    await ev(`window.__snp.newTab('dir.md', ${JSON.stringify(TB)}, null)`);
+    await sleep(400);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(500);
+
+    await caretEndOf('.w-table td');
+    await down();
+    ok('表格末格 ↓ 出表但文档不变', (await bl()).length === 1, JSON.stringify(await bl()));
+    ok('↓ 只记下「块后待插入」', await gapPending(), true);
+    await enter();
+    ok('回车才在表格后开一个空行', (await bl()).length === 2, JSON.stringify(await bl()));
+    await caretEndOf('.w-table td');
+    await down();
+    ok('表格下面已经空着一行，再按 ↓ 不改文档', (await bl()).length === 2, JSON.stringify(await bl()));
+    await caretEndOf('.w-table td');
+    await right();
+    ok('表格末格 → 出表但文档不变', (await bl()).length === 2, JSON.stringify(await bl()));
+    await caretEndOf('.w-table td');
+    await down();
+    await down();
+    ok('连按方向键不攒空行', (await bl()).length === 2, JSON.stringify(await bl()));
+
+    /* 表格后面已有正文：方向键只把光标送到后文开头，文档一动不动；
+       回车 / 打字时才在表格与后文之间补出那个空行。 */
+    await ev(`window.__snp.newTab('dir2.md', ${JSON.stringify(TB + '\n后一段')}, null)`);
+    await sleep(400);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(500);
+    await caretEndOf('.w-table td');
+    await down();
+    ok('表格后面有正文时 ↓ 不改文档', JSON.stringify(await bl()) === '["table:甲乙丙丁","p:后一段"]', JSON.stringify(await bl()));
+    const where = await caretWhere();
+    ok('↓ 光标只是落到后文开头', !!where && where.idx === 1 && where.text === '后一段', JSON.stringify(where));
+    ok('↓ 记下块后待插入', await gapPending(), true);
+    ok('↓ 不改 Markdown', (await ev(`window.__snp.getEditorText()`)) === TB + '\n后一段', JSON.stringify(await ev(`window.__snp.getEditorText()`)));
+    await enter();
+    ok('回车才在表格与后文之间开一行', JSON.stringify(await bl()) === '["table:甲乙丙丁","p:","p:后一段"]', JSON.stringify(await bl()));
+    ok('回车后光标站在新空行', (await caretWhere()).idx === 1, JSON.stringify(await caretWhere()));
+    await send('Input.insertText', { text: '新' });
+    await sleep(420);
+    ok('出块后打字写进块后新行', (await ev(`window.__snp.getEditorText()`)) === TB + '\n新\n\n后一段', JSON.stringify(await ev(`window.__snp.getEditorText()`)));
+
+    await ev(`window.__snp.newTab('dir2b.md', ${JSON.stringify(TB + '\n后一段')}, null)`);
+    await sleep(400);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(500);
+    await caretEndOf('.w-table td');
+    await right();
+    await send('Input.insertText', { text: '新' });
+    await sleep(420);
+    ok('→ 出块后打字不污染后文', (await ev(`window.__snp.getEditorText()`)) === TB + '\n新\n\n后一段', JSON.stringify(await ev(`window.__snp.getEditorText()`)));
+
+    /* 代码块是同一类：文末没有可落脚的下一块，出块时保持光标不动、只记状态 */
+    const CB2 = ['```', '甲', '乙', '```', ''].join('\n');
+    await ev(`window.__snp.newTab('dir3.md', ${JSON.stringify(CB2)}, null)`);
+    await sleep(400);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(500);
+    await caretEndOf('.w-code');
+    await right();
+    ok('代码块末行 → 出块但文档不变', (await bl()).length === 1, JSON.stringify(await bl()));
+    ok('→ 记下块后待插入', await gapPending(), true);
+    await enter();
+    ok('回车才在代码块后开一行', (await bl()).length === 2, JSON.stringify(await bl()));
+    await caretEndOf('.w-code');
+    await right();
+    ok('代码块后面已经空着一行，→ 不改文档', (await bl()).length === 2, JSON.stringify(await bl()));
+
+    /* ---- I2b. 行内码末尾的 →（用户报的「走不出行内代码」）----
+       行内码是块里最后一个行内元素时，它后面没有文本节点：浏览器没有「再往右
+       一格」的落点，→ 成死键，接着打字会继续写进码里。→ 必须把光标摆到码**外面**
+       （同一个块里），且一字不改文档。 */
+    const IC = '用 `npm i` 装';
+    const caretCodeEnd = () => ev(`(() => {
+      const code = document.querySelector('.wysiwyg code');
+      if (!code) return 0;
+      const r = document.createRange(); r.selectNodeContents(code); r.collapse(false);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      document.querySelector('.wysiwyg').focus();
+      return 1;
+    })()`);
+    const caretInCode = () => ev(`(() => {
+      const n = getSelection().anchorNode;
+      const el = n && (n.nodeType === 1 ? n : n.parentElement);
+      return !!(el && el.closest && el.closest('code'));
+    })()`);
+
+    await ev(`window.__snp.newTab('ic.md', ${JSON.stringify('用 `npm i`')}, null)`);
+    await sleep(400);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(500);
+    await caretCodeEnd();
+    ok('前置：光标落在行内码里', await caretInCode(), true);
+    await right();
+    ok('行内码在块尾时 → 把光标送出码', (await caretInCode()) === false, '仍停在码内');
+    ok('送出码不改 Markdown', (await ev(`window.__snp.getEditorText()`)) === '用 `npm i`', JSON.stringify(await ev(`window.__snp.getEditorText()`)));
+    await send('Input.insertText', { text: 'x' });
+    await sleep(420);
+    ok('送出后打的字是正文，不再写进码里',
+      (await ev(`window.__snp.getEditorText()`)) === '用 `npm i`x', JSON.stringify(await ev(`window.__snp.getEditorText()`)));
+
+    /* 码后面本来就有正文：浏览器自己能往右走，结果同样必须是「码外、块内」 */
+    await ev(`window.__snp.newTab('ic2.md', ${JSON.stringify(IC)}, null)`);
+    await sleep(400);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(500);
+    await caretCodeEnd();
+    await right();
+    ok('码后面有正文时 → 也走到码外', (await caretInCode()) === false, '仍停在码内');
+    ok('走码外不改 Markdown', (await ev(`window.__snp.getEditorText()`)) === IC, JSON.stringify(await ev(`window.__snp.getEditorText()`)));
+    await send('Input.insertText', { text: 'x' });
+    await sleep(420);
     {
-      const text = () => ev('window.__snp.getEditorText()');
-      const arrow = async (key, code, vk) => {
-        await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key, code, windowsVirtualKeyCode: vk });
-        await send('Input.dispatchKeyEvent', { type: 'keyUp', key, code, windowsVirtualKeyCode: vk });
-        await sleep(160);
-      };
-      const down = () => arrow('ArrowDown', 'ArrowDown', 40);
-      const right = () => arrow('ArrowRight', 'ArrowRight', 39);
-      const bksp = async () => {
-        await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', windowsVirtualKeyCode: 8, code: 'Backspace', key: 'Backspace' });
-        await send('Input.dispatchKeyEvent', { type: 'keyUp', windowsVirtualKeyCode: 8, code: 'Backspace', key: 'Backspace' });
-        await sleep(280);
-      };
-      const enter = async () => {
-        await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r', unmodifiedText: '\r' });
-        await send('Input.dispatchKeyEvent', { type: 'char', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r', unmodifiedText: '\r' });
-        await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
-        await sleep(220);
-      };
-
-      const TB = ['| 甲 | 乙 |', '| --- | --- |', '| 丙 | 丁 |', '', '后一段'].join('\n');
-      await ev(`window.__snp.newTab('dir.md', ${JSON.stringify(TB)}, null)`);
-      await sleep(400);
-      await ev('window.__snp.commands.modeWysiwyg()');
-      await sleep(520);
-      /* 光标放进表格第一行（表格里光标在 = 源码态，看得见 | 分隔） */
-      await ev(`window.__snp.editor.setSelection(2)`);
-      await sleep(200);
-      const t0 = await text();
-      for (let i = 0; i < 4; i++) await down();
-      for (let i = 0; i < 3; i++) await right();
-      ok('方向键只移动光标，文档一字不改', (await text()) === t0, JSON.stringify(await text()));
-      const moved = await ev(`window.__snp.editor.head`);
-      ok('……光标确实动了（不是「没反应」被当成没改）', typeof moved === 'number' && moved > 2, String(moved));
-
-      /* 回车就是把光标处断开成两行 —— 不再有「补一个空段落」这层隐藏语义 */
-      await ev(`window.__snp.editor.setSelection(0)`);
-      await sleep(120);
-      await enter();
-      ok('回车就是断行，不额外多出空行', (await text()).startsWith('\n'), JSON.stringify((await text()).slice(0, 6)));
-      await ev('window.__snp.commands.undo()');
-      await sleep(260);
-
-      /* 行首退格 = 把两行接起来（markdown 的引用就是一组以 > 开头的行，
-         接完之后仍然是同一段引用；不再有「合并两个块」那种 DOM 层语义） */
-      await ev(`window.__snp.newTab('bq-bksp.md', '> 第一行\\n> 第二行', null)`);
-      await sleep(360);
-      await ev('window.__snp.commands.modeWysiwyg()');
-      await sleep(480);
-      await ev(`window.__snp.editor.setSelection(window.__snp.editor.toMarkdown().indexOf('第二行') - 2)`);
-      await sleep(160);
-      await bksp();
-      ok('引用里行首退格把两行并成一行',
-        (await text()) === '> 第一行> 第二行', JSON.stringify(await text()));
-
-      /* ---- I2. 行内码的两个用户复报点（1.2.19 / 1.2.21）----
-         ①` ` 里只有一个空格时光标进不去；②输入 ` 时把内容截断。
-         新内核里这两件事都是「文档里的字符」，光标按字符走，那两个 bug 结构上
-         不复存在 —— 所以验的是特性本身：空格码能进能改、反引号成对才成码。
-         注意基线是「前 后」三个字（前 + 空格 + 后），光标落在后字前面。 */
-      const marks = () => ev(`document.querySelectorAll('#wysiwyg .cm-lp-codemark').length`);
-      await ev(`window.__snp.newTab('code-span.md', '前 后', null)`);
-      await sleep(360);
-      await ev('window.__snp.commands.modeWysiwyg()');
-      await sleep(480);
-      await ev(`window.__snp.editor.setSelection(2)`);
-      await sleep(120);
-      await send('Input.insertText', { text: '` `' });
-      await sleep(320);
-      ok('`` ` ` `` 这种只含空格的码写得进去', (await text()) === '前 ` `后', JSON.stringify(await text()));
-      ok('……成对了就算一段码（装饰层认得它）', (await marks()) === 1, String(await marks()));
-      /* 光标落在码内（两个反引号之间）还能继续打字 */
-      await ev(`window.__snp.editor.setSelection(3)`);
-      await sleep(120);
-      await send('Input.insertText', { text: 'x' });
-      await sleep(320);
-      ok('空格码里还能继续输入', (await text()) === '前 `x `后', JSON.stringify(await text()));
-      /* 删掉收尾那个反引号：退成字面，内容一个字符都不少 */
-      await ev(`window.__snp.editor.setSelection(6)`);
-      await sleep(120);
-      await bksp();
-      ok('删掉收尾反引号就退回字面，不吞字',
-        (await text()) === '前 `x 后', JSON.stringify(await text()));
-      ok('……不再是码了', (await marks()) === 0, String(await marks()));
+      /* 浏览器往右走**一格**：光标跨过那个空格，x 落在「空格之后、后文之前」。
+         重点是它落在反引号外面（早先这里会写进码里变成 `npm ix`） */
+      const md = await ev(`window.__snp.getEditorText()`);
+      ok('插入的字落在码与后文之间', /^用 `npm i` ?x装$/.test(md), JSON.stringify(md));
     }
-  {
+
+    /* ---- I2c. 不可见残留与开关幂等（1.2.19 用户复报）----
+       「有时候 → 不生效」：码后面留了尾随空格 / 块尾占位 <br> / 码里的零宽垫片，
+       判据只看「有没有节点」就会漏。还有一个更隐蔽的：光标摆在行尾空格上时，
+       Chromium 会把 insertText 的插入点规范化到最近的可见文字（码内），
+       所以落点必须是零宽垫片。
+       「再次设置行内代码出现两层」：拖选起点常停在码外的文本节点上，
+       旧判据看 commonAncestor 就以为「不在码里」，于是又包一层。 */
+    await ev(`window.__snp.newTab('ic3.md', ${JSON.stringify('用 `npm i`')}, null)`);
+    await sleep(400);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(500);
+    await ev(`(() => {
+      const t = document.querySelector('.wysiwyg .w-text');
+      t.appendChild(document.createTextNode(' '));
+      const code = t.querySelector('code');
+      const r = document.createRange(); r.selectNodeContents(code); r.collapse(false);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      document.querySelector('.wysiwyg').focus();
+      return 1;
+    })()`);
+    await right();
+    ok('真机：码后只有尾随空格时 → 也送出码', (await caretInCode()) === false, '仍停在码内');
+    await send('Input.insertText', { text: 'x' });
+    await sleep(420);
+    {
+      const md = (await ev(`window.__snp.getEditorText()`)).trimEnd();
+      ok('真机：字接在空格之后，没被 Chromium 规范回码里', md === '用 `npm i` x', JSON.stringify(md));
+    }
+
+    /* 拖选整段行内码（起点落在码前的文本节点上）再点「行内代码」= 取消 */
+    const selectAroundCode = `(() => {
+      const t = document.querySelector('.wysiwyg .w-text');
+      const r = document.createRange();
+      r.setStart(t.firstChild, t.firstChild.nodeValue.length);
+      r.setEnd(t.lastChild, 0);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      document.querySelector('.wysiwyg').focus();
+      return 1;
+    })()`;
+    await ev(`window.__snp.newTab('ic4.md', ${JSON.stringify('用 `npm i` 装')}, null)`);
+    await sleep(400);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(500);
+    await ev(selectAroundCode);
+    await ev(`window.__snp.commands.inlineCode()`);
+    await sleep(420);
+    ok('真机：选中整段行内码再点一次 → 取消',
+      (await ev(`window.__snp.getEditorText()`)) === '用 npm i 装',
+      JSON.stringify(await ev(`window.__snp.getEditorText()`)));
+    ok('真机：没有两层行内码',
+      (await ev(`document.querySelectorAll('.wysiwyg code code').length`)) === 0);
+
+    /* 选区整段落在码内（拖选起点在码里）：同样按「取消」处理，不许往码里插 */
+    await ev(`window.__snp.newTab('ic5.md', ${JSON.stringify('用 `npm i` 装')}, null)`);
+    await sleep(400);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(500);
+    await ev(`(() => {
+      const code = document.querySelector('.wysiwyg code');
+      const r = document.createRange();
+      r.setStart(code.firstChild, 0);
+      r.setEnd(code.firstChild, code.firstChild.nodeValue.length);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      document.querySelector('.wysiwyg').focus();
+      return 1;
+    })()`);
+    await ev(`window.__snp.commands.inlineCode()`);
+    await sleep(420);
+    ok('真机：码内整段选中再点 → 取消',
+      (await ev(`window.__snp.getEditorText()`)) === '用 npm i 装',
+      JSON.stringify(await ev(`window.__snp.getEditorText()`)));
+    ok('真机：码内选中不套两层',
+      (await ev(`document.querySelectorAll('.wysiwyg code code').length`)) === 0);
+
+    /* ---- I2d. 行内码里的反引号（用户报「输入 ` 再次渲染时被截断」）----
+       ① 在码里打一个反引号：旧序列化一律拿单反引号包，存下 `npm `i`，
+          再打开只剩 npm —— 定界符必须跟着内容加长。
+       ② 选中一段字打反引号：浏览器默认会用它替换整个选区（字当场就没了），
+          这里要包成行内码。
+       ③ 先补后引号、再回头补开头那个：光标前只有一个孤零零的开启符，
+          闭合符还在光标后面，只看光标前的规则碰不到它。 */
+    await ev(`window.__snp.newTab('ic6.md', ${JSON.stringify('用 `npm i` 装')}, null)`);
+    await sleep(400);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(500);
+    await ev(`(() => {
+      const code = document.querySelector('.wysiwyg code');
+      /* 光标落在码中间（i 之前）：用户在码里打字的常态位置 */
+      const r = document.createRange();
+      r.setStart(code.firstChild, 4); r.collapse(true);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      document.querySelector('.wysiwyg').focus();
+      return 1;
+    })()`);
+    await send('Input.insertText', { text: '`' });
+    await sleep(420);
+    {
+      const md = (await ev(`window.__snp.getEditorText()`)).trimEnd();
+      ok('真机：码里打反引号 → 定界符加长成双反引号', md === '用 ``npm `i`` 装', JSON.stringify(md));
+      /* 拿刚存下的 md 重新开一份：解析端必须还认得出这一段码 */
+      await ev(`window.__snp.newTab('ic6b.md', ${JSON.stringify(md)}, null)`);
+      await sleep(400);
+      await ev(`window.__snp.commands.modeWysiwyg()`);
+      await sleep(500);
+      const inner = await ev(`(document.querySelector('.wysiwyg code') || {}).textContent`);
+      ok('真机：重开后码内容没被截断', inner === 'npm `i', JSON.stringify(inner));
+    }
+
+    await ev(`window.__snp.newTab('ic7.md', ${JSON.stringify('npm i')}, null)`);
+    await sleep(400);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(500);
+    await ev(`(() => {
+      const t = document.querySelector('.wysiwyg .w-text');
+      const r = document.createRange(); r.selectNodeContents(t);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      document.querySelector('.wysiwyg').focus();
+      return 1;
+    })()`);
+    await send('Input.insertText', { text: '`' });
+    await sleep(420);
+    ok('真机：选中一段字打反引号 → 包成码（字没被替换掉）',
+      (await ev(`window.__snp.getEditorText()`)).trimEnd() === '`npm i`',
+      JSON.stringify(await ev(`window.__snp.getEditorText()`)));
+
+    await ev(`window.__snp.newTab('ic8.md', ${JSON.stringify('npm i')}, null)`);
+    await sleep(400);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(500);
+    await ev(`(() => {
+      const t = document.querySelector('.wysiwyg .w-text');
+      const r = document.createRange();
+      r.setStart(t.firstChild, t.firstChild.nodeValue.length); r.collapse(true);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      document.querySelector('.wysiwyg').focus();
+      return 1;
+    })()`);
+    await send('Input.insertText', { text: '`' });
+    await sleep(300);
+    await ev(`(() => {
+      const t = document.querySelector('.wysiwyg .w-text');
+      const r = document.createRange(); r.setStart(t.firstChild, 0); r.collapse(true);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      document.querySelector('.wysiwyg').focus();
+      return 1;
+    })()`);
+    await send('Input.insertText', { text: '`' });
+    await sleep(420);
+    ok('真机：先补后引号、再补前引号 → 成码',
+      (await ev(`window.__snp.getEditorText()`)).trimEnd() === '`npm i`',
+      JSON.stringify(await ev(`window.__snp.getEditorText()`)));
+
+    /* 字面反引号贴着行内码：闭合串会和它粘成更长的串，整段就不是码了
+       （重开丢样式，用户看不见任何提示）。序列化写成 `\``，解析端要认回来。
+       注意这里不靠「光标贴边界再打字」验收：Chromium 会把插入点规范化到最近的
+       可见文字（也就是码里），打出来的是码里的反引号 —— 状态本身由粘贴 / 删空格
+       之类产生，这里直接按存盘的样子打开来验两侧。 */
+    for (const [file, md, want, wantText] of [
+      ['ic9.md', '`a`\\`', 'a', 'a`'],
+      ['ic9c.md', '\\``a`', 'a', '`a'],
+    ]) {
+      await ev(`window.__snp.newTab(${JSON.stringify(file)}, ${JSON.stringify(md)}, null)`);
+      await sleep(400);
+      await ev(`window.__snp.commands.modeWysiwyg()`);
+      await sleep(500);
+      const inner = await ev(`(document.querySelector('.wysiwyg code') || {}).textContent`);
+      ok(`真机：${JSON.stringify(md)} 里贴着码的反引号算字面字符`,
+        inner === want, JSON.stringify(inner));
+      ok('……整段文字也对（码外的反引号还在）',
+        (await ev(`document.querySelector('.wysiwyg .w-text').textContent`)) === wantText,
+        JSON.stringify(await ev(`document.querySelector('.wysiwyg .w-text').textContent`)));
+      ok('……再存一次一个字节都不变',
+        (await ev(`window.__snp.getEditorText()`)).trimEnd() === md,
+        JSON.stringify(await ev(`window.__snp.getEditorText()`)));
+    }
+
+    /* ---- I2e. 码里只有一个空格（用户 11-19 报「光标进不去」）----
+       行内码里的空白是**内容**，可 HTML 默认会把它折掉：`` ` ` `` 的盒子
+       靠 padding 撑出宽度、里面却没有可停的插入点，← 一步跨过整条码。
+       这属于「不报错、只能量」的一类，所以三条都测：盒子有宽度、← 能进、
+       进去且一个字都不改。按用户的操作顺序来 —— 手动敲三个键，不拿现成
+       的 md 渲染（那条路上紧跟其后的空白会参与 Chromium 的插入点合并，
+       与本条要守的东西无关）。 */
+    await ev(`window.__snp.newTab('ic10.md', ${JSON.stringify('x')}, null)`);
+    await sleep(400);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(500);
+    await ev(`(() => {
+      const t = document.querySelector('.wysiwyg .w-text');
+      const r = document.createRange();
+      r.setStart(t.firstChild, t.firstChild.nodeValue.length); r.collapse(true);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      document.querySelector('.wysiwyg').focus();
+      return 1;
+    })()`);
+    for (const ch of ['`', ' ', '`']) {
+      await send('Input.insertText', { text: ch });
+      await sleep(160);
+    }
+    await sleep(300);
+    {
+      ok('真机：手敲 ` + 空格 + ` 存成码',
+        (await ev(`window.__snp.getEditorText()`)).trimEnd() === 'x` `',
+        JSON.stringify(await ev(`window.__snp.getEditorText()`)));
+      const w = await ev(`(() => {
+        const c = document.querySelector('.wysiwyg code');
+        return c ? Math.round(c.getBoundingClientRect().width) : -1;
+      })()`);
+      ok('真机：码里只有一个空格也有可见宽度', w > 8, String(w));
+      await left();
+      ok('真机：← 能走进「只有一个空格」的行内码', await caretInCode(), '仍停在外面');
+      ok('……进去这一步不改 Markdown',
+        (await ev(`window.__snp.getEditorText()`)).trimEnd() === 'x` `',
+        JSON.stringify(await ev(`window.__snp.getEditorText()`)));
+    }
+
+    /* ---- I3. 出块提示线与 Ctrl+Enter 强制插入 ----
+       方向键出块零文档改动是对的，但状态一直隐形：光标还在原位、或落进下一块，
+       界面上没任何东西说「按回车会在这儿开一行」。这里在真 WebView2 里验
+       提示线真的画出来、钉在接缝上、状态一作废就收起；Ctrl+Enter 是 Typora
+       式一步到位命令，只在带边界块的最后一个可编辑位置生效。 */
+    const gapHint = () => ev(`(() => {
+      const h = window.__snp.editor.gapHint;
+      return { display: h.style.display, top: parseFloat(h.style.top),
+        label: h.querySelector('.w-gap-hint-label').textContent,
+        hostTop: h.parentElement.getBoundingClientRect().top };
+    })()`);
+    const codeBottom = () => ev(`(() => {
+      const b = document.querySelector('.w-block[data-type="code"]');
+      return b ? b.getBoundingClientRect().bottom : null;
+    })()`);
+    const caretCode = (off) => ev(`(() => {
+      window.__snp.editor.restoreCaret({ blockIndex: 0, offset: ${off} });
+      document.querySelector('.wysiwyg').focus(); return 1;
+    })()`);
+    /* 只发 rawKeyDown + keyUp：Ctrl+Enter 不该产生字符，也不该让 beforeinput
+       把一次换行偷偷写进代码块里。modifiers:2 = Ctrl。 */
+    const ctrlEnter = async () => {
+      const k = { modifiers: 2, key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 };
+      await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...k });
+      await send('Input.dispatchKeyEvent', { type: 'keyUp', ...k });
+      await sleep(360);
+    };
+
+    await ev(`window.__snp.newTab('gap1.md', ${JSON.stringify(CB2)}, null)`);
+    await sleep(400);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(500);
+    await caretEndOf('.w-code');
+    await down();
+    const h1 = await gapHint();
+    ok('真机：出块后插入提示线亮起', h1.display === 'flex', JSON.stringify(h1));
+    ok('真机：提示文字写明按哪个键', h1.label.includes('Enter'), h1.label);
+    ok('真机：提示线钉在代码块底边',
+      Math.abs(h1.top - ((await codeBottom()) - h1.hostTop)) < 3,
+      `${h1.top} vs ${(await codeBottom()) - h1.hostTop}`);
+    await enter();
+    ok('真机：回车兑现后提示线收起', (await gapHint()).display === 'none');
+
+    await caretEndOf('.w-code');
+    await down();
+    await arrow('ArrowLeft', 'ArrowLeft', 37);
+    ok('真机：非写入键让状态作废后提示线也收起', (await gapHint()).display === 'none');
+
+    const CBQ = ['```', '甲', '```', '', '> 引用'].join('\n');
+    await ev(`window.__snp.newTab('gap2.md', ${JSON.stringify(CBQ)}, null)`);
+    await sleep(400);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(500);
+    await caretEndOf('.w-code');
+    await down();
+    const h2 = await gapHint();
+    const bqBottom = await ev(`document.querySelector('.w-block[data-type="bq"]').getBoundingClientRect().bottom`);
+    ok('真机：光标进了引用块，提示线仍钉在代码块底边',
+      h2.display === 'flex'
+        && Math.abs(h2.top - ((await codeBottom()) - h2.hostTop)) < 3
+        && Math.abs(h2.top - (bqBottom - h2.hostTop)) > 4,
+      `${h2.top} / code ${(await codeBottom()) - h2.hostTop} / bq ${bqBottom - h2.hostTop}`);
+
+    await ev(`window.__snp.newTab('gap3.md', ${JSON.stringify(CB2)}, null)`);
+    await sleep(400);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(500);
+    await caretEndOf('.w-code');
+    await ctrlEnter();
+    ok('真机：块末尾 Ctrl+Enter 直接开出块后空行', (await bl()).length === 2, JSON.stringify(await bl()));
+    ok('真机：Ctrl+Enter 不留待插入状态', !(await gapPending()));
+    ok('真机：Ctrl+Enter 后光标在新空行', (await caretWhere()).idx === 1, JSON.stringify(await caretWhere()));
+
+    await ev(`window.__snp.newTab('gap4.md', ${JSON.stringify(CB2)}, null)`);
+    await sleep(400);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(500);
+    await caretCode(0);
+    await ctrlEnter();
+    ok('真机：块中间 Ctrl+Enter 不劈开代码块', (await bl()).length === 1, JSON.stringify(await bl()));
+
+    await ev(`window.__snp.newTab('gap5.md', '正文一段', null)`);
+    await sleep(400);
+    await ev(`window.__snp.commands.modeWysiwyg()`);
+    await sleep(500);
+    await caretCode(4);
+    await ctrlEnter();
+    ok('真机：普通段落里 Ctrl+Enter 不改文档', (await bl()).length === 1, JSON.stringify(await bl()));
+
+    /* ---- I2. 引用 / 提示块 / 列表也是「带范围的块」 ----
+       它们一行一块：只有「这一组的最后一行」归我们管，组内还有下一行时交给
+       浏览器自己走（折了几行、要不要顺手滚动，只有它知道）。 */
+    const caretAt = (i) => ev(`(() => {
+      const b = [...document.querySelectorAll('.wysiwyg > .w-block')][${i}];
+      const t = b.querySelector('.w-text') || b;
+      const r = document.createRange(); r.selectNodeContents(t); r.collapse(false);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      document.querySelector('.wysiwyg').focus();
+    })()`);
+    const caretBlock = () => ev(`(() => {
+      const s = getSelection();
+      const n = s.anchorNode;
+      const el = n && (n.nodeType === 1 ? n : n.parentElement);
+      const b = el && el.closest ? el.closest('.wysiwyg > .w-block') : null;
+      return b ? b.dataset.type : 'none';
+    })()`);
+    const load = async (name, md) => {
+      await ev(`window.__snp.newTab(${JSON.stringify(name)}, ${JSON.stringify(md)}, null)`);
+      await sleep(400);
+      await ev(`window.__snp.commands.modeWysiwyg()`);
+      await sleep(500);
+    };
+
+    /* 下一块也是「带边界的块」：方向键零改动，回车才在两块之间开行。
+       跳进下一块开头时按回车只会在那个块**内部**加行（表格加一行、代码块内换行），
+       所以「块后待插入」必须把这一下回车接管过来。→ 与 ↓ 都必须一样。 */
+    const TB2 = ['| 戊 | 己 |', '| --- | --- |', '| 庚 | 辛 |', ''].join('\n');
+    for (const [kn, kf] of [['→', right], ['↓', down]]) {
+      await load('dirb-t.md', TB + '\n' + TB2);
+      await caretEndOfFirstTable();
+      await kf();
+      ok(`表格+表格 ${kn} 出块不改文档`,
+        JSON.stringify(await bl()) === '["table:甲乙丙丁","table:戊己庚辛"]', JSON.stringify(await bl()));
+      const bw0 = await caretWhere();
+      ok(`表格+表格 ${kn} 光标落到下一块开头`, !!bw0 && bw0.idx === 1, JSON.stringify(bw0));
+      ok(`表格+表格 ${kn} 记下待插入`, await gapPending(), true);
+      await enter();
+      ok(`表格+表格 ${kn} 回车才在两块之间开一行`,
+        JSON.stringify(await bl()) === '["table:甲乙丙丁","p:","table:戊己庚辛"]', JSON.stringify(await bl()));
+      const bw = await caretWhere();
+      ok(`表格+表格 ${kn} 回车后光标在空行`, !!bw && bw.idx === 1 && bw.text === '', JSON.stringify(bw));
+      await enter();
+      ok(`表格+表格 ${kn} 再按回车才加第二行（状态一次性）`,
+        JSON.stringify(await bl()) === '["table:甲乙丙丁","p:","p:","table:戊己庚辛"]', JSON.stringify(await bl()));
+    }
+    await load('dirb-c.md', CB2 + '\n' + TB);
+    await caretEndOf('.w-code');
+    await right();
+    const cb1 = await bl();
+    ok('代码块+表格 → 不改文档', cb1.length === 2 && cb1[1].startsWith('table:'), JSON.stringify(cb1));
+    ok('代码块+表格 → 记下待插入', await gapPending(), true);
+    await enter();
+    const cb2 = await bl();
+    ok('代码块+表格 回车才在中间开一行',
+      cb2.length === 3 && cb2[1] === 'p:' && cb2[2].startsWith('table:'), JSON.stringify(cb2));
+    await load('dirb-q.md', '> 甲\n> 乙\n\n' + CB2);
+    await caretAt(1);
+    await right();
+    const qb1 = await bl();
+    ok('引用+代码块 → 不改文档', qb1.length === 3 && qb1[2].startsWith('code:'), JSON.stringify(qb1));
+    ok('引用+代码块 → 记下待插入', await gapPending(), true);
+    await enter();
+    const qb2 = await bl();
+    ok('引用+代码块 回车才在中间开一行',
+      qb2.length === 4 && qb2[2] === 'p:' && qb2[3].startsWith('code:'), JSON.stringify(qb2));
+
+    /* 代码块正文末尾带一个换行（写完顺手回车 / 粘贴带尾部换行）：1.2.6 里
+       末尾判据把它算进 end，光标永远被判成「不在末尾」，→ / ↓ 不接管、浏览器
+       把光标直接甩进下一块 —— 用户看到的「代码块后面有内容时出不了块」。
+       后面接引用 / 表格 / 另一个代码块 / 正文都要一样能出块、能回车插行。 */
+    const CB_NL = ['```', '甲', '乙', '', '```'].join('\n');
+    let nlN = 0;
+    for (const [nm, tail, pre] of [
+      ['引用', '> 引用一行', 'bq:'],
+      ['表格', TB, 'table:'],
+      ['代码块', CB2, 'code:'],
+      ['正文', '后一段', 'p:后一段'],
+    ]) {
+      for (const [kn, kf] of [['→', right], ['↓', down]]) {
+        await load(`dirn-${++nlN}.md`, CB_NL + '\n\n' + tail);
+        await caretBeforeTrailingNewline();
+        ok(`末尾换行的代码块+${nm} ${kn} 光标算在末尾`, await isAtEnd(), true);
+        await kf();
+        ok(`末尾换行的代码块+${nm} ${kn} 出块不改文档`, (await bl()).length === 2, JSON.stringify(await bl()));
+        ok(`末尾换行的代码块+${nm} ${kn} 记下待插入`, await gapPending(), true);
+        await enter();
+        const nr = await bl();
+        ok(`末尾换行的代码块+${nm} ${kn} 回车才在两块之间开行`,
+          nr.length === 3 && nr[1] === 'p:' && nr[2].startsWith(pre), JSON.stringify(nr));
+      }
+      await load(`dirn-${++nlN}.md`, CB_NL + '\n\n' + tail);
+      await caretBeforeTrailingNewline();
+      await right();
+      await send('Input.insertText', { text: '新' });
+      await sleep(420);
+      const tr = await bl();
+      ok(`末尾换行的代码块+${nm} 打字写进块后新行`, tr[1] === 'p:新', JSON.stringify(tr));
+    }
+
+    await load('dirq.md', '> 甲\n> 乙\n');
+    await caretAt(1);
+    await down();
+    ok('引用末行 ↓ 不改文档', (await bl()).length === 2, JSON.stringify(await bl()));
+    ok('引用末行 ↓ 记下待插入', await gapPending(), true);
+    await enter();
+    ok('引用末行回车才在下面开一行', (await bl()).length === 3, JSON.stringify(await bl()));
+    ok('引用出块后光标在普通段落里', (await caretBlock()) === 'p', await caretBlock());
+    await caretAt(0);
+    await down();
+    ok('引用组内还有下一行时不多开块', (await bl()).length === 3, JSON.stringify(await bl()));
+    ok('引用组内向下的落点仍是引用', (await caretBlock()) === 'bq', await caretBlock());
+
+    await load('dirq2.md', '> 甲\n> 乙\n\n后文\n');
+    await caretAt(1);
+    await right();
+    /* → 和 ↓ 在块末做同一件事：只把光标送到后文开头；回车 / 打字才在
+       引用与后文之间补出空行。落进后文开头直接打字会变成 `新后文`。 */
+    ok('引用组末行 → 不改文档',
+      JSON.stringify(await bl()) === '["bq:甲","bq:乙","p:后文"]', JSON.stringify(await bl()));
+    ok('引用组末行 → 记下待插入', await gapPending(), true);
+    await enter();
+    ok('回车才在引用与后文之间开一行',
+      JSON.stringify(await bl()) === '["bq:甲","bq:乙","p:","p:后文"]', JSON.stringify(await bl()));
+    const qWhere = await caretWhere();
+    ok('引用出块后光标站在空行里', !!qWhere && qWhere.idx === 2 && qWhere.text === '', JSON.stringify(qWhere));
+
+    await load('dirc.md', '> [!info] 标题\n> 正文\n');
+    await caretAt(1);
+    await down();
+    ok('提示块末行 ↓ 不改文档', (await bl()).length === 2, JSON.stringify(await bl()));
+    await enter();
+    ok('提示块末行回车才开一行（不把标题行一起带走）', (await bl()).length === 3, JSON.stringify(await bl()));
+    ok('提示块出块后光标在普通段落里', (await caretBlock()) === 'p', await caretBlock());
+
+    await load('dirl.md', '- 甲\n- 乙\n');
+    await caretAt(1);
+    await down();
+    ok('列表末项 ↓ 不改文档', (await bl()).length === 2, JSON.stringify(await bl()));
+    await enter();
+    ok('列表末项回车才在列表外开一行', (await bl()).length === 3, JSON.stringify(await bl()));
+    ok('列表出块后光标在普通段落里', (await caretBlock()) === 'p', await caretBlock());
+    await caretAt(0);
+    await right();
+    ok('列表中间项 → 不多开块', (await bl()).length === 3, JSON.stringify(await bl()));
+
+    /* 分割线本身放不了光标：它落在文末时，光标停在上面那行末尾按 ↓
+       只记下「线后待插入」，回车才在线下开一行 */
+    await load('dirh.md', '前文\n\n---\n');
+    await caretAt(0);
+    await down();
+    ok('分割线在文末时 ↓ 不改文档',
+      JSON.stringify(await bl()) === '["p:前文","hr:"]', JSON.stringify(await bl()));
+    ok('分割线在文末时 ↓ 记下待插入', await gapPending(), true);
+    await enter();
+    ok('回车才在线下开一行',
+      JSON.stringify(await bl()) === '["p:前文","hr:","p:"]', JSON.stringify(await bl()));
+    ok('穿过分割线后光标在普通段落里', (await caretBlock()) === 'p', await caretBlock());
+
+    /* ---- I3. 块级删除与两处退格：真 WebView2 下用真实按键复验 ----
+       离线内核跑的是 headless Chrome，这里是真应用。四件事都要在真机上站得住：
+       引用整组当一个块、面板能删块、多空行退格不塌行、边界块后空行删得掉。 */
+    const bksp = async () => {
+      await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', windowsVirtualKeyCode: 8, code: 'Backspace', key: 'Backspace' });
+      await send('Input.dispatchKeyEvent', { type: 'keyUp', windowsVirtualKeyCode: 8, code: 'Backspace', key: 'Backspace' });
+      await sleep(320);
+    };
+    const caretStart = (i) => ev(`(() => {
+      const b = [...document.querySelectorAll('.wysiwyg > .w-block')][${i}];
+      const t = b.querySelector('.w-text') || b;
+      const r = document.createRange(); r.setStart(t, 0); r.collapse(true);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      document.querySelector('.wysiwyg').focus();
+    })()`);
+    const firstHeight = () => ev(`(() => { const b = [...document.querySelectorAll('.wysiwyg > .w-block')][1]; return b ? b.getBoundingClientRect().height : -1; })()`);
+
+    /* 引用整组：鼠标挪到续行，从「转换这一块」面板删除，整组一起没 */
+    await load('blk-del.md', '> 第一行\n> 第二行\n> 第三行\n\n尾段\n');
+    await ev(`(() => {
+      const b = [...document.querySelectorAll('.wysiwyg > .w-block')][2];
+      const r = b.getBoundingClientRect();
+      b.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: r.left + 20, clientY: r.top + 6 }));
+      return 1;
+    })()`);
+    await ev(`document.getElementById('whMenu').click()`);
+    const bmDel = await ev(`[...document.querySelectorAll('#wBlockMenu .bm-item')].map(b => b.textContent.trim())`);
+    ok('真机：转换面板底部有「删除这一块」', bmDel.includes('删除这一块'), JSON.stringify(bmDel.slice(-2)));
+    await ev(`(() => { const b = [...document.querySelectorAll('#wBlockMenu .bm-item')].find(e => e.textContent.includes('删除这一块')); if (b) b.click(); return 1; })()`);
+    await sleep(320);
+    const afterDel = await bl();
+    ok('真机：从续行删是块级，引用整组一起没',
+      !afterDel.some((s) => /第一行|第二行|第三行/.test(s)) && afterDel.some((s) => s.includes('尾段')),
+      JSON.stringify(afterDel));
+
+    /* 标题后多空行：一次只少一行，留下的空块还得有一行高（不塌成 0） */
+    await load('blk-blank.md', '# 标题\n\n\n\n正文\n');
+    await caretStart(2);
+    await bksp();
+    const blankBlocks = await bl();
+    const blankH = await firstHeight();
+    ok('真机：多空行退格一次只少一行', blankBlocks.length === 3, JSON.stringify(blankBlocks));
+    ok('真机：留下的空块没塌成 0 高', blankH >= 12, String(blankH));
+
+    /* 边界块后那个空段落：退格要真删掉 */
+    await load('blk-code.md', '```js\nlet a = 1;\n```\n\n');
+    await caretStart(1);
+    await bksp();
+    ok('真机：代码块后空行退格能删掉', (await bl()).length === 1, JSON.stringify(await bl()));
+    await load('blk-table.md', '| A | B |\n| --- | --- |\n| 1 | 2 |\n\n');
+    await caretStart(1);
+    await bksp();
+    ok('真机：表格后空行退格能删掉', (await bl()).length === 1, JSON.stringify(await bl()));
+
     /* ---- J. 菜单栏：速记与对比放在最右边 ----
        它们原来分别在「文件」的第二位和「工具」的中段 —— 天天点的东西不该让人
        在菜单栏上找。两个都是一级项：速记是动作（点一次直接打开，没有下拉），
@@ -1081,13 +1653,12 @@ try {
     await closeTop();
   }
 
-  /* ---- K. 点文末空白：只把光标送回文末，不许加行 ----
-     旧内核为「带边界的块」做 insertEmptyAfter 兜底，于是文末下方随便点几次
-     就多出几个空行。新内核里文档就是文本，光标可以直接停在末行行尾 ——
-     那个兜底整条不需要，这里守的是「点几次行数都不变、光标真的到文末」。 */
+  /* ---- K. 点文末空白：只把光标送回文末，不许一直加行 ----
+     补一行本来是给「带边界的块」兜底的（代码块 / 公式块 / 表格 / 分割线：
+     块内没有可写的尾位）。以前无条件 insertEmptyAfter，于是在文末下方
+     随便点几次，文档就多出几个空行 —— 这个兜底变成了加行的入口。 */
   {
-    const blocks = () => ev(`document.querySelectorAll('#wysiwyg .cm-line').length`);
-    const docLen = () => ev(`window.__snp.editor.toMarkdown().length`);
+    const blocks = () => ev(`document.querySelectorAll('.wysiwyg > .w-block').length`);
     /* 真鼠标：位置按「最后一块下方」算，和用户看到的那片空白一致 */
     const clickBlank = async () => {
       const p = await ev(`(() => {
@@ -1108,37 +1679,32 @@ try {
     await ev(`window.__snp.commands.modeWysiwyg()`);
     await sleep(600);
     await ev(`(() => { const b = document.getElementById('findClose'); if (b && !document.getElementById('findbar').classList.contains('hidden')) b.click(); })()`);
-    const n0 = await blocks();
-    const len0 = await docLen();
     const p1 = await clickBlank();
     const n1 = await blocks();
     await clickBlank();
     await clickBlank();
     const n3 = await blocks();
-    ok('段落垫底：点文末空白不加行', n1 === n0 && n3 === n0, `${JSON.stringify(p1)} → ${n0} / ${n1} / 三次后 ${n3}`);
-    /* 光标要真的落在文末，否则「没加行」可能是因为点空了没反应 */
-    const head = await ev(`window.__snp.editor.head`);
-    ok('段落垫底：点文末空白光标落回文末', head === len0, `${head} / ${len0}`);
-    const tail = await ev(`(() => {
-      const last = [...document.querySelectorAll('#wysiwyg .cm-line')].pop();
+    ok('段落垫底：点文末空白不加行', n1 === 2 && n3 === 2, `${JSON.stringify(p1)} → ${n1} / 三次后 ${n3}`);
+    /* 光标要真的落在文末那一块里，否则「没加行」可能是因为点空了没反应 */
+    const caretTail = await ev(`(() => {
+      const root = document.querySelector('.wysiwyg');
       const a = window.getSelection().anchorNode;
       const b = a && (a.nodeType === 3 ? a.parentElement : a);
-      return !!(b && b.closest && b.closest('.cm-line') === last);
+      return !!(b && b.closest && b.closest('.w-block') === root.lastElementChild);
     })()`);
-    ok('……DOM 选区也在最后一行里', tail === true);
+    ok('段落垫底：点文末空白光标落回末段', caretTail === true);
 
-    /* 代码块垫底也一样：不再有「块边界没有可写尾位」这回事，点几次都不加行 */
+    /* 代码块垫底才补一行，而且只补一次：补出来的空段落就是新的末块 */
     await ev(`window.__snp.newTab('blank-code.md', '\`\`\`js\\nconst a = 1;\\n\`\`\`', null)`);
     await sleep(400);
     await ev(`window.__snp.commands.modeWysiwyg()`);
     await sleep(600);
-    const c0 = await blocks();
     await clickBlank();
     const c1 = await blocks();
     await clickBlank();
     await clickBlank();
     const c3 = await blocks();
-    ok('代码块垫底：点文末空白同样不加行', c1 === c0 && c3 === c0, `${c0} / ${c1} / 三次后 ${c3}`);
+    ok('代码块垫底：点文末空白补一行且只补一次', c1 === 2 && c3 === 2, `${c1} / 三次后 ${c3}`);
   }
 
   /* ---- L. 代码块：自动识别语言 / 编辑态高亮 / 一键复制 / Ctrl+A ----
@@ -1157,103 +1723,71 @@ try {
       await sleep(500);
     };
 
-    /* 语言条：语言名只取 info string（不写就显示「代码」）。
-       词法着色另有一条路：没标语言时停手 500 ms 后自动识别一次，
-       识别结果只影响颜色、不改语言条上的字（条上写的就是文件里的那一行）。 */
-    await ev(`window.__snp.newTab('code-lang.md', '\`\`\`js\\nconst a = 1;\\n\`\`\`\\n\\n第二段', null)`);
+    /* 没标语言的 JSON 块：语言条应当自己认出来，键名要真的着色 */
+    await ev(`window.__snp.newTab('code-auto.md', '\`\`\`\\n{"name": "snp", "n": 3}\\n\`\`\`\\n\\n第二段', null)`);
     await sleep(400);
     await ev(`window.__snp.commands.modeWysiwyg()`);
     await sleep(900);
     await ev(`(() => { const b = document.getElementById('findClose'); if (b && !document.getElementById('findbar').classList.contains('hidden')) b.click(); })()`);
-    /* 光标别停在围栏上：光标在块里时整块按源码显示（这是有意的，见
-       live-preview 里 FencedCode 分支的注释），那时没有语言条可看 */
-    await ev(`window.__snp.editor.setSelection(window.__snp.editor.toMarkdown().length)`);
-    await sleep(400);
     const cinfo = await ev(`(() => {
-      const bar = document.querySelector('#wysiwyg .cm-lp-codebar');
-      const lang = bar && bar.querySelector('.cm-lp-lang');
-      const btn = bar && bar.querySelector('.cm-lp-copy');
-      const r = btn && btn.getBoundingClientRect();
+      const cb = document.querySelector('.w-codeblock');
+      const attr = CSS.highlights && CSS.highlights.get('sn-tok-attr');
+      const str = CSS.highlights && CSS.highlights.get('sn-tok-str');
       return {
-        /* 语言条是个 <select>：textContent 会把全部几十个选项连起来，
-           要读的是 value（送进着色）和当前选中项的文字（给人看） */
-        lang: lang ? lang.value : null,
-        shown: lang ? ((lang.selectedOptions[0] || {}).textContent || '') : null,
-        opts: lang ? lang.options.length : 0,
-        btn: !!btn, w: r ? Math.round(r.width) : 0,
+        lang: cb && cb.querySelector('.cc-lang') ? cb.querySelector('.cc-lang').textContent : null,
+        btn: !!(cb && cb.querySelector('.cc-copy')),
+        attr: attr ? [...attr].map((r) => r.toString()) : [],
+        str: str ? str.size : 0,
       };
     })()`);
-    ok('代码块有语言条，语言名取 info string', cinfo.lang === 'js' && cinfo.shown === 'JavaScript',
-      JSON.stringify(cinfo));
-    ok('语言条是个能改语言的下拉（不是死文字）', cinfo.opts > 10, String(cinfo.opts));
-    ok('语言条上有复制按钮，且有实际尺寸（不是 0×0 的画外元素）',
-      cinfo.btn === true && cinfo.w >= 12, JSON.stringify(cinfo));
-
-    /* 词法着色：新内核挂的是 tok-* 类（`Decoration.mark`），不再是 CSS Custom
-       Highlight。两条一起验 —— 只数 span 会被「整块一个颜色」骗过去：
-       1.3.0 第一版就是这样，整段代码全是绿的（CM6 的 monospace tag 盖住了）。 */
-    const toks = await ev(`(() => {
-      const els = [...document.querySelectorAll('#wysiwyg .cm-line.cm-lp-code [class^="tok-"]')];
-      const kw = els.find((e) => e.className === 'tok-key');
-      const plain = document.querySelector('#wysiwyg .cm-line.cm-lp-code > span:not([class*="tok-"])');
-      const col = (e) => (e ? getComputedStyle(e).color : '');
-      return { n: els.length, kw: kw ? kw.textContent : null, keyCol: col(kw), plainCol: col(plain) };
-    })()`);
-    ok('代码块里的关键字有词法着色', toks.n > 0 && toks.kw === 'const', JSON.stringify(toks));
-    ok('关键字颜色与正文不同（不是整块一个色）',
-      !!toks.keyCol && toks.keyCol !== toks.plainCol, JSON.stringify(toks));
+    ok('没标语言时自动识别成 json', cinfo.lang === 'json', JSON.stringify(cinfo.lang));
+    ok('识别结果真的驱动了高亮（键名区间在）',
+      cinfo.attr.length >= 2 && cinfo.attr.every((t) => /^"[^"]+"$/.test(t)), JSON.stringify(cinfo.attr));
+    ok('语言条上有复制按钮', cinfo.btn === true);
 
     /* 一键复制：真鼠标点按钮 → 图标切对勾 → 粘回编辑器验证内容 */
     const cp = await ev(`(() => {
-      const r = document.querySelector('#wysiwyg .cm-lp-copy').getBoundingClientRect();
-      return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+      const btn = document.querySelector('.w-codeblock .cc-copy');
+      const r = btn.getBoundingClientRect();
+      return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), w: Math.round(r.width) };
     })()`);
+    ok('复制按钮有实际尺寸（不是 0×0 的画外元素）', cp.w >= 12, JSON.stringify(cp));
     await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: cp.x, y: cp.y, button: 'left', clickCount: 1 });
     await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: cp.x, y: cp.y, button: 'left', clickCount: 1 });
     await sleep(400);
-    const done = await ev(`document.querySelector('#wysiwyg .cm-lp-copy').classList.contains('done')`);
+    const done = await ev(`document.querySelector('.w-codeblock .cc-copy').classList.contains('done')`);
     ok('点复制后按钮切成对勾（说明 execCommand 真的成功了）', done === true);
 
-    /* 粘回去：光标放到文末，把剪贴板内容贴进来 */
-    await ev(`window.__snp.editor.setSelection(window.__snp.editor.toMarkdown().length)`);
-    await sleep(150);
+    /* 粘回去：光标放在第二段末尾，把剪贴板内容贴进来 */
+    await ev(`(() => {
+      const p = [...document.querySelectorAll('.wysiwyg > .w-block')].pop();
+      const t = p.querySelector('.w-text');
+      const r = document.createRange();
+      r.selectNodeContents(t); r.collapse(false);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+    })()`);
     await paste();
     const pasted = await ev(`window.__snp.getEditorText()`);
     ok('复制出去的确实是整块代码（粘回来一字不差）',
-      pasted.includes('const a = 1;'), JSON.stringify(pasted));
+      pasted.includes('{"name": "snp", "n": 3}'), JSON.stringify(pasted));
 
-    /* 没标语言时语言条写「代码」：留一条空白条会让人以为坏了 */
-    /* 文档里必须有块外的位置可停：光标在块内时整块按源码显示，没有语言条 */
-    await ev(`window.__snp.newTab('code-nolang.md', '前\\n\\n\`\`\`\\nplain text\\n\`\`\`\\n\\n后', null)`);
-    await sleep(400);
-    await ev(`window.__snp.commands.modeWysiwyg()`);
-    await sleep(700);
-    await ev(`window.__snp.editor.setSelection(0)`);
-    await sleep(300);
-    ok('没标语言时语言条写「代码」',
-      (await ev(`(() => {
-        const s = document.querySelector('#wysiwyg .cm-lp-lang');
-        return s ? ((s.selectedOptions[0] || {}).textContent || '') : '';
-      })()`)) === '代码');
-
-    /* Ctrl+A：新内核是标准编辑器语义，第一下就全选。
-       旧内核「先选本块、再选全篇」是 DOM 块模型的产物（块是独立元素，
-       全选会跨块选到不可见的壳），源码里没有这个边界。 */
+    /* Ctrl+A：代码块里第一下选自己，第二下才扩到全篇 */
     await ev(`window.__snp.newTab('code-sel.md', '\`\`\`js\\nconst a = 1;\\n\`\`\`\\n\\n第二段', null)`);
     await sleep(400);
     await ev(`window.__snp.commands.modeWysiwyg()`);
     await sleep(700);
-    await ev(`window.__snp.editor.setSelection(12)`);
-    await sleep(150);
-    await ctrlA();
-    const sel1 = await ev(`(() => {
-      const r = window.__snp.editor.view.state.selection.main;
-      return { from: r.from, to: r.to, len: r.to - r.from, all: r.to - r.from === window.__snp.editor.toMarkdown().length };
+    await ev(`(() => {
+      const t = document.querySelector('.w-code');
+      const r = document.createRange();
+      r.setStart(t.firstChild, 3); r.collapse(true);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
     })()`);
-    ok('Ctrl+A 全选整篇', sel1.all === true, JSON.stringify(sel1));
     await ctrlA();
-    const sel2 = await ev(`(() => { const r = window.__snp.editor.view.state.selection.main; return r.to - r.from; })()`);
-    ok('再按一次还是全选（不叠加、不缩小）', sel2 === sel1.len, String(sel2));
+    const sel1 = await ev(`window.getSelection().toString()`);
+    ok('代码块内 Ctrl+A 只选这一块', sel1 === 'const a = 1;', JSON.stringify(sel1));
+    await ctrlA();
+    const sel2 = await ev(`window.getSelection().toString()`);
+    ok('再按一次才扩到全文', sel2.includes('第二段'), JSON.stringify(sel2));
   }
 
   /* ---------- 语言覆盖面：类型表是唯一真源 ----------
@@ -1674,109 +2208,62 @@ try {
       String(after).includes('A 的内容') && !String(after).includes('B 的内容'), JSON.stringify(after));
   }
 
-  /* ---------- 表格：渲染成真表格 + 点格子就地改 ----------
-     旧内核的表格是 contenteditable 单元格，于是有一整类「单元格里选中后
-     加不上格式」的问题。新内核里表格是只读 widget，在它上面盖一层输入框
-     来改单格（live-preview 的 openCell）：写回只替换那一格的字符区间，
-     表格不塌、别的字节不动。想看竖线走右键「编辑源码」。 */
+  /* ---------- 表格单元格里的行内格式 ----------
+     用户原话：「表格中的内容，无法选中高亮」。选中是好的（拖选、跨格都通），
+     坏的是「选中之后加不了格式」：toggleMark / toggleInline 见到单元格就整条返回。
+     现在只拦跨格选区，单格里的加粗 / 高亮照常写回 `==…==`。 */
   {
     await ev(`window.__snp.newTab('cell-mark.md', '', null, { mode: 'wysiwyg' })`);
     await sleep(400);
     await ev(`window.__snp.commands.modeWysiwyg()`);
     await sleep(300);
-    await ev(`window.__snp.setContent('前\\n\\n| 姓名 | 城市 |\\n| --- | --- |\\n| 张三 | 北京 |\\n\\n后\\n')`);
+    await ev(`window.__snp.setContent('| 姓名 | 城市 |\\n| --- | --- |\\n| 张三 | 北京 |\\n')`);
     await sleep(700);
 
-    /* 光标移出表格：光标严格在表内时才按源码显示（那是「编辑源码」入口） */
-    await ev(`window.__snp.editor.setSelection(0)`);
-    await sleep(400);
-    const tbl = await ev(`(() => {
-      const t = document.querySelector('#wysiwyg .cm-lp-table');
-      return {
-        has: !!t,
-        ths: t ? [...t.querySelectorAll('th')].map((x) => x.textContent) : [],
-        tds: t ? [...t.querySelectorAll('td')].map((x) => x.textContent) : [],
-      };
-    })()`);
-    ok('表格渲染成真表格（表头 + 单元格）',
-      tbl.has && tbl.ths.join('|') === '姓名|城市' && tbl.tds.join('|') === '张三|北京', JSON.stringify(tbl));
-
-    /* 点格子 → 就地编辑（不是整表塌成源码） */
-    const cellRect = (row, col) => ev(`(() => {
-      const el = document.querySelector('#wysiwyg .cm-lp-table [data-row="${row}"][data-col="${col}"]');
-      if (!el) return null;
-      const r = el.getBoundingClientRect();
-      return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
-    })()`);
-    const c1 = await cellRect(1, 0);
-    await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: c1.x, y: c1.y, button: 'left', clickCount: 1 });
-    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: c1.x, y: c1.y, button: 'left', clickCount: 1 });
-    await sleep(400);
-    const ed = await ev(`(() => {
-      const i = document.querySelector('#wysiwyg .cm-lp-cell');
-      return {
-        open: !!i,
-        val: i ? i.value : null,
-        table: !!document.querySelector('#wysiwyg .cm-lp-table'),
-        src: document.querySelectorAll('#wysiwyg .cm-lp-table-src').length,
-      };
-    })()`);
-    ok('点格子就地编辑：输入框里是这一格的原文', ed.open && ed.val === '张三', JSON.stringify(ed));
-    ok('……表格没有塌成源码', ed.table === true && ed.src === 0, JSON.stringify(ed));
-
-    /* 打一个字 + Tab：落账后跳到下一格，写回只动这一格 */
-    await send('Input.insertText', { text: '三' });
-    await sleep(140);
-    await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
-    await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
-    await sleep(360);
-    const md1 = await ev(`window.__snp.getEditorText()`);
-    ok('Tab 落账：文件里只多了这一个字，别处一个字节没动',
-      md1 === '前\n\n| 姓名 | 城市 |\n| --- | --- |\n| 张三三 | 北京 |\n\n后\n', JSON.stringify(md1));
-    ok('……编辑框跳到下一格（北京）',
-      (await ev(`(document.querySelector('#wysiwyg .cm-lp-cell') || {}).value`)) === '北京');
-
-    /* Esc 收起编辑框（这一格的改动不写回） */
-    await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
-    await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
-    await sleep(250);
-    ok('Esc 收起编辑框', (await ev(`!!document.querySelector('#wysiwyg .cm-lp-cell')`)) === false);
-
-    /* 右键格子 → 「编辑源码」：渲染态下想看竖线走这条路 */
+    /* 程序化选区（不依赖鼠标轨迹）：第一格里「张三」两个字 */
     await ev(`(() => {
-      const el = document.querySelector('#wysiwyg .cm-lp-table [data-row="1"][data-col="0"]');
-      const r = el.getBoundingClientRect();
-      el.dispatchEvent(new MouseEvent('mousedown', {
-        bubbles: true, cancelable: true, button: 2,
-        clientX: r.left + 8, clientY: r.top + 8,
-      }));
-      return 1;
+      const td = document.querySelector('.w-block[data-type="table"] td');
+      const tn = [...td.childNodes].find((n) => n.nodeType === 3);
+      const r = document.createRange(); r.setStart(tn, 0); r.setEnd(tn, 2);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
     })()`);
-    await sleep(200);
-    ok('右键格子之后 isInTable 认得这一格',
-      (await ev(`window.__snp.editor.isInTable()`)) === true);
-    await ev(`window.__snp.commands.tableSource()`);
-    await sleep(400);
-    ok('「编辑源码」把这张表退回竖线原文',
-      (await ev(`!!document.querySelector('#wysiwyg .cm-lp-table-src')`)) === true);
-
-    /* 源码态：选中「张三」加高亮，写回 ==…== */
-    const a1 = String(await ev(`window.__snp.getEditorText()`)).indexOf('张三');
-    await ev(`window.__snp.editor.setSelection(${a1}, ${a1 + 2})`);
-    await sleep(150);
+    await sleep(140);
     await ev(`window.__snp.commands.highlight()`);
-    await sleep(340);
-    const one = await ev(`window.__snp.getEditorText()`);
-    ok('源码态选中后能加高亮', /==张三==/.test(one), JSON.stringify(one));
+    await sleep(320);
+    const one = await ev(`(() => ({
+      hasMark: !!document.querySelector('.w-block[data-type="table"] td mark'),
+      md: window.__snp.getEditorText(),
+    }))()`);
+    ok('单元格里选中后能加高亮', one.hasMark, JSON.stringify(one.md));
+    ok('单元格里的高亮写回 ==…==', /==张三==/.test(one.md), JSON.stringify(one.md));
 
-    /* 再点一次取消 */
-    const b1 = String(await ev(`window.__snp.getEditorText()`)).indexOf('==张三==');
-    await ev(`window.__snp.editor.setSelection(${b1 + 2}, ${b1 + 4})`);
-    await sleep(150);
+    await ev(`(() => {
+      const tn = document.querySelector('.w-block[data-type="table"] mark').firstChild;
+      const r = document.createRange(); r.setStart(tn, 0); r.setEnd(tn, tn.nodeValue.length);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+    })()`);
+    await sleep(140);
     await ev(`window.__snp.commands.highlight()`);
-    await sleep(340);
-    const off = await ev(`window.__snp.getEditorText()`);
-    ok('再点一次取消高亮', !/==/.test(off), JSON.stringify(off));
+    await sleep(320);
+    const off = await ev(`(() => ({
+      hasMark: !!document.querySelector('.w-block[data-type="table"] td mark'),
+      md: window.__snp.getEditorText(),
+    }))()`);
+    ok('单元格里再点一次取消高亮', !off.hasMark && !/==/.test(off.md), JSON.stringify(off.md));
+
+    /* 跨格：不许动结构（会把 <td> 搬进 <mark>） */
+    await ev(`(() => {
+      const tds = document.querySelectorAll('.w-block[data-type="table"] td');
+      const a = [...tds[0].childNodes].find((n) => n.nodeType === 3);
+      const b = [...tds[1].childNodes].find((n) => n.nodeType === 3);
+      const r = document.createRange(); r.setStart(a, 0); r.setEnd(b, b.nodeValue.length);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+    })()`);
+    await sleep(140);
+    await ev(`window.__snp.commands.highlight()`);
+    await sleep(320);
+    const cross = await ev(`window.__snp.getEditorText()`);
+    ok('跨格选区不改表格结构', !/==/.test(cross) && /张三 \| 北京/.test(cross), JSON.stringify(cross));
   }
 
   /* ---------- 编辑区三条视图能力（真机 WebView2） ----------
@@ -1825,19 +2312,21 @@ try {
     ok('真机：光标折叠后清掉匹配',
       (await ev(`document.querySelectorAll('.cm-selectionMatch').length`)) === 0);
 
-    /* 所见即所得用的是同一个 CM6 机制（highlightSelectionMatches），
-       只是装饰落在 #wysiwyg 里。同样不算选中的那一处，所以是三处里的两处 */
+    /* 所见即所得：同一件事走 CSS Custom Highlight API */
     await ev('window.__snp.commands.modeWysiwyg()');
-    await sleep(400);
-    const redPos = String(await ev('window.__snp.getEditorText()')).indexOf('红');
-    await ev(`window.__snp.editor.setSelection(${redPos}, ${redPos + 1})`);
-    await sleep(260);   // selectionchange → rAF → updateSelMatch
-    const same = await ev(`(() => {
-      const els = [...document.querySelectorAll('#wysiwyg .cm-selectionMatch')];
-      return { n: els.length, allRed: els.length > 0 && els.every((e) => e.textContent === '红') };
+    await sleep(320);
+    await ev(`(() => {
+      const root = window.__snp.editor.root;
+      const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      let n = null;
+      while ((n = w.nextNode())) if (n.nodeValue.includes('红')) break;
+      const r = document.createRange(); r.setStart(n, 0); r.setEnd(n, 1);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      return 1;
     })()`);
-    ok('真机：所见即所得把另外两处「红」标出来',
-      same.n === 2 && same.allRed, JSON.stringify(same));
+    await sleep(200);   // selectionchange → rAF → updateSelMatch
+    const same = await ev(`(() => { const h = CSS.highlights && CSS.highlights.get('sn-same'); return h ? h.size : -1; })()`);
+    ok('真机：所见即所得把三处「红」都标出来', same >= 3, String(same));
     ok('真机：标相同文本不改内容',
       (await ev('window.__snp.getEditorText()')) === '红 蓝 红 绿 红');
     ok('真机：标相同文本没往 DOM 插 mark',
@@ -2098,63 +2587,100 @@ try {
     ok('真机：最左侧标签仍不封口', firstColor === 'rgba(0, 0, 0, 0)', firstColor);
   }
 
-  /* ---- I5. ↑ / ↓ 跨块移动：文本内核里就是行与行之间的移动 ----
-     旧内核这一整段在守「块末尾那个不可见尾 \n」：pre-wrap 下它不生成可点击的
-     行，浏览器往回找上一行时会整块跳过、落到更前面一块去。CM6 的行就是文档里的
-    行，↑/↓ 由它自己算「上一行同一列」，那条坑不存在了。这里只验结果：
-     跨块能回到块内、只移光标、文档零改动。 */
+  /* ---- I5. 带边界块末尾留过回车时，↑ 从后一行要回到块内 ----
+     pre-wrap 末尾那个裸 \n 不生成可点击行，浏览器往回找「上一行」时会整块
+     跳过、落到更前面一块。出口（↓/→）1.2.7 已修，这里在真 WebView2 里验入口，
+     并守住两条边界：没有尾行时不抢浏览器、折行长段落第二行不抢浏览器。 */
   {
-    const up = async () => {
-      const k = { key: 'ArrowUp', code: 'ArrowUp', windowsVirtualKeyCode: 38 };
-      await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...k });
-      await send('Input.dispatchKeyEvent', { type: 'keyUp', ...k });
-      await sleep(260);
-    };
-    const lineOf = () => ev(`(() => {
-      const v = window.__snp.editor.view;
-      const n = v.state.doc.lineAt(v.state.selection.main.head);
-      return { line: n.number, text: n.text };
+    const caretIn = (idx, off) => ev(`(() => {
+      const b = document.querySelectorAll('.wysiwyg > .w-block')[${idx}];
+      const t = b && b.querySelector('.w-text');
+      if (!t) return 0;
+      const node = t.firstChild;
+      const r = document.createRange();
+      if (!node || node.nodeName === 'BR') r.setStart(t, 0);
+      else r.setStart(node, Math.min(${off}, node.nodeValue.length));
+      r.collapse(true);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      document.querySelector('.wysiwyg').focus(); return 1;
+    })()`);
+    const where = () => ev(`(() => {
+      const s = getSelection(); if (!s.rangeCount) return null;
+      const r = s.getRangeAt(0); const n = r.startContainer;
+      const el = n.nodeType === 1 ? n : n.parentElement;
+      const b = el && el.closest ? el.closest('.wysiwyg > .w-block') : null;
+      return b ? { idx: [...b.parentElement.children].indexOf(b), type: b.dataset.type || 'p',
+        off: r.startOffset, inCode: !!el.closest('.w-code'), inTex: !!el.closest('.w-tex') } : null;
     })()`);
     const scene = async (name, md) => {
       await ev(`window.__snp.newTab(${JSON.stringify(name)}, ${JSON.stringify(md)}, null)`);
       await sleep(380);
-      await ev('window.__snp.commands.modeWysiwyg()');
-      await sleep(500);
+      await ev(`window.__snp.commands.modeWysiwyg()`);
+      await sleep(480);
     };
+    /* 自己发 CDP 按键：上面那组 I3 的 arrow() 是块级局部函数，跨段引用会
+       直接「arrow is not defined」，整组探针以一条红收场（后面的断言全不跑）。 */
+    const up = async () => {
+      const k = { key: 'ArrowUp', code: 'ArrowUp', windowsVirtualKeyCode: 38 };
+      await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...k });
+      await send('Input.dispatchKeyEvent', { type: 'keyUp', ...k });
+      await sleep(300);
+    };
+    const DOC = ['前面一段', '', '```js', '甲', '乙', '', '```', '', '后面一段'].join('\n');
 
-    const DOC = ['前面一段', '', '```js', '甲', '乙', '```', '', '后面一段'].join('\n');
     await scene('up-code.md', DOC);
-    const md0 = await ev('window.__snp.getEditorText()');
-    /* 光标放到代码块后面那一段的行首，**两下** ↑ 就进到块里：空行停一格，
-       再一下直接到「乙」。中间那行围栏是零高的（见 styles.css 的
-       .cm-lp-fence-off），CM6 的竖直移动会跳过它 —— 围栏不可达，也就永远
-       不会在正文里露出 ``` 。这正是 Typora 的口径，不是漏了一格。 */
-    await ev(`window.__snp.editor.setSelection(window.__snp.editor.toMarkdown().indexOf('后面一段'))`);
-    await sleep(200);
+    const beforeMd = await ev(`window.__snp.getEditorText()`);
+    await caretIn(2, 0);
     await up();
-    await up();
-    const hit = await lineOf();
-    ok('↑ 从代码块后一段回到代码块最后一行（第 5 行「乙」）',
-      hit.line === 5 && hit.text === '乙', JSON.stringify(hit));
-    ok('↑ 只移光标，文档零改动', (await ev('window.__snp.getEditorText()')) === md0);
+    const hit = await where();
+    ok('真机：代码块末尾留过回车时 ↑ 从后一行回到代码块内',
+      hit && hit.type === 'code' && hit.inCode && hit.idx === 1, JSON.stringify(hit));
+    ok('真机：↑ 落在最后一个可见行，不越过不可见尾 \\n',
+      hit && hit.off <= 3, JSON.stringify(hit));
+    ok('真机：↑ 只移光标，文档零改动',
+      (await ev(`window.__snp.getEditorText()`)) === beforeMd);
 
-    /* 普通段落：↑ 就是上一行，不需要任何补丁 */
-    await scene('up-plain.md', ['第一行', '第二行', '第三行'].join('\n'));
-    await ev(`window.__snp.editor.setSelection(window.__snp.editor.toMarkdown().indexOf('第三行'))`);
-    await sleep(160);
+    await scene('up-plain.md', ['前面一段', '', '```js', '甲', '乙', '```', '', '后面一段'].join('\n'));
+    await caretIn(2, 0);
     await up();
-    const hit2 = await lineOf();
-    ok('段落之间 ↑ 落到上一行', hit2.line === 2 && hit2.text === '第二行', JSON.stringify(hit2));
+    const hit2 = await where();
+    ok('真机：代码块末尾没有尾行时 ↑ 也正常进代码块（浏览器本来就对）',
+      hit2 && hit2.type === 'code' && hit2.idx === 1, JSON.stringify(hit2));
 
-    /* 折行的长段落：↑ 按视觉列走，落点仍是上一行（不跳块、不丢列） */
-    await scene('up-long.md', ['前面一段', '', '甲'.repeat(90), '', '后面一段'].join('\n'));
-    const tailPos = await ev(`window.__snp.editor.toMarkdown().indexOf('后面一段')`);
-    await ev(`window.__snp.editor.setSelection(${tailPos})`);
-    await sleep(180);
+    await scene('up-math.md', ['前面一段', '', '$$', 'x^2', '$$', '', '后面一段'].join('\n'));
+    await ev(`(() => { const t = document.querySelector('.w-tex'); t.firstChild.nodeValue += '\\n'; return 1; })()`);
+    await caretIn(2, 0);
     await up();
-    await up();          // 第一下落在中间那条空行上，第二下才进折行段落
-    const hit3 = await lineOf();
-    ok('折行长段落里 ↑ 也留在上一行（第 3 行）', hit3.line === 3, JSON.stringify(hit3));
+    const hit3 = await where();
+    ok('真机：公式块末尾同样有不可见尾行时 ↑ 进公式块',
+      hit3 && hit3.type === 'math' && hit3.inTex, JSON.stringify(hit3));
+
+    /* 故意用短行：双栏窄编辑区里 10 个等宽字符会折成两行，「最后一个可见行」
+       只剩 3 个字符，行首 / 行尾按 ↑ 会分别落到那一行的最左 / 最右，看起来
+       像「丢到行尾」。短行不折，才能干净地验按视觉列落点。 */
+    const COL = ['前面一段', '', '```js', 'abcdef', '', '```', '', '后面一段'].join('\n');
+    await scene('up-col-l.md', COL);
+    await caretIn(2, 0);
+    await up();
+    const hitL = await where();
+    await scene('up-col-r.md', COL);
+    await caretIn(2, 4);
+    await up();
+    const hitR = await where();
+    ok('真机：↑ 按视觉列落点，不无脑丢到行尾',
+      hitL && hitR && hitL.type === 'code' && hitR.type === 'code'
+        && hitR.off > hitL.off && hitL.off < 6,
+      JSON.stringify({ hitL, hitR }));
+
+    await scene('up-long.md', ['前面一段', '', '```js', '甲', '', '```', '', '甲'.repeat(90)].join('\n'));
+    await caretIn(2, 60);
+    const longBefore = await where();
+    await up();
+    const longAfter = await where();
+    ok('真机：光标在折行长段落第二行时 ↑ 留在原块，入口不抢浏览器',
+      longBefore && longBefore.type === 'p' && longAfter
+        && longAfter.type === 'p' && longAfter.idx === 2,
+      JSON.stringify({ longBefore, longAfter }));
   }
 
   /* ---- I6. 文件树选中态 / 分割线独立块 / 文件右键历史版本 ----
@@ -2198,41 +2724,48 @@ try {
     await ev(`(() => { const b = document.querySelector('#dlgFoot .mini.primary') || document.getElementById('dlgClose'); if (b) b.click(); })()`);
     await sleep(250);
 
-    /* 分割线：插入时只多一行 `---`，不凭空补空行；点中它退回源码。
-       （旧断言按 .w-block[data-type] 逐块比对 —— 新内核里块就是行，
-       空行也是行，所以这里比的是**文档文本**，比 DOM 类名稳得多。） */
+    /* 分割线是独立块：不多空行、删空行不删线、能点选、能整块删除 */
     await ev(`window.__snp.newTab('hr-block.md', ${JSON.stringify('# T\n\n甲\n\n乙\n')}, null)`);
-    await sleep(300);
+    await sleep(250);
     await ev(`window.__snp.commands.modeWysiwyg()`);
-    await sleep(450);
-    await ev(`window.__snp.editor.setSelection(window.__snp.editor.toMarkdown().indexOf('甲') + 1)`);
+    await sleep(420);
+    const blocks = () => ev(`JSON.stringify([...document.querySelectorAll('#wysiwyg .w-block')].map(b => b.dataset.type + ':' + b.textContent.trim()))`);
+    await ev(`(() => { const root = document.getElementById('wysiwyg'); const b = [...root.querySelectorAll('.w-block')].find(x => x.textContent.includes('甲')); const t = b.querySelector('.w-text') || b; const r = document.createRange(); r.selectNodeContents(t); r.collapse(false); const s = getSelection(); s.removeAllRanges(); s.addRange(r); root.focus(); })()`);
     await sleep(150);
     await ev(`window.__snp.commands.hr()`);
     await sleep(350);
-    ok('真机：插入分割线只多一行 ---，不凭空补空行',
-      (await ev('window.__snp.getEditorText()')) === '# T\n\n甲\n\n---\n\n乙\n',
-      JSON.stringify(await ev('window.__snp.getEditorText()')));
-    ok('真机：插入后光标就在分割线那一行',
-      (await ev(`window.__snp.editor.lineText`)) === '---',
-      JSON.stringify(await ev(`window.__snp.editor.lineText`)));
+    const b1 = await blocks();
+    ok('真机：插入分割线不再凭空多一个空段落',
+      b1 === JSON.stringify(['h1:T', 'p:甲', 'hr:', 'p:乙']), b1);
+    ok('真机：插入后分割线本身被选中，块手柄出现',
+      (await ev(`window.__snp.editor.blockSel?.dataset.type || ''`)) === 'hr'
+        && (await ev(`!document.getElementById('wHandle').classList.contains('hidden')`)) === true);
 
-    /* 光标移开就画成一条线 */
-    await ev(`window.__snp.editor.setSelection(0)`);
-    await sleep(350);
-    ok('真机：分割线渲染成一条线', (await ev(`document.querySelectorAll('#wysiwyg .cm-lp-hr hr').length`)) === 1);
+    await ev(`(() => { const w = window.__snp.editor; const hr = [...document.querySelectorAll('#wysiwyg .w-block')].find(b => b.dataset.type === 'hr'); const p = w.insertEmptyAfter(hr); w.clearBlockSel(); w.placeCaretStart(p); w.flush(); })()`);
+    await sleep(200);
+    await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', windowsVirtualKeyCode: 8, code: 'Backspace', key: 'Backspace' });
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', windowsVirtualKeyCode: 8, code: 'Backspace', key: 'Backspace' });
+    await sleep(320);
+    const b2 = await blocks();
+    ok('真机：删除分割线下的空行不连线条一起删',
+      b2 === JSON.stringify(['h1:T', 'p:甲', 'hr:', 'p:乙'])
+        && (await ev(`window.__snp.editor.blockSel?.dataset.type || ''`)) === 'hr', b2);
 
-    /* 点一下这条线 → 退回源码，可以改 / 删 */
-    const hrRect = await ev(`(() => {
-      const h = document.querySelector('#wysiwyg .cm-lp-hr');
-      const b = h.getBoundingClientRect();
-      return { x: Math.round(b.left + b.width / 2), y: Math.round(b.top + b.height / 2) };
-    })()`);
-    await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: hrRect.x, y: hrRect.y, button: 'left', clickCount: 1, buttons: 1 });
-    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: hrRect.x, y: hrRect.y, button: 'left', clickCount: 1, buttons: 0 });
-    await sleep(300);
-    ok('真机：点中分割线退回源码（可直接编辑）',
-      (await ev(`document.querySelectorAll('#wysiwyg .cm-lp-hr-src').length`)) === 1,
-      JSON.stringify(await ev(`window.__snp.editor.lineText`)));
+    const hrRect = await ev(`(() => { const h = document.querySelector('#wysiwyg .w-hr'); const b = h.getBoundingClientRect(); return JSON.stringify({ x: Math.round(b.left + b.width / 2), y: Math.round(b.top + b.height / 2) }); })()`);
+    const q = JSON.parse(hrRect);
+    await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: q.x, y: q.y, button: 'left', clickCount: 1, buttons: 1 });
+    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: q.x, y: q.y, button: 'left', clickCount: 1, buttons: 0 });
+    await sleep(280);
+    ok('真机：点中分割线能选中并给出可见选中态',
+      (await ev(`window.__snp.editor.blockSel?.dataset.type || ''`)) === 'hr'
+        && (await ev(`document.querySelectorAll('#wysiwyg .w-hr.w-sel').length`)) === 1);
+    await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', windowsVirtualKeyCode: 46, code: 'Delete', key: 'Delete' });
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', windowsVirtualKeyCode: 46, code: 'Delete', key: 'Delete' });
+    await sleep(320);
+    const b3 = await blocks();
+    ok('真机：选中后按 Delete 删掉整块分割线',
+      b3 === JSON.stringify(['h1:T', 'p:甲', 'p:乙'])
+        && !(await ev(`window.__snp.getEditorText()`)).includes('---'), b3);
 
     /* 合并窗口在 Rust 侧，只有真调后端才验得到。用唯一路径，免得历次探针
        留下的快照混进条数。这里存的是「即将被覆盖的旧版」，所以合并应当跳过、
@@ -2437,6 +2970,9 @@ try {
 }
 
 let bad = 0;
-for (const r of out) if (!r.pass) bad++;
+for (const r of out) {
+  if (!r.pass) bad++;
+  console.log(`  ${r.pass ? 'ok  ' : 'FAIL'} ${r.name}${r.extra ? '  → ' + r.extra : ''}`);
+}
 console.log(`\n${out.length - bad}/${out.length} 通过`);
 process.exit(bad ? 1 : 0);

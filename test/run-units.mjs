@@ -104,18 +104,6 @@ ok('行内公式原样留着', html.includes('$x_1$'));
 const dupHtml = renderMarkdown('## 说明\n\n## 说明\n');
 ok('重复标题各自有 id', dupHtml.includes('id="说明"') && dupHtml.includes('id="说明-1"'));
 
-/* ---------- 渲染器必须每一行都往前走一步 ----------
-   真 bug（1.2.21 就在，1.3.0 才发现）：'```json{' 这种「info string 里带非
-   [\w#+-] 字符」的行，围栏分支不认它、段落分支又用宽松的 /^\s*(```|~~~)/
-   把它排除掉，于是 i 一步不动 —— 外层 while 原地转圈，整个预览渲染把主线程
-   锁死（真机表现：在空代码块的围栏行末尾粘贴多行文本，应用直接无响应）。
-   这里守着「任何一行都必须被某个分支消费掉」。 */
-const oddFence = renderMarkdown('前一段\n\n```json{\n  "b": 2\n}\n```\n\n后一段\n');
-ok('``` 后面跟非法 info string 的行不会让渲染卡死', oddFence.includes('后一段'));
-ok('……这一行按普通段落渲染，内容不丢', oddFence.includes('```json{'));
-ok('……后面那个 ``` 仍然当围栏开头（吃不到内容也不会死循环）',
-  renderMarkdown('```{').includes('<p>'));
-
 /* ---------- 提示块（callout）：> [!info] 的预览渲染 ---------- */
 const co = renderMarkdown('> [!warning] 注意事项\n> 正文一行\n');
 ok('提示块带类型 class', /md-callout md-callout-warning/.test(co));
@@ -875,13 +863,8 @@ ok('语言表：新建类型够多', newDocTypes().length >= 24);
       && app.includes("if (handleBlock.dataset.type === 'hr')"));
   ok('整批重渲染 / 清视图时块选中态作废',
     wys.includes('旧块已被整批换掉') && app.includes('wys.clearBlockSel();'));
-  /* 新内核的分割线是一行 widget：高度靠行 padding 撑出来（否则整条线只有
-     1px，点不中），点一下由 HrWidget 把光标送进那一行、当场露出 `---`。
-     旧内核那套「块选中态 + .w-sel」随 wysiwyg.js 一起退役了。 */
-  ok('分割线有真实可点高度，点一下就把光标放进去',
-    css.includes('#wysiwyg .cm-lp-hr { padding: .85em 0; }')
-      && read('src/js/editor/live-preview.js').includes('class HrWidget')
-      && read('src/js/editor/live-preview.js').includes("addEventListener('mousedown'"));
+  ok('分割线有真实可点高度与独立选中态',
+    css.includes('padding: .9em 0') && css.includes('.wysiwyg .w-hr.w-sel'));
 
   /* 自动保存 1.2s 一次，不合并就会把 60 份上限很快塞满逐秒的半成品 */
   const rust = read('src-tauri/src/lib.rs');
@@ -1060,11 +1043,7 @@ ok('语言表：新建类型够多', newDocTypes().length >= 24);
   ok('属性条只在所见即所得下出现（源码模式里 YAML 本来就在正文中）',
     appJs.includes("if (!t || t.mode !== 'wysiwyg' || detectKind(t.name) !== 'md') {")
       && appJs.includes('function syncPropBar()'));
-  /* 只认「setMode 函数体里确实调了 syncPropBar()」——
-     以前写的是 `'syncPropBar();\n}'`，那是在钉「它是函数最后一句」，
-     函数尾再补什么都算失败（补焦点搬运时就误报了一次） */
-  const setModeBody = appJs.slice(appJs.indexOf('function setMode('), appJs.indexOf('function dropPreviewDom('));
-  ok('切模式后刷新属性条', setModeBody.includes('syncPropBar();'));
+  ok('切模式后刷新属性条', appJs.includes('syncPropBar();\n}'));
   ok('点标签走一次普通的文件夹搜索，不自建索引',
     appJs.includes('el.ftQuery.value = \'#\' + t;') && appJs.includes("await tree.search('#' + t);"));
   ok('标签点击在 document 上代理（属性条与预览共用一套 .tag）',

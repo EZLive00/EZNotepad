@@ -1299,13 +1299,6 @@ input[type="search"] { cursor: var(--cur-text), text; }
 ::highlight(sn-find-cur) { background-color: var(--amber-9); color: var(--gray-12); }
 body[data-theme="dark"] ::highlight(sn-find) { background-color: color-mix(in srgb, var(--amber-9) 20%, transparent); }
 
-/* 所见即所得的查找高亮是 CM6 的目录装饰（不是 CSS Custom Highlight）：
-   匹配是按**源码偏移**算的，DOM 里只渲染视口那几行，建不出全部 Range。
-   颜色跟上面那两条保持一致，切换模式时观感不变。 */
-#wysiwyg .cm-find { background-color: color-mix(in srgb, var(--amber-9) 30%, transparent); border-radius: 2px; }
-#wysiwyg .cm-find-cur { background-color: var(--amber-9); color: var(--gray-12); border-radius: 2px; }
-body[data-theme="dark"] #wysiwyg .cm-find { background-color: color-mix(in srgb, var(--amber-9) 20%, transparent); }
-
 /* 选中一段文字时，把当前文档里相同的文字一并标出来（纯视图，不动 DOM）。
    和 CM6 的 .cm-selectionMatch 共用 --sel-match-bg，两种编辑模式看起来是一套；
    走中性灰而不是黄/橙：黄是文档里 ==高亮== 的语义，橙是选区，都不能抢。 */
@@ -1595,14 +1588,94 @@ body[data-zen="1"] .win-title { color: var(--fg-faint); }
 .ctx-pill.danger:hover:not(:disabled) { background: var(--danger-solid); color: var(--danger-fg); }
 .ctx-pill:disabled { opacity: .34; }
 
-/* ============ 切块面板 / 拖放提示 / 预览的换行与图表 ============
-   所见即所得的正文样式在下面「所见即所得（CM6 live preview）」那一节。
-   这里只剩切块面板、拖放提示，以及预览侧共用的几条。
-   旧内核（wysiwyg.js）的 .w-block / .w-handle / .w-bmenu 那套随它一起退役了：
-   两边共用同一个 #wysiwyg 容器，旧规则会命中 CM6 里同名的 w-* 行，
-   给行塞上 margin —— 而 CM6 只按 getBoundingClientRect 量行高，
-   margin 不计入块高度，光标与点击定位会整体错位。 */
+/* ============ WYSIWYG 块级编辑视图 ============ */
+/* 注意：.wysiwyg 的 padding / 字体 / 行高统一写在「工作区」那一节，
+   这里不要重复声明，否则会悄悄盖掉那边的 max() 居中规则
+   content-visibility 只对超大文档（块数过 BIG_DOC_BLOCKS 阈值，由 JS 挂
+   .cv-auto）启用：万块级文档首布局 11s → 2.3s。曾在 headless 里测到过
+   cv:auto 块内 execCommand 后选区被重置，复核未能复现（视口内外插入选区
+   均正常），但小文档没有收益，维持默认不开。 */
+.wysiwyg .w-block { position: relative; }
+.wysiwyg.cv-auto .w-block {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 28px;
+}
 
+/* ---- 视口渲染的上下占位（大文档专用，见 wysiwyg.js 的 _applyPadding）----
+   窗口外内容的真实高度用伪元素顶出来，而不是 padding：clientHeight 含
+   padding，几百万像素的 padding 会把滚动容器自己撑高，滚动条直接失效。
+   伪元素还有个好处 —— 不进 root.children，块下标与 firstElementChild
+   这些假定（索引、序列化、光标恢复）统统不受影响。 */
+.wysiwyg.virtual::before,
+.wysiwyg.virtual::after {
+  content: '';
+  display: block;
+  height: 0;
+  pointer-events: none;
+}
+.wysiwyg.virtual::before { height: var(--vpad-top, 0); }
+.wysiwyg.virtual::after { height: var(--vpad-bot, 0); }
+
+/* 关掉浏览器的滚动锚定：视口渲染在 _windowAt 里自己补 delta（见那里的注释），
+   浏览器再按「内容变了、把可见内容钉住」补一次，两次叠加 → 每搬一次窗口
+   scrollTop 就被顶前一两千像素，滚动像被人拽着跑。只对视口模式关，
+   普通文档继续吃原生锚定的好处。 */
+.wysiwyg.virtual { overflow-anchor: none; }
+
+/* ---- 行首块手柄：只在光标 / 鼠标所在那一行浮出，落在正文左侧的留白里 ----
+   它挂在 .edit-wrap 上而不是块里，所以浏览器选不中、退格删不到、也不会被
+   sweepBlock 当成游离节点吸进正文（.w-hash 踩过这个坑）。 */
+.w-handle { position: absolute; z-index: 6; display: flex; align-items: center; gap: 1px; }
+.w-handle.hidden { display: none; }
+.wh-btn {
+  width: 21px; height: 22px; padding: 0; flex: none;
+  display: flex; align-items: center; justify-content: center;
+  border: none; border-radius: var(--r-1); background: transparent;
+  /* 手柄是这个编辑器唯一的块级入口，常驻显示，颜色必须是正文级 ——
+     先试过 --fg-soft，六个点的抓手看着还是一层灰 */
+  color: var(--fg); cursor: pointer;
+}
+.wh-btn:hover { background: var(--bg-hover); color: var(--fg); }
+.wh-btn.open { background: var(--bg-hover); color: var(--accent); }
+.wh-btn .ico { width: 16px; height: 16px; }
+/* 抓手图标是六段「零长度线段」靠 stroke-linecap:round 画出来的点，
+   viewBox 24 缩到 16px 后 1.75 的线宽实际只剩 1.17px，六个点糊成一层浅灰。
+   加粗到 3 才有 2px 的实心点；加号是长线，不动 */
+.wh-btn.wh-grip .ico { stroke-width: 3; }
+
+/* ---- 块类型菜单 ---- */.w-bmenu {
+  position: absolute; z-index: 60; min-width: 190px; padding: 6px;
+  /* 「插入」模式有 14 项，窗口矮时会顶出屏幕；给个上限让它自己滚 */
+  max-height: calc(100vh - 24px); overflow: auto;
+  background: var(--bg-float); border-radius: var(--r-2);
+  box-shadow: var(--shadow-float);
+}
+.w-bmenu.hidden { display: none; }
+.w-bmenu .bm-head {
+  padding: 5px 8px 2px; font-size: var(--fs-1); font-weight: 600;
+  color: var(--fg-faint); text-transform: uppercase;
+}
+.w-bmenu .bm-item {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 6px 8px; border: none; background: transparent; border-radius: var(--r-1);
+  font: inherit; font-size: var(--fs-2); color: var(--fg); text-align: left; cursor: pointer;
+}
+/* 键盘高亮的 .hot 和 hover 用同一层底色：焦点始终留在编辑区（菜单抢焦点会吃掉
+   正文选区），所以「当前项」只能靠这个类来表达 */
+.w-bmenu .bm-item:hover, .w-bmenu .bm-item.hot { background: var(--bg-hover); }
+.w-bmenu .bm-item .ico { width: 14px; height: 14px; color: var(--fg-soft); }
+.w-bmenu .bm-item.checked { color: var(--accent); }
+.w-bmenu .bm-item.checked .ico { color: var(--accent); }
+/* 破坏性项只在高亮时染红：平时保持普通文字色，面板底部不该像一直挂着警告。
+   键盘高亮用 .hot（焦点始终留在编辑区），鼠标 hover 用同一层底色 */
+.w-bmenu .bm-item.danger:hover, .w-bmenu .bm-item.danger.hot { background: var(--danger-solid); color: var(--danger-fg); }
+.w-bmenu .bm-item.danger:hover .ico, .w-bmenu .bm-item.danger.hot .ico { color: var(--danger-fg); }
+.w-bmenu .bm-sep { height: 1px; margin: 4px 6px; background: var(--line); }
+.w-bmenu .bm-kbd { margin-left: auto; padding-left: 18px; font-size: var(--fs-1); color: var(--fg-soft); }
+
+/* ---- 拖入提示 ---- */
+/* 原生拖放通道下页面收不到 dragover，只能靠 Tauri 给的 enter/leave 事件自己画。
+   虚线框贴窗口边，中间一块浮层说明「松手会怎样」 */
 .drop-hint {
   position: fixed; inset: 8px; z-index: 80; pointer-events: none;
   display: flex; align-items: center; justify-content: center;
@@ -1656,71 +1729,164 @@ body[data-zen="1"] .win-title { color: var(--fg-faint); }
 }
 .new-go:disabled { color: var(--fg-faint); cursor: default; opacity: .6; }
 .new-go:not(:disabled):hover { border-color: var(--accent); background: var(--bg-hover); }
-
+.wysiwyg .w-h[data-type="h1"] { font-size: 1.9em; font-weight: 680; margin: 1.5em 0 .5em; line-height: 1.28; letter-spacing: -.022em; }
 /* h2 不再画下边框：中文里那条横线会把标题压成「分节条」，显旧。
    改用「上方大间距 + 字号差」来分段，视线一样能一刀切开 */
-
+.wysiwyg .w-h[data-type="h2"] { font-size: 1.42em; font-weight: 660; margin: 1.85em 0 .55em; line-height: 1.32; letter-spacing: -.012em; }
+.wysiwyg .w-h[data-type="h3"] { font-size: 1.16em; font-weight: 650; margin: 1.55em 0 .45em; line-height: 1.4; }
+.wysiwyg .w-h[data-type="h4"],
+.wysiwyg .w-h[data-type="h5"],
+.wysiwyg .w-h[data-type="h6"] { font-size: 1.02em; font-weight: 650; margin: 1.35em 0 .35em; }
 /* 第一个块贴顶：不让标题自带上边距，否则正文顶部的呼吸感全被吃掉 */
-
+.wysiwyg > .w-block:first-child { margin-top: 0; }
+.wysiwyg .w-p { margin: .85em 0; }
 /* 标题的 ### 标记：在标题行首按退格时亮出来，可以一级一级往回删 */
-
+.wysiwyg .w-hash {
+  color: var(--fg-faint); font-weight: 400; letter-spacing: .02em;
+  margin-right: .3em; user-select: none; cursor: default;
+}
 /* 列表：data-indent 通过 --li-indent 换算成视觉缩进，标记列固定宽度对齐 */
-
+.wysiwyg .w-li {
+  display: flex; align-items: baseline; gap: 8px; margin: .28em 0;
+  padding-left: calc(1.15em + var(--li-indent, 0) * 1.55em);
+}
 /* 标记用中性灰：整屏唯一的蓝点应该留给「当前态」，而不是每一行项目符号 */
-
+.wysiwyg .w-li-marker {
+  color: var(--fg-faint); flex: none; min-width: 1.15em; text-align: right;
+  user-select: none; font-variant-numeric: tabular-nums; font-size: .96em;
+}
+.wysiwyg .w-li[data-list="task"] .w-li-marker { display: none; }
+.wysiwyg .w-check {
+  flex: none; width: 14px; height: 14px; margin: 0 2px 0 0;
+  accent-color: var(--accent); cursor: pointer; position: relative; top: 1px;
+}
+.wysiwyg .w-task[data-checked="1"] > .w-text { color: var(--fg-faint); text-decoration: line-through; }
 /* 引用 = 一块比纸面浅一档的底色（--bg-soft，与代码块、表格头同一类「纸面坑」）。
    ⛔ 不再画左边条：底色已经说明「这段被引用」，再叠一条彩边就是两层装饰，
    也正是最容易被读成「卡片」的那种造型。
    底色只比纸面暗/亮一档 —— 引用是正文的一部分，不能跳出来抢标题的位置 */
-
+.wysiwyg .w-bq {
+  background: var(--bg-soft);
+  border-radius: var(--r-2);
+  margin: .95em 0 .95em calc(var(--bq-indent, 0) * 1.55em);
+  padding: .5em 1em; color: var(--fg-soft);
+}
 /* 连续的引用行在视觉上连成一块。
    注意必须把**前行**的 margin-bottom 也清零 —— 相邻外边距折叠取大者，
    只把后行的 margin-top 置 0 的话，折叠结果仍是前行的 .95em，框会断成一节一节。
    「前行跟着紧凑引用」这个后视条件用 JS 打的 data-bq-tail 表达，不能用 :has(+ ...)：
    Chromium 对 :has 的失效判定是插入时沿兄弟链重算，万块级文档分块载入时
    每次 append 都触发全量重算，实测每批 2500 块从 4ms 恶化到 4s+（O(n²) 载入） */
-
+.wysiwyg .w-bq + .w-bq { margin-top: 0; }
 /* 组内续行：上下 padding 清掉、内外两侧圆角抹平，否则每行自带 .5em + 圆角，
    整段会变成一串小胶囊 */
-
+.wysiwyg .w-bq[data-bq-tail] { margin-bottom: 0; padding-bottom: 0; border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
 /* 组内续行把上 padding 也清掉：每块自带 .5em，叠两份就是「两个块」的行距。
    清掉后行距与普通段落完全一致 */
-
+.wysiwyg .w-bq + .w-bq:not([data-bq-start]) { padding-top: 0; border-top-left-radius: 0; border-top-right-radius: 0; }
 /* data-bq-start = 空行断出来的独立引用：恢复与上一条的间距，两个框各自完整
    （不需要专门恢复 margin-bottom/padding-bottom —— 那正是基础值，
    前行没打 data-bq-tail 时自然就是它们） */
-
+.wysiwyg .w-bq + .w-bq[data-bq-start] { margin-top: .95em; padding-top: .5em; }
 /* 提示块：引用块 + [!info] 标记，四色染色 + 标题行（.w-co-head 非可编辑）。
    data-co-follow = 提示块的正文续行，染同一色让整个框看起来是一块 */
 /* 提示块：颜色只落在底色和标题上，不再画左边条 —— 四色底已经够分辨，
    再加一条彩边就是两层装饰（也正是最容易被读成「卡片」的那种造型） */
-
-
+.wysiwyg .w-bq[data-callout],
+.wysiwyg .w-bq[data-co-follow] { border-left: none; background: var(--co-bg, var(--accent-soft)); }
+.wysiwyg .w-bq[data-callout="info"],    .wysiwyg .w-bq[data-co-follow="info"]    { --co-c: var(--co-info);   --co-bg: var(--co-info-bg); }
+.wysiwyg .w-bq[data-callout="warning"], .wysiwyg .w-bq[data-co-follow="warning"] { --co-c: var(--co-warn);   --co-bg: var(--co-warn-bg); }
+.wysiwyg .w-bq[data-callout="danger"],  .wysiwyg .w-bq[data-co-follow="danger"]  { --co-c: var(--co-danger); --co-bg: var(--co-danger-bg); }
+.wysiwyg .w-bq[data-callout="success"], .wysiwyg .w-bq[data-co-follow="success"] { --co-c: var(--co-ok);     --co-bg: var(--co-ok-bg); }
+.wysiwyg .w-co-head {
+  display: flex; align-items: center; gap: 6px;
+  font-weight: 600; font-size: var(--fs-1); color: var(--co-c, var(--accent));
+  margin-bottom: 3px; user-select: none;
+}
+.w-co-head .co-ico {
+  width: 14px; height: 14px; flex: none;
+  fill: none; stroke: currentColor; stroke-width: 2;
+  stroke-linecap: round; stroke-linejoin: round;
+}
 /* 分割线是独立块：margin 区域不属于元素盒、点不到，所以用 padding 撑出
    一条真正可点的高度（总间距仍与原来的 2.1em 相当）。选中态用状态色，
    不和「鼠标悬浮」的灰底混。 */
-
+.wysiwyg .w-hr { margin: 1.2em 0; padding: .9em 0; cursor: pointer; user-select: none; }
+.wysiwyg .w-hr hr { border: none; border-top: var(--bw) solid var(--line-strong); }
+.wysiwyg .w-hr.w-sel { background: var(--accent-soft); border-radius: 4px; }
+.wysiwyg .w-hr.w-sel hr { border-top-color: var(--accent); }
 /* 所见即所得里的公式只染色：真渲染交给预览（往 contenteditable 塞 KaTeX
    的 DOM，退格删不掉、光标会卡住）。染色是为了让人一眼认出这是公式而不是排版符号 */
+.wysiwyg .w-math {
+  background: var(--bg-soft); border-radius: 0; padding: 0 1px;
+  font-family: var(--font-mono); font-size: .94em; color: var(--fg-soft);
+}
 
 /* 块级公式：一个整体块，内容是裸 TeX。$$ 用伪元素画出来（不进 DOM），
    所以序列化时不会多一个也不会少一个 */
-
+.wysiwyg .w-mathblock {
+  background: var(--bg-soft);
+  border-radius: var(--r-1); padding: 9px 13px; margin: .95em 0;
+  font-family: var(--font-mono); font-size: .94em; color: var(--fg-soft);
+  white-space: pre-wrap;
+}
+.wysiwyg .w-mathblock::before { content: "$$ "; color: var(--fg-faint); }
+.wysiwyg .w-mathblock::after { content: " $$"; color: var(--fg-faint); }
 /* 代码块：去掉描边，用一块比正文略沉的底 + 圆角，边界靠底色而不是线 */
-
+.wysiwyg .w-codeblock { background: var(--code-bg); border-radius: var(--r-2); margin: 1.15em 0; overflow: hidden; box-shadow: inset 0 0 0 var(--bw) var(--line); }
+.wysiwyg .w-codebar {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 3px 8px 3px 14px; font-size: var(--fs-1); color: var(--fg-faint);
+  letter-spacing: .06em; border-bottom: var(--bw) solid var(--line);
+}
+.wysiwyg .cc-lang { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* 复制按钮：默认不现身，鼠标落在代码块上才淡出来 —— 每块代码都挂一个常驻
    按钮，等于让工具栏长在正文里。点中后图标换成对勾，1.2s 自己退回 */
-
+.wysiwyg .cc-copy {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: 0 0 auto; width: 22px; height: 22px; padding: 0;
+  border: 0; border-radius: var(--r-2); background: transparent;
+  color: var(--fg-faint); cursor: pointer;
+  opacity: 0;
+}
+.wysiwyg .w-codeblock:hover .cc-copy,
+.wysiwyg .cc-copy:focus-visible { opacity: 1; }
+.wysiwyg .cc-copy:hover { background: var(--bg-hover); color: var(--fg); }
+.wysiwyg .cc-copy .ico { width: 13px; height: 13px; stroke-width: 2; }
+.wysiwyg .cc-copy .cc-ico-done { display: none; color: var(--tok-str); }
+.wysiwyg .cc-copy.done .cc-ico-copy { display: none; }
+.wysiwyg .cc-copy.done .cc-ico-done { display: block; }
+.wysiwyg .w-text { outline: none; }
+.wysiwyg .w-code { display: block; white-space: pre-wrap; font-family: var(--font-mono); font-size: var(--fs-2); line-height: 1.68; padding: 12px 14px; }
 /* white-space: pre-wrap 与 .md code 同一个理由：码里的空格是内容，折没了光标
    就进不去（见 .md code 上方那段）。三处（所见即所得 / 预览 / 导出）必须同值 */
-
+.wysiwyg code { background: var(--code-bg); padding: .12em .4em; border-radius: var(--r-1); font-family: var(--font-mono); font-size: .88em; white-space: pre-wrap; box-shadow: inset 0 0 0 var(--bw) var(--line); }
+.wysiwyg a { color: var(--accent); }
+.wysiwyg .w-img { max-width: 100%; max-height: 320px; border-radius: var(--r-2); margin: .3em 0; }
 /* 手动指定了尺寸就按尺寸来，别再被 320px 的天花板压回去 */
-
+.wysiwyg .w-img[width], .wysiwyg .w-img[height] { max-height: none; }
 /* 右下角 14px 是改宽的抓手（命中判定在 wysiwyg.handlePointerDown），
    光标由 JS 在悬停时切；拖拽中给一圈 accent 描边，确认操作落在这张图上 */
+.wysiwyg .w-img { -webkit-user-drag: none; }
+.wysiwyg .w-img.w-img-resizing { outline: var(--ring); outline-offset: 2px; }
 
 /* 表格：编辑态 */
 /* 编辑态保留竖线（单元格边界要靠它定位光标），但压到最淡的一档 */
+.wysiwyg .w-table { margin: 1.2em 0; overflow-x: auto; }
+.wysiwyg .w-table table { border-collapse: collapse; font-size: .94em; min-width: 100%; }
+.wysiwyg .w-table th,
+.wysiwyg .w-table td {
+  border: var(--bw) solid var(--line); padding: 7px 11px; min-width: 4.5em;
+  vertical-align: top; outline: none; line-height: 1.6;
+}
+.wysiwyg .w-table th { background: var(--bg-soft); font-weight: 620; text-align: left; }
+.wysiwyg .w-table td:focus,
+.wysiwyg .w-table th:focus { background: var(--accent-soft); box-shadow: inset 0 0 0 1.5px var(--accent); }
+.wysiwyg .w-table tbody tr:hover td { background: color-mix(in srgb, var(--bg-soft) 55%, transparent); }
+.wysiwyg .w-block:focus-within { }
+.wysiwyg .w-text:empty::after { content: ""; }
+.wysiwyg > .w-p:last-child .w-text,
+.wysiwyg .w-h .w-text { }
 
 /* ================= 行显示模式：自动换行 / 不换行 =================
    body[data-nowrap] 由 app.js 的 applyWrap() 开关（菜单「视图」、三处右键）。
@@ -1738,17 +1904,25 @@ body[data-nowrap] .preview-body { overflow-x: auto; white-space: nowrap; }
 body[data-nowrap] .preview-body > *,
 body[data-nowrap] .preview-body > .md { max-width: none; margin-inline: 0; }
 /* 所见即所得：左右留白退回最小档，别让「居中收窄」把长行挤在一半宽里 */
-
+body[data-nowrap] .wysiwyg {
+  overflow-x: auto; white-space: nowrap;
+  padding-left: var(--read-gutter);
+  padding-right: var(--read-gutter);
+}
 /* 自己声明过 white-space 的块不会继承容器，逐个改回不折行的那一档。
    行内码也要跟上：它现在是 pre-wrap（为了空格不被折没），不覆盖的话
    长行不折、只有码里的空格在折，画面更怪 */
+body[data-nowrap] .wysiwyg .w-code,
+body[data-nowrap] .wysiwyg .w-mathblock,
+body[data-nowrap] .wysiwyg code,
 body[data-nowrap] .md code,
-body[data-nowrap] .plainview{ white-space: pre; }
+body[data-nowrap] .plainview { white-space: pre; }
 
 /* 自动换行时，超长的「词」也要折：一长串没有空格的 URL / ID / 日志行，
    在 word-break: normal 下会整段溢出，看起来跟没开换行一样。
    不换行的那一侧不需要它 —— 那儿本来就靠横向滚动。 */
-body:not([data-nowrap]) .preview-body{ overflow-wrap: break-word; }
+body:not([data-nowrap]) .preview-body,
+body:not([data-nowrap]) .wysiwyg { overflow-wrap: break-word; }
 
 /* ---- ```mermaid 渲染出的图 ----
    背景用 --bg-soft 而不是白：深色主题下图里的黑字会看不见，mermaid 的 dark
@@ -1829,232 +2003,3 @@ body:not([data-nowrap]) .preview-body{ overflow-wrap: break-word; }
   /* 预览里的 JSON 校验横幅不该进 PDF：那是屏幕上的提示，不是文档内容 */
   #printRoot .json-err { display: none !important; }
 }
-
-/* ============================================================================
-   行内所见即所得（CM6 live preview）
-   ----------------------------------------------------------------------------
-   这里的 DOM 是 CM6 的：每一行是一个 .cm-line，标记符号被装饰藏起来。
-   旧内核那套 .w-block / .w-text 的规则不再命中，所以这一节自成一体。
-
-   ⛔ 间距一律用 padding，不用 margin：CM6 按 getBoundingClientRect 量行高，
-      margin 不计入块高度，光标与点击定位会整体偏移半行。
-   ========================================================================== */
-/* 围栏行（``` / ~~~）：内容已经被换成零宽，这里把行高压掉，代码块上下不留空行。
-   用 height 而不是 display:none —— CM6 靠 getBoundingClientRect 量行高，
-   藏掉元素会让它的整篇坐标表错位（点击、光标、滚动全跟着偏）。 */
-#wysiwyg { padding: 0; overflow: hidden; }
-#wysiwyg .cm-line.cm-lp-fence-off {
-  height: 0; min-height: 0; padding: 0; margin: 0;
-  line-height: 0; font-size: 0; overflow: hidden;
-}
-#wysiwyg .cm-editor { height: 100%; background: transparent; }
-/* ⛔ overflow 必须两轴都给 `auto`：只写 overflow-y 时另一轴的计算值不是
-   `auto`（实测拿回来是 hidden），「不换行」下长行虽然撑出了 scrollWidth，
-   却没有滚动条可拖 —— 表现为「切了不换行，长行还是只能看到开头」。 */
-#wysiwyg .cm-scroller { overflow: auto; scrollbar-gutter: stable; }
-
-/* ---- 标题 ---- */
-#wysiwyg .cm-lp-h { font-weight: 680; color: var(--fg); }
-#wysiwyg .cm-lp-h1 { font-size: 1.9em; line-height: 1.3; letter-spacing: -.022em; padding: .85em 0 .2em; }
-#wysiwyg .cm-lp-h2 { font-size: 1.42em; line-height: 1.34; letter-spacing: -.012em; padding: .95em 0 .18em; font-weight: 660; }
-#wysiwyg .cm-lp-h3 { font-size: 1.16em; line-height: 1.42; padding: .8em 0 .15em; font-weight: 650; }
-#wysiwyg .cm-lp-h4,
-#wysiwyg .cm-lp-h5,
-#wysiwyg .cm-lp-h6 { font-size: 1.02em; line-height: 1.5; padding: .9em 0 .15em; font-weight: 650; }
-#wysiwyg .cm-content > .cm-line:first-child { padding-top: 0; }
-
-/* ---- 引用 / 提示块 ---- */
-#wysiwyg .cm-lp-bq {
-  border-left: 3px solid var(--line-strong);
-  padding-left: 14px; padding-right: 8px;
-  color: var(--fg-soft);
-}
-#wysiwyg .cm-lp-bq[data-callout] {
-  border-left: none; border-radius: var(--r-2);
-  background: var(--co-bg, var(--accent-soft));
-  padding-left: 16px; margin: 0;
-  color: var(--fg);
-}
-#wysiwyg .cm-lp-co-info    { --co-c: var(--co-info);   --co-bg: var(--co-info-bg); }
-#wysiwyg .cm-lp-co-warning { --co-c: var(--co-warn);   --co-bg: var(--co-warn-bg); }
-#wysiwyg .cm-lp-co-danger  { --co-c: var(--co-danger); --co-bg: var(--co-danger-bg); }
-#wysiwyg .cm-lp-co-success { --co-c: var(--co-ok);     --co-bg: var(--co-ok-bg); }
-#wysiwyg .cm-lp-co-note,
-#wysiwyg .cm-lp-co-tip,
-#wysiwyg .cm-lp-co-important,
-#wysiwyg .cm-lp-co-caution { --co-c: var(--accent);    --co-bg: var(--accent-soft); }
-/* 提示块的第一行要托住标题头 */
-#wysiwyg .cm-line[data-callout] { border-left-width: 0; }
-#wysiwyg .cm-lp-cohead {
-  display: inline-flex; align-items: center; gap: 6px;
-  font-weight: 600; font-size: var(--fs-1); color: var(--co-c, var(--accent));
-  user-select: none;
-}
-#wysiwyg .cm-lp-coico {
-  width: 14px; height: 14px; flex: none;
-  fill: none; stroke: currentColor; stroke-width: 2;
-  stroke-linecap: round; stroke-linejoin: round;
-}
-
-/* ---- 列表 ---- */
-#wysiwyg .cm-lp-li { padding-left: 2px; }
-/* 无序项的圆点（`- ` 已被换成 widget）。1.15em 右对齐和旧内核的项目符号同宽，
-   缩进由行首那些空格字符自己撑开，换层级不会整体位移 */
-#wysiwyg .cm-lp-bullet {
-  display: inline-block; width: 1.15em; text-align: right;
-  margin-right: .28em; color: var(--fg-faint); user-select: none;
-}
-
-/* ---- 代码块 ---- */
-#wysiwyg .cm-lp-code {
-  background: var(--code-bg);
-  font-family: var(--font-mono);
-  font-size: .92em;
-  white-space: pre-wrap;
-  padding: 2px 14px;
-  box-shadow: none;
-}
-#wysiwyg .cm-line.cm-lp-code:not(.cm-lp-code) { box-shadow: none; }
-/* 语言条：贴在代码块顶上的一条，左边语言名、右边复制。
-   背景与代码行同色，视觉上就是代码块的第 0 行 */
-#wysiwyg .cm-lp-codebar {
-  display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  padding: 3px 8px 3px 14px;
-  background: var(--code-bg);
-  border-radius: var(--r-2) var(--r-2) 0 0;
-  font-family: var(--font-mono); font-size: var(--fs-1);
-  letter-spacing: .06em; color: var(--fg-faint);
-  user-select: none;
-}
-/* 语言名是个 <select>：围栏行零高、光标到不了，改语言只能从这里点。
-   用原生下拉而不是自绘菜单 —— 自绘要处理点外关闭、键盘导航、滚动跟随，
-   而这里只需要一个值改变事件。小三角用两层线性渐变画，省一张图。 */
-#wysiwyg .cm-lp-lang {
-  appearance: none; -webkit-appearance: none;
-  max-width: 14em; margin: 0; padding: 1px 14px 1px 4px;
-  border: 0; border-radius: var(--r-1);
-  background-color: transparent; color: inherit;
-  font: inherit; letter-spacing: inherit; cursor: pointer;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  background-image:
-    linear-gradient(45deg, transparent 50%, currentColor 50%),
-    linear-gradient(135deg, currentColor 50%, transparent 50%);
-  background-position: right 6px center, right 2px center;
-  background-size: 4px 4px, 4px 4px;
-  background-repeat: no-repeat;
-}
-#wysiwyg .cm-lp-lang:hover { background-color: var(--bg-hover); color: var(--fg); }
-#wysiwyg .cm-lp-lang option { color: var(--fg); background: var(--bg); }
-#wysiwyg .cm-lp-copy {
-  display: inline-flex; align-items: center; justify-content: center;
-  flex: 0 0 auto; width: 22px; height: 22px; padding: 0;
-  border: 0; border-radius: var(--r-2); background: transparent;
-  color: var(--fg-faint); cursor: pointer; opacity: .5;
-}
-#wysiwyg .cm-lp-codebar:hover .cm-lp-copy,
-#wysiwyg .cm-lp-copy:focus-visible { opacity: 1; }
-#wysiwyg .cm-lp-copy:hover { background: var(--bg-hover); color: var(--fg); }
-#wysiwyg .cm-lp-copy .ico { width: 13px; height: 13px; stroke-width: 2; }
-#wysiwyg .cm-lp-copy .ico-done { display: none; color: var(--tok-str); }
-#wysiwyg .cm-lp-copy.done .ico { display: none; }
-#wysiwyg .cm-lp-copy.done .ico-done { display: block; }
-/* 代码块的最后一行收个圆角；靠 :has 找「后面紧跟围栏」的那一行 */
-#wysiwyg .cm-line.cm-lp-code:has(+ .cm-lp-fence-off) {
-  border-radius: 0 0 var(--r-2) var(--r-2);
-}
-/* 代码块里的普通文字要中性色。
-   cmHighlight 把 `tags.monospace` 整个标成 `--tok-str`（编辑模式里「一眼看出
-   这是代码」的用途），在所见即所得里会让整块代码泛绿、把词法颜色压没 ——
-   实测整段 `const a = 1;` 全是绿的，看不出哪个是关键字。
-   ⚠️ 结构是「tok-* 在外、CM6 的 ͼxx 在内」：`<span class="tok-key"><span
-   class="ͼ15">const</span></span>`。所以颜色是**内层**在起效，必须让内层
-   `inherit`（继承外层 tok-* 的颜色），光给外层定色是没用的。
-   ⛔ 别改成「整块一个颜色」：那样等于没有着色。 */
-#wysiwyg .cm-line.cm-lp-code > span:not([class*="tok-"]) { color: var(--fg); }
-#wysiwyg .cm-line.cm-lp-code [class*="tok-"] span { color: inherit; }
-
-/* ---- 行内码 ---- */
-#wysiwyg .cm-lp-codemark {
-  background: var(--code-bg);
-  border-radius: var(--r-1);
-  font-family: var(--font-mono);
-  font-size: .88em;
-  /* 空白是内容：折掉的话 `` ` ` `` 里就没有可停的插入点 */
-  white-space: pre-wrap;
-  box-shadow: inset 0 0 0 var(--bw) var(--line);
-  padding: .08em .28em;
-}
-
-/* ---- 行内标记 ---- */
-#wysiwyg .cm-lp-strong { font-weight: 680; }
-#wysiwyg .cm-lp-em { font-style: italic; }
-#wysiwyg .cm-lp-del { text-decoration: line-through; color: var(--fg-soft); }
-#wysiwyg .cm-lp-link { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
-
-/* ---- 图片 ---- */
-#wysiwyg .cm-lp-img { display: inline-block; vertical-align: bottom; max-width: 100%; }
-#wysiwyg .cm-lp-img img { max-width: 100%; max-height: 320px; border-radius: var(--r-2); -webkit-user-drag: none; }
-#wysiwyg .cm-lp-img.is-broken {
-  font-family: var(--font-mono); font-size: .88em; color: var(--fg-faint);
-  background: var(--bg-soft); border-radius: var(--r-1); padding: 2px 6px;
-}
-
-/* ---- 任务框 ---- */
-#wysiwyg .cm-lp-task {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 15px; height: 15px; margin-right: 5px; padding: 0;
-  border: 0; background: none; vertical-align: -2px; cursor: pointer;
-  color: var(--fg-faint);
-}
-#wysiwyg .cm-lp-task svg { width: 15px; height: 15px; }
-#wysiwyg .cm-lp-task .box { fill: none; stroke: currentColor; stroke-width: 1.5; }
-#wysiwyg .cm-lp-task .tick { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; opacity: 0; }
-#wysiwyg .cm-lp-task.is-on { color: var(--accent); }
-#wysiwyg .cm-lp-task.is-on .tick { opacity: 1; }
-#wysiwyg .cm-lp-task:hover { color: var(--fg); }
-
-/* ---- 水平线 ---- */
-#wysiwyg .cm-lp-hr { padding: .85em 0; }
-#wysiwyg .cm-lp-hr hr { border: none; border-top: var(--bw) solid var(--line-strong); margin: 0; }
-
-/* ---- 表格 ---- */
-/* 单元格输入框是**绝对定位在 .cm-editor 上的一层**（不是 <td> 的子节点：
-   widget 一重建就把输入框连同焦点、输入法组字一起弄丢）。所以要一个定位锚点。 */
-#wysiwyg .cm-editor { position: relative; }
-#wysiwyg .cm-lp-table {
-  border-collapse: collapse; width: 100%; margin: .6em 0;
-  font-size: .96em;
-}
-#wysiwyg .cm-lp-table th,
-#wysiwyg .cm-lp-table td {
-  border: var(--bw) solid var(--line-strong);
-  padding: 6px 10px; text-align: left; vertical-align: top;
-}
-#wysiwyg .cm-lp-table th { background: var(--bg-soft); font-weight: 650; }
-#wysiwyg .cm-lp-table tr:hover td { background: var(--bg-hover); }
-/* 正在编辑的那一格：把格子的高亮收掉，免得和输入框的描边叠成两层 */
-#wysiwyg .cm-lp-table td.is-editing,
-#wysiwyg .cm-lp-table th.is-editing { background: transparent; color: transparent; }
-#wysiwyg .cm-lp-table td.is-editing *,
-#wysiwyg .cm-lp-table th.is-editing * { visibility: hidden; }
-
-/* 盖在格子上的输入框。尺寸由脚本按格子的 rect 现算，这里只管长相：
-   字体、行高、内边距都对齐 <td>，光标落进去时看不出「换了控件」 */
-#wysiwyg .cm-lp-cell {
-  position: absolute; z-index: 8; box-sizing: border-box;
-  margin: 0; padding: 5px 9px;
-  border: var(--bw) solid var(--accent); border-radius: var(--r-1);
-  background: var(--bg); color: var(--fg);
-  font-family: var(--font-read); font-size: .96em; line-height: 1.78;
-  resize: none; overflow: auto; outline: none;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, .10);
-}
-
-/* 表格源码态：竖线压淡，一眼看出还在编辑源码 */
-#wysiwyg .cm-lp-table-src { font-family: var(--font-mono); font-size: .92em; color: var(--fg-soft); background: var(--bg-soft); }
-
-/* ---- 重复行 ---- */
-#wysiwyg .cm-dup { background: var(--accent-soft); }
-
-/* ---- 选区：CM6 自己的那层不画，用系统高亮更贴近原生 ---- */
-#wysiwyg .cm-selectionBackground { background: var(--sel-bg, rgba(120, 130, 160, .28)) !important; }
