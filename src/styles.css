@@ -1077,14 +1077,15 @@ input[type="search"] { cursor: var(--cur-text), text; }
 /* 宽窗口下正文居中对齐到一个固定的行长，避免一行拉出一百多个字 */
 .preview-body > *, .preview-body > .md { max-width: var(--read-measure); margin-inline: auto; }
 
-/* 阅读排版：字号阶梯拉开、段距放大、标题上方留白，
-   三件事一起做才有「文档感」，只调其中一项都会显得平。
-   上边距与编辑区同步（1.1 / 1.05em），免得同一文档切到预览时长出一大截 */
-.md h1, .md h2, .md h3, .md h4 { line-height: 1.32; margin: 1.1em 0 .6em; font-weight: 650; }
-.md h1 { font-size: 1.9em; letter-spacing: -.022em; margin-top: 0; }
-.md h2 { font-size: 1.42em; letter-spacing: -.012em; }
-.md h3 { font-size: 1.16em; letter-spacing: -.005em; margin-top: 1.05em; }
-.md h4 { font-size: 1.02em; }
+/* 阅读排版：字号阶梯拉开、段距统一，靠字号 + 字重分段（Notion 派）。
+   与编辑区同口径：段落 .9em，标题用 calc(.9em / 字号倍数) 反算回同一个
+   基础字号绝对值，块间距不随类型变。别改回相对自身字号的 1.1em ——
+   那样 h2 实际间距比段落大，切模式会突然散开。 */
+.md h1, .md h2, .md h3, .md h4 { line-height: 1.32; font-weight: 650; }
+.md h1 { font-size: 1.9em; letter-spacing: -.022em; margin: calc(.9em / 1.9) 0; }
+.md h2 { font-size: 1.42em; letter-spacing: -.012em; margin: calc(.9em / 1.42) 0; }
+.md h3 { font-size: 1.16em; letter-spacing: -.005em; margin: calc(.9em / 1.16) 0; }
+.md h4 { font-size: 1.02em; margin: calc(.9em / 1.02) 0; }
 .md > :first-child { margin-top: 0; }
 .md p { margin: .9em 0; }
 .md a { color: var(--accent); text-decoration: none; border-bottom: var(--bw) solid transparent; }
@@ -1730,16 +1731,17 @@ body[data-zen="1"] .win-title { color: var(--fg-faint); }
 }
 .new-go:disabled { color: var(--fg-faint); cursor: default; opacity: .6; }
 .new-go:not(:disabled):hover { border-color: var(--accent); background: var(--bg-hover); }
-.wysiwyg .w-h[data-type="h1"] { font-size: 1.9em; font-weight: 680; margin: 1.0em 0 .5em; line-height: 1.28; letter-spacing: -.022em; }
-/* h2 不再画下边框：中文里那条横线会把标题压成「分节条」，显旧。
-   改用「上方留白 + 字号差」来分段，视线一样能一刀切开。
-   ⛔ 上边距别再调回 1.85em：段落 .85em → 标题的 margin 突变会让敲 `# ` 时整行下跳
-   （实测 h2 跳 26.6px），收到 1.1em 后跳 ~11px，基本无感。分段靠字号差担着 */
-.wysiwyg .w-h[data-type="h2"] { font-size: 1.42em; font-weight: 660; margin: 1.1em 0 .55em; line-height: 1.32; letter-spacing: -.012em; }
-.wysiwyg .w-h[data-type="h3"] { font-size: 1.16em; font-weight: 650; margin: 1.05em 0 .45em; line-height: 1.4; }
+/* 块间距统一走「基础字号口径」：段落是 .85em（相对 15px 基础 = 12.75px），
+   标题的 em 相对自身放大字号，因此用 calc(.85em / 字号倍数) 反算回同一个绝对值。
+   ⛔ 别写 1.1em 这种相对自身字号的值：h2 实际 = 1.1×1.42×15 = 23.4px，
+   比段落多 10px，敲 `# ` 把 p 换成 h2 时整行就往下跳 —— 这就是「不顺滑」的根。
+   统一后 p→h 顶部零位移，分段只靠字号 + 字重（Notion 派）。首块贴顶见下。 */
+.wysiwyg .w-h[data-type="h1"] { font-size: 1.9em; font-weight: 680; margin: calc(.85em / 1.9) 0; line-height: 1.28; letter-spacing: -.022em; }
+.wysiwyg .w-h[data-type="h2"] { font-size: 1.42em; font-weight: 660; margin: calc(.85em / 1.42) 0; line-height: 1.32; letter-spacing: -.012em; }
+.wysiwyg .w-h[data-type="h3"] { font-size: 1.16em; font-weight: 650; margin: calc(.85em / 1.16) 0; line-height: 1.4; }
 .wysiwyg .w-h[data-type="h4"],
 .wysiwyg .w-h[data-type="h5"],
-.wysiwyg .w-h[data-type="h6"] { font-size: 1.02em; font-weight: 650; margin: 1.35em 0 .35em; }
+.wysiwyg .w-h[data-type="h6"] { font-size: 1.02em; font-weight: 650; margin: calc(.85em / 1.02) 0; }
 /* 第一个块贴顶：不让标题自带上边距，否则正文顶部的呼吸感全被吃掉 */
 .wysiwyg > .w-block:first-child { margin-top: 0; }
 .wysiwyg .w-p { margin: .85em 0; }

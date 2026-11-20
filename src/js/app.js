@@ -4441,13 +4441,19 @@ const blockInserts = () => [
 ];
 const SELF_INSERTING = new Set(['table', 'tablePrompt', 'image', 'link', 'hr']);
 
-/* 手柄锚在哪个块上。语义是「最后确定的那一行」而不是「鼠标此刻压着的行」：
-   鼠标滑到行间空隙、页边距、甚至移出编辑区，锚点都不动，手柄就钉在原地。
-   只有真的换到另一个块（或光标被键盘移走）才换锚点。 */
+/* 手柄锚在哪个块上。Notion 式：鼠标悬停哪一行，手柄就贴哪一行；鼠标离开那一行
+   （行间空隙、页边距、编辑区外）就收起。不再「钉在最后确定的那一行」——
+   那样加了新行、鼠标没动时，按钮会尴尬地留在上一行。
+   菜单打开期间手柄是菜单的定位锚点，任何「移开」逻辑都不得收它。 */
 let anchorBlock = null;
 let handleBlock = null;      // 当前画出手柄的那个块，由 placeHandle 写
-let pointerInside = false;   // 鼠标是否在编辑区里，决定 selectionchange 能不能抢锚点
+let pointerInside = false;   // 鼠标是否在编辑区里
 let handleTimer = 0;
+let handleIdleTimer = 0;     // 移开块之后的收起延时
+/* 手柄按钮浮在正文左侧的留白里，那一条不属于任何 .w-block。鼠标从正文移向按钮
+   必然先穿过这段「非块区域」，若一离开块就立刻收，按钮永远点不到。
+   留 220ms 走过这段路（进按钮有 mouseenter 再取消），手感仍是「移开即消失」。 */
+const HANDLE_HIDE_DELAY = 220;
 let bmMode = 'convert';
 /* 面板是从 "/" 长出来的吗：这决定两件事——
    1) 关面板而没选任何项时，要把那个 "/" 补回正文（用户可能就是想打个斜杠）；
@@ -4509,9 +4515,25 @@ function placeHandle(block) {
 
 function hideHandle() {
   if (blockMenuOpen()) return;      // 菜单还开着，手柄得留在原地当锚点
+  clearTimeout(handleIdleTimer);
   anchorBlock = null;
   handleBlock = null;
   el.wHandle.classList.add('hidden');
+}
+
+/** 鼠标离开当前块：给一小段宽限期再收，让鼠标来得及移进手柄按钮 */
+function scheduleHandleHide() {
+  clearTimeout(handleIdleTimer);
+  if (blockMenuOpen()) return;      // 菜单开着，手柄是它的锚点，绝不收
+  handleIdleTimer = setTimeout(() => {
+    if (blockMenuOpen()) return;
+    hideHandle();
+  }, HANDLE_HIDE_DELAY);
+}
+
+/** 鼠标回到块上 / 进了手柄按钮：取消待执行的收起 */
+function cancelHandleHide() {
+  clearTimeout(handleIdleTimer);
 }
 
 function refreshHandle() {
@@ -4793,15 +4815,17 @@ function setupBlockHandle() {
        关菜单只认「点编辑区别处」「Esc」「滚动」三条路。 */
     if (blockMenuOpen()) return;
     const b = e.target.closest ? e.target.closest('.w-block') : null;
-    /* 没压在任何块上（行间空隙、左右页边距、块内的 .w-text 之外）就不动锚点。
-       这是「只要不换行就不消失」的关键：以前这里会把 null 当成「离开」 */
-    if (!b || b === anchorBlock) return;
+    /* Notion 式：压在块上就贴过去（并取消待执行的收起）；没压在任何块上
+       （行间空隙、左右页边距）则启动收起 —— 鼠标停在哪一行，手柄就在哪一行。 */
+    if (!b) { scheduleHandleHide(); return; }
+    cancelHandleHide();
+    if (b === anchorBlock) return;
     anchorBlock = b;
     refreshHandle();
   });
   el.wysiwyg.addEventListener('mouseenter', () => { pointerInside = true; });
-  /* 鼠标移出编辑区（去预览、去菜单、出窗口）也不收 —— 只是不再抢锚点 */
-  el.wysiwyg.addEventListener('mouseleave', () => { pointerInside = false; });
+  /* 鼠标移出编辑区（去预览、去菜单、出窗口）：和离开块一样收起 */
+  el.wysiwyg.addEventListener('mouseleave', () => { pointerInside = false; scheduleHandleHide(); });
   /* 滚动会让菜单和它的块错位，这时关掉比让它悬在空中好 */
   el.wysiwyg.addEventListener('scroll', () => {
     if (blockMenuOpen()) closeBlockMenu();
@@ -4862,6 +4886,10 @@ function setupBlockHandle() {
     if (blockMenuOpen()) closeBlockMenu();
   }, true);
 
+  /* 鼠标从正文移向按钮要穿过左侧留白（那段不属于任何块，会 scheduleHandleHide）。
+     进出手柄本身要接管这个收起计时：进来取消、出去重新开始，按钮才点得到。 */
+  el.wHandle.addEventListener('mouseenter', cancelHandleHide);
+  el.wHandle.addEventListener('mouseleave', scheduleHandleHide);
   for (const b of [el.whAdd, el.whMenu]) b.addEventListener('mousedown', (e) => e.preventDefault());
   el.whAdd.onclick = () => openBlockMenu('insert');
   el.whMenu.onclick = () => openBlockMenu('convert');

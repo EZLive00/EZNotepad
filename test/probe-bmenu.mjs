@@ -127,7 +127,7 @@ const btnCenter = (id) => ev(`(() => {
   return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
 })()`);
 
-/** 悬停段落 → 点 + 打开菜单。手柄本身会被 240ms 的空闲逻辑收起，所以重试几轮 */
+/** 悬停段落 → 点 + 打开菜单。手柄是 hover 语义（离开块 220ms 收起），所以重试几轮 */
 async function openMenu() {
   for (let attempt = 0; attempt < 4; attempt++) {
     const p = await paraCenter();
@@ -162,7 +162,7 @@ await moveTo(p0.x, p0.y);
 await sleep(320);
 ok('鼠标移到段落上，行首手柄出现', await ev(`!document.getElementById('wHandle').classList.contains('hidden')`));
 
-/* ---------- 1.5 驻留：只要不换行，怎么挪都不该消失 ---------- */
+/* ---------- 1.5 Notion 式 hover：鼠标在哪行，手柄就在哪行；离开就收起 ---------- */
 const paraRects = await ev(`(() => {
   const ps = [...document.querySelectorAll('.w-block')].filter((n) => n.dataset.type === 'p');
   return ps.slice(0, 2).map((b) => {
@@ -189,23 +189,23 @@ const handleAnchor = () => ev(`(() => {
 const topAfterFirst = await handleTop();
 ok('手柄一开始贴在第一段', (await handleAnchor()) === '第一个段', await handleAnchor());
 
-/* a. 两段之间的空隙：既不属于上一块也不属于下一块 */
+/* a. 两段之间的空隙：既不属于上一块也不属于下一块 → 收起（Notion 式不常驻） */
 const paraGapY = (paraRects[0].bottom + paraRects[1].top) / 2;
 await moveTo(inPara(paraRects[0]), paraGapY);
-await sleep(320);
-ok('鼠标停在两段之间的空隙，手柄没消失', await shown());
-ok('…而且还钉在原处（没有被挪到别的行）', Math.abs((await handleTop()) - topAfterFirst) < 2,
-  `${Math.round(await handleTop())} vs ${Math.round(topAfterFirst)}`);
+await sleep(420);   // > 220ms 宽限期
+ok('鼠标停在两段之间的空隙，手柄收起', !(await shown()));
 
-/* b. 块的左侧留白（手柄右边、正文左边这一条） */
-await moveTo(paraRects[0].left - 52, paraRects[0].cy);
-await sleep(320);
-ok('鼠标停在正文左侧的留白里，手柄没消失', await shown());
+/* b. 块的左侧留白（手柄右边、正文左边这一条）→ 收起 */
+await moveTo(inPara(paraRects[0]), paraRects[0].cy);       // 先回块上，让它重新出现
+await sleep(120);
+await moveTo(paraRects[0].left - 52, paraRects[0].cy);     // 手柄按钮左侧的干净留白（按钮本身在 left-45~-24）
+await sleep(420);
+ok('鼠标停在正文左侧的留白里，手柄收起', !(await shown()));
 
-/* c. 移出编辑区（去标题栏） */
+/* c. 移出编辑区（去标题栏）→ 收起 */
 await moveTo(300, 8);
-await sleep(320);
-ok('鼠标离开编辑区，手柄仍留在最后那一行', await shown());
+await sleep(420);
+ok('鼠标离开编辑区，手柄收起', !(await shown()));
 
 /* d. 真的换到下一段，才跟着挪。
    按真实手的轨迹分段移过去：从标题栏一步瞬移到段落中心，是一次 mousemove 跨过
