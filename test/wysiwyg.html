@@ -434,6 +434,21 @@ window.__run = () => {
   T.type('正文');
   eq('标题内回车后是新段落', T.out(), '# 标题\n\n正文');
 
+  // 12b. 标题块首回车：在标题上面插空行，标题样式不丢
+  //      回归：原来 splitBlock 把整个标题文字搬进 nextBlockFor 给的普通段落，
+  //      h2 当场降成正文。正文块首回车本就是「上面多一行、文字往下去」。
+  T.reset('## 标题\n');
+  T.caret(0, 0);
+  T.key('Enter');
+  eq('标题块首回车：标题仍是 h2', T.blocks().join(','), 'p=,h2=标题');
+  eq('标题块首回车：md 仍是标题', T.out(), '## 标题\n');
+  eq('标题块首回车：光标落在新空段', ed.caretState().blockIndex, 0);
+  /* 中间 / 行末仍是拆分，别一起改掉 */
+  T.reset('## 标题\n');
+  T.caret(0, 1);
+  T.key('Enter');
+  eq('标题中间回车：仍是拆分', T.blocks().join(','), 'h2=标,p=题');
+
   // 13. 撤销
   T.reset('');
   T.type('abc');
@@ -2294,6 +2309,28 @@ window.__run = () => {
     T.key('Backspace');
     eq('表格后空行退格：空行被删掉', T.blocks().length, 1);
     has('表格后空行退格：剩下的是表格', T.blocks()[0].startsWith('table='));
+
+    /* 空段 + Delete：删掉空段自己，下一块的块级样式原样留下。
+       回归：用户报「在一个块前面按 Delete，后面块的样式丢失」——原来无条件
+       mergeForward 把下一块内容搬进空段、删掉下一块，标题 B 当场降成正文。
+       与上面 Backspace 撞 needsLineBelow 时空段「删掉自己」对称。 */
+    T.reset('## 标题A\n## 标题B\n');
+    T.caret(0, 4); T.key('Enter'); T.caret(1, 0); T.key('Delete');
+    eq('空段 Delete：下一块标题仍是 h2', T.blocks().join(','), 'h2=标题A,h2=标题B');
+    eq('空段 Delete：md 标题标记还在', T.out(), '## 标题A\n\n## 标题B\n');
+
+    T.reset('正文A\n> 引用B\n');
+    T.caret(0, 3); T.key('Enter'); T.caret(1, 0); T.key('Delete');
+    eq('空段 Delete：下一块引用仍是 bq', T.blocks().join(','), 'p=正文A,bq@0=引用B');
+
+    T.reset('正文A\n- 项目B\n');
+    T.caret(0, 3); T.key('Enter'); T.caret(1, 0); T.key('Delete');
+    eq('空段 Delete：下一块列表仍是 li', T.blocks().join(','), 'p=正文A,li:ul@0=项目B');
+
+    /* 非空块保持老路：行末 Delete 仍把下一块并进来、保留当前块样式 */
+    T.reset('正文A\n## 标题B\n');
+    T.caret(0, 3); T.key('Delete');
+    eq('非空段 Delete：仍是合并，保留当前块样式', T.blocks().join(','), 'p=正文A标题B');
   }
 
   /* ---- 正文光标：自绘工字 ---- 系统 I-beam 只有 1px，且 Chromium 会按背景

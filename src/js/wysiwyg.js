@@ -3432,6 +3432,19 @@ export class WysiwygEditor {
       return;
     }
     if (next.dataset.type === 'table' || next.dataset.type === 'code') return false;
+    /* 空块 + Delete：删掉空块自己，让下一块原样上移。
+       原来无条件 mergeForward —— 把下一块内容搬进空块、删掉下一块，于是
+       「标题A → 回车 → 空段 → Delete」把标题B 当场降成正文（块级样式丢失）。
+       空块没有内容也没有格式意图，要删的是它自己，不是下一块；与 Backspace 撞
+       needsLineBelow 时空块「删块 + 光标退回上一块」对称。含图的块不算空块。 */
+    if (this.isEmptyBlock(block) && !block.querySelector('img')) {
+      block.remove();
+      this.placeCaretStart(next);
+      this.renumber();
+      this.hCoalesce = false;
+      this.flush();
+      return;
+    }
     this.mergeForward(block, next);
   }
 
@@ -4071,6 +4084,17 @@ export class WysiwygEditor {
     // 空标题：在空白标题里回车 = 我要写正文
     if (/^h[1-6]$/.test(type) && this.isEmptyBlock(block)) {
       this.toParagraph(block, 0);
+      return;
+    }
+    /* 非空标题的行首回车：在标题**上面**插一个空段落，标题原样不动。
+       原来落到下面的拆分逻辑 —— nextBlockFor 给标题返回的是普通段落，整个标题
+       文字被搬进新 p，h2 当场降成正文（用户报的「标题样式丢失」）。正文块首回车
+       本来就是「上面多一个空行、文字往下去」，标题该走同一条语义。
+       空标题仍走上面的 toParagraph（那个回车的意思是「我要写正文」）。 */
+    if (/^h[1-6]$/.test(type) && !this.isEmptyBlock(block) && this.isCaretAtStart(block)) {
+      const p = this.insertEmptyBefore(block);
+      this.placeCaretStart(p);
+      if (!batch) { this.renumber(); this.hCoalesce = false; this.flush(); }
       return;
     }
     // 空列表项：退出列表，同理
