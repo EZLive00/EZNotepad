@@ -5580,7 +5580,10 @@ export class WysiwygEditor {
          把光标搬到文档末尾。记个时间戳让 handleClick 放过这一次。 */
       this._skipClickTs = performance.now();
       if (!blk) { this.clearBlockSel(); return; }
-      this.selectBlock(blk, { additive: true });
+      /* 点在锚块上 = 保持不变。别用 selectBlock({additive:true})：它在「锚块只是
+         单选」时会 toggle 成全取消 —— 手抖点一下正文，整片选区就没了。 */
+      if (blk === this.blockSel) return;
+      this.selectBlockRange(blk);
       return;
     }
     /* 复制按钮按下的那一下别把编辑区的光标/选区抢走 */
