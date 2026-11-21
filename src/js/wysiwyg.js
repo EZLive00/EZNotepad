@@ -2483,10 +2483,53 @@ export class WysiwygEditor {
     return [...this.root.children].filter((b) => want.has(b));
   }
 
+  /** 这组块在文档里是不是一串紧挨着的兄弟（空组按连续算）。
+      整组移动 / 「收成一段」这类命令要先问它：非连续集合上语义立不住。 */
+  isContiguousList(list) {
+    if (!list || list.length < 2) return true;
+    const kids = this.root.children;
+    const i = [...kids].indexOf(list[0]);
+    if (i < 0) return false;
+    for (let k = 1; k < list.length; k++) {
+      if (kids[i + k] !== list[k]) return false;
+    }
+    return true;
+  }
+
+  /** 当前选中集是不是连续的一段 */
+  isContiguousSelection() {
+    return this.isContiguousList(this.selectedBlocks());
+  }
+
+  /** Ctrl/Cmd+点：把这一块（引用按整组）加进 / 移出选中集，其余不动。
+      Shift 走的是 selectBlockRange（从锚块往外量），两个手势分工不同。 */
+  toggleBlockSel(block) {
+    if (!block || !this.root.contains(block)) return;
+    const group = this.bqGroupOf(block);
+    const on = group.every((b) => this.blockSelSet.has(b));
+    if (on) {
+      for (const b of group) { this.blockSelSet.delete(b); b.classList.remove('w-sel'); }
+      if (!this.blockSelSet.size) { this.clearBlockSel(); return; }
+      /* 锚块被移出时把锚点交给剩下的第一块：后续 Shift 从这儿量，
+         否则锚点指向一个已经不在集合里的块，范围会算到意料之外的地方 */
+      if (!this.blockSel || !this.blockSelSet.has(this.blockSel)) {
+        this.blockSel = this.selectedBlocks()[0] || null;
+      }
+    } else {
+      for (const b of group) { this.blockSelSet.add(b); b.classList.add('w-sel'); }
+      if (!this.blockSel || !this.blockSelSet.has(this.blockSel)) this.blockSel = group[0];
+    }
+    this._afterBlockSel();
+  }
+
   /** 把一组连续块上移 / 下移一位。返回是否真的动了 —— 到顶/到底要能
-     告诉调用方，否则「按了没反应」会被当成快捷键没生效。 */
+     告诉调用方，否则「按了没反应」会被当成快捷键没生效。
+     ⛔ 非连续选中直接拒绝：1、3 各滑一格没有自洽的落点（中间没选的块会被
+     推来推去），Notion 也只给拖动、不给上下移。拖动那条路不受影响 ——
+     它是一次 DocumentFragment 搬到目标处，相对顺序仍然保持。 */
   _shiftBlocks(list, dir) {
     if (!list.length) return false;
+    if (!this.isContiguousList(list)) return false;
     const first = list[0];
     const last = list[list.length - 1];
     const inSel = new Set(list);
@@ -5109,7 +5152,12 @@ export class WysiwygEditor {
     const out = [];
     for (let i = 0; i < list.length; i++) {
       const b = list[i];
-      if (i) out.push(this.sameBlockGroup(list[i - 1], b) ? '\n' : '\n\n');
+      /* 只有「真的挨着」且同属一组才不空行。非连续多选时中间隔着没选的块，
+         两条列表项各自是独立段落，粘出去必须分开 */
+      if (i) {
+        const adjacent = list[i - 1].nextElementSibling === b;
+        out.push(adjacent && this.sameBlockGroup(list[i - 1], b) ? '\n' : '\n\n');
+      }
       const rb = rawBlock(b);
       if (rb.type === 'li') {
         const kind = b.dataset.list || 'ul';
@@ -5580,6 +5628,8 @@ export class WysiwygEditor {
          把光标搬到文档末尾。记个时间戳让 handleClick 放过这一次。 */
       this._skipClickTs = performance.now();
       if (!blk) { this.clearBlockSel(); return; }
+      /* Ctrl/Cmd+点 = 加选 / 取消这一块（与抓手上的手势同一口径） */
+      if (e.ctrlKey || e.metaKey) { this.toggleBlockSel(blk); return; }
       /* 点在锚块上 = 保持不变。别用 selectBlock({additive:true})：它在「锚块只是
          单选」时会 toggle 成全取消 —— 手抖点一下正文，整片选区就没了。 */
       if (blk === this.blockSel) return;

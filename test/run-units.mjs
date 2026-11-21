@@ -509,10 +509,10 @@ ok('语言表：新建类型够多', newDocTypes().length >= 24);
 
   ok('标签右键四个关闭方向齐全，没有目标的项置灰',
     ["tt('关闭')", "tt('关闭其他')", "tt('关闭左侧')", "tt('关闭右侧')"].every((s) => app.includes(s))
-      && app.includes('disabled: t.ding')
-      && app.includes('disabled: !tabs.some((x) => x.id !== t.id && !x.ding)')
-      && app.includes('disabled: !tabs.slice(0, idx).some((x) => !x.ding)')
-      && app.includes('disabled: !tabs.slice(idx + 1).some((x) => !x.ding)'));
+      && app.includes('disabled: t.ding || isBuiltin(t)')
+      && app.includes('disabled: !tabs.some((x) => x.id !== t.id && closableByBatch(x))')
+      && app.includes('disabled: !tabs.slice(0, idx).some(closableByBatch)')
+      && app.includes('disabled: !tabs.slice(idx + 1).some(closableByBatch)'));
   ok('三个批量关闭统一走 closeMany 守卫，不再直接 removeTab 丢数据',
     ['closeOthers', 'closeLeft', 'closeRight'].every((n) => app.includes(`function ${n}(id)`))
       && app.includes('async function closeMany(')
@@ -1226,33 +1226,34 @@ eq('没有标签给 null', tabSeed(null, false), null);
   const rust = fs.readFileSync('src-tauri/src/lib.rs', 'utf8');
 
   ok('标签模型带 ding 字段，新建默认不钉',
-    /quickNote: false,[\s\S]{0,120}ding: false,/.test(state));
+    /quickNote: false,[\s\S]{0,420}ding: false,/.test(state));
   ok('钉住只有一个写入口，写完重画并落进会话',
     /function setDing\(id, on\) \{\n[\s\S]{0,240}t\.ding = !!on;\n  renderTabs\(\);\n  saveDraft\(\);/.test(app));
   ok('渲染签名带上钉住状态（少了它取消钉住不重画）',
     app.includes('${t.ding ? 1 : 0}') && app.includes("b.classList.add('ding')"));
   ok('钉住的标签不画关闭键，改画常驻的钉子',
-    /if \(t\.ding\) \{\n\s*const pin[\s\S]{0,160}iconHTML\('pin'\)[\s\S]{0,300}\} else \{\n\s*const x/.test(app));
+    /if \(t\.ding\) \{\n\s*const pin[\s\S]{0,180}iconHTML\('pin'\)[\s\S]{0,620}\} else \{/.test(app));
   ok('closeTab 自己就挡住钉住的（中键 / Ctrl+W / 菜单「关闭」都走它）',
     /async function closeTab\(id\) \{[\s\S]{0,400}if \(t\.ding\) \{\n\s*toast\(tt\('「\{name\}」已钉住/.test(app));
-  ok('批量关闭在入口处滤掉钉住的，三个方向不必各自记得',
-    /const set = new Set\(ids\.filter[\s\S]{0,160}return t && !t\.ding;/.test(app));
+  ok('批量关闭在入口处滤掉钉住的与内置文档，三个方向不必各自记得',
+    /const set = new Set\(ids\.filter[\s\S]{0,220}return t && !t\.ding && !isBuiltin\(t\);/.test(app));
   /* 滤了不照着用等于没滤：第一版就是这么过掉的（钉住了，点「关闭左侧」照样没） */
   ok('批量关闭遍历的是滤过的名单，不是原始 ids',
     app.includes('for (const id of set) removeTab(id)')
       && !app.includes('for (const id of ids) removeTab(id)'));
-  ok('右键菜单的禁用态与 closeMany 同一口径（按没钉住的算，不按标签个数）',
-    app.includes('disabled: t.ding')
-      && app.includes('disabled: !tabs.some((x) => x.id !== t.id && !x.ding)')
-      && app.includes('disabled: !tabs.slice(0, idx).some((x) => !x.ding)')
-      && app.includes('disabled: !tabs.slice(idx + 1).some((x) => !x.ding)'));
+  ok('右键菜单的禁用态与 closeMany 同一口径（按 close-able 算，不按标签个数）',
+    app.includes('const closableByBatch = (t) => !t.ding && !isBuiltin(t);')
+      && app.includes('disabled: t.ding || isBuiltin(t)')
+      && app.includes('disabled: !tabs.some((x) => x.id !== t.id && closableByBatch(x))')
+      && app.includes('disabled: !tabs.slice(0, idx).some(closableByBatch)')
+      && app.includes('disabled: !tabs.slice(idx + 1).some(closableByBatch)'));
   ok('文件菜单的「关闭标签」对钉住的也置灰（菜单里点了没反应最难受）',
     /const canCloseActive = \(\) => !!activeTab\(\) && !activeTab\(\)\.ding;/.test(app)
       && app.includes("disabled: () => !canCloseActive()"));
   ok('钉住进会话，重启后还在',
     app.includes('ding: !!t.ding,') && app.includes('t.ding = !!s.ding;'));
   ok('钉子与关闭键同宽，钉与不钉之间标签不跳',
-    /\.tab-pin \{[^}]*width: 18px; height: 18px/.test(css)
+    /\.tab-pin, \.tab-builtin \{[^}]*width: 18px; height: 18px/.test(css)
       && /\.tab-close\s*\{[^}]*width:\s*18px;\s*height:\s*18px/.test(css));
   ok('钉子常驻显示（它要解释「为什么关不掉」，不能在悬停时才出现）',
     !/\.tab-pin[^,{]*\{[^}]*opacity: 0/.test(css) && css.includes('.tab-pin .ico'));
@@ -1262,6 +1263,46 @@ eq('没有标签给 null', tabSeed(null, false), null);
   ok('四条新词条都进了源字典与 8 语产物',
     ["'钉住标签'", "'取消钉住'", "'已钉住，右键可取消'", "'「{name}」已钉住，先取消钉住才能关闭'"]
       .every((k) => dictSrc.includes(k) && dict.includes(k)));
+}
+
+/* ---------- 内置使用手册 ----------
+   一份随程序走的手册：没有磁盘路径，所以既不能「保存」，也不该进会话；
+   它关不掉（关了就只剩「帮助」一条路），只能在预览模式下读。 */
+{
+  const app = fs.readFileSync('src/js/app.js', 'utf8');
+  const state = fs.readFileSync('src/js/state.js', 'utf8');
+  const manual = fs.readFileSync('src/js/manual.js', 'utf8');
+  const dictSrc = fs.readFileSync('src/js/i18n-dict-src.js', 'utf8');
+
+  ok('标签模型有 builtin 字段，默认不是内置文档',
+    /quickNote: false,[\s\S]{0,420}builtin: null,/.test(state));
+  ok('内置文档的判定只有一处（字符串标记，不是布尔量）',
+    app.includes('const isBuiltin = (t) => !!(t && t.builtin);')
+      && app.includes("tabs.find((x) => x.builtin === 'manual')"));
+  ok('手册以预览模式打开，并当场记成「不脏」',
+    /newTab\(tt\('使用手册\.md'\), manualDoc\(getLang\(\)\), null, \{ builtin: 'manual', mode: 'preview' \}\)/.test(app)
+      && app.includes('t.savedContent = t.content;'));
+  ok('内置手册切不到编辑模式（能改就必然要问「存到哪儿」）',
+    app.includes("if (isBuiltin(t) && mode !== 'preview')"));
+  ok('关不掉：closeTab 自己拦，批量关闭在入口滤',
+    app.includes('if (isBuiltin(t)) {')
+      && app.includes("toast(tt('内置手册不能关闭'))")
+      && app.includes('return t && !t.ding && !isBuiltin(t);'));
+  ok('不进会话（没有路径，恢复时也认不出来）',
+    app.includes('tabs.filter((t) => !t.quickNote && !isBuiltin(t))'));
+  ok('首次开机自动开一次，之后只能从帮助菜单进',
+    app.includes("if (!LS.get('manualSeen', false)) {")
+      && app.includes("LS.set('manualSeen', true);")
+      && app.includes('manual: openManual,')
+      && app.includes("tt('使用手册')"));
+  ok('九种语言都有手册正文',
+    ['zh-CN', 'zh-TW', 'en', 'ja', 'ko', 'fr', 'de', 'es', 'pt']
+      .every((l) => new RegExp('^  \'?' + l + '\'?: `', 'm').test(manual)));
+  ok('旧的欢迎文档已并入手册，不再有两份「首次启动」文案',
+    !app.includes('welcomeDoc') && !fs.existsSync('src/js/welcome.js'));
+  ok('手册的四条词条进了源字典',
+    ["'使用手册'", "'使用手册.md'", "'内置手册不能关闭'", "'内置手册是只读的'"]
+      .every((k) => dictSrc.includes(k)));
 }
 
 /* ---------- 汇总 ---------- */

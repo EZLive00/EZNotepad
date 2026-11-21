@@ -498,11 +498,13 @@ body.tab-dragging, body.tab-dragging * { cursor: grabbing !important; }
 /* 钉住的标签：关闭键让位给一枚钉子。宽度和关闭键一样是 18px，钉与不钉之间
    标签不会跳；钉子常驻显示，因为它是「为什么中键 / Ctrl+W 关不掉」的唯一解释，
    只在悬停时才出现等于没有。它是状态不是按钮，用最弱的灰，不做悬停反馈。 */
-.tab-pin {
+/* 关闭键的两种替代：钉子（钉住）与文档图标（内置手册）。
+   两者都占 18px，与 .tab-close 同宽 —— 有与没有之间标签不跳。 */
+.tab-pin, .tab-builtin {
   width: 18px; height: 18px; display: grid; place-items: center; flex: none;
   color: var(--fg-faint);
 }
-.tab-pin .ico { width: 12px; height: 12px; stroke-width: 2.2; }
+.tab-pin .ico, .tab-builtin .ico { width: 12px; height: 12px; stroke-width: 2.2; }
 .tab-add {
   width: 26px; height: 26px; border-radius: var(--r-1); border: none; background: transparent;
   color: var(--fg-soft); display: inline-flex; align-items: center; justify-content: center; padding: 0;

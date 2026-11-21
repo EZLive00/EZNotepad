@@ -781,6 +781,52 @@ ok('退出后提示条收起', await ev(`(() => {
   return !h || h.classList.contains('hidden');
 })()`));
 
+/* 非连续多选：Ctrl+点单块加入 / 移出，中间没选的块原地不动。
+   提示条必须把两个手势都写出来 —— 没有多选框，用户不知道还能怎么加第二块。
+   整组上下移在非连续上没有自洽落点，菜单里要置灰。 */
+await openDoc('sel2.md', '甲\n\n乙\n\n丙\n\n丁\n');
+const d0 = await gripAt(0);
+if (d0) { await ctrlClickAt(d0.x, d0.y); await sleep(200); }
+const hintOne = await ev(`(document.querySelector('.w-selhint') || {}).textContent || ''`);
+ok('提示条写了怎么选（点块扩选 / Ctrl+点加选）',
+  /点块扩选/.test(hintOne) && /Ctrl\+点加选/.test(hintOne), hintOne);
+
+const d2 = await nthBlock(2);
+if (d2) { await ctrlClickAt(d2.x, d2.y); await sleep(220); }
+const dsel = await ev(`(() => {
+  const ed = window.__snp.editor;
+  const bs = [...document.querySelectorAll('.wysiwyg > .w-block')];
+  return {
+    sel: bs.filter((b) => b.classList.contains('w-sel')).map((b) => b.textContent),
+    contiguous: ed.isContiguousSelection(),
+    hint: (document.querySelector('.w-selhint') || {}).textContent || '',
+  };
+})()`);
+ok('Ctrl+点正文加选第二块，跳过中间那块',
+  dsel.sel.join(',') === '甲,丙' && dsel.contiguous === false, JSON.stringify(dsel));
+ok('非连续也照样报「已选 2 块」', /已选 2 块/.test(dsel.hint), dsel.hint);
+
+await ev(`(() => {
+  const b = document.querySelectorAll('.wysiwyg > .w-block')[2];
+  const r = b.getBoundingClientRect();
+  b.dispatchEvent(new MouseEvent('contextmenu', {
+    bubbles: true, cancelable: true, clientX: r.left + 20, clientY: r.top + 6,
+  }));
+  return true;
+})()`);
+await sleep(200);
+const dmv = await ev(`(() => {
+  const m = document.querySelector('.ctx-menu');
+  if (!m) return null;
+  const pick = (s) => [...m.querySelectorAll('button')].find((x) => x.textContent.trim().startsWith(s));
+  const up = pick('上移'), down = pick('下移');
+  return { up: up ? up.disabled : null, down: down ? down.disabled : null };
+})()`);
+ok('非连续时上移 / 下移置灰（差的那几块没有「挪一格」的落点）',
+  !!dmv && dmv.up === true && dmv.down === true, JSON.stringify(dmv));
+await pressKey('Escape');
+await sleep(160);
+
 /* 复制为 Markdown：列表项必须带上 `- ` / `1. ` 标记 —— 用 blockMarkdownText
    拼的话只有块内文本，粘到别的编辑器里就是一堆裸段落 */
 await openDoc('copymd.md', '## 标题\n\n- 甲\n- 乙\n\n正文\n');
@@ -801,6 +847,46 @@ const cpMix = await ev(`(() => {
 })()`);
 ok('复制为 Markdown：标题与列表之间空一行', cpMix === '## 标题\n\n- 甲', JSON.stringify(cpMix));
 await ev('window.__snp.editor.clearBlockSel()');
+
+/* 内置使用手册：帮助菜单能进、只读预览、关不掉。
+   「首次开机自动打开」那条在离线不变量里验（真机这一次跑时 manualSeen 早已置位）。 */
+await ev(`window.__snp.commands.manual()`);
+await sleep(420);
+const man = await ev(`(() => {
+  const t = window.__snp.getActiveTab();
+  return {
+    builtin: t ? t.builtin : null,
+    mode: t ? t.mode : null,
+    name: t ? t.name : null,
+    dirty: t ? t.content !== t.savedContent : null,
+    body: !!document.querySelector('#wyPreview .md-body, #preview .md-body, #preview .preview-body'),
+    chars: t ? (t.content || '').length : 0,
+  };
+})()`);
+ok('帮助菜单能打开内置手册', man.builtin === 'manual' && /使用手册/.test(man.name || ''), JSON.stringify(man));
+ok('手册以预览模式打开且不脏（没有可保存的东西）', man.mode === 'preview' && man.dirty === false,
+  JSON.stringify({ mode: man.mode, dirty: man.dirty }));
+ok('手册正文不是空壳', man.chars > 600, String(man.chars));
+
+/* 手册标签上**根本不画关闭键**：它关不掉，摆一个按了只弹提示的 × 是骗人。
+   中键与 Ctrl+W 都会落到 closeTab，一并验一遍。 */
+ok('手册标签上没有关闭键', await ev(`(() => {
+  const man = [...document.querySelectorAll('.tab')].find((t) => t.querySelector('.tab-name').textContent === '使用手册.md');
+  return !!man && !man.querySelector('.tab-close') && !!man.querySelector('.tab-builtin');
+})()`));
+
+await ev(`(() => {
+  const man = [...document.querySelectorAll('.tab')].find((t) => t.querySelector('.tab-name').textContent === '使用手册.md');
+  if (!man) return false;
+  man.dispatchEvent(new MouseEvent('auxclick', { bubbles: true, button: 1 }));
+  return true;
+})()`);
+await sleep(320);
+const manStill = await ev(`(() => {
+  const t = window.__snp.getActiveTab();
+  return t ? t.builtin : null;
+})()`);
+ok('中键点手册标签也关不掉', manStill === 'manual', String(manStill));
 
 /* 命令面板拿当前文档的标题做过滤，上面的用例已经把文档换成 sel.md 了 —— 切回来 */
 await openDoc('fold.md', '# 标题一\n\n正文甲\n\n## 标题二\n\n正文乙\n');

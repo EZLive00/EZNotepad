@@ -67,6 +67,26 @@ try {
     String(await ev('window.__bootError || ""')).slice(0, 300));
 
   if (await ev('!!window.__booted')) {
+    /* 内置使用手册在这里只验「能开、只读、不脏」。**首次启动自动打开**那条
+       不在这一层验：app-preview 的 localStorage 是复用的，跑过一次之后
+       manualSeen 已置位，断言「boot 之后一定是手册」会时绿时红 ——
+       那条由 run-units 的源码级不变量覆盖。
+       主动开一次（幂等：已经开着就只是激活），下面的标签数量断言因此稳定。 */
+    await ev('window.__snp.commands.manual()');
+    await ev('new Promise(r => setTimeout(r, 240))');
+    const manTab = await ev(`(() => {
+      const t = window.__snp.getActiveTab();
+      return t ? { name: t.name, mode: t.mode, builtin: t.builtin, dirty: t.content !== t.savedContent } : null;
+    })()`);
+    ok('使用手册能打开，且以只读预览出现、不脏',
+      !!manTab && manTab.builtin === 'manual' && manTab.mode === 'preview' && manTab.dirty === false,
+      JSON.stringify(manTab));
+
+    /* 下面的查找 / 替换要一份可编辑的正文，自己造一份：以前这里蹭的是
+       boot 自动打开的「欢迎.md」，现在那份变成了只读手册，蹭不上。 */
+    await ev(`(() => { window.__snp.newTab('演示.md', '# 演示 EZNotepad\\n\\n正文甲\\n'); return 1; })()`);
+    await ev('new Promise(r => setTimeout(r, 260))');
+
     // ---- 1. 折叠 / 展开 ----
     await ev('window.__snp.commands.find()');
     ok('Ctrl+F 打开查找条', !(await cls('#findbar')).includes('hidden'));
@@ -1149,7 +1169,11 @@ try {
     ok('钉与不钉之间标签宽度不跳（钉子占的就是关闭键那 18px）',
       Math.abs((await tabW('M.md')) - wBefore) < 0.5, `${wBefore} → ${await tabW('M.md')}`);
     ok('别的标签不受影响（还是各有关闭键）',
-      state.filter((x) => x.name !== 'M.md').every((x) => !x.ding && x.close), JSON.stringify(state));
+      state.filter((x) => x.name !== 'M.md' && x.name !== '使用手册.md').every((x) => !x.ding && x.close),
+      JSON.stringify(state));
+    ok('内置手册也没有关闭键（它关不掉，摆一个 × 是骗人）',
+      (() => { const man = state.find((x) => x.name === '使用手册.md');
+        return !!man && !man.close && !man.pin; })(), JSON.stringify(state));
     ok('钉住写进会话，重启后还在',
       await ev(`(localStorage.getItem('snp.session') || '').includes('"ding":true')`));
 
@@ -1195,7 +1219,9 @@ try {
     ok('点「关闭其他」（钉住场景）', await clickItem('关闭其他'));
     await ev('new Promise(r => setTimeout(r, 300))');
     n2 = await names();
-    ok('关闭其他只留下钉住的那颗', n2.length === 1 && n2[0] === 'M.md', JSON.stringify(n2));
+    /* 内置手册关不掉，必然还在；这条只比较「能关的那些」 */
+    const n2closable = n2.filter((n) => n !== '使用手册.md');
+    ok('关闭其他只留下钉住的那颗', n2closable.length === 1 && n2closable[0] === 'M.md', JSON.stringify(n2));
 
     /* 右侧全是钉子 → 「关闭右侧」置灰；自己没钉 → 「关闭」仍可点 */
     await ev(`(() => { window.__snp.newTab('S.md', 'S', 'C:/tmp/S.md'); return 1; })()`);

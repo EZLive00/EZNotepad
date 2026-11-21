@@ -30,7 +30,7 @@ import { listen } from '../vendor/api/event.js';
 import * as win from './win.js';
 import { tt, setLang, resolveLang, getLang, applyDom, LANGS } from './i18n.js';
 import { errText } from './errors.js';
-import { welcomeDoc } from './welcome.js';
+import { manualDoc } from './manual.js';
 import { writeClipboard } from './clipboard.js';
 
 const $ = (id) => document.getElementById(id);
@@ -165,7 +165,9 @@ function updateSelHint() {
     selHintEl.setAttribute('role', 'status');
     el.editWrap.appendChild(selHintEl);
   }
-  selHintEl.textContent = tt('已选 {n} 块 · 右键可操作 · Esc 退出', { n });
+  /* 这条提示是模式里唯一的说明书：没有多选框，用户不知道「怎么加下一块」，
+     所以必须把两个手势都写出来 —— 点块 = 扩成范围，Ctrl/Cmd+点 = 单块加选。 */
+  selHintEl.textContent = tt('已选 {n} 块 · 点块扩选 · Ctrl+点加选 · 右键操作 · Esc 退出', { n });
   selHintEl.classList.remove('hidden');
 }
 
@@ -270,7 +272,7 @@ let tabsSig = '';
 
 function renderTabs() {
   const act = activeTab();
-  const sig = tabs.map((t) => `${t.id}|${tabLabel(t)}|${t.path || ''}|${isDirty(t) ? 1 : 0}|${t.extChanged ? 1 : 0}|${t.ding ? 1 : 0}`).join('~')
+  const sig = tabs.map((t) => `${t.id}|${tabLabel(t)}|${t.path || ''}|${isDirty(t) ? 1 : 0}|${t.extChanged ? 1 : 0}|${t.ding ? 1 : 0}|${t.builtin || ''}`).join('~')
     + '#' + (act ? act.id : '');
   if (sig === tabsSig && el.tabs.children.length) return;
   tabsSig = sig;
@@ -302,6 +304,14 @@ function renderTabs() {
       pin.innerHTML = iconHTML('pin');
       pin.title = tt('已钉住，右键可取消');
       b.appendChild(pin);
+    } else if (isBuiltin(t)) {
+      /* 内置手册摆一个按了只会弹提示的 × 是骗人：它本来就关不掉。
+         换成文档图标 + 一句说明，宽度与关闭键一致，标签不跳。 */
+      const mark = document.createElement('span');
+      mark.className = 'tab-builtin';
+      mark.innerHTML = iconHTML('file-text');
+      mark.title = tt('内置手册不能关闭');
+      b.appendChild(mark);
     } else {
       const x = document.createElement('button');
       x.className = 'tab-close';
@@ -334,12 +344,12 @@ function renderTabs() {
       /* 钉住的标签谁都不关：自己的「关闭」变灰，三个方向只看「没钉住的那些」
          还有没有得关 —— 光看标签个数会在剩下全是钉子时给出一个点了没反应的项 */
       contextMenu(e.clientX, e.clientY, [
-        { label: t.ding ? tt('取消钉住') : tt('钉住标签'), action: () => setDing(t.id, !t.ding) },
+        { label: t.ding ? tt('取消钉住') : tt('钉住标签'), disabled: isBuiltin(t), action: () => setDing(t.id, !t.ding) },
         { sep: true },
-        { label: tt('关闭'), shortcut: 'Ctrl+W', disabled: t.ding, action: () => closeTab(t.id) },
-        { label: tt('关闭其他'), disabled: !tabs.some((x) => x.id !== t.id && !x.ding), action: () => closeOthers(t.id) },
-        { label: tt('关闭左侧'), disabled: !tabs.slice(0, idx).some((x) => !x.ding), action: () => closeLeft(t.id) },
-        { label: tt('关闭右侧'), disabled: !tabs.slice(idx + 1).some((x) => !x.ding), action: () => closeRight(t.id) },
+        { label: tt('关闭'), shortcut: 'Ctrl+W', disabled: t.ding || isBuiltin(t), action: () => closeTab(t.id) },
+        { label: tt('关闭其他'), disabled: !tabs.some((x) => x.id !== t.id && closableByBatch(x)), action: () => closeOthers(t.id) },
+        { label: tt('关闭左侧'), disabled: !tabs.slice(0, idx).some(closableByBatch), action: () => closeLeft(t.id) },
+        { label: tt('关闭右侧'), disabled: !tabs.slice(idx + 1).some(closableByBatch), action: () => closeRight(t.id) },
         { sep: true },
         { label: tt('复制文件路径'), disabled: !t.path, action: () => copyPath(t.path) },
         { label: tt('在文件夹中显示'), disabled: !t.path, action: () => revealInFolder(t.path) },
@@ -721,11 +731,11 @@ function copyPath(p) {
    活动标签，拿去写别的文件就是把 A 的正文灌进 B），没有路径、存不进去的
    脏标签写进草稿，和退出时「存成草稿，下次启动还能恢复」走同一条路。 */
 async function closeMany(ids, keepId) {
-  /* 钉住的标签不参与批量关闭 —— 在入口处滤掉，三个方向（其他/左/右）以及以后
-     可能多出来的调用点都不必各自记得这件事。 */
+  /* 钉住的与内置文档都不参与批量关闭 —— 在入口处滤掉，三个方向（其他/左/右）
+     以及以后可能多出来的调用点都不必各自记得这件事。 */
   const set = new Set(ids.filter((id) => {
     const t = tabs.find((x) => x.id === id);
-    return t && !t.ding;
+    return t && !t.ding && !isBuiltin(t);
   }));
   if (!set.size) return;
   /* 速记永远算干净，但它是防抖写盘的：关之前先 flush，否则最后几个字会丢 */
@@ -767,8 +777,9 @@ async function closeMany(ids, keepId) {
   activate(keepId);
 }
 
-/* closeMany 会滤掉钉住的，这里也不必先剔 —— 但「有没有得关」的判断（右键菜单
-   的禁用态）必须和它同一套口径，所以两处都按 !t.ding 算 */
+/* closeMany 会滤掉钉住的和内置文档，这里也不必先剔 —— 但「有没有得关」的判断
+   （右键菜单的禁用态）必须和它同一套口径，所以两处都按这条算 */
+const closableByBatch = (t) => !t.ding && !isBuiltin(t);
 function closeOthers(id) {
   closeMany([...tabs].filter((t) => t.id !== id).map((t) => t.id), id);
 }
@@ -932,6 +943,12 @@ function viewKindOf(t = activeTab()) {
 function setMode(mode, opt = {}) {
   const t = activeTab();
   if (!t) return;
+  /* 内置手册是只读的：模式下拉里另外两项点了也切不过去，
+     否则用户一进编辑模式就能改，改完又没处保存，只会变成一肚子疑问。 */
+  if (isBuiltin(t) && mode !== 'preview') {
+    if (t.mode !== 'preview') toast(tt('内置手册是只读的'));
+    return;
+  }
   /* 这两条要在改动 t.mode / renderedTabId 之前取：后面的「恢复光标与滚动」
      判的就是「编辑器里刚换了东西没有」 */
   const cameFromOtherTab = renderedTabId !== t.id;
@@ -2053,8 +2070,9 @@ function saveDraft() {
      它一写就会把主窗口的标签列表整个盖掉。它的内容由「关窗前合并回去」兜底。 */
   if (IS_TEAROFF) return;
   /* 速记不进会话：它不是「上次打开的文档」，而是一个随时能一键回到的地方。
-     混进去还会连带把它的路径塞进「最近打开」，那两份列表就都不干净了。 */
-  const session = tabs.filter((t) => !t.quickNote).map((t) => ({
+     混进去还会连带把它的路径塞进「最近打开」，那两份列表就都不干净了。
+     内置手册同理：它没有路径，会话恢复也认不出来，下次启动该由 manualSeen 决定。 */
+  const session = tabs.filter((t) => !t.quickNote && !isBuiltin(t)).map((t) => ({
     path: t.path, name: t.name, mode: t.mode,
     scrollTop: t.scrollTop || 0, previewScroll: t.previewScroll || 0, caret: t.caret ?? null,
     ding: !!t.ding,
@@ -2451,6 +2469,23 @@ export async function openQuickNote() {
   return t;
 }
 
+/* ---------------- 内置使用手册 ----------------
+   内容随程序编译进去（manual.js），不是磁盘上的文件：没有路径、不进会话、
+   关不掉、只允许预览。这样「使用手册」永远指向当前这一版的说明，不会出现
+   「用户机器上还留着一份 1.2 的旧手册」。 */
+function openManual() {
+  const had = tabs.find((x) => x.builtin === 'manual');
+  if (had) { activate(had.id); return had; }
+  const t = newTab(tt('使用手册.md'), manualDoc(getLang()), null, { builtin: 'manual', mode: 'preview' });
+  /* 预览模式下没有编辑入口，也就永远不脏 —— 不会在关窗时被问「要保存吗」 */
+  t.savedContent = t.content;
+  renderTabs();
+  return t;
+}
+
+/** 是不是内置文档：关不掉、不进会话、只读（目前只有手册一份） */
+const isBuiltin = (t) => !!(t && t.builtin);
+
 function scheduleQuickSave(t) {
   if (!t || !t.quickNote) return;
   clearTimeout(quickTimer);
@@ -2617,6 +2652,12 @@ async function saveAllQuiet(list) {
 async function closeTab(id) {
   const t = tabs.find((x) => x.id === id);
   if (!t) return;
+  /* 内置手册不属于用户，删不掉：它的内容随程序走，关掉之后下次还想看
+     只能从「帮助」再开，没有理由让它进入「关还是不关」这个决策。 */
+  if (isBuiltin(t)) {
+    toast(tt('内置手册不能关闭'));
+    return;
+  }
   /* 钉住的标签连自己都关不掉（右键里的「关闭」已变灰，这里兜住 × 之外的
      中键、Ctrl+W 和菜单「文件→关闭」）。要关先取消钉住，这是钉住的意思是全部。 */
   if (t.ding) {
@@ -3903,7 +3944,7 @@ async function showAbout() {
     title: tt('关于 EZNotepad'),
     body: `<div class="dlg-text">
       <p style="margin-top:0"><b>EZNotepad</b> ${tt('版本 {v}', { v })}</p>
-      <p>${tt('把 Markdown 预览、文本对比、记事本读写，做成一个 10MB 以内、免安装、不联网的小工具。')}</p>
+      <p>${tt('简单、轻量、好用：把 Markdown 写作、纯文本编辑和文件对比收在一个窗口里，免安装、不联网。')}</p>
       <p style="color:var(--fg-faint);font-size:12px">${tt('文件只在本机读写，不向任何服务器发送内容。')}</p>
     </div>`,
   });
@@ -4156,6 +4197,7 @@ const commands = {
   clearRecent: () => { LS.del('recent'); toast(tt('已清除最近记录')); },
   openFolder: pickFolder,
   settings: showSettings,
+  manual: openManual,
   shortcuts: showShortcuts,
   about: showAbout,
   encoding: changeEncoding,
@@ -4387,6 +4429,7 @@ const menuTree = () => [
   {
     label: tt('帮助'),
     items: [
+      { id: 'manual', label: tt('使用手册') },
       { id: 'shortcuts', label: tt('快捷键一览') },
       { id: 'about', label: tt('关于 EZNotepad') },
     ],
@@ -4979,11 +5022,18 @@ function setupGrip() {
     const block = handleBlock;
     if (!block || !block.isConnected) return;
     e.preventDefault();
-    /* Ctrl/Cmd+点、Shift+点 = 进入块选择模式并选中这一块（已选一段时就是扩到这一块）。
+    /* 三个修饰键是三种意思，别混：
+       Ctrl/Cmd+点 = 这一块加进 / 移出选中集（不连续多选，文件管理器的手感）；
+       Shift+点 = 从锚块扩成连续一段。
        两下都只要「选」，不拖、不开菜单：这一下的意思是「我要对这一整块做点什么」，
        菜单会挡住要选的目标。顺手记时间戳：pointerup 之后浏览器还会派发一次 click，
        那条兜底路径会立刻把菜单打开 —— 选完就弹菜单正是最烦人的那种。 */
-    if (e.ctrlKey || e.metaKey || e.shiftKey) {
+    if (e.ctrlKey || e.metaKey) {
+      gripMenuTs = performance.now();
+      wys.toggleBlockSel(block);
+      return;
+    }
+    if (e.shiftKey) {
       gripMenuTs = performance.now();
       wys.selectBlock(block, { additive: true });
       return;
@@ -5209,10 +5259,13 @@ function setupBlockHandle() {
 function blockSelMenu(x, y) {
   const n = wys.blockSelSet.size;
   const toType = (label, type, opts) => ({ label, action: () => wys.setSelectionType(type, opts) });
+  /* 非连续选中时上移/下移没有自洽语义（1、3 各滑一格会把中间没选的块推乱），
+     置灰而不是隐藏：让人看见「有这功能，只是现在不能用」。 */
+  const canMove = wys.isContiguousSelection();
   contextMenu(x, y, [
     { head: tt('已选 {n} 块', { n }) },
-    { label: tt('上移'), shortcut: 'Ctrl+Shift+↑', action: () => wys.moveSelection(-1) },
-    { label: tt('下移'), shortcut: 'Ctrl+Shift+↓', action: () => wys.moveSelection(1) },
+    { label: tt('上移'), shortcut: 'Ctrl+Shift+↑', disabled: !canMove, action: () => wys.moveSelection(-1) },
+    { label: tt('下移'), shortcut: 'Ctrl+Shift+↓', disabled: !canMove, action: () => wys.moveSelection(1) },
     { sep: true },
     { head: tt('类型') },
     { row: [
@@ -5986,7 +6039,8 @@ function persistCurrentView() {
 }
 
 /* ---------------- 启动 ---------------- */
-/* 欢迎文档按语言取，见 welcome.js；这里只在首次启动建标签时用一次。 */
+/* 使用手册按语言取，见 manual.js。首次开机自动开一次（LS 里的 manualSeen
+   记住这一笔），之后只能从「帮助 → 使用手册」进。 */
 async function boot() {
   /* 先认出自己是不是被拆出来的那扇窗：下面「怎么开标签」「怎么保存草稿」
      「关窗做什么」三处都要按它分叉，晚一步问就来不及了 */
@@ -6044,14 +6098,24 @@ async function boot() {
   if (IS_TEAROFF) {
     const seed = await be.takeTearoffSeed().catch(() => []);
     for (const s of seed || []) await openSeed(s);
-    if (!tabs.length) newTab(tt('欢迎.md'), welcomeDoc(getLang()));
+    /* 拆窗通常是带着标签出来的；真空的就给一份手册，但**不置 manualSeen** ——
+       首次开机这件事该由主窗口决定，别让一扇临时窗口替用户把标记吃掉 */
+    if (!tabs.length) openManual();
   } else {
     const cliFiles = await be.initialFiles().catch(() => []);
     const opened = await restoreSession().catch(() => 0);
     const drafts = await restoreDrafts().catch(() => 0);
     /* 命令行/文件关联带进来的文件：双击 .md 时系统把路径塞进 argv */
     for (const p of cliFiles || []) await openPath(p);
-    if (!opened && !drafts && !(cliFiles || []).length) newTab(tt('欢迎.md'), welcomeDoc(getLang()));
+    /* 第一次开机：把手册摆出来（这是唯一一次自动打开）。
+       老版本升上来的用户也没有这个标记，会看到一次 —— 他们本来就没见过手册。
+       之后启动就只剩「恢复上次的标签」，什么都没有时给一张空白纸。 */
+    if (!LS.get('manualSeen', false)) {
+      openManual();
+      LS.set('manualSeen', true);
+    } else if (!opened && !drafts && !(cliFiles || []).length) {
+      newTab(untitledName('md'), '');
+    }
   }
   setLayout(settings.layout);
   updateOutline();

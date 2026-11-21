@@ -2483,6 +2483,46 @@ window.__run = () => {
       eq('有序列表：md 里的显式起点 3 保留', nums(), '3. 4.');
       eq('有序列表：显式起点原样写回', T.out(), '3. 一\n4. 二\n');
 
+      /* 非连续多选：Ctrl+点 = 单块加入 / 移出，中间没选的块原地不动。
+         整组移动在非连续上没有自洽落点（1、3 各滑一格会把中间块推乱），必须拒绝；
+         删除 / 转类型 / 复制 md 是逐块走的，隔开的块各算各的，本来就该能用。 */
+      T.reset('甲\n\n乙\n\n丙\n\n丁\n');
+      ed.selectBlock(root.children[0]);
+      ed.toggleBlockSel(root.children[2]);
+      eq('非连续：Ctrl 加选后是两块', ed.blockSelSet.size, 2);
+      eq('非连续：selectedBlocks 仍按文档顺序',
+        ed.selectedBlocks().map((b) => b.textContent).join(','), '甲,丙');
+      eq('非连续：isContiguousSelection 判为不连续', ed.isContiguousSelection(), false);
+      eq('非连续：上移被拒绝', ed.moveSelection(-1), false);
+      eq('非连续：下移被拒绝', ed.moveSelection(1), false);
+      eq('非连续：拒绝之后顺序一个没动', T.blocks().join(','), 'p=甲,p=乙,p=丙,p=丁');
+      eq('非连续：复制为 Markdown 两块之间空一行', ed.selectionMarkdown(), '甲\n\n丙');
+      ed.setSelectionType('h2');
+      eq('非连续：整组转类型各转各的', T.blocks().join(','), 'h2=甲,p=乙,h2=丙,p=丁');
+      eq('非连续：转完仍是这两块选中', ed.blockSelSet.size, 2);
+      ed.deleteSelection();
+      eq('非连续：删除只删选中的两块', T.out(), '乙\n\n丁\n');
+
+      /* 再 Ctrl+点 一次 = 取消这一块；取消的是锚块时锚点交给剩下的第一块 */
+      T.reset('甲\n\n乙\n\n丙\n');
+      ed.selectBlock(root.children[0]);
+      ed.toggleBlockSel(root.children[2]);
+      ed.toggleBlockSel(root.children[2]);
+      eq('非连续：再点一次取消这一块', ed.blockSelSet.size, 1);
+      eq('非连续：锚块还是最先选的那块', ed.blockSel.textContent, '甲');
+      ed.toggleBlockSel(root.children[0]);
+      eq('非连续：把锚块也取消后选中为空', ed.blockSelSet.size, 0);
+      eq('非连续：没有锚块了', ed.blockSel, null);
+      eq('非连续：取消选中不改正文', T.out(), '甲\n\n乙\n\n丙\n');
+
+      /* 连续的一段仍然能整组移动（非连续守卫不能把这条路也堵了） */
+      T.reset('甲\n\n乙\n\n丙\n');
+      ed.selectBlock(root.children[0]);
+      ed.selectBlock(root.children[1], { additive: true });
+      eq('连续：两段仍判为连续', ed.isContiguousSelection(), true);
+      eq('连续：整组下移照常生效', ed.moveSelection(1), true);
+      eq('连续：下移后的顺序', T.blocks().join(','), 'p=丙,p=甲,p=乙');
+
       /* 折叠是视图状态：md 一个字节都不该变 */
       T.reset('# 一\n\n甲\n\n## 二\n\n乙\n\n丙\n');
       const h1 = root.children[0];

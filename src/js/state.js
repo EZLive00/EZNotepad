@@ -74,6 +74,10 @@ export function createTab(name = tt('未命名.md'), content = '', path = null) 
     readonly: false,
     external: false,            // 是否为外部生成（对比结果 / 合并结果）
     quickNote: false,           // 是不是那份固定位置的速记（见 app.js openQuickNote）
+    /* 内置文档（目前只有使用手册）：内容随程序走，没有磁盘路径、只允许预览、
+       关不掉，也不进会话。用一个字符串标记是哪一份，别做成布尔量 —— 以后
+       再加「更新日志」之类，加一个值就行。 */
+    builtin: null,
     ding: false,                // 钉住：不画关闭键，批量关闭也绕开它（见 app.js setDing）
     mtime: null,                // 上次读/写这个文件时的修改时间（毫秒），用于发现外部改动
     /* 折叠了哪些标题：键是「级别 + 标题文字」（见 wysiwyg.js 的 foldKey）。
