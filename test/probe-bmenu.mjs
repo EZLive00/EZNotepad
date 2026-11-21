@@ -517,6 +517,12 @@ const shiftClickAt = async (x, y) => {
   await sleep(40);
   await call('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1, buttons: 0, modifiers: 8 });
 };
+/** Ctrl+点：modifiers 2 = Ctrl（进块选择模式） */
+const ctrlClickAt = async (x, y) => {
+  await call('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1, buttons: 1, modifiers: 2 });
+  await sleep(40);
+  await call('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1, buttons: 0, modifiers: 2 });
+};
 /** 悬停第 i 块 → 等手柄**真的贴上**它 → 返回抓手中心。
  *  固定 sleep 不够：release 产物比 debug 快，160ms 时手柄偶尔还在上一块上，
  *  接着 Shift+点就成了「点锚块 = 取消选中」，测试红得莫名其妙。 */
@@ -602,6 +608,19 @@ if (gTop && pBottom) {
     await sleep(20);
   }
   await sleep(80);
+  /* 松手之前先看插入线：这是「会插在哪」的唯一提示，位置得真的贴在目标块边缘 */
+  const dl = await ev(`(() => {
+    const l = document.querySelector('.w-drop-line');
+    const bs = [...document.querySelectorAll('.wysiwyg > .w-block')];
+    const b = bs[2];
+    if (!l || !b) return null;
+    const lr = l.getBoundingClientRect(), br = b.getBoundingClientRect();
+    return { hidden: l.classList.contains('hidden'), w: Math.round(lr.width), h: Math.round(lr.height),
+             dy: Math.round(lr.top - br.bottom), bw: Math.round(br.width), top: Math.round(lr.top) };
+  })()`);
+  ok('拖动时插入线是显示出来的', !!dl && !dl.hidden && dl.w > 0 && dl.h > 0, JSON.stringify(dl));
+  ok('插入线贴住落点（目标块下边缘）', !!dl && Math.abs(dl.dy) <= 3, JSON.stringify(dl));
+  ok('插入线横跨整块宽度', !!dl && Math.abs(dl.w - dl.bw) <= 2, JSON.stringify(dl));
   await call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: gTop.x + 6, y: yTo, button: 'left', clickCount: 1, buttons: 0 });
   await sleep(320);
   /* 拖动前顺序是「二段,一段,三段」（上一条用例刚把二段提到最前），
@@ -609,6 +628,9 @@ if (gTop && pBottom) {
   ok('拖抓手把第一块搬到最后', (await blockTexts()).join(',') === '一段,三段,二段', (await blockTexts()).join(','));
 } else {
   ok('拖抓手把第一块搬到最后', false, '抓手或目标块没找到');
+  ok('拖动时插入线是显示出来的', false, '抓手或目标块没找到');
+  ok('插入线贴住落点（目标块下边缘）', false, '抓手或目标块没找到');
+  ok('插入线横跨整块宽度', false, '抓手或目标块没找到');
 }
 
 /* 标题折叠：三角只在标题块上出现，折起来是一行不差的「只是看不见」 */
@@ -640,6 +662,148 @@ if (foldBtn) {
   ok('点三角：后续块全部不可见', false, '三角没找到');
   ok('折叠不改 Markdown（视图状态不进文件）', false, '三角没找到');
 }
+
+/* ---------- 10. 滚动之后的插入线 ----------
+   paintDropLine 以前在「块矩形相对容器的偏移」上又加了一次 scrollTop，
+   文档一滚线就被推到视口外 —— 用户看到的是「拖的时候完全没有插入位置」。 */
+await openDoc('long.md', Array.from({ length: 40 }, (_, i) => `第${i + 1}段`).join('\n\n') + '\n');
+await ev(`(() => { const w = document.getElementById('wysiwyg'); w.scrollTop = 700; return w.scrollTop; })()`);
+await sleep(240);
+const midIdx = await ev(`(() => {
+  const w = document.getElementById('wysiwyg');
+  const wr = w.getBoundingClientRect();
+  const mid = (wr.top + wr.bottom) / 2;
+  const bs = [...w.querySelectorAll(':scope > .w-block')];
+  return bs.findIndex((b) => { const r = b.getBoundingClientRect(); return r.top < mid && r.bottom > mid; });
+})()`);
+const sFrom = midIdx > 2 ? await gripAt(midIdx - 2) : null;
+const sTo = midIdx > 0 ? await nthBlock(midIdx + 2) : null;
+if (sFrom && sTo) {
+  const yTo = sTo.bottom - 3;
+  await call('Input.dispatchMouseEvent', { type: 'mousePressed', x: sFrom.x, y: sFrom.y, button: 'left', clickCount: 1, buttons: 1 });
+  await sleep(60);
+  for (let i = 1; i <= 8; i++) {
+    await call('Input.dispatchMouseEvent', {
+      type: 'mouseMoved', x: sFrom.x + 6, y: sFrom.y + (yTo - sFrom.y) * i / 8, buttons: 0,
+    });
+    await sleep(20);
+  }
+  await sleep(90);
+  const sd = await ev(`(() => {
+    const l = document.querySelector('.w-drop-line');
+    const w = document.getElementById('wysiwyg');
+    if (!l) return null;
+    const lr = l.getBoundingClientRect(), wr = w.getBoundingClientRect();
+    return { hidden: l.classList.contains('hidden'), h: Math.round(lr.height),
+             inView: lr.top > wr.top - 4 && lr.top < wr.bottom + 4,
+             scrollTop: Math.round(w.scrollTop) };
+  })()`);
+  ok('滚动后拖动：插入线仍在视口内', !!sd && !sd.hidden && sd.h > 0 && sd.inView, JSON.stringify(sd));
+  ok('滚动后拖动：线确实按滚动位置重算过', !!sd && sd.scrollTop > 300, JSON.stringify(sd));
+  await call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: sFrom.x + 6, y: yTo, button: 'left', clickCount: 1, buttons: 0 });
+  await sleep(240);
+} else {
+  ok('滚动后拖动：插入线仍在视口内', false, `from=${!!sFrom} to=${!!sTo}`);
+  ok('滚动后拖动：线确实按滚动位置重算过', false, `from=${!!sFrom} to=${!!sTo}`);
+}
+
+/* ---------- 11. 块选择模式 ----------
+   Ctrl+点抓手进去，抓手与行首 + 让位，只留整块高亮 + 顶部提示条；
+   点正文换选中的块，右键出整套整组操作，Esc 退出。 */
+await openDoc('sel.md', '一段\n\n二段\n\n三段\n');
+const sA = await gripAt(0);
+if (sA) { await ctrlClickAt(sA.x, sA.y); await sleep(220); }
+const mode1 = await ev(`(() => {
+  const wrap = document.querySelector('.edit-wrap');
+  const hint = document.querySelector('.w-selhint');
+  const h = document.getElementById('wHandle');
+  return {
+    mode: wrap.classList.contains('w-selmode'),
+    hint: hint ? hint.textContent : null,
+    hintShown: hint ? !hint.classList.contains('hidden') : false,
+    grip: getComputedStyle(h).display,
+    sel: document.querySelectorAll('.wysiwyg > .w-block.w-sel').length,
+  };
+})()`);
+ok('Ctrl+点抓手进入选择模式', mode1.mode && mode1.sel === 1, JSON.stringify(mode1));
+ok('顶部提示条写明已选几块', mode1.hintShown && /已选 1 块/.test(mode1.hint || ''), JSON.stringify(mode1.hint));
+ok('模式里抓手让位（只留选中高亮）', mode1.grip === 'none', mode1.grip);
+
+const pB = await nthBlock(2);
+if (pB) { await click(pB.x, pB.y); await sleep(220); }
+ok('模式里点正文 = 扩到那一段', (await selCount()) === 3, String(await selCount()));
+ok('点正文不进编辑，提示条跟着更新',
+  /已选 3 块/.test(await ev(`(document.querySelector('.w-selhint') || {}).textContent || ''`)),
+  await ev(`(document.querySelector('.w-selhint') || {}).textContent || ''`));
+
+/* 右键：整套整组菜单（文字格式那一套对着一堆整块没有意义） */
+await ev(`(() => {
+  const b = document.querySelectorAll('.wysiwyg > .w-block')[2];
+  const r = b.getBoundingClientRect();
+  b.dispatchEvent(new MouseEvent('contextmenu', {
+    bubbles: true, cancelable: true, clientX: r.left + 20, clientY: r.top + 6,
+  }));
+  return true;
+})()`);
+await sleep(200);
+const bmenu = await ev(`(() => {
+  const m = document.querySelector('.ctx-menu');
+  if (!m) return null;
+  return {
+    heads: [...m.querySelectorAll('.am-head')].map((h) => h.textContent),
+    labels: [...m.querySelectorAll('button')].map((b) => b.textContent.trim()),
+  };
+})()`);
+ok('右键弹出整组菜单', !!bmenu && bmenu.heads.includes('类型'), JSON.stringify(bmenu && bmenu.heads));
+ok('菜单里有「删除 3 块」', !!bmenu && bmenu.labels.some((l) => /删除 3 块/.test(l)),
+  JSON.stringify(bmenu && bmenu.labels));
+ok('菜单里有「复制为 Markdown」', !!bmenu && bmenu.labels.some((l) => /复制为 Markdown/.test(l)),
+  JSON.stringify(bmenu && bmenu.labels));
+
+/* 整组转类型：三块一起变 h2，且转换后仍是选中态 */
+await ev(`(() => {
+  const b = [...document.querySelectorAll('.ctx-menu button')].find((x) => x.textContent.trim() === '标题 2');
+  if (b) b.click();
+  return !!b;
+})()`);
+await sleep(320);
+ok('整组转成标题 2', await ev(`(() => {
+  const bs = [...document.querySelectorAll('.wysiwyg > .w-block')];
+  return bs.length === 3 && bs.every((b) => b.dataset.type === 'h2');
+})()`), await ev(`[...document.querySelectorAll('.wysiwyg > .w-block')].map((b) => b.dataset.type).join(',')`));
+ok('转换后仍然选中（可以接着操作）', (await selCount()) === 3, String(await selCount()));
+
+await pressKey('Escape');
+await sleep(180);
+ok('Esc 退出选择模式', await ev(`!document.querySelector('.edit-wrap').classList.contains('w-selmode')`));
+ok('退出后提示条收起', await ev(`(() => {
+  const h = document.querySelector('.w-selhint');
+  return !h || h.classList.contains('hidden');
+})()`));
+
+/* 复制为 Markdown：列表项必须带上 `- ` / `1. ` 标记 —— 用 blockMarkdownText
+   拼的话只有块内文本，粘到别的编辑器里就是一堆裸段落 */
+await openDoc('copymd.md', '## 标题\n\n- 甲\n- 乙\n\n正文\n');
+const cpList = await ev(`(() => {
+  const ed = window.__snp.editor;
+  const bs = [...document.querySelectorAll('.wysiwyg > .w-block')];
+  ed.selectBlock(bs[1]);
+  ed.selectBlock(bs[2], { additive: true });
+  return ed.selectionMarkdown();
+})()`);
+ok('复制为 Markdown：列表项带 - 标记', cpList === '- 甲\n- 乙', JSON.stringify(cpList));
+const cpMix = await ev(`(() => {
+  const ed = window.__snp.editor;
+  const bs = [...document.querySelectorAll('.wysiwyg > .w-block')];
+  ed.selectBlock(bs[0]);
+  ed.selectBlock(bs[1], { additive: true });
+  return ed.selectionMarkdown();
+})()`);
+ok('复制为 Markdown：标题与列表之间空一行', cpMix === '## 标题\n\n- 甲', JSON.stringify(cpMix));
+await ev('window.__snp.editor.clearBlockSel()');
+
+/* 命令面板拿当前文档的标题做过滤，上面的用例已经把文档换成 sel.md 了 —— 切回来 */
+await openDoc('fold.md', '# 标题一\n\n正文甲\n\n## 标题二\n\n正文乙\n');
 
 /* 命令面板：一次输入框里同时找得到「文件 / 标题 / 命令」 */
 await ev('window.__snp.commands.palette()');

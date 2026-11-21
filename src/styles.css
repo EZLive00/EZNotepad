@@ -1680,7 +1680,34 @@ body[data-zen="1"] .win-title { color: var(--fg-faint); }
   position: absolute; z-index: 7; height: 2px; border-radius: 1px;
   background: var(--accent); pointer-events: none; display: block;
 }
+/* 两端各一个圆点：2px 细线压在密集正文里会和文字笔画、下划线混成一片，
+   用户看不出「会插在这里」。圆点把落点钉成一条可见的横杠。 */
+.w-drop-line::before,
+.w-drop-line::after {
+  content: ''; position: absolute; top: -2px; width: 6px; height: 6px;
+  border-radius: 50%; background: var(--accent);
+}
+.w-drop-line::before { left: -3px; }
+.w-drop-line::after { right: -3px; }
 .w-drop-line.hidden { display: none; }
+/* ---- 块选择模式（Ctrl/Shift+点抓手进入）----
+   模式里抓手、行首 + 、折叠三角一起让位：那三个属于「编辑这一块」，
+   和「选这一段」是两套意图，同时摆着只会互相误触。选择只靠点正文。
+   !important 是因为手柄的位置/显隐由 placeHandle 每帧接管，靠 class 让步不可靠。 */
+.edit-wrap.w-selmode .w-handle { display: none !important; }
+
+/* 模式提示条：贴在编辑区顶部居中，说清「选了几块 / 能做什么 / 怎么出去」。
+   没有它的话，这一模式就只能靠记快捷键，用户进去出不来。 */
+.w-selhint {
+  position: absolute; top: 6px; left: 50%; transform: translateX(-50%);
+  z-index: 8; max-width: calc(100% - 32px);
+  padding: 3px 12px; border-radius: 999px;
+  background: var(--bg-float); border: var(--bw) solid var(--line);
+  color: var(--fg-soft); font-size: var(--fs-1); line-height: 1.7;
+  box-shadow: var(--shadow-float); pointer-events: none;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.w-selhint.hidden { display: none; }
 .wysiwyg .w-block.w-dragging { opacity: .45; }
 .edit-wrap.w-dragging-active { cursor: grabbing; }
 .edit-wrap.w-dragging-active .wysiwyg { cursor: grabbing; }

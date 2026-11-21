@@ -2462,6 +2462,27 @@ window.__run = () => {
       eq('块删除：选中两块一起删掉', T.out(), '丙\n');
       eq('块删除：删完不留选中态', ed.blockSelSet.size, 0);
 
+      /* 有序列表编号：起点只属于序列首项。
+         以前每项都记着自己的 md 序号，搬一次块或删掉首项，新首项就接着
+         上一轮的号往下排（1.2.3 变成 2.3.4）——这是编号算法的坑，不是搬块的。 */
+      const nums = () => [...root.children]
+        .map((b) => b.querySelector('.w-li-marker').textContent).join(' ');
+      T.reset('1. 一\n2. 二\n3. 三\n');
+      T.caret(0, 0);
+      T.key('ArrowDown', { ctrlKey: true, shiftKey: true });
+      eq('有序列表：首项下移后仍从 1 编号', nums(), '1. 2. 3.');
+      eq('有序列表：下移后的顺序', T.blocks().join(','), 'li:ol@0=二,li:ol@0=一,li:ol@0=三');
+      eq('有序列表：搬完写回 md 也是 1 起', T.out(), '1. 二\n2. 一\n3. 三\n');
+
+      T.reset('1. 一\n2. 二\n3. 三\n');
+      ed.selectBlock(root.children[0]);
+      ed.deleteSelection();
+      eq('有序列表：删掉首项后从 1 重新编号', nums(), '1. 2.');
+
+      T.reset('3. 一\n4. 二\n');
+      eq('有序列表：md 里的显式起点 3 保留', nums(), '3. 4.');
+      eq('有序列表：显式起点原样写回', T.out(), '3. 一\n4. 二\n');
+
       /* 折叠是视图状态：md 一个字节都不该变 */
       T.reset('# 一\n\n甲\n\n## 二\n\n乙\n\n丙\n');
       const h1 = root.children[0];

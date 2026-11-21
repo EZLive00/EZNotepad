@@ -149,11 +149,32 @@ function scheduleOutline() {
   outlineTimer = setTimeout(updateOutline, big ? 800 : 250);
 }
 
+/* ---------------- 块选择模式 ----------------
+   选中一块或多块时，整块淡橙底 + 顶部一条提示。模式里只做三件事：
+   换选中的块（点正文）、整组操作（右键菜单 / Ctrl+Shift+↑↓ / Delete）、退出（Esc）。
+   抓手与行首 + 在模式里一律不显示 —— 它们属于「编辑这一块」，和「选这一段」
+   是两套意图，同时摆着只会互相误触。 */
+let selHintEl = null;
+function updateSelHint() {
+  const n = wys.blockSelSet ? wys.blockSelSet.size : 0;
+  el.editWrap.classList.toggle('w-selmode', n > 0);
+  if (!n) { if (selHintEl) selHintEl.classList.add('hidden'); return; }
+  if (!selHintEl) {
+    selHintEl = document.createElement('div');
+    selHintEl.className = 'w-selhint';
+    selHintEl.setAttribute('role', 'status');
+    el.editWrap.appendChild(selHintEl);
+  }
+  selHintEl.textContent = tt('已选 {n} 块 · 右键可操作 · Esc 退出', { n });
+  selHintEl.classList.remove('hidden');
+}
+
 const wys = new WysiwygEditor(el.wysiwyg, {
   /* 每 10 视觉行一条浅色虚线（overlay），跟编辑区共用一个开关 */
   /* 点中分割线：它自己没有光标位，把块手柄的锚点直接钉到这一块上，
      别等 selectionchange 拿旧锚点把刚选中的块盖掉 */
   onBlockSelect: (block) => {
+    updateSelHint();
     if (!block) { anchorBlock = null; hideHandle(); return; }
     /* 范围选中时「锚块」是范围起点（可能在文档另一头）。手柄跟着锚块跳，
        会当场从鼠标底下溜走 —— 生成一次 mouseleave，220ms 后自己收起来，
@@ -4890,7 +4911,10 @@ function paintDropLine(t) {
   if (!t || !t.block.isConnected) { line.classList.add('hidden'); return; }
   const host = el.editWrap.getBoundingClientRect();
   const r = t.block.getBoundingClientRect();
-  const y = (t.after ? r.bottom : r.top) - host.top + el.wysiwyg.scrollTop;
+  /* 不要在这里再加 wysiwyg.scrollTop：块的 rect 已经是当前视口坐标，
+     减掉容器顶就是相对 .edit-wrap 的偏移。之前多加了一次滚动距离 ——
+     文档一滚，线被推到视口外，看起来就像「拖的时候压根没有插入位置」。 */
+  const y = (t.after ? r.bottom : r.top) - host.top;
   line.style.top = Math.round(y - 1) + 'px';
   line.style.left = Math.round(r.left - host.left) + 'px';
   line.style.width = Math.round(r.width) + 'px';
@@ -4955,11 +4979,11 @@ function setupGrip() {
     const block = handleBlock;
     if (!block || !block.isConnected) return;
     e.preventDefault();
-    /* Shift+点 = 选中这一块（再 Shift 点别块扩成范围），不进拖拽、不开菜单：
-       这一下的意思是「我要对这一块做点什么」，菜单会挡住要选的目标。
-       顺手记时间戳：pointerup 之后浏览器还会派发一次 click，那条兜底路径
-       会立刻把菜单打开 —— Shift 选完弹菜单正是最烦人的那种。 */
-    if (e.shiftKey) {
+    /* Ctrl/Cmd+点、Shift+点 = 进入块选择模式并选中这一块（已选一段时就是扩到这一块）。
+       两下都只要「选」，不拖、不开菜单：这一下的意思是「我要对这一整块做点什么」，
+       菜单会挡住要选的目标。顺手记时间戳：pointerup 之后浏览器还会派发一次 click，
+       那条兜底路径会立刻把菜单打开 —— 选完就弹菜单正是最烦人的那种。 */
+    if (e.ctrlKey || e.metaKey || e.shiftKey) {
       gripMenuTs = performance.now();
       wys.selectBlock(block, { additive: true });
       return;
@@ -5178,6 +5202,35 @@ function setupBlockHandle() {
 }
 
 /* ---------------- 事件绑定 ---------------- */
+
+/** 块选中态的右键菜单：只作用于选中的那几块。
+    这是模式里唯一的「说明书」—— 进去之后不用记快捷键，看一眼菜单就知道能做什么。
+    整组转换走 setSelectionType：一次入栈，Ctrl+Z 一步退回整批。 */
+function blockSelMenu(x, y) {
+  const n = wys.blockSelSet.size;
+  const toType = (label, type, opts) => ({ label, action: () => wys.setSelectionType(type, opts) });
+  contextMenu(x, y, [
+    { head: tt('已选 {n} 块', { n }) },
+    { label: tt('上移'), shortcut: 'Ctrl+Shift+↑', action: () => wys.moveSelection(-1) },
+    { label: tt('下移'), shortcut: 'Ctrl+Shift+↓', action: () => wys.moveSelection(1) },
+    { sep: true },
+    { head: tt('类型') },
+    { row: [
+      toType(tt('正文'), 'p'), toType(tt('标题 1'), 'h1'),
+      toType(tt('标题 2'), 'h2'), toType(tt('标题 3'), 'h3'),
+    ] },
+    { row: [
+      toType(tt('无序列表'), 'li', { list: 'ul' }), toType(tt('有序列表'), 'li', { list: 'ol' }),
+      toType(tt('引用'), 'bq'), toType(tt('代码块'), 'code'),
+    ] },
+    { sep: true },
+    { label: tt('复制为 Markdown'), action: () => writeClipboard(wys.selectionMarkdown()) },
+    { label: tt('取消选择'), shortcut: 'Esc', action: () => wys.clearBlockSel() },
+    { sep: true },
+    { label: n > 1 ? tt('删除 {n} 块', { n }) : tt('删除'), danger: true, action: () => wys.deleteSelection() },
+  ]);
+}
+
 function bindEvents() {
   /* 用 addEventListener 而不是 onclick：覆盖式赋值一旦被后续代码碰上就悄悄失效，
      而 addEventListener 至少不会互相顶掉 */
@@ -5285,6 +5338,15 @@ function bindEvents() {
   document.addEventListener('contextmenu', (e) => {
     if (e.target.closest('.wysiwyg')) {
       e.preventDefault();
+      /* 块选中态先走专属菜单：文字格式那一套对着「整块」既没有焦点也说不通 ——
+         这里要的是删几块、整组换类型、挪位置。 */
+      if (wys.blockSelSet && wys.blockSelSet.size) {
+        const hit = e.target.closest('.w-block');
+        /* 右键点在选中集之外的块上：意思显然是「改成对这一块」，先把选中换过去 */
+        if (hit && !wys.blockSelSet.has(hit)) wys.selectBlock(hit);
+        blockSelMenu(e.clientX, e.clientY);
+        return;
+      }
       const tbl = wys.isInTable();
       /* 这一套是所见即所得里唯一的右键入口，原来 23 项一口气竖排、7 条分隔线，
          表格里那一截足有 11 项，找「右对齐」得从上往下数。现在按「文字 / 段落 /

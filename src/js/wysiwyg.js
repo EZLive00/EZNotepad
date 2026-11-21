@@ -275,7 +275,11 @@ export function mkLi(kind, text = '', indent = 0, checked = false, start = 1) {
     b.appendChild(m);
   }
   b.appendChild(mkText(text));
-  if (kind === 'ol') b.dataset.start = String(start);
+  /* data-start 只表示「这个有序序列的显式起点」，且**只有序列首项**能持有。
+     每项都写自己的号会让 renumber 把「这一项原来排第几」当成「序列从几开始」：
+     第一项下移之后新首项读到 2，整组就变成 2. 3. 4.（删掉首项时同理）。
+     起点是 1（Markdown 的默认）就不必落属性，省掉万行文档里每项一次写。 */
+  if (kind === 'ol' && start !== 1) b.dataset.start = String(start);
   return b;
 }
 
@@ -679,7 +683,14 @@ export function parseMarkdown(md) {
     // 有序列表
     const ol = line.match(RE_OL);
     if (ol) {
-      frag.appendChild(mkLi('ol', ol[3], levelOf(leadingCols(ol[1])), false, parseInt(ol[2], 10) || 1));
+      const lvl = levelOf(leadingCols(ol[1]));
+      /* 起点只认序列首项：md 里 `3.` 开头要能从 3 开始，而第 2、3 项写着的
+         2、3 只是行号。把它们都记成起点，搬一次块就整组错号（见 mkLi 注释） */
+      const prevEl = frag.lastElementChild;
+      const seqHead = !(prevEl && prevEl.dataset && prevEl.dataset.type === 'li'
+        && prevEl.dataset.list === 'ol' && (+prevEl.dataset.indent || 0) === lvl);
+      frag.appendChild(mkLi('ol', ol[3], lvl, false,
+        seqHead ? (parseInt(ol[2], 10) || 1) : 1));
       i++;
       continue;
     }
@@ -1119,10 +1130,16 @@ function parseRecords(md) {
       }
       const ol = raw.match(RE_OL);
       if (ol) {
-        push({
-          type: 'li', md: raw.replace(/\s+$/, ''),
-          li: { kind: 'ol', indent: levelOf(leadingCols(ol[1])), text: ol[3], num: parseInt(ol[2], 10) || 1, start: parseInt(ol[2], 10) || 1 },
-        }, lineNo);
+        const indent = levelOf(leadingCols(ol[1]));
+        const num = parseInt(ol[2], 10) || 1;
+        /* 起点只认序列首项（见 mkLi 的注释）：续项的 num 只是行号，
+           记成 start 会让「搬块 / 删首项」之后整组从 2 开始 */
+        const pv = recs[recs.length - 1];
+        const seqHead = !(pv && pv.type === 'li' && pv.li && pv.li.kind === 'ol'
+          && (pv.li.indent || 0) === indent);
+        const li = { kind: 'ol', indent, text: ol[3], num };
+        if (seqHead && num !== 1) li.start = num;
+        push({ type: 'li', md: raw.replace(/\s+$/, ''), li }, lineNo);
         i++;
         continue;
       }
@@ -1433,9 +1450,15 @@ export class WysiwygEditor {
        点在其它段落上一样该取消。 */
     document.addEventListener('pointerdown', (e) => {
       if (!this.blockSel) return;
+      /* 右键不清块选中：这一下就是为了对选中的那几块开菜单，
+         清掉等于菜单没有目标（右下的 contextmenu 紧随其后） */
+      if (e.button !== 0) return;
       const t = e.target;
       if (t && t.closest && t.closest('.w-block[data-type="hr"]')) return;
       if (t && t.closest && (t.closest('.w-handle') || t.closest('.w-bmenu'))) return;
+      /* 块选择模式里点正文 = 换个块选中（由 handlePointerDown 接管）。
+         这一条必须放在取消之前 —— 点上去就退出的话，模式根本立不住。 */
+      if (this.blockSelSet.size && t && t.closest && t.closest('.w-block')) return;
       this.clearBlockSel();
     }, true);
     root.addEventListener('beforeinput', (e) => this.onBeforeInput(e));
@@ -1446,16 +1469,14 @@ export class WysiwygEditor {
       /* 中文输入法起手也是「要输入了」：先把块后那一行建出来，组字文本
          才会落在它里面，而不是写进下一块的正文。 */
       if (this.gapAfter) this.materializeGap();
-      /* 分割线被选中时同样要在它下方开一行，否则组字无处落脚；
-         多选时整组被这次输入顶掉（与「选中后打字」同一口径） */
+      /* 块选中态起手输入法：把光标送回锚块末尾、退出选中，**不删块**。
+         以前这里（和 handleBlockSelKey 那条）会把整组顶掉，但组字起手时
+         删 DOM 会打断输入法 —— 字符反而落到别处。删多块的入口留给 Delete
+         和块选中右键菜单，它们都在操作结束之后才动 DOM。 */
       if (this.blockSel) {
-        if (this.blockSelSet.size > 1) {
-          this.deleteSelection();
-        } else {
-          const p = this.insertEmptyAfter(this.blockSel);
-          this.clearBlockSel();
-          this.placeCaretStart(p);
-        }
+        const b = this.blockSel;
+        this.clearBlockSel();
+        if (b && b.isConnected) this.focusBlock(b, true);
       }
     });
     root.addEventListener('compositionend', () => { this.composing = false; this.onInput(); });
@@ -1614,8 +1635,12 @@ export class WysiwygEditor {
     this._exitVirtual();
     this.lastBlock = null;
     this.lastCell = null;
+    const hadSel = this.blockSelSet.size > 0;
     this.blockSel = null;      // 旧块已被整批换掉，块选中态一并作废
     this.blockSelSet.clear();
+    /* 外层要靠这个回调收掉「已选 N 块」提示条与选择模式的 class ——
+       光清本地的 Set，切完标签那一条会挂在屏幕上不走 */
+    if (hadSel && this.onBlockSelect) this.onBlockSelect(null);
     /* 大文档（>1MB）走视口渲染：块只存记录、DOM 里只留视口附近几十个。
        中小文档维持原路径（DOM 即模型），行为一字不变。 */
     if (md.length > BIG_DOC_CHARS) {
@@ -2000,7 +2025,7 @@ export class WysiwygEditor {
           kind: el.dataset.list || 'ul',
           indent: Math.min(+(el.dataset.indent || 0), MAX_INDENT),
           num: +(el.dataset.num || 1),
-          start: prev.start || prev.num || 1,
+          start: prev.start || 1,
           checked: el.dataset.checked === '1',
           text: inlineToMd(textEl(el)),
         };
@@ -3332,52 +3357,19 @@ export class WysiwygEditor {
       this.deleteSelection();
       return true;
     }
-    if (plain && (e.key === 'Enter' || (e.key.length === 1 && !e.isComposing))) {
-      /* 多选 + 打字 = 整组被这个字顶掉（Notion 的行为）。单选照旧「在下面开一行」。 */
-      if (this.blockSelSet.size > 1 && e.key.length === 1) {
-        const list = this.selectedBlocks();
-        const prev = list[0].previousElementSibling;
-        for (const x of list) x.remove();
-        this.clearBlockSel();
-        let p;
-        if (prev && prev.isConnected) p = this.insertEmptyAfter(prev);
-        else { p = mkPara(''); this.root.prepend(p); }
-        this.renumber();
-        this.hCoalesce = false;
-        this.placeCaretStart(p);
-        return true;      // 不 preventDefault：字符随后落进刚建好的段落
-      }
-      const last = this.selectedBlocks().slice(-1)[0] || b;
-      const p = this.insertEmptyAfter(last);
-      this.clearBlockSel();
-      this.placeCaretStart(p);
-      if (e.key === 'Enter') { e.preventDefault(); this.flush(); return true; }
-      /* 可打印字符不 preventDefault：它随后落进刚建好的段落，
-         由 input 事件负责序列化。 */
-      return true;
-    }
-    if (plain && /^Arrow(Up|Down|Left|Right)$/.test(e.key)) {
-      const up = e.key === 'ArrowUp' || e.key === 'ArrowLeft';
-      /* 多选时先把选中收缩到对应的那一端，再往外走一步 —— 这样
-         「选了三块 → 按 ↓」落到第四块，而不是从锚块（可能在中间）跳。 */
-      const list = this.selectedBlocks();
-      const edge = up ? list[0] : list[list.length - 1];
-      const from = edge || b;
-      const near = up ? from.previousElementSibling : from.nextElementSibling;
-      if (near && near.dataset.type !== 'hr') {
-        e.preventDefault();
-        this.clearBlockSel();
-        if (up) this.placeCaretEnd(near); else this.placeCaretStart(near);
-        return true;
-      }
-      this.clearBlockSel();
-      return true;
-    }
     if (e.key === 'Escape' || e.key === 'Tab') {
       e.preventDefault();
       this.clearBlockSel();
       return true;
     }
+    /* 其余按键一律「退出选中 + 光标回到锚块末尾」。
+       以前这里还有「打字整组被顶掉」和「方向键先收缩到端点」两支，都去掉了：
+       前者靠 keydown 判 e.key.length === 1，输入法组合期（isComposing / key
+       是 Process）命不中，字会落到块选中用的那个折叠假 Range 上 —— 用户看到
+       的是「没替换，反而在下面多出字符」。删十块的入口留 Delete 和右键菜单
+       就够，不必再赌一次输入法。 */
+    this.clearBlockSel();
+    if (b && b.isConnected) this.focusBlock(b, true);
     return false;
   }
 
@@ -4638,8 +4630,15 @@ export class WysiwygEditor {
       if (b.dataset.list !== 'ol') continue;
       const ind = +b.dataset.indent || 0;
       counters.length = ind + 1;
-      if (counters[ind] == null) counters[ind] = +(b.dataset.start || 1);
-      else counters[ind] += 1;
+      if (counters[ind] == null) {
+        /* 序列首项：显式起点说了算（md 里 `3.` 开头），默认 1 */
+        counters[ind] = +(b.dataset.start || 1);
+      } else {
+        counters[ind] += 1;
+        /* 起点只属于序列首项。搬块、删首项之后，原来带着 start 的那一项可能
+           已经排到中间 —— 残留的 start 会在它下次成为首项时把整组带歪 */
+        if (b.dataset.start) delete b.dataset.start;
+      }
       const num = counters[ind];
       b.dataset.num = String(num);
       /* marker 永远是首孩子（mkLi 先造它）——命中就不必 querySelector，
@@ -4889,28 +4888,7 @@ export class WysiwygEditor {
     if (block.dataset.type === 'li') {
       const same = (block.dataset.list || 'ul') === kind;
       if (same) { this.toParagraph(block, null); return; }
-      block.dataset.list = kind;
-      block.classList.toggle('w-task', kind === 'task');
-      if (kind === 'task') {
-        const marker = block.querySelector('.w-li-marker');
-        if (marker) {
-          const cb = document.createElement('input');
-          cb.type = 'checkbox';
-          cb.className = 'w-check';
-          cb.tabIndex = -1;
-          cb.contentEditable = 'false';
-          marker.replaceWith(cb);
-        }
-      } else {
-        const cb = block.querySelector('.w-check');
-        if (cb) {
-          const m = document.createElement('span');
-          m.className = 'w-li-marker';
-          m.contentEditable = 'false';
-          m.textContent = kind === 'ol' ? '1.' : '•';
-          cb.replaceWith(m);
-        }
-      }
+      this._setListKind(block, kind);
       this.renumber();
       this.hCoalesce = false;
       this.flush();
@@ -4920,6 +4898,33 @@ export class WysiwygEditor {
 
     /* 段落/标题/引用/代码块 → 列表，内容跟过去（代码块按行拆成一个条目一行） */
     this.convertBlock('li', { list: kind });
+  }
+
+  /** 列表项原地换 kind（ul / ol / task）：只换 marker，文本与缩进不动。
+      不调 renumber —— 批量转换时让调用方在最外层重排一次。 */
+  _setListKind(block, kind) {
+    block.dataset.list = kind;
+    block.classList.toggle('w-task', kind === 'task');
+    if (kind === 'task') {
+      const marker = block.querySelector('.w-li-marker');
+      if (marker) {
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.className = 'w-check';
+        cb.tabIndex = -1;
+        cb.contentEditable = 'false';
+        marker.replaceWith(cb);
+      }
+    } else {
+      const cb = block.querySelector('.w-check');
+      if (cb) {
+        const m = document.createElement('span');
+        m.className = 'w-li-marker';
+        m.contentEditable = 'false';
+        m.textContent = kind === 'ol' ? '1.' : '•';
+        cb.replaceWith(m);
+      }
+    }
   }
 
   /** 标题级别：0 = 正文 */
@@ -4986,14 +4991,28 @@ export class WysiwygEditor {
   convertBlock(type, opts = {}) {
     const cur = this.currentBlock();
     if (!cur) return false;
+    const nodes = this._convertNodes(cur, type, opts);
+    if (!nodes) return false;
+    this.placeCaretEnd(nodes[nodes.length - 1]);
+    this.renumber();
+    this.hCoalesce = false;
+    this.flush();
+    return true;
+  }
+
+  /** convertBlock 的本体：把 cur（引用整组）换成 type，返回新节点数组；
+      不该转（表格 / 分割线 / 已经是这个类型）返回 null。
+      光标、重排、入栈交给调用方 —— 批量转换要一次重排、一次入栈，
+      逐块 flush 会把一步撤销拆成 N 步。 */
+  _convertNodes(cur, type, opts = {}) {
     /* 引用整组是一个逻辑块：光标落在续行上也要连组首一起转，否则第二行会被
        单独改成标题、留下半截引用。别的类型 group 就只有自己，下面与原来等价。 */
     const group = this.bqGroupOf(cur);
     const block = group[0];
     const last = group[group.length - 1];
     const from = block.dataset.type || 'p';
-    if (from === 'table' || from === 'hr') return false;
-    if (from === type) return false;
+    if (from === 'table' || from === 'hr') return null;
+    if (from === type) return null;
 
     const src = group.map((b) => blockMarkdownText(b)).join('\n');
     /* 只有代码/公式能把多行塞进一个块；其余类型一行一块。
@@ -5046,11 +5065,72 @@ export class WysiwygEditor {
       }
     }
 
-    this.placeCaretEnd(nodes[nodes.length - 1]);
+    return nodes;
+  }
+
+  /** 把选中的块整体换成同一类型（块选中右键菜单用）。
+      一次 renumber、一次入栈：撤销一步就回到转换前。 */
+  setSelectionType(type, opts = {}) {
+    const list = this.selectedBlocks();
+    if (!list.length) return false;
+    const made = [];
+    const kind = opts.list || 'ul';
+    for (const b of list) {
+      if (!b.isConnected) continue;
+      /* 列表项换列表类型是原地改 marker，不走 _convertNodes（from===type） */
+      if (type === 'li' && b.dataset.type === 'li') {
+        this._setListKind(b, kind);
+        for (const x of this.bqGroupOf(b)) made.push(x);
+        continue;
+      }
+      const nodes = this._convertNodes(b, type, opts);
+      if (nodes) made.push(...nodes);
+    }
+    if (!made.length) return false;
+    /* 转换之后旧节点全被换掉了：重新选中新的一批，模式继续（用户可以接着
+       右键当正文/标题，或直接 Esc 退出） */
+    this.blockSelSet.clear();
+    for (const n of made) { this.blockSelSet.add(n); n.classList.add('w-sel'); }
+    this.blockSel = made[0];
     this.renumber();
     this.hCoalesce = false;
+    this._afterBlockSel();
     this.flush();
     return true;
+  }
+
+  /** 选中块拼回 Markdown（「复制为 Markdown」）。
+      块之间按原文的空行习惯走：同一段列表、同一组引用之间不空行。
+      ⛔ 别用 blockMarkdownText：它只给块内文本，列表项会丢掉 `- ` / `1. `，
+      复制出去粘到别的编辑器里就是一堆裸段落。 */
+  selectionMarkdown() {
+    const list = this.selectedBlocks();
+    if (!list.length) return '';
+    const out = [];
+    for (let i = 0; i < list.length; i++) {
+      const b = list[i];
+      if (i) out.push(this.sameBlockGroup(list[i - 1], b) ? '\n' : '\n\n');
+      const rb = rawBlock(b);
+      if (rb.type === 'li') {
+        const kind = b.dataset.list || 'ul';
+        const pad = ' '.repeat(Math.max(0, +(b.dataset.indent || 0)) * 2);
+        const mark = kind === 'ol' ? `${+(b.dataset.num || 1)}. `
+          : kind === 'task' ? `- [${b.dataset.checked === '1' ? 'x' : ' '}] ` : '- ';
+        out.push(pad + mark + (rb.text || ''));
+      } else {
+        out.push((rb.lines || [rb.text || '']).join('\n'));
+      }
+    }
+    return out.join('');
+  }
+
+  /** 相邻两块在原文里是不是「贴着」的（同列表 / 同引用组） */
+  sameBlockGroup(a, b) {
+    const ta = a.dataset.type;
+    const tb = b.dataset.type;
+    if (ta === 'li' && tb === 'li') return true;
+    if (ta === 'bq' && tb === 'bq' && !b.dataset.bqStart) return true;
+    return false;
   }
 
   insertBlock(type) {
@@ -5489,6 +5569,20 @@ export class WysiwygEditor {
 
   handlePointerDown(e) {
     this.clearGapAfter();      // 鼠标重新摆了光标，「块后待插入」立刻作废
+    /* 块选择模式：这一层只用来选块。
+       点某块 = 加进选中集（Ctrl/Shift 与否都一样，范围模型下点哪块就是扩到哪块），
+       点块外空白 = 退出。整个模式里不把光标放进正文 —— 那正是「只选不编辑」。 */
+    if (this.blockSelSet.size) {
+      const blk = e.target && e.target.closest ? e.target.closest('.w-block') : null;
+      if (e.button !== 0) return;    // 右键交给 contextmenu，别在这里换选中
+      e.preventDefault();
+      /* 默认行为挡得住，click 照样会派发：那一下会走「点空白 → 文末补一行」
+         把光标搬到文档末尾。记个时间戳让 handleClick 放过这一次。 */
+      this._skipClickTs = performance.now();
+      if (!blk) { this.clearBlockSel(); return; }
+      this.selectBlock(blk, { additive: true });
+      return;
+    }
     /* 复制按钮按下的那一下别把编辑区的光标/选区抢走 */
     if (e.target && e.target.closest && e.target.closest('.cc-copy')) { e.preventDefault(); return; }
     /* 分割线 contentEditable=false：浏览器在按下这一刻的默认动作会把焦点甩到
@@ -5618,6 +5712,12 @@ export class WysiwygEditor {
 
   handleClick(e) {
     this.clearGapAfter();
+    /* 块选择模式里那一下 pointerdown 已经处理完了（选块 / 退出），
+       随后补派的 click 不能再按「点正文 / 点空白」走一遍 */
+    if (this._skipClickTs && performance.now() - this._skipClickTs < 500) {
+      this._skipClickTs = 0;
+      return;
+    }
     /* 块选中态的取消统一由 document 的 pointerdown 判定：click 的 target
        是按下点与松开点的最近公共祖先，点在分割线上时它可能落回 root，
        在这里无条件清就会把 pointerdown 刚选中的那一块抹掉。 */
@@ -5726,7 +5826,9 @@ export class WysiwygEditor {
     if (e.clientY <= lastRect.bottom + 2) { this.hideInsertLine(); return; }
     const rootRect = this.root.getBoundingClientRect();
     ind.style.display = 'block';
-    ind.style.top = (lastRect.bottom - rootRect.top + this.root.scrollTop - 1) + 'px';
+    /* 同 paintDropLine：块的 rect 是视口坐标，减容器顶就够了。
+       再加一次 scrollTop 会把线推到视口下方 —— 这条提示就永远看不见了 */
+    ind.style.top = (lastRect.bottom - rootRect.top - 1) + 'px';
     ind.style.left = (lastRect.left - rootRect.left) + 'px';
     ind.style.width = lastRect.width + 'px';
   }
