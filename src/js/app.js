@@ -944,9 +944,11 @@ function setMode(mode, opt = {}) {
   const t = activeTab();
   if (!t) return;
   /* 内置手册是只读的：模式下拉里另外两项点了也切不过去，
-     否则用户一进编辑模式就能改，改完又没处保存，只会变成一肚子疑问。 */
+     否则用户一进编辑模式就能改，改完又没处保存，只会变成一肚子疑问。
+     ⛔ 别把 toast 关在「t.mode !== 'preview'」后面 —— 手册本来就是预览模式，
+     那个条件恒假，于是点「编辑」既不切换也不提示，看起来就像按钮坏了。 */
   if (isBuiltin(t) && mode !== 'preview') {
-    if (t.mode !== 'preview') toast(tt('内置手册是只读的'));
+    toast(tt('内置手册是只读的'));
     return;
   }
   /* 这两条要在改动 t.mode / renderedTabId 之前取：后面的「恢复光标与滚动」
@@ -1073,10 +1075,16 @@ function dropPreviewDom() {
 }
 
 function updateModeMenu(kind, allowed) {
+  const t = activeTab();
+  const ro = isBuiltin(t);   // 内置手册只读：只有「预览」能点
   el.modeMenu.querySelectorAll('button[data-mode]').forEach((b) => {
     const m = b.dataset.mode;
-    b.classList.toggle('checked', activeTab() && activeTab().mode === m);
-    b.classList.toggle('disabled', !allowed.includes(m));
+    b.classList.toggle('checked', !!t && t.mode === m);
+    b.classList.toggle('disabled', ro ? m !== 'preview' : !allowed.includes(m));
+    /* data-ro 让点击提示说「只读」，而不是「文件类型不支持该模式」 */
+    if (ro && m !== 'preview') b.dataset.ro = '1';
+    else delete b.dataset.ro;
+    b.title = (ro && m !== 'preview') ? tt('内置手册是只读的') : '';
   });
 }
 
@@ -5323,6 +5331,7 @@ function bindEvents() {
   $('btnMode').onclick = (e) => { e.stopPropagation(); el.modeMenu.classList.toggle('open'); };
   el.modeMenu.querySelectorAll('button[data-mode]').forEach((b) => {
     b.onclick = () => {
+      if (b.dataset.ro) { toast(tt('内置手册是只读的')); return; }
       if (b.classList.contains('disabled')) { toast(tt('当前文件类型不支持该模式')); return; }
       setMode(b.dataset.mode, { fromActivate: true });
       el.modeMenu.classList.remove('open');

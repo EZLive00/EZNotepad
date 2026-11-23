@@ -1283,7 +1283,16 @@ eq('没有标签给 null', tabSeed(null, false), null);
     /newTab\(tt\('使用手册\.md'\), manualDoc\(getLang\(\)\), null, \{ builtin: 'manual', mode: 'preview' \}\)/.test(app)
       && app.includes('t.savedContent = t.content;'));
   ok('内置手册切不到编辑模式（能改就必然要问「存到哪儿」）',
-    app.includes("if (isBuiltin(t) && mode !== 'preview')"));
+    app.includes("if (isBuiltin(t) && mode !== 'preview')")
+      /* ⛔ 提示必须无条件发：手册本身就是预览模式，一旦把 toast 塞进
+         「t.mode !== 'preview'」的条件里就恒不触发，点了没反应也没解释。 */
+      && !app.includes("if (t.mode !== 'preview') toast(tt('内置手册是只读的'))")
+      && /if \(isBuiltin\(t\) && mode !== 'preview'\) \{\n\s*toast\(tt\('内置手册是只读的'\)\);/.test(app));
+  ok('内置手册的模式下拉只有「预览」可点，另两项置灰并写明原因',
+    app.includes('const ro = isBuiltin(t);')
+      && app.includes("b.classList.toggle('disabled', ro ? m !== 'preview' : !allowed.includes(m));")
+      && app.includes("if (ro && m !== 'preview') b.dataset.ro = '1';")
+      && app.includes("if (b.dataset.ro) { toast(tt('内置手册是只读的')); return; }"));
   ok('关不掉：closeTab 自己拦，批量关闭在入口滤',
     app.includes('if (isBuiltin(t)) {')
       && app.includes("toast(tt('内置手册不能关闭'))")

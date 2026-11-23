@@ -15,6 +15,8 @@ const DOCS = {
 
 简单、轻量、好用的文本与 Markdown 编辑器。文件只在本机读写，不联网、不上传。
 
+> 这份手册内置在程序里：磁盘上没有对应文件、只能预览、也关不掉。想留下其中内容，把文字复制到自己的文档即可。
+
 ## 三种模式
 
 - **所见即所得**：输入 # 加空格立刻变标题，**粗体**当场加粗
@@ -76,6 +78,8 @@ const DOCS = {
   'zh-TW': `# EZNotepad 使用手冊
 
 簡單、輕巧、好用的文字與 Markdown 編輯器。檔案只在本機讀寫，不連網、不上傳。
+
+> 這份手冊內建在程式裡：磁碟上沒有對應檔案、只能預覽、也關不掉。想留下其中內容，把文字複製到自己的文件即可。
 
 ## 三種模式
 
@@ -139,6 +143,8 @@ const DOCS = {
 
 A simple, light and pleasant editor for Markdown and plain text. Files are read and written on this machine only — no network, no upload.
 
+> This manual is built into the program: there is no file on disk, it opens in preview only, and it cannot be closed. To keep any of it, copy the text into your own document.
+
 ## Three modes
 
 - **WYSIWYG**: type # and a space to make a heading; **bold** turns bold as you type
@@ -200,6 +206,8 @@ Settings, drafts and history live on this machine only. No account, no upload, n
   ja: `# EZNotepad 取扱説明書
 
 シンプルで軽く、使いやすい Markdown / テキストエディタです。ファイルはこの PC 内だけで読み書きし、ネットワークにも接続しません。
+
+> このマニュアルは本体に組み込まれています：ディスク上にファイルはなく、プレビューのみ、閉じることもできません。残したい部分はご自分の文書にコピーしてください。
 
 ## 3 つのモード
 
@@ -263,6 +271,8 @@ Settings, drafts and history live on this machine only. No account, no upload, n
 
 간단하고 가볍고 쓰기 좋은 Markdown / 텍스트 편집기입니다. 파일은 이 PC 안에서만 읽고 쓰며 네트워크에 연결하지 않습니다.
 
+> 이 설명서는 프로그램에 내장되어 있습니다: 디스크에 파일이 없고, 미리보기만 되며, 닫을 수도 없습니다. 남기고 싶은 부분은 직접 문서로 복사하세요.
+
 ## 세 가지 모드
 
 - **위지윅**: # 과 공백으로 제목이 되고, **굵게**는 그 자리에서 굵어집니다
@@ -324,6 +334,8 @@ Settings, drafts and history live on this machine only. No account, no upload, n
   fr: `# Manuel d'EZNotepad
 
 Un éditeur Markdown et texte simple, léger et agréable. Les fichiers sont lus et écrits uniquement sur cette machine — sans réseau, sans envoi.
+
+> Ce manuel est intégré au programme : aucun fichier sur le disque, aperçu uniquement, et il ne peut pas être fermé. Pour en garder un passage, copiez le texte dans votre propre document.
 
 ## Trois modes
 
@@ -387,6 +399,8 @@ Réglages, brouillons et historique restent sur cette machine. Aucun compte, auc
 
 Ein einfacher, leichter und angenehmer Editor für Markdown und reinen Text. Dateien werden nur auf diesem Rechner gelesen und geschrieben — ohne Netzwerk, ohne Upload.
 
+> Dieses Handbuch ist ins Programm eingebaut: keine Datei auf der Festplatte, nur Vorschau, und es lässt sich nicht schließen. Um etwas daraus zu behalten, kopieren Sie den Text in ein eigenes Dokument.
+
 ## Drei Modi
 
 - **WYSIWYG**: # und ein Leerzeichen ergeben eine Überschrift; **fett** wird sofort fett
@@ -449,6 +463,8 @@ Einstellungen, Entwürfe und Verlauf bleiben auf diesem Rechner. Kein Konto, kei
 
 Un editor de Markdown y texto plano sencillo, ligero y agradable. Los archivos se leen y escriben solo en este equipo: sin red, sin subidas.
 
+> Este manual está integrado en el programa: no hay archivo en el disco, solo vista previa, y no se puede cerrar. Para conservar algo, copia el texto en tu propio documento.
+
 ## Tres modos
 
 - **WYSIWYG**: escribe # y un espacio para un título; **negrita** se aplica al momento
@@ -510,6 +526,8 @@ Ajustes, borradores e historial se quedan en este equipo. Sin cuenta, sin subida
   pt: `# Manual do EZNotepad
 
 Um editor de Markdown e texto simples, leve e agradável. Os arquivos são lidos e gravados só nesta máquina: sem rede, sem envio.
+
+> Este manual é embutido no programa: não há arquivo no disco, só visualização, e não pode ser fechado. Para guardar algum trecho, copie o texto para o seu próprio documento.
 
 ## Três modos
 

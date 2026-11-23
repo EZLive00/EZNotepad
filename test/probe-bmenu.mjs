@@ -474,6 +474,10 @@ const blankItem = await ev(`(() => {
   const b = [...document.querySelectorAll('#wBlockMenu .bm-item')]
     .find(e => e.textContent.includes('插入空行'));
   if (!b) return null;
+  /* 插入面板十几项，容器带 max-height 会内部滚动。不先滚到可见，
+     getBoundingClientRect 给的是裁剪区之外的坐标，按它点等于点空
+     —— elementFromPoint 会返回 null，表现为「点了没反应」。 */
+  b.scrollIntoView({ block: 'nearest' });
   const r = b.getBoundingClientRect();
   return { key: b.dataset.key, title: b.title, x: r.left + 40, y: r.top + r.height / 2 };
 })()`);
@@ -887,6 +891,47 @@ const manStill = await ev(`(() => {
   return t ? t.builtin : null;
 })()`);
 ok('中键点手册标签也关不掉', manStill === 'manual', String(manStill));
+
+/* 手册只读：模式下拉里「所见即所得 / 编辑」要置灰并写明原因。
+   以前那条守卫把 toast 关在「t.mode !== 'preview'」里 —— 手册本来就是预览，
+   条件恒假，于是点「编辑」既不切换也不提示，看起来就像按钮坏了。 */
+await ev(`document.getElementById('btnMode').click()`);
+await sleep(140);
+const manModes = await ev(`(() => {
+  return [...document.querySelectorAll('#modeMenu button[data-mode]')].map((b) => ({
+    mode: b.dataset.mode,
+    disabled: b.classList.contains('disabled'),
+    ro: b.dataset.ro || '',
+    title: b.title || '',
+  }));
+})()`);
+ok('手册的模式下拉：只有「预览」可点，另两项置灰',
+  manModes.length === 3
+    && manModes.filter((x) => x.mode === 'preview').every((x) => !x.disabled)
+    && manModes.filter((x) => x.mode !== 'preview').every((x) => x.disabled),
+  JSON.stringify(manModes));
+ok('置灰那两项写明「只读」，而不是「文件类型不支持」',
+  manModes.filter((x) => x.mode !== 'preview').every((x) => x.ro === '1' && /只读|read-only/i.test(x.title)),
+  JSON.stringify(manModes));
+
+await ev(`(() => {
+  const b = document.querySelector('#modeMenu button[data-mode="edit"]');
+  if (b) b.click();
+  return !!b;
+})()`);
+await sleep(220);
+const afterEdit = await ev(`(() => {
+  const t = window.__snp.getActiveTab();
+  return {
+    mode: t ? t.mode : null,
+    toasts: [...document.querySelectorAll('#toasts .toast')].map((x) => x.textContent),
+  };
+})()`);
+ok('点「编辑」切不过去，并且明确告诉用户为什么',
+  afterEdit.mode === 'preview' && afterEdit.toasts.some((s) => /只读|read-only/i.test(s)),
+  JSON.stringify(afterEdit));
+await ev(`document.getElementById('btnMode').click()`);
+await sleep(100);
 
 /* 命令面板拿当前文档的标题做过滤，上面的用例已经把文档换成 sel.md 了 —— 切回来 */
 await openDoc('fold.md', '# 标题一\n\n正文甲\n\n## 标题二\n\n正文乙\n');
