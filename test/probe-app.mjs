@@ -2600,9 +2600,10 @@ try {
        自动化进不去 → 直接调 fileTree 的加根入口，验「加进去之后界面对不对」。 */
     const rA = path.join(os.tmpdir(), 'eznotepad-probe', 'root-a');
     const rB = path.join(os.tmpdir(), 'eznotepad-probe', 'root-b');
-    fs.mkdirSync(rA, { recursive: true });
+    fs.mkdirSync(path.join(rA, 'sub'), { recursive: true });
     fs.mkdirSync(rB, { recursive: true });
     fs.writeFileSync(path.join(rA, 'only-a.md'), '# A\n', 'utf8');
+    fs.writeFileSync(path.join(rA, 'sub', 'inner.md'), '# inner\n', 'utf8');
     fs.writeFileSync(path.join(rB, 'only-b.md'), '# B\n', 'utf8');
     const wA = rA.replace(/\//g, '\\');
     const wB = rB.replace(/\//g, '\\');
@@ -2630,6 +2631,39 @@ try {
     const foldedRoot = await ev(`[...document.querySelectorAll('#ftBody .ft-row')].map(r => r.querySelector('.ft-name').textContent)`);
     ok('真机：折叠一个根只收它自己',
       !foldedRoot.includes('only-a.md') && foldedRoot.includes('only-b.md'), JSON.stringify(foldedRoot));
+
+    /* 缩进层级：加根 / 刷新之后不能变平。
+       以前层数是读 `row.style.paddingLeft` 反推的，而根行的 6px 写在 CSS 里、
+       内联是空串 → NaN → 根下面整层按 "NaNpx" 缩进（无效值，浏览器忽略），
+       表现就是「一刷新全平，折叠再展开才回来」。 */
+    await ev(`document.querySelectorAll('#ftBody .ft-root')[0].click()`);   // 展开回来
+    await sleep(300);
+    await ev(`(() => {
+      const sub = [...document.querySelectorAll('#ftBody .ft-row')]
+        .find((r) => r.querySelector('.ft-name').textContent === 'sub');
+      if (sub) sub.click();
+      return 1;
+    })()`);
+    await sleep(350);
+    const pads = () => ev(`(() => {
+      const pick = ['root-a', 'sub', 'only-a.md', 'inner.md'];
+      const out = {};
+      for (const r of document.querySelectorAll('#ftBody .ft-root, #ftBody .ft-row')) {
+        const n = r.querySelector('.ft-name').textContent;
+        if (pick.includes(n)) out[n] = getComputedStyle(r).paddingLeft;
+      }
+      return out;
+    })()`);
+    const pads1 = await pads();
+    ok('真机：子目录按层缩进（18 / 30，不是全平）',
+      pads1['only-a.md'] === '18px' && pads1['sub'] === '18px' && pads1['inner.md'] === '30px',
+      JSON.stringify(pads1));
+
+    await ev(`(async () => { await window.__snp.fileTree.render(); return 1; })()`);
+    await sleep(400);
+    const pads2 = await pads();
+    ok('真机：刷新之后缩进不丢，子目录还开着',
+      pads2['sub'] === '18px' && pads2['inner.md'] === '30px', JSON.stringify(pads2));
 
     await ev(`(async () => { await window.__snp.fileTree.setRoots([]); return 1; })()`);
     await sleep(350);

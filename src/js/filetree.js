@@ -17,17 +17,31 @@ const baseName = (p) => (p ? String(p).split(/[\\/]/).pop() : '');
 const parentOf = (p) => String(p || '').replace(/[\\/][^\\/]*$/, '');
 
 /**
+ * p 在 root 这棵树里的相对部分（`a/b`，前后都不带分隔符）。
+ *
+ * 不在里面返回 null，p 就是根本身返回空串。分隔符两种写法都认 —— 命令行传进来的
+ * 目录可能是 `D:/work`，而后端读出来是 `D:\work\a.md`，只按字面比前缀会把同一棵树
+ * 判成两棵（缩进全平、定位说「不在里面」）。
+ */
+function relInRoot(p, root) {
+  if (!root) return null;
+  const a = String(p).replace(/\\/g, '/');
+  const b = String(root).replace(/\\/g, '/').replace(/\/+$/, '');
+  if (!b) return a.replace(/^\/+/, '');        // 根就是 `/`：一切都算在里面
+  if (a === b) return '';
+  return a.startsWith(b + '/') ? a.slice(b.length + 1) : null;
+}
+
+/**
  * p 是否落在 root 这棵树里。
  *
  * 三个坑都在这一个函数里收掉：① 根可以带尾部分隔符（`C:\`、`/home/a/`），
  * 直接拼 `root + '\\'` 会变成 `C:\\` 永远匹配不上；② 前缀相同不等于在里面
  * （`C:\a` 与 `C:\ab` 是两棵不同的树）；③ `/` 这种根去掉分隔符就成空串了。
+ * 分隔符本身也不该参与比较，见 `relInRoot`。
  */
 function inRoot(p, root) {
-  if (!root) return false;
-  const base = String(root).replace(/[\\/]+$/, '');
-  if (!base) return true;              // 根就是 `/`：一切都算在里面
-  return p === base || p.startsWith(base + '\\') || p.startsWith(base + '/');
+  return relInRoot(p, root) !== null;
 }
 
 function icon(id, cls = '') {
@@ -73,9 +87,12 @@ export class FileTree {
        换了根就要把上一棵树的展开状态全丢掉。顺序就是显示顺序。 */
     this.roots = [];
     this.expanded = new Set();
-    this.regex = false;        // 搜索是否按正则匹配（由侧栏那个 .* 开关控制）
+    this.regex = false;        // 搜索是否按正则匹配（侧栏 ⋯ 菜单里的那个开关）
     this.caseSensitive = false;
-    this.token = 0;            // 搜索序号：慢请求回来时直接丢弃
+    /* 「body 现在归谁」的代号。render 与 search 都先把它 +1 记下自己那份，
+       中间每 await 一次就回头看一眼 —— 变了就说明有更新的那次已经接管了 body，
+       再往 DOM 上写就成了「旧树盖新树」。 */
+    this.token = 0;
     this.activePath = '';      // 编辑区当前文件，用来在树里点亮
     /* 空白处右键：多根之后「对根目录操作」这句话已经没有唯一答案了，
        所以给的是「添加文件夹 / 刷新」这两个与具体根无关的动作。挂在容器上，
@@ -105,12 +122,30 @@ export class FileTree {
   /** 设成「只有这一个根」（旧接口 / 测试用）。传空串等于全清 */
   setRoot(path) { return this.setRoots(path ? [path] : []); }
 
-  async setRoots(list) {
-    const next = [];
+  /**
+   * 把一串根理干净：同一棵树里只留最外层那一个。
+   *
+   * 互为父子的两个根会让同一个路径在树里出现两行（`_rowOf` 只能返回第一行，
+   * 第二棵的展开就落到了第一棵的位置上），层数也没法算 —— 一个路径到底算第几层，
+   * 取决于「按哪个根算」。所以干脆不让这种状态存在：更里层的那个根被外层的吸收，
+   * 顺序保留第一次出现的位置。
+   */
+  static _cleanRoots(list) {
+    const out = [];
     for (const p of list || []) {
       const s = FileTree._norm(p);
-      if (s && !next.includes(s)) next.push(s);
+      if (!s) continue;
+      if (out.some((r) => inRoot(s, r))) continue;          // 已经在某个根下面了
+      for (let i = out.length - 1; i >= 0; i--) {            // 这个根包住了先前那些
+        if (inRoot(out[i], s)) out.splice(i, 1);
+      }
+      out.push(s);
     }
+    return out;
+  }
+
+  async setRoots(list) {
+    const next = FileTree._cleanRoots(list);
     this.roots = next;
     this._pruneExpanded();
     /* 根默认展开：树的意义就是看见里面有什么。收起来的根只在用户自己点过之后
@@ -125,7 +160,12 @@ export class FileTree {
     const s = FileTree._norm(path);
     if (!s) return false;
     if (this.roots.includes(s)) { await this.render(); return false; }
-    this.roots.push(s);
+    /* 加进来的目录若被某个根包着（选了个子目录），它本来就在树里 —— 不再单独成根；
+       反过来，加的若是父目录，就把被它包住的旧根并进来（那些文件仍在这棵树里，
+       只是深了一层）。两种情况都不能留下「一格里两行同一路径」的状态。 */
+    const next = FileTree._cleanRoots([...this.roots, s]);
+    if (!next.includes(s)) { await this.render(); return false; }
+    this.roots = next;
     this.expanded.add(s);           // 新加进来的根默认展开：加它就是为了看里面的东西
     await this.render();
     this._notifyRoots();
@@ -230,7 +270,7 @@ export class FileTree {
   }
 
   async render() {
-    this.token++;
+    const token = ++this.token;
     this.body.innerHTML = '';
     if (!this.roots.length) {
       this._emptyState();
@@ -246,18 +286,36 @@ export class FileTree {
        否则刷新一次看着全收起，而标记还留着 —— 再点那一下只会把标记删掉，
        界面上什么都不发生（要按两下才收得回去）。按层级从浅到深加，
        深的目录得先有父行的子容器才找得到自己的行。根行也在这条链上。 */
-    const byDepth = [...this.expanded].sort((a, b) => a.split(/[\\/]/).length - b.split(/[\\/]/).length);
-    for (const p of byDepth) {
-      const row = this._rowOf(p);
-      if (row) await this._openRow(row, p, this._depthOf(row));
-      else this.expanded.delete(p);      // 目录已经不在了，别留着标记
-    }
+    await this._replayExpanded(null, token);
+    if (token !== this.token) return;          // 期间又画了一次，这份已经作废
     this.setActive(this.activePath);
     /* 行是新建的，选择状态要重画；顺手把已经不存在的路径从选择里摘掉 */
     if (this.sel.size) {
       const alive = new Set([...this.body.querySelectorAll('.ft-row')].map((r) => r.dataset.path));
       for (const p of [...this.sel]) if (!alive.has(p)) this.sel.delete(p);
       this._paintSel();
+    }
+  }
+
+  /**
+   * 把 `expanded` 里开着的那几层重新开一遍（重画之后调用）。
+   *
+   * 按层数从浅到深走：子目录的行要等父目录展开了才在 DOM 里。找不到行的
+   * 标记直接摘掉（目录已在磁盘上没了），别留着一个点两下才消的死状态。
+   * `under` 非空时只重放这一棵子树 —— 局部刷新走这条，不会去动别人。
+   */
+  async _replayExpanded(under = null, token = this.token) {
+    const list = [...this.expanded]
+      .filter((p) => (under === null ? true : p !== under && inRoot(p, under)))
+      .sort((a, b) => this._depthOfPath(a) - this._depthOfPath(b));
+    for (const p of list) {
+      /* 期中有新的 render / search 接管了 body，这一份就作废。⛔ 不能继续往下走：
+         此时 body 里可能根本不是树（是搜索结果），`_rowOf` 全落空，
+         会把这棵树本来开着的目录从 `expanded` 里一个个抹掉。 */
+      if (token !== this.token) return;
+      const row = this._rowOf(p);
+      if (row) await this._openRow(row, p);
+      else this.expanded.delete(p);
     }
   }
 
@@ -281,8 +339,10 @@ export class FileTree {
    *
    * 行本身可点：折叠 / 展开这一整棵（`expanded` 里根路径也在，和普通目录同一套）。
    * 右侧两颗按钮鼠标经过才显形：＋ 在这个根里新建，× 从侧栏移除（不动磁盘）。
-   * paddingLeft 取 6（与 `_depthOf` 的刻度对齐 → depth 0），所以它下面的顶层项
-   * 缩进到 18px，一眼看出归属。
+   * 左内边距 6px 来自 CSS，正好等于「层数 0」那一档，所以它下面的顶层项缩进到
+   * 18px，一眼看出归属。层数由路径算（`_depthOfPath`），⛔ 别再靠读回行上的
+   * padding 反推 —— 根行的 6px 在 CSS 里，`row.style.paddingLeft` 是空串，
+   * 反推会得到 NaN，整棵树重画时缩进就全平了。
    */
   _rootRow(root) {
     const row = document.createElement('button');
@@ -292,7 +352,7 @@ export class FileTree {
     row.title = root;
     row.innerHTML = icon('chevron-right', 'ft-caret') + icon('folder', 'ft-ico') + '<span class="ft-name"></span>';
     row.querySelector('.ft-name').textContent = baseName(root) || root;
-    row.onclick = () => this._toggle(row, { path: root, is_dir: true, name: baseName(root) }, 0);
+    row.onclick = () => this._toggle(row, { path: root, is_dir: true, name: baseName(root) });
     row.oncontextmenu = (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
@@ -329,7 +389,10 @@ export class FileTree {
     if (await this.removeRoot(root)) this.toast(tt('已从侧栏移除'));
   }
 
-  async _children(dir, depth) {
+  /* 读一层子项。缩进层级由 `dir` 自己在树里的层数决定 —— 不接外部传进来的
+     depth：传参的那份和 `expanded` 那份迟早会不一样，缩进就跟着漂。 */
+  async _children(dir) {
+    const depth = this._depthOfPath(dir) + 1;
     const frag = document.createDocumentFragment();
     let entries = [];
     try {
@@ -361,12 +424,12 @@ export class FileTree {
         icon(e.is_dir ? 'folder' : 'file-text', 'ft-ico') +
         '<span class="ft-name"></span>';
       row.querySelector('.ft-name').textContent = e.name;
-      if (e.is_dir) row.onclick = () => this._toggle(row, e, depth);
+      if (e.is_dir) row.onclick = () => this._toggle(row, e);
       else row.onclick = (ev) => this._clickFile(row, e, ev);
       row.oncontextmenu = (ev) => {
         ev.preventDefault();
         ev.stopPropagation();
-        this._rowMenu(ev, e, depth);
+        this._rowMenu(ev, e);
       };
       /* 文件夹右侧的「＋」：鼠标移上去才显形，点开是这个目录自己的新增菜单。
          必须是 span 而不是 button —— .ft-row 本身就是 button，button 套 button
@@ -405,20 +468,20 @@ export class FileTree {
     ]);
   }
 
-  async _toggle(row, entry, depth) {
+  async _toggle(row, entry) {
     if (this.expanded.has(entry.path)) this._closeRow(row, entry.path);
-    else await this._openRow(row, entry.path, depth);
+    else await this._openRow(row, entry.path);
   }
 
   /** 展开一行；幂等 —— 已经挂过子容器就直接跳过（render 重放时会重复调） */
-  async _openRow(row, path, depth) {
+  async _openRow(row, path) {
     const next = row.nextElementSibling;
     if (next && next.classList.contains('ft-kids')) { this.expanded.add(path); row.classList.add('open'); return; }
     this.expanded.add(path);
     row.classList.add('open');
     const kids = document.createElement('div');
     kids.className = 'ft-kids';
-    kids.append(await this._children(path, depth + 1));
+    kids.append(await this._children(path));
     row.after(kids);
   }
 
@@ -623,13 +686,19 @@ export class FileTree {
     if (!row) { await this.render(); return; }
     const kids = row.nextElementSibling;
     if (!kids || !kids.classList.contains('ft-kids')) return;   // 没展开过，没有要刷的
+    const token = this.token;
     kids.innerHTML = '';
-    kids.append(await this._children(dir, this._depthOf(row) + 1));
+    kids.append(await this._children(dir));
+    if (token !== this.token) return;
+    /* 这一层下面本来开着的子目录也得重新打开：行是新建的，`expanded` 里还留着
+       标记，看着却全收起了 —— 再点那一下只会把标记删掉，界面上什么都不发生
+       （「要按两下才收得回去」）。只重放这一棵子树，不碰别人的展开状态。 */
+    await this._replayExpanded(dir, token);
   }
 
   async _expandRow(dir) {
     const row = this._rowOf(dir);
-    if (row) await this._openRow(row, dir, this._depthOf(row));
+    if (row) await this._openRow(row, dir);
   }
 
   /* 根行也算：`_expandRow(根)` / `_reloadDir(根)` 得能找到它 */
@@ -640,10 +709,22 @@ export class FileTree {
     return null;
   }
 
-  /* 根行 paddingLeft 是 6 → depth 0，所以它下面的顶层项缩进到 18px。
-     普通行照旧按 padding 反推（自己不记 depth，省得两份真相打架）。 */
-  _depthOf(row) {
-    return Math.max(0, Math.round((parseInt(row.style.paddingLeft, 10) - 6) / 12));
+  /**
+   * 一个路径在自己那棵树里的层数：根 = 0，根下第一层 = 1，依此类推。
+   *
+   * 以前是读 `row.style.paddingLeft` 反推（(padding - 6) / 12），可根行的 6px
+   * 写在 CSS 的 `padding: 0 6px` 里，内联样式是空串 → `parseInt('')` 得 NaN →
+   * 根下面整层都按 NaN 缩进（`"NaNpx"` 是无效值，浏览器直接忽略），表现为
+   * **一刷新整棵树就变平**，手动折叠再展开才回来。层数本来就是从路径就能算出来的
+   * 东西，不该反过来问 DOM。
+   */
+  _depthOfPath(p) {
+    const s = String(p || '');
+    const root = this.rootOf(s);
+    if (!root) return 0;
+    const rest = relInRoot(s, root);                 // 分隔符两种写法都归一过了
+    if (!rest) return 0;                             // 根自己
+    return rest.split('/').filter(Boolean).length;
   }
 
   /** 全目录搜内容（**所有根一起搜**）；空串回退成树 */
@@ -667,7 +748,8 @@ export class FileTree {
     }
     if (!hits.length && firstErr) {
       if (token === this.token) this.body.innerHTML = '';
-      this.toast(tt('搜索失败：') + firstErr);
+      /* 直接拼 Error 会得到「搜索失败：Error: ...」，走 errText 才是别处同一套说法 */
+      this.toast(tt('搜索失败：') + errText(firstErr));
       return;
     }
     if (token !== this.token) return;   // 期间又搜了新词，这次结果作废

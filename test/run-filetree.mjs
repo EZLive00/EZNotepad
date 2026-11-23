@@ -303,6 +303,69 @@ try {
   await ev(`document.querySelectorAll('.ft-root')[0].click()`);
   await new Promise((r) => setTimeout(r, 140));
 
+  // ---- 缩进层级：重画之后不能变平 ----
+  /* 踩过的坑：层数原来是读 `row.style.paddingLeft` 反推的，可根行的 6px 写在 CSS
+     的 `padding: 0 6px` 里、内联是空串 → `parseInt('')` 得 NaN → 根下面整层算成
+     `"NaNpx"`（无效值，浏览器忽略）→ 一刷新整棵树变平，折叠再展开才回来。
+     层数从路径就能算，不该反过来问 DOM。 */
+  const indents = () => ev(`[...document.querySelectorAll('.ft-root, .ft-row')].map((r) => ({
+    name: r.querySelector('.ft-name').textContent,
+    pad: getComputedStyle(r).paddingLeft,
+  }))`);
+  const padOf = (list, name) => (list.find((x) => x.name === name) || {}).pad;
+
+  await ev(`(async () => {
+    window.__tree.expanded.clear();
+    for (const r of window.__tree.roots) window.__tree.expanded.add(r);
+    await window.__tree.render();
+    return 1;
+  })()`);
+  await new Promise((r) => setTimeout(r, 160));
+  const lvl1 = await indents();
+  ok('整棵树重画之后，根下面仍是 18px 缩进',
+    padOf(lvl1, 'demo') === '6px' && padOf(lvl1, '改名后.md') === '18px' && padOf(lvl1, 'assets') === '18px',
+    JSON.stringify(lvl1));
+
+  await ev(`(async () => {
+    const byName = (n) => [...document.querySelectorAll('.ft-row')].find((r) => r.querySelector('.ft-name').textContent === n);
+    byName('assets').click();
+    await new Promise((r) => setTimeout(r, 160));
+    byName('deep').click();
+    await new Promise((r) => setTimeout(r, 160));
+  })()`);
+  const lvl3 = await indents();
+  ok('展开两层后按层递进 18 / 30 / 42',
+    padOf(lvl3, 'assets') === '18px' && padOf(lvl3, 'deep') === '30px' && padOf(lvl3, 'deep.md') === '42px',
+    JSON.stringify(lvl3));
+
+  await ev(`window.__tree.render()`);
+  await new Promise((r) => setTimeout(r, 200));
+  const afterRender = await indents();
+  ok('刷新（整棵树重画）之后缩进不丢，三层都还在原位',
+    padOf(afterRender, 'deep') === '30px' && padOf(afterRender, 'deep.md') === '42px',
+    JSON.stringify(afterRender));
+
+  await ev(`window.__tree._reloadDir('C:/demo/assets')`);
+  await new Promise((r) => setTimeout(r, 200));
+  const afterLocal = await indents();
+  ok('局部刷新只重画那一层，孙目录仍开着（42 还在）',
+    padOf(afterLocal, 'deep.md') === '42px', JSON.stringify(afterLocal));
+
+  // ---- 同一棵树不叠两个根 ----
+  /* 子目录再挂一次会让同一个路径出现两行（`_rowOf` 只认第一行，第二棵的展开
+     就落到第一棵的位置上），层数也没法算对 —— 所以直接不让这种状态出现 */
+  const nested = await ev(`window.__tree.addRoot('C:/demo/assets')`);
+  const rootsNow = await ev(`document.querySelectorAll('.ft-root').length`);
+  ok('子目录不会再单独成一个根（它已经在树里）', nested === false && rootsNow === 2, `${nested} / ${rootsNow}`);
+
+  /* 命令行传进来的目录可能是 `D:/work`，后端读出来却是 `D:\work\a.md`。
+     只按字面比前缀会把同一棵树判成两棵：缩进全平、定位说「不在里面」。 */
+  const mixed = await ev(`({
+    depth: window.__tree._depthOfPath('C:\\\\demo\\\\assets'),
+    root: window.__tree.rootOf('C:\\\\demo\\\\x.md'),
+  })`);
+  ok('反斜杠写法也算在同一棵树里', mixed.depth === 1 && mixed.root === 'C:/demo', JSON.stringify(mixed));
+
   await ev(`window.__tree.search('笔记')`);
   await new Promise((r) => setTimeout(r, 220));
   const hits = await ev(`(() => ({
