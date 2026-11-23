@@ -16,6 +16,20 @@ const baseName = (p) => (p ? String(p).split(/[\\/]/).pop() : '');
 /** 取所在目录，保留原来的分隔符风格（后端给的是 \，别混用手写的 /） */
 const parentOf = (p) => String(p || '').replace(/[\\/][^\\/]*$/, '');
 
+/**
+ * p 是否落在 root 这棵树里。
+ *
+ * 三个坑都在这一个函数里收掉：① 根可以带尾部分隔符（`C:\`、`/home/a/`），
+ * 直接拼 `root + '\\'` 会变成 `C:\\` 永远匹配不上；② 前缀相同不等于在里面
+ * （`C:\a` 与 `C:\ab` 是两棵不同的树）；③ `/` 这种根去掉分隔符就成空串了。
+ */
+function inRoot(p, root) {
+  if (!root) return false;
+  const base = String(root).replace(/[\\/]+$/, '');
+  if (!base) return true;              // 根就是 `/`：一切都算在里面
+  return p === base || p.startsWith(base + '\\') || p.startsWith(base + '/');
+}
+
 function icon(id, cls = '') {
   return `<svg class="ico ${cls}" aria-hidden="true"><use href="#i-${id}" /></svg>`;
 }
@@ -24,9 +38,9 @@ export class FileTree {
   /**
    * @param {object} opt
    *   body     树/搜索结果的容器
-   *   pathText 显示当前文件夹名的元素
    *   be       backend.js 模块（readDirShallow / searchInFolder / createEntry / renameEntry / deleteEntry）
    *   onOpen   (path, line?) => void
+   *   onAddFolder () => void                   空状态与右键里的「添加文件夹…」
    *   toast    (msg) => void
    *   menu     (x, y, items) => void           右键菜单（ui.js 的 contextMenu）
    *   ask      (title, label, value) => Promise<string|null>   文本输入框
@@ -39,9 +53,10 @@ export class FileTree {
    */
   constructor(opt) {
     this.body = opt.body;
-    this.pathText = opt.pathText;
     this.be = opt.be;
     this.onOpen = opt.onOpen || (() => {});
+    this.onAddFolder = opt.onAddFolder || null;
+    this.onRootsChanged = opt.onRootsChanged || null;
     this.toast = opt.toast || (() => {});
     this.menu = opt.menu || null;
     this.ask = opt.ask || null;
@@ -54,29 +69,101 @@ export class FileTree {
     /* 多选只对文件生效：Ctrl 点击增减、Shift 点击选一段，用来挑两个文件做比较 */
     this.sel = new Set();
     this.anchor = '';
-    this.root = '';
+    /* 根目录可以有多个：同时盯两摊业务（项目 + 笔记）时不用来回换根，
+       换了根就要把上一棵树的展开状态全丢掉。顺序就是显示顺序。 */
+    this.roots = [];
     this.expanded = new Set();
     this.regex = false;        // 搜索是否按正则匹配（由侧栏那个 .* 开关控制）
     this.caseSensitive = false;
     this.token = 0;            // 搜索序号：慢请求回来时直接丢弃
     this.activePath = '';      // 编辑区当前文件，用来在树里点亮
-    /* 空白处右键 = 对根目录操作。挂在容器上，树被重画多少次都还在 */
+    /* 空白处右键：多根之后「对根目录操作」这句话已经没有唯一答案了，
+       所以给的是「添加文件夹 / 刷新」这两个与具体根无关的动作。挂在容器上，
+       树被重画多少次都还在 */
     this.body.addEventListener('contextmenu', (ev) => {
+      if (ev.target.closest('.ft-root')) return;    // 根行自己处理
       if (ev.target.closest('.ft-row')) return;     // 行自己处理
       if (ev.target.closest('.ft-hit, .ft-hit-file')) return;
       ev.preventDefault();
-      this._rootMenu(ev);
+      this._blankMenu(ev);
     });
   }
 
-  setRoot(path) {
-    this.root = path || '';
-    this.expanded.clear();
-    if (this.pathText) {
-      this.pathText.textContent = this.root ? baseName(this.root) : tt('未打开文件夹');
-      this.pathText.title = this.root || '';
+  /** 第一个根 —— 只给「当前能不能搜」这类判断用，别拿它当唯一根 */
+  get root() { return this.roots[0] || ''; }
+  get hasRoot() { return this.roots.length > 0; }
+
+  /** 把一个路径归一成根的样子。盘符根（`C:\`）与 `/` 保持原样 —— 去掉分隔符
+      会变成 `C:`（「C 盘的当前目录」）和空串，两者都不是同一个位置 */
+  static _norm(p) {
+    const s = String(p || '');
+    if (!s) return '';
+    if (s === '/' || /^[A-Za-z]:[\\/]$/.test(s)) return s;
+    return s.replace(/[\\/]+$/, '');
+  }
+
+  /** 设成「只有这一个根」（旧接口 / 测试用）。传空串等于全清 */
+  setRoot(path) { return this.setRoots(path ? [path] : []); }
+
+  async setRoots(list) {
+    const next = [];
+    for (const p of list || []) {
+      const s = FileTree._norm(p);
+      if (s && !next.includes(s)) next.push(s);
     }
-    return this.render();
+    this.roots = next;
+    this._pruneExpanded();
+    /* 根默认展开：树的意义就是看见里面有什么。收起来的根只在用户自己点过之后
+       才出现（`_closeRow` 会把它从 expanded 里摘掉） */
+    for (const s of next) this.expanded.add(s);
+    await this.render();
+    this._notifyRoots();
+  }
+
+  /** 加一个根。已经在列表里就只展开它（不重复加、不报错） */
+  async addRoot(path) {
+    const s = FileTree._norm(path);
+    if (!s) return false;
+    if (this.roots.includes(s)) { await this.render(); return false; }
+    this.roots.push(s);
+    this.expanded.add(s);           // 新加进来的根默认展开：加它就是为了看里面的东西
+    await this.render();
+    this._notifyRoots();
+    return true;
+  }
+
+  /** 从侧栏移除一个根。**只移除视图**，磁盘上的东西一个字节都不动 */
+  async removeRoot(path) {
+    const s = FileTree._norm(path);
+    const before = this.roots.length;
+    this.roots = this.roots.filter((r) => r !== s);
+    if (this.roots.length === before) return false;
+    this._pruneExpanded();
+    await this.render();
+    this._notifyRoots();
+    return true;
+  }
+
+  /** 根列表变了 → 让外面把它存进设置（views 不碰 storage） */
+  _notifyRoots() {
+    if (this.onRootsChanged) this.onRootsChanged(this.roots.slice());
+  }
+
+  /** 展开状态里只留还在某个根下面的路径 */
+  _pruneExpanded() {
+    for (const p of [...this.expanded]) {
+      if (!this.roots.some((r) => inRoot(p, r))) this.expanded.delete(p);
+    }
+  }
+
+  /** 这个路径属于哪个根？不属于任何一个返回空串。多个根互为前缀时取最长的那一个 */
+  rootOf(path) {
+    const p = String(path || '');
+    let best = '';
+    for (const r of this.roots) {
+      if (inRoot(p, r) && r.length > best.length) best = r;
+    }
+    return best;
   }
 
   /** 编辑区换文件时调用：把对应行点亮，并让「单选」一起跟着走 */
@@ -112,18 +199,21 @@ export class FileTree {
    * 自己拼 DOM 会和 render 的那套（按层级深浅补开目录）漂移。
    */
   async reveal(path) {
-    if (!this.root || !path) return 'outside';
-    const root = this.root.replace(/[\\/]+$/, '');
-    /* 前缀相同不算在里面：C:\a 与 C:\ab 是两棵不同的树 */
+    if (!this.roots.length || !path) return 'outside';
     const p = String(path);
-    if (p !== root && !p.startsWith(root + '\\') && !p.startsWith(root + '/')) return 'outside';
+    /* 多个根时先问「它属于哪一棵」：只看第一个根会把第二个根下的文件判成「在外面」 */
+    const root = this.rootOf(p);
+    if (!root) return 'outside';
 
     const dirs = [];
-    for (let d = parentOf(p); d && d.length > root.length; d = parentOf(d)) dirs.unshift(d);
+    const rootBase = root.replace(/[\\/]+$/, '') || root;
+    for (let d = parentOf(p); d && d.length > rootBase.length && inRoot(d, root); d = parentOf(d)) dirs.unshift(d);
     let opened = false;
     for (const d of dirs) if (!this.expanded.has(d)) { this.expanded.add(d); opened = true; }
+    /* 根要是收着的，它下面的行根本不在 DOM 里 —— 光展开中间层不够 */
+    if (!this.expanded.has(root)) { this.expanded.add(root); opened = true; }
     /* 搜索状态下 body 里是命中列表，不是树 —— 重画一次才会回到树上 */
-    if (opened || !this.body.querySelector('.ft-row')) await this.render();
+    if (opened || !this.body.querySelector('.ft-row, .ft-root')) await this.render();
 
     const row = this._rowOf(p);
     if (!row) return 'gone';
@@ -142,18 +232,20 @@ export class FileTree {
   async render() {
     this.token++;
     this.body.innerHTML = '';
-    if (!this.root) {
-      this.body.innerHTML = '<div class="ft-empty">' + tt('还没打开文件夹。<br>点上面的「选择…」挑一个目录，<br>之后就能在这里翻文件、搜内容。') + '</div>';
+    if (!this.roots.length) {
+      this._emptyState();
       return;
     }
     const tree = document.createElement('div');
     tree.className = 'ft-tree';
-    tree.append(await this._children(this.root, 0));
+    /* 根行是**分组标题**，不是 .ft-row：树里的行都带动作（单击打开、Ctrl 多选），
+       根行混进去会让「顶层有几项」这类判断凭空多一个，也会被 Shift 选段扫到 */
+    for (const root of this.roots) tree.append(this._rootRow(root));
     this.body.append(tree);
     /* `expanded` 是「哪些目录开着」的唯一真相，整棵树重建后必须重新落到 DOM 上：
        否则刷新一次看着全收起，而标记还留着 —— 再点那一下只会把标记删掉，
        界面上什么都不发生（要按两下才收得回去）。按层级从浅到深加，
-       深的目录得先有父行的子容器才找得到自己的行。 */
+       深的目录得先有父行的子容器才找得到自己的行。根行也在这条链上。 */
     const byDepth = [...this.expanded].sort((a, b) => a.split(/[\\/]/).length - b.split(/[\\/]/).length);
     for (const p of byDepth) {
       const row = this._rowOf(p);
@@ -167,6 +259,74 @@ export class FileTree {
       for (const p of [...this.sel]) if (!alive.has(p)) this.sel.delete(p);
       this._paintSel();
     }
+  }
+
+  /** 一个根都没有：给一句话 + 一个明显的入口，别让人去找角落里那个小按钮 */
+  _emptyState() {
+    const box = document.createElement('div');
+    box.className = 'ft-empty';
+    box.textContent = tt('还没打开文件夹。添加一个目录，就能在这里翻文件、搜内容。');
+    this.body.append(box);
+    if (!this.onAddFolder) return;
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'ft-empty-btn';
+    b.textContent = tt('添加文件夹…');
+    b.onclick = () => this.onAddFolder();
+    this.body.append(b);
+  }
+
+  /**
+   * 一个根的分组行。
+   *
+   * 行本身可点：折叠 / 展开这一整棵（`expanded` 里根路径也在，和普通目录同一套）。
+   * 右侧两颗按钮鼠标经过才显形：＋ 在这个根里新建，× 从侧栏移除（不动磁盘）。
+   * paddingLeft 取 6（与 `_depthOf` 的刻度对齐 → depth 0），所以它下面的顶层项
+   * 缩进到 18px，一眼看出归属。
+   */
+  _rootRow(root) {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'ft-root' + (this.expanded.has(root) ? ' open' : '');
+    row.dataset.path = root;
+    row.title = root;
+    row.innerHTML = icon('chevron-right', 'ft-caret') + icon('folder', 'ft-ico') + '<span class="ft-name"></span>';
+    row.querySelector('.ft-name').textContent = baseName(root) || root;
+    row.onclick = () => this._toggle(row, { path: root, is_dir: true, name: baseName(root) }, 0);
+    row.oncontextmenu = (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      this._rootRowMenu(ev, root);
+    };
+    row.append(
+      this._rootBtn('plus', tt('在这个文件夹里新建…'), (ev) => this._addMenu(ev, { path: root, is_dir: true })),
+      this._rootBtn('x', tt('从侧栏移除（磁盘上的文件不动）'), () => this._removeRootAsk(root)),
+    );
+    return row;
+  }
+
+  /** 根行右侧那颗小按钮：mousedown 就挡住，否则它会先把整棵树折起来再说 */
+  _rootBtn(iconId, title, fn) {
+    const b = document.createElement('span');
+    b.className = 'ft-root-btn';
+    b.setAttribute('role', 'button');
+    b.title = title;
+    b.innerHTML = icon(iconId);
+    b.addEventListener('mousedown', (ev) => { ev.preventDefault(); ev.stopPropagation(); });
+    b.addEventListener('click', (ev) => { ev.preventDefault(); ev.stopPropagation(); fn(ev); });
+    return b;
+  }
+
+  async _removeRootAsk(root) {
+    const name = baseName(root) || root;
+    const ok = this.confirmAsk
+      ? await this.confirmAsk(
+        tt('移除文件夹'),
+        tt('把 <b>{name}</b> 从侧栏移除？<br><br>磁盘上的文件一个都不会动，只是这里不再显示。', { name })
+      )
+      : true;
+    if (!ok) return;
+    if (await this.removeRoot(root)) this.toast(tt('已从侧栏移除'));
   }
 
   async _children(dir, depth) {
@@ -361,14 +521,42 @@ export class FileTree {
     this.toast(writeClipboard(path) ? tt('路径已复制') : tt('无法复制路径'));
   }
 
-  _rootMenu(ev) {
-    if (!this.menu || !this.root) return;
-    this.menu(ev.clientX, ev.clientY, [
-      { label: tt('新建文件…'), icon: 'file-plus', action: () => this._create(this.root, false) },
-      { label: tt('新建文件夹…'), icon: 'folder-plus', action: () => this._create(this.root, true) },
+  /** 根行右键：这个根自己的新建 / 刷新，加上全局的「添加文件夹」 */
+  _rootRowMenu(ev, root) {
+    if (!this.menu) return;
+    const items = [
+      { label: tt('新建文件…'), icon: 'file-plus', action: () => this._create(root, false) },
+      { label: tt('新建文件夹…'), icon: 'folder-plus', action: () => this._create(root, true) },
       { sep: true },
       { label: tt('刷新'), icon: 'rotate-ccw', action: () => this.render() },
-    ]);
+    ];
+    if (this.onAddFolder) {
+      items.push({ label: tt('添加文件夹…'), icon: 'folder-plus', action: () => this.onAddFolder() });
+    }
+    items.push({ sep: true });
+    items.push({ label: tt('移除这个文件夹'), icon: 'x', action: () => this._removeRootAsk(root) });
+    this.menu(ev.clientX, ev.clientY, items);
+  }
+
+  /**
+   * 树区空白处右键。
+   *
+   * 原来的语义是「对根目录操作」（这里是新建文件…）。多根之后这句话没有唯一答案 ——
+   * 空白到底算哪个根的？所以在这里只给与具体根无关的两件事：加根、刷新。
+   * 「在某个根里新建」回到那个根自己的行上（右键或右侧 ＋）。
+   */
+  _blankMenu(ev) {
+    if (!this.menu) return;
+    const items = [];
+    if (this.onAddFolder) {
+      items.push({ label: tt('添加文件夹…'), icon: 'folder-plus', action: () => this.onAddFolder() });
+    }
+    if (this.roots.length) {
+      if (items.length) items.push({ sep: true });
+      items.push({ label: tt('刷新'), icon: 'rotate-ccw', action: () => this.render() });
+    }
+    if (!items.length) return;
+    this.menu(ev.clientX, ev.clientY, items);
   }
 
   async _create(dir, isDir) {
@@ -429,7 +617,8 @@ export class FileTree {
   /* 只重画受影响的那一层：整棵树重来会把手动展开的目录全收起来，
      刚新建完就看不到新文件，等于逼人再点一遍。 */
   async _reloadDir(dir) {
-    if (!dir || dir === this.root) { await this.render(); return; }
+    /* 根自己那一层 = 整棵树重画最省事（多根时还牵涉根行的开合） */
+    if (!dir || this.roots.includes(dir)) { await this.render(); return; }
     const row = this._rowOf(dir);
     if (!row) { await this.render(); return; }
     const kids = row.nextElementSibling;
@@ -443,31 +632,42 @@ export class FileTree {
     if (row) await this._openRow(row, dir, this._depthOf(row));
   }
 
+  /* 根行也算：`_expandRow(根)` / `_reloadDir(根)` 得能找到它 */
   _rowOf(path) {
-    for (const r of this.body.querySelectorAll('.ft-row')) {
+    for (const r of this.body.querySelectorAll('.ft-row, .ft-root')) {
       if (r.dataset.path === path) return r;
     }
     return null;
   }
 
+  /* 根行 paddingLeft 是 6 → depth 0，所以它下面的顶层项缩进到 18px。
+     普通行照旧按 padding 反推（自己不记 depth，省得两份真相打架）。 */
   _depthOf(row) {
     return Math.max(0, Math.round((parseInt(row.style.paddingLeft, 10) - 6) / 12));
   }
 
-  /** 全目录搜内容；空串回退成树 */
+  /** 全目录搜内容（**所有根一起搜**）；空串回退成树 */
   async search(q) {
-    if (!this.root) { await this.render(); return; }
+    if (!this.roots.length) { await this.render(); return; }
     const query = String(q || '').trim();
     if (!query) { await this.render(); return; }
 
     const token = ++this.token;
     this.body.innerHTML = '<div class="ft-empty">' + tt('搜索中…') + '</div>';
-    let hits = [];
-    try {
-      hits = await this.be.searchInFolder(this.root, query, 200, this.regex, this.caseSensitive);
-    } catch (e) {
+    const hits = [];
+    let firstErr = null;
+    /* 一个根读不了不该让整次搜索失败 —— 收集其它根的命中，最后再决定要不要报错 */
+    for (const root of this.roots) {
+      if (token !== this.token) return;
+      try {
+        hits.push(...await this.be.searchInFolder(root, query, 200, this.regex, this.caseSensitive));
+      } catch (e) {
+        firstErr = firstErr || e;
+      }
+    }
+    if (!hits.length && firstErr) {
       if (token === this.token) this.body.innerHTML = '';
-      this.toast(tt('搜索失败：') + e);
+      this.toast(tt('搜索失败：') + firstErr);
       return;
     }
     if (token !== this.token) return;   // 期间又搜了新词，这次结果作废
@@ -489,6 +689,7 @@ export class FileTree {
     }
     const wrap = document.createElement('div');
     wrap.className = 'ft-results';
+    const multi = this.roots.length > 1;      // 一个根时标所属是废话
     for (const [path, list] of groups) {
       const head = document.createElement('button');
       head.type = 'button';
@@ -497,6 +698,19 @@ export class FileTree {
       head.innerHTML = icon('file-text', 'ft-ico') + '<span class="ft-name"></span><span class="ft-count"></span>';
       head.querySelector('.ft-name').textContent = baseName(path);
       head.querySelector('.ft-count').textContent = list.length;
+      /* 多根时在文件名后面标出所属的根：两边的同名文件光看名字分不开。
+         做成组头里的一段淡字，不另起一行 —— 一个文件一行根名的话，
+         十来个文件就是十来行重复 */
+      if (multi) {
+        const root = this.rootOf(path);
+        if (root) {
+          const tag = document.createElement('span');
+          tag.className = 'ft-root-tag';
+          tag.textContent = baseName(root) || root;
+          tag.title = root;
+          head.insertBefore(tag, head.querySelector('.ft-count'));
+        }
+      }
       head.onclick = () => this.onOpen(path);
       wrap.append(head);
 

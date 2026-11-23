@@ -112,8 +112,14 @@ try {
      改内容交给编辑区的查找替换（Ctrl+H），那里只改当前这一份。 */
   ok('文件搜索里没有替换行',
     (await ev(`!!document.getElementById('ftReplaceRow') || !!document.getElementById('ftReplaceAll')`)) === false);
-  ok('区分大小写并进搜索行，不再挂在替换行上',
-    (await ev(`!!document.querySelector('#sideFiles .ft-search #ftCase')`)) === true);
+  ok('搜索选项收进 ⋯ 菜单（Aa / .* 不再各占一个方块）',
+    (await ev(`(() => {
+      const s = document.querySelector('#sideFiles .ft-search');
+      if (!s) return false;
+      return !!s.querySelector('#ftMore') && !s.querySelector('#ftCase') && !s.querySelector('#ftRegex');
+    })()`)) === true);
+  ok('侧栏头在文件页才有「添加文件夹」',
+    (await ev(`(document.getElementById('sideAdd') || {}).offsetParent !== null && getComputedStyle(document.getElementById('sideAdd')).display !== 'none'`)) === true);
 
   // ---- B. 后端命令：列目录 / 全目录搜索 ----
   const invoke = (cmd, args) =>
@@ -2392,6 +2398,10 @@ try {
     const win = (x) => x.replace(/\//g, '\\');
     const target = win(path.join(deep, 'two.md'));
 
+    /* 定位按钮只属于文件页（大纲页没有「定位哪个文件」这回事），
+       所以先切过去再量 —— 按新口径常驻着就是两个点了没反应的按钮 */
+    await ev(`document.querySelector('[data-side="files"]').click()`);
+    await sleep(280);
     const btn = await ev(`(() => {
       const b = document.getElementById('sideLocate');
       if (!b) return { exists: false };
@@ -2400,8 +2410,18 @@ try {
       return { exists: true, visible: r.width > 0, icon: b.querySelector('use').getAttribute('href'),
         rightOfTabs: r.left >= tr.right - 1 };
     })()`);
-    ok('侧栏页签右边有定位按钮', btn.exists && btn.visible && btn.rightOfTabs, JSON.stringify(btn));
+    ok('侧栏页签右边有定位按钮（文件页才显示）', btn.exists && btn.visible && btn.rightOfTabs, JSON.stringify(btn));
     ok('定位按钮用的是 locate 准星图标', btn.icon === '#i-locate', String(btn.icon));
+    const addBtn = await ev(`(() => {
+      const b = document.getElementById('sideAdd');
+      const r = b ? b.getBoundingClientRect() : null;
+      return { exists: !!b, visible: !!r && r.width > 0 };
+    })()`);
+    ok('文件页侧栏头有「添加文件夹」', addBtn.exists && addBtn.visible, JSON.stringify(addBtn));
+    await ev(`document.querySelector('[data-side="outline"]').click()`);
+    await sleep(200);
+    const addHidden = await ev(`getComputedStyle(document.getElementById('sideAdd')).display`);
+    ok('大纲页不显示「添加文件夹」', addHidden === 'none', addHidden);
 
     await ev(`window.__snp.openPath(${JSON.stringify(target)})`);
     await sleep(800);
@@ -2574,6 +2594,57 @@ try {
       ok('真机：文件树复制的是那一行的完整路径',
         ftPasted === winFile, JSON.stringify({ got: ftPasted, want: winFile }));
     }
+
+    /* ---- 多根：一个侧栏同时挂两个目录 ----
+       真实入口（侧栏头的 ＋、拖目录进窗口）都要过系统对话框或原生拖放，
+       自动化进不去 → 直接调 fileTree 的加根入口，验「加进去之后界面对不对」。 */
+    const rA = path.join(os.tmpdir(), 'eznotepad-probe', 'root-a');
+    const rB = path.join(os.tmpdir(), 'eznotepad-probe', 'root-b');
+    fs.mkdirSync(rA, { recursive: true });
+    fs.mkdirSync(rB, { recursive: true });
+    fs.writeFileSync(path.join(rA, 'only-a.md'), '# A\n', 'utf8');
+    fs.writeFileSync(path.join(rB, 'only-b.md'), '# B\n', 'utf8');
+    const wA = rA.replace(/\//g, '\\');
+    const wB = rB.replace(/\//g, '\\');
+
+    await ev(`(async () => { await window.__snp.setFolder(${JSON.stringify(wA)}); return 1; })()`);
+    await sleep(500);
+    await ev(`document.querySelector('[data-side="files"]').click()`);
+    await sleep(250);
+    await ev(`(async () => { await window.__snp.fileTree.addRoot(${JSON.stringify(wB)}); return 1; })()`);
+    await sleep(500);
+
+    const multiRoot = await ev(`(() => ({
+      roots: [...document.querySelectorAll('#ftBody .ft-root')].map(r => r.querySelector('.ft-name').textContent),
+      names: [...document.querySelectorAll('#ftBody .ft-row')].map(r => r.querySelector('.ft-name').textContent),
+      saved: (JSON.parse(localStorage.getItem('snp.settings') || '{}').folders || []).length,
+    }))()`);
+    ok('真机：两个根各占一行分组标题', multiRoot.roots.length === 2, JSON.stringify(multiRoot.roots));
+    ok('真机：两个根的文件同时显示',
+      multiRoot.names.includes('only-a.md') && multiRoot.names.includes('only-b.md'), JSON.stringify(multiRoot.names));
+    ok('真机：根列表写进了设置', multiRoot.saved === 2, String(multiRoot.saved));
+
+    /* 折叠第一个根：只收它，另一棵树还在（以前整棵树共用一个根，没有这件事） */
+    await ev(`document.querySelectorAll('#ftBody .ft-root')[0].click()`);
+    await sleep(300);
+    const foldedRoot = await ev(`[...document.querySelectorAll('#ftBody .ft-row')].map(r => r.querySelector('.ft-name').textContent)`);
+    ok('真机：折叠一个根只收它自己',
+      !foldedRoot.includes('only-a.md') && foldedRoot.includes('only-b.md'), JSON.stringify(foldedRoot));
+
+    await ev(`(async () => { await window.__snp.fileTree.setRoots([]); return 1; })()`);
+    await sleep(350);
+    const emptyRoots = await ev(`(() => {
+      const b = document.querySelector('#ftBody .ft-empty-btn');
+      return {
+        btn: !!b,
+        btnText: b ? b.textContent : '',
+        text: (document.querySelector('#ftBody .ft-empty') || {}).textContent || '',
+        rows: document.querySelectorAll('#ftBody .ft-root').length,
+      };
+    })()`);
+    ok('真机：没有根时给引导和一个明显的按钮',
+      emptyRoots.btn && /添加文件夹/.test(emptyRoots.btnText) && emptyRoots.rows === 0 && /还没打开文件夹/.test(emptyRoots.text),
+      JSON.stringify(emptyRoots));
   }
 
   /* ---- I4. 标签条竖线：一条缝只画一条线，最右端要封口 ----

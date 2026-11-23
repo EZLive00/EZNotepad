@@ -692,19 +692,21 @@ body.tab-dragging, body.tab-dragging * { cursor: grabbing !important; }
 }
 .side-tab:hover { background: var(--bg-hover); color: var(--fg-soft); }
 .side-tab.active { background: var(--bg-panel); color: var(--fg); }
-/* 侧栏头右侧的两个图标钮：刷新（重新对齐磁盘）与定位（在树里找到当前文件）。
-   靠右收起；图标是 Lucide 的 refresh-cw / locate，和菜单栏其它图标同源 */
-.side-locate, .side-refresh {
-  margin-left: auto;
+/* 侧栏头右侧图标组：添加文件夹（仅文件页）/ 刷新 / 定位。
+   整组靠右由 .side-acts 的 margin-left:auto 负责，单个按钮不再各写 auto */
+.side-acts { display: flex; align-items: center; gap: 2px; margin-left: auto; }
+.side-add, .side-locate, .side-refresh {
   width: 24px; height: 24px; flex: none;
   display: grid; place-items: center;
   border: none; border-radius: var(--r-1);
   background: transparent; color: var(--fg-faint); cursor: pointer;
 }
-/* 两个都写 auto 时，第一个吃掉全部空余、第二个紧挨着它 —— 这一组是整体靠右的 */
-.side-refresh + .side-locate { margin-left: 0; }
-.side-locate:hover, .side-refresh:hover { background: var(--bg-hover); color: var(--fg); }
-.side-locate .ico, .side-refresh .ico { width: 14px; height: 14px; }
+.side-add:hover, .side-locate:hover, .side-refresh:hover { background: var(--bg-hover); color: var(--fg); }
+.side-add .ico, .side-locate .ico, .side-refresh .ico { width: 14px; height: 14px; }
+/* 大纲页没有「往哪个目录里加」这回事，定位也没有目标 —— 这两个只属于文件页。
+   常驻着就是两个点了没反应的按钮 */
+.outline[data-side="outline"] .side-add,
+.outline[data-side="outline"] .side-locate { display: none; }
 .side-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 
 /* ---- 文件树 ---- */
@@ -728,34 +730,48 @@ body.tab-dragging, body.tab-dragging * { cursor: grabbing !important; }
 .ft-x:hover { background: var(--bg-hover); color: var(--fg); }
 .ft-x .ico { width: 12px; height: 12px; }
 
-/* 正则 / 区分大小写开关：一个字宽的小方块，开着时点亮。
-   放搜索框里而不是菜单里，是因为它改的是「这一次搜索」的语义 */
-.ft-tog {
-  flex: none; height: 19px; padding: 0 4px; font-size: var(--fs-1); line-height: 1;
-  font-family: var(--font-mono); color: var(--fg-faint);
-  background: transparent; border: var(--bw) solid var(--line-strong);
-  border-radius: var(--r-1); cursor: pointer;
-}
-.ft-tog:hover { color: var(--fg); }
-.ft-tog.on { color: var(--accent); border-color: var(--accent); background: transparent; }
+/* 正则 / 区分大小写：不再是搜索框里的常驻小方块，收进 .ft-more 的菜单里。
+   侧栏只有 220px，这两个各占 27px 时输入区只剩 90px */
 
-.ft-path {
-  flex: none; display: flex; align-items: center; gap: 6px;
-  padding: 0 10px 6px; font-size: var(--fs-1); color: var(--fg-faint);
+/* 搜索选项入口（Aa / .* 收进来的那个 ⋯）。有开关开着时点亮 ——
+   否则「正则还开着」在界面上没有任何痕迹，搜出来少了东西也找不到原因 */
+.ft-more {
+  width: 18px; height: 18px; flex: none; border: none; border-radius: var(--r-1);
+  background: transparent; color: var(--fg-faint); cursor: pointer;
+  display: grid; place-items: center;
+  font-family: var(--font-mono); font-size: var(--fs-1); line-height: 1;
 }
-.ft-path span {
-  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-weight: 600; color: var(--fg-soft);
-}
-.ft-open {
-  flex: none; height: 21px; padding: 0 8px; border: none; border-radius: var(--r-1);
-  background: var(--bg-panel); color: var(--fg-soft); font-size: var(--fs-1); cursor: pointer;
-  box-shadow: inset 0 0 0 var(--bw) var(--line);
-}
-.ft-open:hover { color: var(--fg); box-shadow: inset 0 0 0 var(--bw) var(--line-strong); }
+.ft-more:hover { background: var(--bg-hover); color: var(--fg); }
+.ft-more.on { color: var(--accent); font-weight: 700; }
 
 .ft-body { flex: 1; overflow: auto; padding: 0 6px 14px; }
 .ft-tree, .ft-results { display: flex; flex-direction: column; }
+
+/* ---- 根目录分组行 ----
+   多根时它们是分组标题（不然分不清哪一行属于哪个业务），单根时就是「这个文件夹」。
+   行本身可点：折叠 / 展开整棵。右侧两颗按钮 hover 才显形。
+   注意它**不是** .ft-row：树里的行都带动作（单击打开、Ctrl 多选、Shift 选段），
+   根行混进去会被这些批量操作扫到 */
+.ft-root {
+  display: flex; align-items: center; gap: 5px; width: 100%;
+  height: 25px; padding: 0 6px; margin-top: 3px;
+  border: none; border-radius: var(--r-1);
+  background: transparent; color: var(--fg); font-size: var(--fs-1); font-weight: 600;
+  text-align: left; cursor: pointer; flex: none;
+}
+.ft-root:first-child { margin-top: 0; }
+.ft-root:hover { background: var(--bg-hover); }
+.ft-root .ft-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ft-root .ft-ico { color: var(--fg-soft); }
+.ft-root.open .ft-caret { transform: rotate(90deg); }
+.ft-root-btn {
+  width: 18px; height: 18px; flex: none; display: grid; place-items: center;
+  border-radius: var(--r-1); color: var(--fg-faint);
+  opacity: 0; pointer-events: none;
+}
+.ft-root:hover .ft-root-btn { opacity: 1; pointer-events: auto; }
+.ft-root-btn:hover { background: var(--bg-active); color: var(--fg); }
+.ft-root-btn .ico { width: 13px; height: 13px; }
 .ft-row {
   display: flex; align-items: center; gap: 5px; width: 100%;
   height: 24px; padding-right: 6px; border: none; border-radius: var(--r-1);
@@ -808,6 +824,11 @@ body.tab-dragging, body.tab-dragging * { cursor: grabbing !important; }
   flex: none; font-size: var(--fs-1); color: var(--fg-faint); font-weight: 500;
   background: var(--bg-panel); border-radius: var(--r-2); padding: 0 5px;
 }
+/* 多根时在命中文件后面标出它属于哪个根：两边的同名文件光看名字分不开 */
+.ft-hit-file .ft-root-tag {
+  flex: none; max-width: 84px; font-size: var(--fs-1); font-weight: 400; color: var(--fg-faint);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .ft-hit {
   display: flex; gap: 7px; width: 100%; padding: 3px 6px 3px 21px;
   border: none; background: transparent; cursor: pointer; text-align: left;
@@ -824,6 +845,16 @@ body.tab-dragging, body.tab-dragging * { cursor: grabbing !important; }
 }
 .ft-empty { padding: 18px 14px; font-size: var(--fs-1); line-height: 1.7; color: var(--fg-faint); }
 .ft-empty.small { padding: 4px 0 4px 0; font-size: var(--fs-1); }
+/* 一个根都没有时的入口：原来是顶部那个 8 个字宽的小「选择…」，
+   在 220px 的侧栏里等于藏起来了 */
+.ft-empty-btn {
+  display: block; margin: 0 14px; padding: 5px 10px;
+  border: none; border-radius: var(--r-1); cursor: pointer;
+  background: var(--bg-panel); color: var(--fg);
+  font-family: var(--font-ui); font-size: var(--fs-1); font-weight: 600;
+  box-shadow: inset 0 0 0 var(--bw) var(--line-strong);
+}
+.ft-empty-btn:hover { background: var(--bg-hover); box-shadow: inset 0 0 0 var(--bw) var(--accent); }
 
 /* ---- 设置面板 ----
    左分类 + 右内容。原来八组竖着一列排下来，面板比一屏还长，「快捷键」这种
@@ -1533,6 +1564,10 @@ body[data-zen="1"] .win-title { color: var(--fg-faint); }
 .ctx-item.danger:hover:not(:disabled) { background: var(--danger-solid); color: var(--danger-fg); }
 .ctx-item.danger:hover:not(:disabled) .ctx-kbd { color: color-mix(in srgb, var(--danger-fg) 80%, transparent); }
 .ctx-item:disabled { opacity: .4; cursor: default; }
+/* 开关型菜单项的「开着」状态。勾加在文字后面，不用另起一列 ——
+   另起一列会把同一次菜单里其它项的左边距一起撑宽 */
+.ctx-item.on .ctx-label { color: var(--accent); }
+.ctx-item.on .ctx-label::after { content: ' ✓'; font-weight: 600; }
 .ctx-kbd { font-family: var(--font-mono); font-size: var(--fs-1); color: var(--fg-faint); }
 .ctx-sep { height: var(--bw); background: var(--line); margin: 5px 8px; }
 

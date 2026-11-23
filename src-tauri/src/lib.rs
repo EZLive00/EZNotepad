@@ -284,9 +284,29 @@ fn compare_args(argv: &[String]) -> Option<(Option<String>, Option<String>)> {
     Some((left, right))
 }
 
+/// 启动参数里带的目录（拖个文件夹到 exe 上 / `EZNotepad.exe D:\notes`）。
+///
+/// 和 `file_args` 分开而不是合成一个：目录不能当文件打开，混在一起前端还得为每条
+/// 路径再问一次后端「这是不是目录」。分开之后两边各自只认自己的那一类，
+/// 前端拿到就能直接用。
+fn dir_args(argv: &[String]) -> Vec<String> {
+    argv.iter()
+        .enumerate()
+        .skip(1) // argv[0] 是 exe 自己
+        .filter(|(_, a)| !a.starts_with('-'))
+        .filter(|(_, a)| Path::new(a).is_dir())
+        .map(|(_, a)| a.clone())
+        .collect()
+}
+
 #[tauri::command]
 fn initial_files() -> Vec<String> {
     file_args(&std::env::args().collect::<Vec<_>>())
+}
+
+#[tauri::command]
+fn initial_folders() -> Vec<String> {
+    dir_args(&std::env::args().collect::<Vec<_>>())
 }
 
 /// 两两比对文件内容，返回同长度的「是否逐字节相同」。
@@ -1833,6 +1853,12 @@ pub fn run() {
             if !files.is_empty() {
                 let _ = app.emit("open-files", files);
             }
+            /* 第二个实例也可能是「拖了个文件夹到 exe 上」：那种情况下文件列表是空的，
+               只把窗口拉到前面就等于什么都没发生。目录单独一条事件，前端加进根列表 */
+            let dirs = dir_args(&argv);
+            if !dirs.is_empty() {
+                let _ = app.emit("add-folders", dirs);
+            }
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -1859,6 +1885,7 @@ pub fn run() {
             rename_entry,
             delete_entry,
             initial_files,
+            initial_folders,
             save_history,
             list_history,
             read_history,
@@ -1996,6 +2023,20 @@ mod tests {
         let got = file_args(&args);
         assert_eq!(got.len(), 1, "{got:?}");
         assert!(got[0].ends_with("Cargo.toml"));
+    }
+
+    #[test]
+    fn dir_args_takes_folders_only() {
+        let args = vec![
+            "app.exe".to_string(),
+            "--flag".to_string(),
+            ".".to_string(),                        // 仓库根，是目录 → 收
+            "Cargo.toml".to_string(),               // 是文件 → 不收
+            "definitely-missing-xyz".to_string(),   // 不存在 → 不收
+        ];
+        let got = dir_args(&args);
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(got[0], ".");
     }
 
     #[test]

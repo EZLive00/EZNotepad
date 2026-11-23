@@ -378,6 +378,14 @@
           <button type="button" class="side-tab active" data-side="outline" data-i18n="大纲">大纲</button>
           <button type="button" class="side-tab" data-side="files" data-i18n="文件">文件</button>
         </div>
+        <!-- 右侧图标组整组靠右。包一层是因为「添加文件夹」只在这一页出现，
+             直接平铺时它一隐藏，后面那个按钮的 margin-left:auto 就落空了 -->
+        <div class="side-acts">
+        <!-- 添加文件夹：只在这一页出现（大纲页没有「往哪儿加」这个问题）。
+             多根之后每次加一个根都从这里进，不必先找那个已被删掉的「选择…」 -->
+        <button type="button" class="side-add" id="sideAdd" title="添加文件夹…" data-i18n-title="添加文件夹…">
+          <svg class="ico" aria-hidden="true"><use href="#i-folder-plus" /></svg>
+        </button>
         <!-- 刷新：把界面重新对齐到磁盘上的真相。文件页在前台时重扫目录（别的程序
              刚建的文件/改名/删除立刻出现，搜索状态按当前词重搜），同时把当前文档
              从磁盘重读一遍 —— 手改过文件后不用退出重开。 -->
@@ -388,6 +396,7 @@
         <button type="button" class="side-locate" id="sideLocate" title="在文件列表中定位" data-i18n-title="在文件列表中定位">
           <svg class="ico" aria-hidden="true"><use href="#i-locate" /></svg>
         </button>
+        </div>
       </div>
 
       <!-- 大纲：只管导航 -->
@@ -395,20 +404,17 @@
         <div class="outline-list" id="outlineList"></div>
       </div>
 
-      <!-- 文件：文件夹树 + 全目录搜索 -->
+      <!-- 文件：多个根目录的文件夹树 + 跨根搜索 -->
       <div class="side-body hidden" id="sideFiles">
+        <!-- 搜索框里只留「输入」和「更多选项」两个位置。Aa / .* 收进 ⋯ 菜单：
+             侧栏只有 220px，两个常驻小方块各占 27px，输入区被压到 90px 不到 -->
         <div class="ft-search">
           <svg class="ico" aria-hidden="true"><use href="#i-search" /></svg>
           <input id="ftQuery" placeholder="搜索文件内容" data-i18n-ph="搜索文件内容" spellcheck="false" />
-          <button type="button" class="ft-tog" id="ftCase" title="区分大小写" data-i18n-title="区分大小写">Aa</button>
-          <button type="button" class="ft-tog" id="ftRegex" title="按正则表达式匹配" data-i18n-title="按正则表达式匹配">.*</button>
           <button type="button" class="ft-x icon-only hidden" id="ftClear" title="清除搜索" data-i18n-title="清除搜索">
             <svg class="ico" aria-hidden="true"><use href="#i-x" /></svg>
           </button>
-        </div>
-        <div class="ft-path">
-          <span id="ftPathText" title="">未打开文件夹</span>
-          <button type="button" class="ft-open" id="ftPick" data-i18n="选择…">选择…</button>
+          <button type="button" class="ft-more" id="ftMore" title="搜索选项" data-i18n-title="搜索选项">⋯</button>
         </div>
         <div class="ft-body" id="ftBody"></div>
       </div>

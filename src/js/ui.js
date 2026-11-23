@@ -197,6 +197,10 @@ export function contextMenu(x, y, items, { stayOnScroll = false } = {}) {
     const b = mkBtn('ctx-item', it);
     b.innerHTML = '<span class="ctx-label"></span>';
     b.firstChild.textContent = it.label;
+    /* 勾选态：开关型菜单项（区分大小写 / 正则匹配）要能看出当前是开还是关。
+       文字后面补一个 ✓ 而不是另开一列 —— 另开一列会把所有菜单的左边距都撑宽 */
+    const on = typeof it.checked === 'function' ? it.checked() : !!it.checked;
+    if (on) b.classList.add('on');
     if (it.shortcut) {
       const k = document.createElement('span');
       k.className = 'ctx-kbd';

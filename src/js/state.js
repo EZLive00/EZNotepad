@@ -30,29 +30,44 @@ export const DEFAULTS = {
   lastMode: {},
   lastNewExt: 'md',     // 「新建」上次选的扩展名
   autoSave: true,       // 自动保存（只对已存在于磁盘上的文件生效）
-  folder: '',           // 侧栏「文件」页打开的文件夹
+  /* 侧栏「文件」页的根目录，可以有多个（同时处理几摊业务）。
+     以前是单个字符串 folder：一个窗口只能盯一个目录，换个目录就把上一棵树的
+     展开状态全丢了。现在多个根并列在树里，各自独立展开。 */
+  folders: [],
   side: 'outline',      // 侧栏当前页：outline | files
   zen: false,           // 专注模式：只留标题栏和正文
   watchFiles: true,     // 监听磁盘上的改动（别的程序改了文件实时提示）
   keymap: {},           // 自定义快捷键：{ 'mod+shift+k': 'commandId' }，优先于默认键位
-  __v: 4,               // 设置版本：默认值变更时 +1，触发下面的迁移
+  __v: 5,               // 设置版本：默认值变更时 +1，触发下面的迁移
 };
 
 export const settings = Object.assign({}, DEFAULTS, LS.get('settings', {}));
 
-/* 一次性迁移：老用户的 localStorage 里存着上一版的默认值（layout:split / autoSave:false），
-   光改 DEFAULTS 对他们无效。bump __v 后按新默认覆盖一次；
-   测试脚本等需要钉死设置的地方，在写入的 settings 里带上当前 __v 即可跳过。 */
-if (LS.get('settings', {}).__v !== DEFAULTS.__v) {
-  settings.layout = 'single';
-  settings.autoSave = true;
-  /* __v3：默认模式改为「所见即所得」（Markdown）。旧版把自动落位也写进 lastMode，
-     'edit' 已成粘滞值 → 一次性清掉，之后只记忆用户手动切换的模式 */
-  settings.lastMode = {};
-  /* __v4：新增界面语言偏好。老用户没有这个键 → 一律先「跟随系统」，
-     之后在设置里手动改过就一直记住 */
-  settings.lang = 'auto';
-  saveSettings();
+/* 一次性迁移。早先这里是一整块「无条件覆盖」，只要版本号一变就把 layout /
+   autoSave / lastMode / lang 全部重置 —— v4 → v5 时会顺手把用户选好的界面语言
+   打回「跟随系统」。所以按**来源版本**分段：每段只处理它自己那一版引入的键。 */
+{
+  const stored = LS.get('settings', {});
+  const from = Number(stored.__v) || 0;
+  if (from !== DEFAULTS.__v) {
+    /* v3 → v4：清掉 layout / autoSave / lastMode 的粘滞值（老用户的 localStorage
+       里存着上一版的默认值，光改 DEFAULTS 对他们无效） */
+    if (from < 4) {
+      settings.layout = 'single';
+      settings.autoSave = true;
+      settings.lastMode = {};
+      /* v4 新增界面语言偏好：老用户没有这个键 → 先「跟随系统」 */
+      settings.lang = 'auto';
+    }
+    /* v4 → v5：侧栏从「一个文件夹」改成「多个根」，老值搬进 folders 数组。
+       之后只认 folders，folder 这个键一并删掉，免得两处真相漂移。 */
+    if (from < 5) {
+      const old = stored.folders ?? (stored.folder ? [stored.folder] : []);
+      settings.folders = Array.isArray(old) ? old.filter(Boolean) : [];
+    }
+    delete settings.folder;
+    saveSettings();
+  }
 }
 
 export function saveSettings() { LS.set('settings', settings); }

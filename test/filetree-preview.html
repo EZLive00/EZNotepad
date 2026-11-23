@@ -43,6 +43,14 @@ const fs = {
   'C:/demo/assets/deep': [
     { name: 'deep.md', path: 'C:/demo/assets/deep/deep.md', is_dir: false, ext: 'md', size: 4, mtime: 0 },
   ],
+  /* 第二个根：多根相关的断言都靠它 */
+  'C:/work': [
+    { name: 'notes', path: 'C:/work/notes', is_dir: true, ext: '', size: 0, mtime: 0 },
+    { name: '业务.md', path: 'C:/work/业务.md', is_dir: false, ext: 'md', size: 20, mtime: 0 },
+  ],
+  'C:/work/notes': [
+    { name: '客户.md', path: 'C:/work/notes/客户.md', is_dir: false, ext: 'md', size: 9, mtime: 0 },
+  ],
 };
 
 const calls = [];
@@ -51,10 +59,14 @@ window.__opened = [];
 window.__renamed = [];
 window.__deleted = [];
 window.__compared = [];
+window.__added = [];          // 「添加文件夹」被点了（真实场景里会弹系统对话框）
 
 const be = {
   readDirShallow: async (p) => (fs[p] || []).map((e) => ({ ...e })),
-  searchInFolder: async () => [],
+  /* 每个根给一条命中：多根搜索要能看出「两边都搜了」 */
+  searchInFolder: async (root, q) => (root === 'C:/demo'
+    ? [{ path: 'C:/demo/笔记.md', line: 1, text: `甲 ${q}` }]
+    : [{ path: 'C:/work/业务.md', line: 2, text: `乙 ${q}` }]),
   createEntry: async (dir, name, isDir) => {
     calls.push(['create', dir, name, isDir]);
     const p = `${dir}/${name}`;
@@ -86,12 +98,13 @@ window.__menuItems = menuItems;
 
 const tree = new FileTree({
   body: document.getElementById('ftBody'),
-  pathText: document.getElementById('path'),
   be,
   toast: (m) => calls.push(['toast', String(m)]),
   menu: (x, y, items) => { menuItems.length = 0; menuItems.push(...items); },
   ask: async () => window.__nextName,
   confirm: async () => window.__confirm,
+  onAddFolder: () => window.__added.push('add'),
+  onRootsChanged: (roots) => { window.__roots = roots.slice(); },
   onOpen: (p) => window.__opened.push(p),
   onRenamed: (a, b) => window.__renamed.push([a, b]),
   onDeleted: (p) => window.__deleted.push(p),

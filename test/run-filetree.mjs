@@ -93,8 +93,14 @@ try {
   const rv4 = await revealState('C:/demo/ghost.md');
   ok('根目录下但树里没有这一行返回 gone', rv4.code === 'gone', JSON.stringify(rv4));
 
-  /* 收回到根目录折叠态，后面的右键 / 新建用例按原样跑 */
-  await ev(`(async () => { window.__tree.expanded.clear(); await window.__tree.render(); return 1; })()`);
+  /* 收回到「只展开根」：根现在是分组行，expanded 清空会把整棵（含根）收起来，
+     后面的右键 / 新建用例就找不到任何行了 */
+  await ev(`(async () => {
+    window.__tree.expanded.clear();
+    for (const r of window.__tree.roots) window.__tree.expanded.add(r);
+    await window.__tree.render();
+    return 1;
+  })()`);
   await new Promise((r) => setTimeout(r, 120));
 
   // ---- 右键菜单 ----
@@ -268,11 +274,68 @@ try {
   await new Promise((r) => setTimeout(r, 150));
   ok('局部刷新后仍在展开状态', (await rows()).includes('a.png'), (await rows()).join(','));
 
-  // ---- 空白处右键 = 对根目录操作 ----
+  // ---- 空白处右键 = 与具体根无关的两件事 ----
+  /* 多根之后「对根目录操作」没有唯一答案（空白算哪个根的？），
+     所以这里只剩添加 / 刷新；「在某个根里新建」回到那个根自己的行上 */
   await ev(`document.getElementById('ftBody').dispatchEvent(
     new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 20, clientY: 300 }))`);
   const rootMenu = await labels();
-  ok('空白处右键给根目录菜单', rootMenu.includes('新建文件…') && rootMenu.includes('刷新'), rootMenu.join(' | '));
+  ok('空白处右键给「添加文件夹 / 刷新」', rootMenu.includes('添加文件夹…') && rootMenu.includes('刷新'), rootMenu.join(' | '));
+  ok('空白处右键不再猜「哪个根」（没有新建项）', !rootMenu.includes('新建文件…'), rootMenu.join(' | '));
+
+  // ---- 多根：一个侧栏同时挂两个目录 ----
+  await ev(`window.__tree.addRoot('C:/work')`);
+  await new Promise((r) => setTimeout(r, 180));
+  const multi = await ev(`(() => ({
+    roots: [...document.querySelectorAll('.ft-root')].map((r) => r.querySelector('.ft-name').textContent),
+    rows: [...document.querySelectorAll('.ft-row')].map((r) => r.querySelector('.ft-name').textContent),
+    saved: window.__roots,
+  }))()`);
+  ok('两个根各占一行分组标题', JSON.stringify(multi.roots) === JSON.stringify(['demo', 'work']), JSON.stringify(multi.roots));
+  ok('新加的根默认展开，两边的东西都在', multi.rows.includes('改名后.md') && multi.rows.includes('业务.md'), multi.rows.join(','));
+  ok('根列表变了会通知外面存盘',
+    JSON.stringify(multi.saved) === JSON.stringify(['C:/demo', 'C:/work']), JSON.stringify(multi.saved));
+
+  await ev(`document.querySelectorAll('.ft-root')[0].click()`);
+  await new Promise((r) => setTimeout(r, 140));
+  const folded = await ev(`[...document.querySelectorAll('.ft-row')].map((r) => r.querySelector('.ft-name').textContent)`);
+  ok('折叠一个根只收它自己，另一个根不动', !folded.includes('笔记.md') && folded.includes('业务.md'), folded.join(','));
+  await ev(`document.querySelectorAll('.ft-root')[0].click()`);
+  await new Promise((r) => setTimeout(r, 140));
+
+  await ev(`window.__tree.search('笔记')`);
+  await new Promise((r) => setTimeout(r, 220));
+  const hits = await ev(`(() => ({
+    files: [...document.querySelectorAll('.ft-hit-file .ft-name')].map((n) => n.textContent),
+    tags: [...document.querySelectorAll('.ft-hit-file .ft-root-tag')].map((n) => n.textContent),
+  }))()`);
+  ok('搜索会跑遍所有根', hits.files.length === 2, JSON.stringify(hits.files));
+  ok('多根时每条命中标出所属根', hits.tags.join(',') === 'demo,work', hits.tags.join(','));
+
+  const rv = await ev(`window.__tree.reveal('C:/work/notes/客户.md')`);
+  ok('第二个根下的文件也能定位到', rv === 'revealed', String(rv));
+
+  await ev(`window.__tree.removeRoot('C:/work')`);
+  await new Promise((r) => setTimeout(r, 180));
+  const afterRemove = await ev(`(() => ({
+    roots: document.querySelectorAll('.ft-root').length,
+    rows: [...document.querySelectorAll('.ft-row')].map((r) => r.querySelector('.ft-name').textContent),
+    saved: window.__roots,
+  }))()`);
+  ok('移除根只留另一棵', afterRemove.roots === 1 && afterRemove.rows.includes('改名后.md'), JSON.stringify(afterRemove));
+  ok('移除后根列表也同步出去',
+    JSON.stringify(afterRemove.saved) === JSON.stringify(['C:/demo']), JSON.stringify(afterRemove.saved));
+
+  // ---- 一个根都没有：给一个明显的入口 ----
+  await ev(`window.__tree.setRoots([])`);
+  await new Promise((r) => setTimeout(r, 140));
+  const emptyState = await ev(`(() => {
+    const b = document.querySelector('.ft-empty-btn');
+    return { has: !!b, text: b ? b.textContent : '', added: window.__added.length };
+  })()`);
+  ok('没有根时给「添加文件夹」按钮', emptyState.has && /添加文件夹/.test(emptyState.text), JSON.stringify(emptyState));
+  await ev(`document.querySelector('.ft-empty-btn').click()`);
+  ok('点它走的是加文件夹那条路', (await ev(`window.__added.length`)) > emptyState.added);
 } catch (e) {
   ok('执行完成', false, e.message);
 } finally {

@@ -80,14 +80,12 @@ const el = {
   sideOutline: $('sideOutline'),
   sideFiles: $('sideFiles'),
   sideTabs: [...document.querySelectorAll('.side-tab')],
+  sideAdd: $('sideAdd'),
   sideLocate: $('sideLocate'),
   sideRefresh: $('sideRefresh'),
   ftQuery: $('ftQuery'),
-  ftRegex: $('ftRegex'),
-  ftCase: $('ftCase'),
+  ftMore: $('ftMore'),
   ftBody: $('ftBody'),
-  ftPathText: $('ftPathText'),
-  ftPick: $('ftPick'),
   ftClear: $('ftClear'),
 };
 
@@ -1429,7 +1427,6 @@ function scrollBoxToHeading(box, h) {
 /* ---------------- 侧栏：大纲 / 文件 ---------------- */
 const tree = new FileTree({
   body: el.ftBody,
-  pathText: el.ftPathText,
   be,
   toast,
   onOpen: (p, line) => openPathAt(p, line),
@@ -1437,6 +1434,14 @@ const tree = new FileTree({
   ask: askText,
   confirm: (title, html) => confirmBox(title, html, tt('删除'), tt('取消')),
   onReveal: (p) => revealInFolder(p),
+  /* 「添加文件夹」在三个地方出现（侧栏头、树里空白处右键、空状态那个按钮），
+     都汇到这一个入口 —— 每个地方各写一遍取目录的流程，早晚会长歪 */
+  onAddFolder: () => addFolder(),
+  /* 树只负责视图，存盘交给这里 */
+  onRootsChanged: (roots) => {
+    settings.folders = roots.slice();
+    saveSettings();
+  },
   /* 树里选中两个文件右键「比较」：左边是被右键的那个 */
   onCompare: (l, r) => be.openCompareWindow(l, r).catch((e) => toast(tt('打不开对比窗口：') + e)),
   /* 右键「历史版本」按被右键的那个路径列快照；那个文件可能没打开，
@@ -1488,6 +1493,22 @@ function askText(title, label, value, okLabel = tt('确定')) {
 }
 
 /** 侧栏两个页面互斥显示；记住上次用的是哪个 */
+/**
+ * 把侧栏叫出来并切到某一页。
+ *
+ * 「打开一个文件目录」「定位当前文件」「点标签搜库」都要这一套：侧栏可能被
+ * 设成隐藏（视图 → 侧栏），先让它出现，再切页，最后才谈展开定位 —— 反过来的话
+ * 作用在一个 display:none 的容器上，scrollIntoView 等于没滚。
+ */
+function revealSidebar(which = 'files') {
+  if (!settings.outlineVisible) {
+    settings.outlineVisible = true;
+    saveSettings();
+    updateOutline();
+  }
+  setSide(which);
+}
+
 function setSide(side) {
   const s = side === 'files' ? 'files' : 'outline';
   settings.side = s;
@@ -1495,6 +1516,9 @@ function setSide(side) {
   el.sideTabs.forEach((b) => b.classList.toggle('active', b.dataset.side === s));
   el.sideOutline.classList.toggle('hidden', s === 'files');
   el.sideFiles.classList.toggle('hidden', s !== 'files');
+  /* 侧栏头那两颗只属于文件页的按钮（添加文件夹 / 定位）靠这个属性显隐 ——
+     大纲页留着它们，就是两个点了没反应的按钮 */
+  el.outlinePane.dataset.side = s;
 }
 
 /**
@@ -1575,13 +1599,8 @@ function syncPropBar() {
 async function searchTag(tag) {
   const t = String(tag || '').trim();
   if (!t) return;
-  if (!tree.root) { toast(tt('先在侧栏选择一个文件夹')); return; }
-  if (!settings.outlineVisible) {
-    settings.outlineVisible = true;
-    saveSettings();
-    updateOutline();
-  }
-  setSide('files');
+  if (!tree.hasRoot) { toast(tt('先在侧栏选择一个文件夹')); return; }
+  revealSidebar('files');
   el.ftQuery.value = '#' + t;
   el.ftClear.classList.remove('hidden');
   await tree.search('#' + t);
@@ -1616,13 +1635,8 @@ async function locateCurrentFile() {
   const t = activeTab();
   if (!t) return;
   if (!t.path) { toast(tt('这个标签还没保存到磁盘，文件列表里没有它')); return; }
-  if (!tree.root) { toast(tt('先在侧栏选择一个文件夹')); return; }
-  if (!settings.outlineVisible) {
-    settings.outlineVisible = true;
-    saveSettings();
-    updateOutline();
-  }
-  setSide('files');
+  if (!tree.hasRoot) { toast(tt('先在侧栏选择一个文件夹')); return; }
+  revealSidebar('files');
   const r = await tree.reveal(t.path);
   if (r === 'outside') toast(tt('当前文件不在已打开的文件夹里'));
   else if (r === 'gone') toast(tt('文件列表里找不到这个文件'));
@@ -1633,28 +1647,39 @@ async function locateCurrentFile() {
   if (line) setTimeout(() => gotoLine(line - 1), 90);
 }
 
-async function pickFolder() {
+/**
+ * 添加一个文件夹到侧栏。
+ *
+ * 以前叫 pickFolder / setFolder，是「换掉当前这个根」：换个目录 = 上一棵树的
+ * 展开状态全丢。现在同一个窗口可以同时挂几个根（两摊业务各一个目录），
+ * 所以这里只加不换；要去掉某个根，在树里那个根的分组行上点 ×。
+ */
+async function addFolder() {
   const p = await be.pickFolder(tt('选择文件夹'));
   if (!p) return;
-  await setFolder(p);
-}
-
-/** 把文件树切到某个根目录（选择框与探针共用；不要把这段逻辑复制第二份） */
-async function setFolder(p) {
-  settings.folder = p || '';
-  saveSettings();
   setSide('files');
   el.ftQuery.value = '';
   el.ftClear.classList.add('hidden');
-  await tree.setRoot(p || '');
+  const added = await tree.addRoot(p);
+  /* 已经在列表里：展开它、别让人以为「点了没反应」 */
+  if (!added) toast(tt('这个文件夹已经在列表里了'));
 }
 
-function clearFolder() {
-  settings.folder = '';
-  saveSettings();
+/** 把根列表整体设成这几个（探针与「恢复默认」用；不要把这段逻辑复制第二份） */
+async function setFolders(list) {
+  setSide('files');
   el.ftQuery.value = '';
   el.ftClear.classList.add('hidden');
-  tree.setRoot('');
+  await tree.setRoots(list || []);
+}
+
+/** 旧接口：设成唯一根（探针沿用这个入口，测的是用户按下去会发生的事） */
+async function setFolder(p) { return setFolders(p ? [p] : []); }
+
+function clearFolder() {
+  el.ftQuery.value = '';
+  el.ftClear.classList.add('hidden');
+  setFolders([]);
 }
 
 /* ---------------- 侧栏：大纲 / 文件 ---------------- */
@@ -1662,8 +1687,8 @@ function setupSidebar() {
   el.sideTabs.forEach((b) => { b.onclick = () => setSide(b.dataset.side); });
   el.sideLocate.onclick = locateCurrentFile;
   el.sideRefresh.onclick = refreshFromDisk;
+  el.sideAdd.onclick = addFolder;
   bindTagClicks();
-  el.ftPick.onclick = pickFolder;
   /* 设置入口只在两处：顶部菜单栏的「设置」和 Ctrl+,（同一个 showSettings）。
      侧栏那个齿轮去掉了——它紧挨「大纲/文件」，看着像「这一栏的设置」。 */
 
@@ -1685,31 +1710,37 @@ function setupSidebar() {
   /* ---- 搜索选项 ----
      搜索只有「看」这一件事：命中行点一下就在编辑器里打开那一行，改哪一处、
      怎么改都交给编辑区的查找替换。跨文件批量替换不再提供 —— 那是个改磁盘的
-     动作，误点一次要按文件去翻历史快照才能救回来，而真实需求几乎不存在。 */
-  const syncSearchMode = () => {
-    tree.regex = el.ftRegex.classList.contains('on');
-    tree.caseSensitive = el.ftCase.classList.contains('on');
-  };
+     动作，误点一次要按文件去翻历史快照才能救回来，而真实需求几乎不存在。
+
+     Aa / 正则原来在搜索框里各占一个小方块，220px 的侧栏被吃掉一半输入区。
+     收进这个 ⋯ 菜单：两个带勾选的开关，点一下切换、菜单留着（还要能接着点另一个）。 */
   const rerunSearch = () => {
     clearTimeout(ftTimer);
     ftTimer = setTimeout(() => tree.search(el.ftQuery.value), 60);
   };
-  el.ftRegex.onclick = () => {
-    el.ftRegex.classList.toggle('on');
-    el.ftRegex.title = tree.regex ? tt('按正则表达式匹配（已开启）') : tt('按正则表达式匹配');
-    syncSearchMode();
+  const paintSearchMode = () => {
+    el.ftMore.classList.toggle('on', tree.regex || tree.caseSensitive);
+    el.ftMore.title = tree.regex || tree.caseSensitive ? tt('搜索选项（有开关开着）') : tt('搜索选项');
+  };
+  const toggleSearchFlag = (key) => {
+    tree[key] = !tree[key];
+    paintSearchMode();
     if (el.ftQuery.value) rerunSearch();
   };
-  el.ftCase.onclick = () => {
-    el.ftCase.classList.toggle('on');
-    el.ftCase.title = tree.caseSensitive ? tt('区分大小写（已开启）') : tt('区分大小写');
-    syncSearchMode();
-    if (el.ftQuery.value) rerunSearch();
+  el.ftMore.onclick = () => {
+    const r = el.ftMore.getBoundingClientRect();
+    contextMenu(r.right - 2, r.bottom + 4, [
+      { label: tt('区分大小写'), checked: () => tree.caseSensitive, action: () => toggleSearchFlag('caseSensitive') },
+      { label: tt('按正则表达式匹配'), checked: () => tree.regex, action: () => toggleSearchFlag('regex') },
+      { sep: true },
+      { label: tt('清除搜索'), action: () => el.ftClear.onclick() },
+    ], { stayOnScroll: true });
   };
+  paintSearchMode();
 
   setSide(settings.side || 'outline');
-  // 有记住的文件夹就直接画出来；没有也要画一次（显示「还没打开文件夹」的引导）
-  tree.setRoot(settings.folder || '').catch(() => {});
+  // 有记住的根就都画出来；没有也要画一次（显示「还没打开文件夹」的引导）
+  tree.setRoots(settings.folders || []).catch(() => {});
 }
 
 /* ---------------- 设置面板 ---------------- */
@@ -1816,8 +1847,8 @@ function showSettings() {
           <div class="set-label" data-i18n="工作文件夹">工作文件夹</div>
           <div class="set-row folder">
             <span class="set-folder" id="setFolder"></span>
-            <button type="button" class="mini" id="setPickFolder" data-i18n="选择…">选择…</button>
-            <button type="button" class="mini ghost" id="setClearFolder" data-i18n="清除">清除</button>
+            <button type="button" class="mini" id="setPickFolder" data-i18n="添加…">添加…</button>
+            <button type="button" class="mini ghost" id="setClearFolder" data-i18n="全部移除">全部移除</button>
           </div>
         </div>
       </section>
@@ -1850,9 +1881,12 @@ function showSettings() {
   const paintFolder = () => {
     const n = box.querySelector('#setFolder');
     if (!n) return;
-    n.textContent = settings.folder || tt('未打开文件夹');
-    n.title = settings.folder || '';
-    n.classList.toggle('faint', !settings.folder);
+    const list = settings.folders || [];
+    n.textContent = !list.length ? tt('未打开文件夹')
+      : list.length === 1 ? list[0]
+        : tt('{n} 个文件夹', { n: list.length });
+    n.title = list.join('\n');        // 多个根时把完整路径列出来
+    n.classList.toggle('faint', !list.length);
   };
   paintFolder();
   paintKeyList(box.querySelector('#setKeysList'));
@@ -1928,7 +1962,7 @@ function showSettings() {
     toast(settings.autoSave ? tt('自动保存已开启') : tt('自动保存已关闭'));
   };
   box.querySelector('#setPickFolder').onclick = async () => {
-    await pickFolder();
+    await addFolder();
     paintFolder();
   };
   box.querySelector('#setClearFolder').onclick = () => { clearFolder(); paintFolder(); };
@@ -3702,8 +3736,19 @@ function hideDropHint() {
 async function dropPaths(paths) {
   const list = (paths || []).filter(Boolean);
   if (!list.length) return;
-  const imgs = list.filter((p) => be.isImagePath(p));
-  const docs = list.filter((p) => !be.isImagePath(p));
+  /* 拖进来的可能是**文件夹**：那是「把这个目录加进侧栏」，不是「打开这个文件」。
+     以前一律当文档 openPath，目录必然读失败 —— 界面上就是「拖了没反应」。 */
+  const flags = await Promise.all(list.map((p) => be.isDir(p).catch(() => false)));
+  const dirs = list.filter((_, i) => flags[i]);
+  const rest = list.filter((_, i) => !flags[i]);
+  if (dirs.length) {
+    revealSidebar('files');
+    let added = 0;
+    for (const d of dirs) if (await tree.addRoot(d)) added++;
+    toast(added ? tt('已添加 {n} 个文件夹', { n: added }) : tt('这些文件夹已经在列表里了'));
+  }
+  const imgs = rest.filter((p) => be.isImagePath(p));
+  const docs = rest.filter((p) => !be.isImagePath(p));
   if (imgs.length) {
     const t = activeTab();
     if (!t || t.mode === 'preview') toast(tt('预览模式是只读的，Ctrl+1 或 Ctrl+2 之后再插入'));
@@ -4202,7 +4247,7 @@ const commands = {
     toast(settings.autoSave ? tt('自动保存已开启：改动停下约 1 秒就写盘') : tt('自动保存已关闭'));
   },
   clearRecent: () => { LS.del('recent'); toast(tt('已清除最近记录')); },
-  openFolder: pickFolder,
+  openFolder: addFolder,
   settings: showSettings,
   manual: openManual,
   shortcuts: showShortcuts,
@@ -6122,6 +6167,19 @@ async function boot() {
     });
   } catch {}
 
+  /* 第二个实例被单实例插件收编时，除了文件，还可能带着**目录**（从资源管理器
+     拖一个文件夹到 exe 上、命令行传目录）。目录不能当文件打开，它要加进侧栏。 */
+  try {
+    await listen('add-folders', async (e) => {
+      const list = (e.payload || []).filter(Boolean);
+      if (!list.length) return;
+      revealSidebar('files');
+      let added = 0;
+      for (const p of list) if (await tree.addRoot(p)) added++;
+      if (added) toast(tt('已添加 {n} 个文件夹', { n: added }));
+    });
+  } catch {}
+
   /* 拆出去的窗口把标签交回来：拖到标签栏上松手、或者直接关掉那扇窗 */
   try {
     await listen('tearoff:tabs', async (e) => {
@@ -6143,10 +6201,13 @@ async function boot() {
     if (!tabs.length) openManual();
   } else {
     const cliFiles = await be.initialFiles().catch(() => []);
+    const cliFolders = await be.initialFolders().catch(() => []);
     const opened = await restoreSession().catch(() => 0);
     const drafts = await restoreDrafts().catch(() => 0);
     /* 命令行/文件关联带进来的文件：双击 .md 时系统把路径塞进 argv */
     for (const p of cliFiles || []) await openPath(p);
+    /* 命令行带进来的目录：加进侧栏的根列表（已经记住的那些不动，是追加） */
+    for (const p of cliFolders || []) await tree.addRoot(p);
     /* 第一次开机：把手册摆出来（这是唯一一次自动打开）。
        老版本升上来的用户也没有这个标记，会看到一次 —— 他们本来就没见过手册。
        之后启动就只剩「恢复上次的标签」，什么都没有时给一张空白纸。 */
@@ -6222,6 +6283,9 @@ window.__snp = {
   quickNoteFile: () => quickFile(),
   isBusy: () => wys.loading,
   editor: wys,          // 编辑器实例（与 __merge 同类调试面：真机 CDP 探针要用）
+  /* 侧栏文件树。探针要验「一次挂两个根」：真实的入口（侧栏头的 ＋、拖目录进来）
+     都要过系统对话框或原生拖放，自动化进不去，只能直接调这个入口验后果 */
+  fileTree: tree,
   capture: persistCurrentView,
   openCompare: (l, r) => be.openCompareWindow(l, r),
   /* 探针：选文件夹要弹系统对话框，自动化进不去；这条走的是和选择框同一条路

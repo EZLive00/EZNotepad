@@ -120,6 +120,10 @@ export const saveImageBytes = (docPath, bytes, ext) =>
 /** 路径是不是图片（拖拽进来的文件按这个分流：图片插进文档，其它当文档打开） */
 export const isImagePath = (p) => IMAGE_EXTS.includes(String(p).split('.').pop().toLowerCase());
 
+/** 这个路径是不是目录。拖进来的可能是文件夹 → 那是「加进侧栏」，不是「打开」。
+    路径不存在时后端也回 false（`Path::is_dir`），不用先判存在 */
+export const isDir = (path) => invoke('file_stat', { path });
+
 /** 文件修改时间（毫秒）；文件不存在时为 null。用于发现外部改动 */
 export const fileMtime = (path) => invoke('file_mtime', { path });
 
@@ -138,6 +142,8 @@ export const deleteEntry = (path) => invoke('delete_entry', { path });
 
 /** 启动参数里带的文件（双击 .md 打开时由系统传进来） */
 export const initialFiles = () => invoke('initial_files');
+/** 启动参数里带的目录（拖个文件夹到 exe 上 / 从命令行传一个目录）→ 加进侧栏根列表 */
+export const initialFolders = () => invoke('initial_folders');
 
 /** 应用版本：取自 tauri.conf.json（编译期注入），前端不写死，免得跟版本号脱节 */
 export const appVersion = () => getVersion().catch(() => '');
