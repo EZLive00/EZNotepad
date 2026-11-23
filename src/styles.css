@@ -1693,10 +1693,14 @@ body[data-zen="1"] .win-title { color: var(--fg-faint); }
 .w-drop-line::after { right: -3px; }
 .w-drop-line.hidden { display: none; }
 /* ---- 块选择模式（Ctrl/Shift+点抓手进入）----
-   模式里抓手、行首 + 、折叠三角一起让位：那三个属于「编辑这一块」，
-   和「选这一段」是两套意图，同时摆着只会互相误触。选择只靠点正文。
+   模式里让位的是行首 + 与折叠三角 —— 它们属于「往这儿插东西」和「折这一节」，
+   和「选这一段」是两套意图，同时摆着只会互相误触。
+   ⛔ 抓手必须留着：它是模式里唯一能精确点中「就是这一块」的入口。
+   藏掉它（1.5.1~1.5.3 就是这样）之后，用户只能点正文，而行内空白、块间
+   13px 缝隙都点不中，一下点空就把整片选中清掉 —— 看起来就是「选不上」。
    !important 是因为手柄的位置/显隐由 placeHandle 每帧接管，靠 class 让步不可靠。 */
-.edit-wrap.w-selmode .w-handle { display: none !important; }
+.edit-wrap.w-selmode #whAdd,
+.edit-wrap.w-selmode #whFold { display: none !important; }
 
 /* 模式提示条：贴在编辑区顶部居中，说清「选了几块 / 能做什么 / 怎么出去」。
    没有它的话，这一模式就只能靠记快捷键，用户进去出不来。 */

@@ -712,8 +712,8 @@ if (sFrom && sTo) {
 }
 
 /* ---------- 11. 块选择模式 ----------
-   Ctrl+点抓手进去，抓手与行首 + 让位，只留整块高亮 + 顶部提示条；
-   点正文换选中的块，右键出整套整组操作，Esc 退出。 */
+   Ctrl+点抓手进去：抓手留着（它是「就选这一块」的唯一入口），行首 + 与
+   折叠三角让位，顶部出提示条；点正文换选中的块，右键出整套整组操作，Esc 退出。 */
 await openDoc('sel.md', '一段\n\n二段\n\n三段\n');
 const sA = await gripAt(0);
 if (sA) { await ctrlClickAt(sA.x, sA.y); await sleep(220); }
@@ -726,12 +726,16 @@ const mode1 = await ev(`(() => {
     hint: hint ? hint.textContent : null,
     hintShown: hint ? !hint.classList.contains('hidden') : false,
     grip: getComputedStyle(h).display,
+    add: getComputedStyle(document.getElementById('whAdd')).display,
+    fold: getComputedStyle(document.getElementById('whFold')).display,
     sel: document.querySelectorAll('.wysiwyg > .w-block.w-sel').length,
   };
 })()`);
 ok('Ctrl+点抓手进入选择模式', mode1.mode && mode1.sel === 1, JSON.stringify(mode1));
 ok('顶部提示条写明已选几块', mode1.hintShown && /已选 1 块/.test(mode1.hint || ''), JSON.stringify(mode1.hint));
-ok('模式里抓手让位（只留选中高亮）', mode1.grip === 'none', mode1.grip);
+ok('模式里抓手还在（加选入口不能被藏掉）', mode1.grip !== 'none', mode1.grip);
+ok('模式里行首 + 与折叠三角让位', mode1.add === 'none' && mode1.fold === 'none',
+  JSON.stringify({ add: mode1.add, fold: mode1.fold }));
 
 const pB = await nthBlock(2);
 if (pB) { await click(pB.x, pB.y); await sleep(220); }
@@ -792,8 +796,8 @@ await openDoc('sel2.md', '甲\n\n乙\n\n丙\n\n丁\n');
 const d0 = await gripAt(0);
 if (d0) { await ctrlClickAt(d0.x, d0.y); await sleep(200); }
 const hintOne = await ev(`(document.querySelector('.w-selhint') || {}).textContent || ''`);
-ok('提示条写了怎么选（点块扩选 / Ctrl+点加选）',
-  /点块扩选/.test(hintOne) && /Ctrl\+点加选/.test(hintOne), hintOne);
+ok('提示条写了怎么选（点行扩选 / Ctrl+点或抓手加选）',
+  /点行扩选/.test(hintOne) && /抓手加选/.test(hintOne), hintOne);
 
 const d2 = await nthBlock(2);
 if (d2) { await ctrlClickAt(d2.x, d2.y); await sleep(220); }
@@ -828,6 +832,59 @@ const dmv = await ev(`(() => {
 })()`);
 ok('非连续时上移 / 下移置灰（差的那几块没有「挪一格」的落点）',
   !!dmv && dmv.up === true && dmv.down === true, JSON.stringify(dmv));
+await pressKey('Escape');
+await sleep(160);
+
+/* ---------- 11b. 「选不上」的两种真实手感 ----------
+   ① 行右侧空白、块间缝隙都不属于 .w-block（块盒子只有文字那么宽、块间还有
+      13px margin），closest 落空 → 以前当场清空整片选中，用户只觉得「选不上」。
+   ② 模式里想再点远一点的另一行，抓手是那一行左边最顺手的入口 ——
+      以前被 CSS 藏掉（display:none），点下去落到 titlebar 上，
+      看起来就是「Ctrl 跨区域选块不生效」。 */
+await openDoc('sel3.md', '甲\n\n乙\n\n丙\n\n丁\n');
+const q0 = await gripAt(0);
+if (q0) { await ctrlClickAt(q0.x, q0.y); await sleep(220); }
+const marks = () => ev(`(() => [...document.querySelectorAll('.wysiwyg > .w-block')]
+  .map((b) => b.classList.contains('w-sel') ? 1 : 0).join(''))()`);
+const q3 = await gripAt(3);                 // 模式里再取第四块的抓手
+if (q3) { await ctrlClickAt(q3.x, q3.y); await sleep(240); }
+ok('模式里点远处的抓手 = 直接选中那一块（跨区域加选）', (await marks()) === '1001', await marks());
+if (q3) { await ctrlClickAt(q3.x, q3.y); await sleep(240); }
+ok('再点一次同一个抓手 = 取消那一块', (await marks()) === '1000', await marks());
+
+/* Shift+点抓手 = 从锚块扩成连续一段。⛔ 不能走 selectBlock({additive:true})：
+   那个开关在「锚块只是单选」时会把整片取消，一按 Shift 就全没了。 */
+const q2 = await gripAt(2);
+if (q2) { await shiftClickAt(q2.x, q2.y); await sleep(240); }
+ok('模式里 Shift+点抓手 = 从锚块扩成连续一段（不清空）', (await marks()) === '1110', await marks());
+if (q2) { await ctrlClickAt(q2.x, q2.y); await sleep(200); }
+
+/* 行右侧那一大片空白：视觉上仍属于这一行 */
+const blankRow = await ev(`(() => {
+  const b = document.querySelectorAll('.wysiwyg > .w-block')[2];
+  const r = b.getBoundingClientRect();
+  const root = document.querySelector('.wysiwyg').getBoundingClientRect();
+  return { x: Math.round(root.right - 24), y: Math.round(r.top + r.height / 2) };
+})()`);
+await click(blankRow.x, blankRow.y); await sleep(240);
+ok('点一行右侧的空白 = 选这一行，不是清空选中', (await selCount()) === 3, String(await selCount()));
+
+/* 两块之间那 13px 的缝：靠上一点就该归上面那一块（缝两边各让一半，
+   正中间那一像素取整后归谁不定，所以故意往上偏 3px 取样） */
+const gapPt = await ev(`(() => {
+  const a = document.querySelectorAll('.wysiwyg > .w-block')[0].getBoundingClientRect();
+  return { x: Math.round(a.left + 20), y: Math.round(a.bottom + 3) };
+})()`);
+await click(gapPt.x, gapPt.y); await sleep(240);
+ok('点块间缝隙不清空选中', (await selCount()) === 3, String(await selCount()));
+await pressKey('Escape');
+await sleep(180);
+
+/* 退出模式后抓手回到「点一下开菜单」，别被模式里的 toggle 分支吃掉 */
+const r0 = await gripAt(1);
+if (r0) { await click(r0.x, r0.y); await sleep(240); }
+ok('退出模式后点抓手仍然打开块菜单',
+  await ev(`!document.getElementById('wBlockMenu').classList.contains('hidden')`));
 await pressKey('Escape');
 await sleep(160);
 
@@ -972,6 +1029,60 @@ await ev(`(() => {
 })()`);
 await sleep(320);
 ok('回车跳到那一节，面板关掉', await ev(`!document.querySelector('.palette')`));
+
+/* ---------- 12. 点「贴边空白」：光标落在鼠标那一行，焦点还在 ----------
+   块与块之间有 13px 的缝，正文左右还有一大段留白（宽窗口下正文居中收窄得
+   更厉害）。这些地方点下去 target 都是编辑区根节点。以前一律把光标送去末块：
+   光标在鼠标处闪一下就跳到文档另一头，用户报的就是「点一下光标没了」。 */
+await openDoc('blank.md', '# 标题\n\n第一段\n\n第二段\n\n第三段\n\n');
+const caretState = () => ev(`(() => {
+  const sel = getSelection();
+  const r = sel.rangeCount ? sel.getRangeAt(0) : null;
+  if (!r) return { block: -1, offset: -1 };
+  const n = r.startContainer.nodeType === 1 ? r.startContainer : r.startContainer.parentElement;
+  const blk = n.closest ? n.closest('.w-block') : null;
+  const bs = [...document.querySelectorAll('.wysiwyg > .w-block')];
+  return {
+    block: blk ? bs.indexOf(blk) : -1,
+    offset: r.startOffset,
+    active: document.activeElement && (document.activeElement.id || document.activeElement.tagName),
+  };
+})()`);
+const blankPts = await ev(`(() => {
+  const bs = [...document.querySelectorAll('.wysiwyg > .w-block')];
+  const root = document.querySelector('.wysiwyg');
+  const R = root.getBoundingClientRect();
+  const r0 = bs[0].getBoundingClientRect();
+  const r1 = bs[1].getBoundingClientRect();
+  return {
+    gapTop: { x: Math.round(r0.left + 20), y: Math.round(r0.bottom + 3) },
+    gapLow: { x: Math.round(r0.left + 20), y: Math.round(r1.top - 3) },
+    right: { x: Math.round(R.right - 14), y: Math.round((r1.top + r1.bottom) / 2) },
+  };
+})()`);
+/** 点之前先把鼠标挪开等手柄收起来：左留白那一片有跟随鼠标的 + / ⋮⋮ */
+const parkMouse = async () => {
+  await pressKey('Escape');
+  await moveTo(6, 6);
+  await sleep(380);
+};
+await parkMouse();
+await click(blankPts.gapTop.x, blankPts.gapTop.y);
+await sleep(200);
+let cs = await caretState();
+ok('点两段之间的缝（上半）：光标归上面那行，没跳文末',
+  cs.block === 0 && cs.active === 'wysiwyg', JSON.stringify(cs));
+await parkMouse();
+await click(blankPts.gapLow.x, blankPts.gapLow.y);
+await sleep(200);
+cs = await caretState();
+ok('点两段之间的缝（下半）：光标归下面那行', cs.block === 1, JSON.stringify(cs));
+await parkMouse();
+await click(blankPts.right.x, blankPts.right.y);
+await sleep(200);
+cs = await caretState();
+ok('点正文右留白：光标进那一行行尾，焦点还在编辑区',
+  cs.block === 1 && cs.offset === 3 && cs.active === 'wysiwyg', JSON.stringify(cs));
 
 /* ---------- 汇总 ---------- */
 console.log('');

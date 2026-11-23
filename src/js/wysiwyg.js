@@ -1459,8 +1459,11 @@ export class WysiwygEditor {
       if (t && t.closest && t.closest('.w-block[data-type="hr"]')) return;
       if (t && t.closest && (t.closest('.w-handle') || t.closest('.w-bmenu'))) return;
       /* 块选择模式里点正文 = 换个块选中（由 handlePointerDown 接管）。
-         这一条必须放在取消之前 —— 点上去就退出的话，模式根本立不住。 */
-      if (this.blockSelSet.size && t && t.closest && t.closest('.w-block')) return;
+         这一条必须放在取消之前 —— 点上去就退出的话，模式根本立不住。
+         判据用几何命中而不是 closest：点在行右侧空白或块间缝隙时 closest
+         是 null，但用户点的是「那一行」，这一下还得交给模式去处理。
+         ⛔ 别退回 closest 判据：那正是「点偏一点就整片清空」的来源。 */
+      if (this.blockSelSet.size && this.blockAtPoint(e.clientX, e.clientY)) return;
       this.clearBlockSel();
     }, true);
     root.addEventListener('beforeinput', (e) => this.onBeforeInput(e));
@@ -2483,6 +2486,89 @@ export class WysiwygEditor {
       for (const x of this.bqGroupOf(b)) want.add(x);
     }
     return [...this.root.children].filter((b) => want.has(b));
+  }
+
+  /** 坐标 → 视觉上「这一行」是哪一块。
+   *
+   *  ⚠️ 不能用 closest('.w-block') 代替：`.w-block` 的盒子只有文字那么宽
+   *  （实测一段三字正文 99px，窗口还宽着），块与块之间还有 13px 的 margin。
+   *  用户点「这一行」时经常落在行右侧空白、或两行之间的缝里，那时 closest
+   *  是 null。在选择模式里 null 的意思是「点空白 = 全取消」—— 一次点空就把
+   *  刚选好的一片清掉，手感就是「选不上」。
+   *
+   *  所以模式内的命中按几何算：垂直方向取最近的一块（缝隙两边各让一半，
+   *  距离上限 12px 略大于实测缝宽 13/2），水平方向只要求落在正文列里。
+   *  再远（文档末尾下方、页边距）才算真空白，仍然用来退出。 */
+  blockAtPoint(x, y) {
+    const rr = this.root.getBoundingClientRect();
+    if (x < rr.left - 8 || x > rr.right + 8) return null;
+    let best = null;
+    let bestD = 13;
+    for (const b of this.root.children) {
+      if (!b.classList || !b.classList.contains('w-block')) continue;
+      const r = b.getBoundingClientRect();
+      /* 折起来的块是 display:none，rect 全 0 —— 高度判空已经把它排除。
+         ⛔ 别再显式判 w-fold-hide：序列化一条块都不能少，那条不变量
+         靠「源码里没有 fold-hide 过滤」守着，这里多一句就假红。 */
+      if (!r.height) continue;
+      const d = y < r.top ? r.top - y : (y > r.bottom ? y - r.bottom : 0);
+      if (d < bestD) { bestD = d; best = b; }
+    }
+    return best;
+  }
+
+  /** 贴边空白（块间缝隙 / 正文左右留白 / 首块上方）→ 光标该落到哪一块。
+   *
+   *  与 blockAtPoint 的差别有两处，都是刻意的：
+   *   · **不设 13px 上限**。用户点在字的左边三四十像素外的留白上，意思仍然是
+   *     「这一行」；拿不到落点就等于「点了没反应」。
+   *   · **末块下沿以下返回 null**。那块空白的语义是「去文末写字」，走
+   *     handleClick 原来的路（末块能落脚就送光标进去，代码块 / 表格垫一行）。
+   */
+  blockForCaretAt(y) {
+    const vis = [];
+    for (const b of this.root.children) {
+      if (!b.classList || !b.classList.contains('w-block')) continue;
+      const r = b.getBoundingClientRect();
+      if (r.height) vis.push({ b, r });       // 折起来 / 还没渲染的块 rect 全 0
+    }
+    if (!vis.length) return null;
+    if (y > vis[vis.length - 1].r.bottom) return null;
+    if (y < vis[0].r.top) return vis[0].b;
+    let best = null;
+    let bestD = Infinity;
+    for (const { b, r } of vis) {
+      const d = y < r.top ? r.top - y : (y > r.bottom ? y - r.bottom : 0);
+      if (d < bestD) { bestD = d; best = b; }
+    }
+    return best;
+  }
+
+  /** 把光标放到 block 里「鼠标那个高度」的位置。块外沿取行首 / 行尾；
+   *  块内部（左右留白）交给 caretRangeFromPoint —— 它给的是那一行最近的字间。 */
+  placeCaretAt(block, x, y) {
+    const r = block.getBoundingClientRect();
+    if (y <= r.top) { this.placeCaretStart(block); return; }
+    if (y >= r.bottom) { this.placeCaretEnd(block); return; }
+    const t = textEl(block);
+    const accept = (cr) => !!cr && (cr.startContainer === t || t.contains(cr.startContainer));
+    const fromPoint = (px) => (typeof document.caretRangeFromPoint === 'function'
+      ? document.caretRangeFromPoint(px, y) : null);
+    let cr = fromPoint(x);
+    if (!accept(cr)) {
+      /* 点在左右留白里，浏览器可能把落点算到相邻的块、或干脆算到容器上。
+         把 x 夹进这一块的盒子再问一次，总能落回「那一行」。 */
+      cr = fromPoint(Math.min(Math.max(x, r.left + 1), r.right - 1));
+    }
+    if (accept(cr)) {
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(cr);
+      return;
+    }
+    /* 问不出来（图片块、虚拟渲染的空档）：块中线以上取行首，以下取行尾 */
+    if (y > (r.top + r.bottom) / 2) this.placeCaretEnd(block);
+    else this.placeCaretStart(block);
   }
 
   /** 这组块在文档里是不是一串紧挨着的兄弟（空组按连续算）。
@@ -5624,12 +5710,16 @@ export class WysiwygEditor {
        点某块 = 加进选中集（Ctrl/Shift 与否都一样，范围模型下点哪块就是扩到哪块），
        点块外空白 = 退出。整个模式里不把光标放进正文 —— 那正是「只选不编辑」。 */
     if (this.blockSelSet.size) {
-      const blk = e.target && e.target.closest ? e.target.closest('.w-block') : null;
       if (e.button !== 0) return;    // 右键交给 contextmenu，别在这里换选中
       e.preventDefault();
       /* 默认行为挡得住，click 照样会派发：那一下会走「点空白 → 文末补一行」
          把光标搬到文档末尾。记个时间戳让 handleClick 放过这一次。 */
       this._skipClickTs = performance.now();
+      /* 命中一块：优先 closest（表格单元格、代码块内部都能准确定位），
+         落空时按几何找「鼠标所在的那一行」—— 行右侧空白与块间缝隙都算。
+         两个都落空才是真空白（文档末尾下方、页边距），那才退出模式。 */
+      const blk = (e.target && e.target.closest ? e.target.closest('.w-block') : null)
+        || this.blockAtPoint(e.clientX, e.clientY);
       if (!blk) { this.clearBlockSel(); return; }
       /* Ctrl/Cmd+点 = 加选 / 取消这一块（与抓手上的手势同一口径） */
       if (e.ctrlKey || e.metaKey) { this.toggleBlockSel(blk); return; }
@@ -5846,6 +5936,14 @@ export class WysiwygEditor {
       const last = this.lastVisible();
       if (!last) return;
       this.hideInsertLine();
+      /* 先问「这一点是不是落在某一行的高度上」—— 块间那 13px 的缝、正文左右
+         的留白、首块上方的空白都算。以前这里一律把光标送去末块，于是点一下：
+         浏览器刚在鼠标处画出的光标跳到文档另一头（40vh 的尾部留白里根本看不见），
+         看着就是「光标闪一下就没了」。点在字左边 / 右边 / 两段之间，意思始终是
+         「把光标放到这一行」。 */
+      const near = this.blockForCaretAt(e.clientY);
+      if (near) { this.placeCaretAt(near, e.clientX, e.clientY); return; }
+      /* 剩下的是末块下方那块空白：去文末能打字的地方 */
       /* 末块本身能落脚（段落 / 标题 / 引用末行 / 列表末项 / 那个空段落），
          光标进去就够；只有代码块、公式块、表格、分割线把光标包在结构里，
          块内没有可写的尾位，才需要给它垫一行。补过一次之后那个空段落

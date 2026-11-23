@@ -166,8 +166,9 @@ function updateSelHint() {
     el.editWrap.appendChild(selHintEl);
   }
   /* 这条提示是模式里唯一的说明书：没有多选框，用户不知道「怎么加下一块」，
-     所以必须把两个手势都写出来 —— 点块 = 扩成范围，Ctrl/Cmd+点 = 单块加选。 */
-  selHintEl.textContent = tt('已选 {n} 块 · 点块扩选 · Ctrl+点加选 · 右键操作 · Esc 退出', { n });
+     所以必须把三个手势都写出来 —— 点行 = 扩成范围，Ctrl+点 / 点抓手 = 单块加选。
+     抓手也要写进去：它就在每一行左边，是「就选这一块」最省事的入口。 */
+  selHintEl.textContent = tt('已选 {n} 块 · 点行扩选 · Ctrl+点或抓手加选 · 右键操作 · Esc 退出', { n });
   selHintEl.classList.remove('hidden');
 }
 
@@ -178,15 +179,13 @@ const wys = new WysiwygEditor(el.wysiwyg, {
   onBlockSelect: (block) => {
     updateSelHint();
     if (!block) { anchorBlock = null; hideHandle(); return; }
-    /* 范围选中时「锚块」是范围起点（可能在文档另一头）。手柄跟着锚块跳，
-       会当场从鼠标底下溜走 —— 生成一次 mouseleave，220ms 后自己收起来，
-       恰好在用户想接着 Shift 点第二块的时候消失。
-       所以手柄优先留在鼠标当前压着的那一块（它确实进了选中集），
-       只有它不在选中集里时才退回锚块。 */
-    const keep = handleBlock && handleBlock.isConnected && block.classList.contains('w-block')
-      && wys.blockSelSet.has(handleBlock) ? handleBlock : block;
-    anchorBlock = keep;
-    placeHandle(keep);
+    /* 手柄跟在鼠标压着的那一块上，别跟着锚块跳。
+       范围选中时「锚块」是范围起点（可能远在文档另一头）；选择模式里
+       用户刚点过的行更不该空出一个没有按钮的洞 —— 他要接着点那里的抓手。
+       只有鼠标那块已经不在文档里（块被删 / 换标签）才退回锚块。 */
+    if (handleBlock && handleBlock.isConnected) { placeHandle(handleBlock); return; }
+    anchorBlock = block;
+    placeHandle(block);
   },
   /* 大文档分块载入的进度：状态栏行数位临时显示百分比。
      完成时（done === total）调度一次统计，把「载入中 x%」换回真实行数 ——
@@ -4606,17 +4605,29 @@ function placeHandle(block) {
   anchorBlock = block;              // placeHandle 是唯一真源，锚点跟它同步
   /* 标题块多给一个折叠三角的位置：按钮组整体往左让一格，三角就成了
      「从正文往左划出来第一个碰到的东西」。文档末尾的标题后面没有内容，
-     不给三角 —— 点它什么都不会发生，那是一个骗人的按钮。 */
-  const foldable = /^h[1-6]$/.test(block.dataset.type || '')
+     不给三角 —— 点它什么都不会发生，那是一个骗人的按钮。
+     选择模式里三角让位（CSS），这 21px 也要收回来：只剩一个抓手却还按
+     三个按钮的宽度往左偏，看着像浮错了行。 */
+  const selMode = !!(wys.blockSelSet && wys.blockSelSet.size);
+  const foldable = !selMode && /^h[1-6]$/.test(block.dataset.type || '')
     && !wys.virtual && !!nextFoldableSibling(block);
   el.whFold.classList.toggle('hidden', !foldable);
   const folded = block.dataset.folded === '1';
   el.whFold.classList.toggle('folded', folded);
   el.whFold.title = folded ? tt('展开') : tt('折叠');
+  /* 抓手是进入选择模式的唯一入口，title 得写出这个手势 ——
+     提示条只在模式里面才出现，第一次用的人没有任何别的线索 */
+  el.whMenu.title = selMode
+    ? tt('点一下选中这一块 · 点已选的块取消')
+    : tt('点击打开菜单 · Ctrl+点选择 · 拖动搬移');
   el.wHandle.classList.remove('hidden');
   // 贴着首行：块可能是多行，手柄只对齐第一行
   el.wHandle.style.top = Math.round(Math.max(2, r.top - host.top + 2)) + 'px';
-  el.wHandle.style.left = Math.round(Math.max(2, r.left - host.left - (foldable ? 66 : 45))) + 'px';
+  /* 贴到正文左缘：按钮组宽度是算出来的，不是写死的 —— 三种形态只差在
+     缺一个按钮（选择模式只留抓手 21px，标题多一个折叠三角 65px），
+     写死偏移会让少一个按钮的形态凭空离正文远 21px。 */
+  const gripW = selMode ? 21 : (foldable ? 65 : 43);
+  el.wHandle.style.left = Math.round(Math.max(2, r.left - host.left - gripW - 2)) + 'px';
 }
 
 /** 这个标题下面还有块吗（折叠三角只在「折得起来」时出现） */
@@ -5036,6 +5047,21 @@ function setupGrip() {
        两下都只要「选」，不拖、不开菜单：这一下的意思是「我要对这一整块做点什么」，
        菜单会挡住要选的目标。顺手记时间戳：pointerup 之后浏览器还会派发一次 click，
        那条兜底路径会立刻把菜单打开 —— 选完就弹菜单正是最烦人的那种。 */
+    /* 已经在选择模式里：点抓手的作用按修饰键分三条，别让「模式」把 Shift 吃掉：
+       Shift = 从锚块扩成连续一段（和模式里点正文同一口径）；
+       其余（含无修饰键）= 选 / 不选这一块。抓手是「就选这一块，别扩成一片」
+       的唯一入口 —— 想再选远一点的另一块时，用户自然会去点那一行的抓手。
+       以前这一步被 CSS 藏掉了，点下去落到 titlebar 上，看起来就是
+       「Ctrl 加选不生效」。 */
+    if (wys.blockSelSet && wys.blockSelSet.size) {
+      gripMenuTs = performance.now();
+      /* Shift 走 selectBlockRange，⛔ 别用 selectBlock({additive:true})：
+         后者在「锚块只是单选」时会把整片取消 —— 想按住 Shift 从锚块往外
+         扩一段，结果一按就全没了。 */
+      if (e.shiftKey) wys.selectBlockRange(block);
+      else wys.toggleBlockSel(block);
+      return;
+    }
     if (e.ctrlKey || e.metaKey) {
       gripMenuTs = performance.now();
       wys.toggleBlockSel(block);
@@ -5108,12 +5134,17 @@ function setupBlockHandle() {
        关菜单只认「点编辑区别处」「Esc」「滚动」三条路。 */
     if (blockMenuOpen()) return;
     const b = e.target.closest ? e.target.closest('.w-block') : null;
+    /* 选择模式里按几何判「这一行」：.w-block 的盒子只有文字那么宽，
+       鼠标压到行右侧空白时 closest 落空，手柄就会赖在上一行不动 ——
+       用户想去点「这一行」的抓手，抓的却是上一行。 */
+    const hit = b || (wys.blockSelSet && wys.blockSelSet.size
+      ? wys.blockAtPoint(e.clientX, e.clientY) : null);
     /* Notion 式：压在块上就贴过去（并取消待执行的收起）；没压在任何块上
        （行间空隙、左右页边距）则启动收起 —— 鼠标停在哪一行，手柄就在哪一行。 */
-    if (!b) { scheduleHandleHide(); return; }
+    if (!hit) { scheduleHandleHide(); return; }
     cancelHandleHide();
-    if (b === anchorBlock) return;
-    anchorBlock = b;
+    if (hit === anchorBlock) return;
+    anchorBlock = hit;
     refreshHandle();
   });
   el.wysiwyg.addEventListener('mouseenter', () => { pointerInside = true; });

@@ -53,6 +53,25 @@ const T = {
     root.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: 3, clientY: y }));
     return ed.toMarkdown();
   },
+  /* 点「贴边空白」：kind = gap（两段之间的缝）/ left / right（正文左右留白）/
+     above（首块上方）。按真实坐标点，点必须落在字外面 —— 内核靠
+     elementFromPoint + 纵向几何判落点。返回点完的光标状态。 */
+  clickBlank(kind, i = 1) {
+    const rr = root.getBoundingClientRect();
+    const bs = root.querySelectorAll('.w-block');
+    const a = bs[0].getBoundingClientRect();
+    const b = bs[i].getBoundingClientRect();
+    let x;
+    let y;
+    if (kind === 'gap') { x = a.left + 12; y = a.bottom + 3; }          // 缝的上半 → 归上面一块
+    else if (kind === 'gapLow') { x = a.left + 12; y = b.top - 3; }     // 缝的下半 → 归下面一块
+    else if (kind === 'above') { x = a.left + 12; y = rr.top + 6; }
+    else { x = kind === 'left' ? rr.left + 4 : rr.right - 4; y = (b.top + b.bottom) / 2; }
+    root.dispatchEvent(new MouseEvent('click', {
+      bubbles: true, cancelable: true, clientX: Math.round(x), clientY: Math.round(y),
+    }));
+    return ed.caretState();
+  },
   /* 模拟「鼠标挪到最后一个块下方的空白」，返回插入指示线的显示状态 */
   hoverBelow() {
     const last = root.lastElementChild;
@@ -1153,6 +1172,37 @@ window.__run = () => {
   eq('段落垫底不亮插入线', T.hoverBelow(), 'none');
   T.reset('```js\nx\n```');
   eq('代码块垫底亮插入线', T.hoverBelow(), 'block');
+
+  /* 19c2b. 点「贴边空白」：光标要落在鼠标那一行，不能跳到文档另一头。
+     块与块之间那 13px 的缝、正文左右留白、首块上方的空白都算 —— 以前一律
+     把光标送去末块，于是点一下，浏览器刚画出的光标就跑到文书另一头
+     （40vh 的尾部留白里根本看不见），用户看到的是「光标闪一下就没了」。 */
+  T.reset('第一段\n\n第二段\n\n第三段');
+  T.caret(0, 0);
+  eq('点两段之间的缝（上半）→ 光标归上面那行', T.clickBlank('gap').blockIndex, 0);
+  T.caret(0, 0);
+  eq('点两段之间的缝（下半）→ 光标归下面那行', T.clickBlank('gapLow').blockIndex, 1);
+  T.caret(0, 0);
+  {
+    const c = T.clickBlank('left');
+    eq('点正文左边留白 → 光标进那一行行首', `${c.blockIndex}:${c.offset}`, '1:0');
+  }
+  T.caret(0, 0);
+  {
+    const c = T.clickBlank('right');
+    eq('点正文右边留白 → 光标进那一行行尾', `${c.blockIndex}:${c.offset}`, '1:3');
+  }
+  T.caret(0, 0);
+  {
+    const c = T.clickBlank('above');
+    eq('点首块上方留白 → 光标进首块行首', `${c.blockIndex}:${c.offset}`, '0:0');
+  }
+  eq('这些点击都不动文档', T.out(), '第一段\n\n第二段\n\n第三段');
+  /* 末块下方那块空白另有语义（去文末写字），别被上面这套吞掉 */
+  T.reset('第一段\n\n第二段');
+  T.caret(0, 0);
+  T.clickRootBelow();
+  eq('末块下方空白仍然是去文末', ed.caretState().blockIndex, 1);
 
   /* 19c3. 代码块：语言条 / 自动识别 / 一键复制 / Ctrl+A 只选自己
      高亮走 CSS Custom Highlight API（不改 DOM，见 codehilite.js），所以断言
@@ -2541,6 +2591,20 @@ window.__run = () => {
       eq('连续：两段仍判为连续', ed.isContiguousSelection(), true);
       eq('连续：整组下移照常生效', ed.moveSelection(1), true);
       eq('连续：下移后的顺序', T.blocks().join(','), 'p=丙,p=甲,p=乙');
+
+      /* 选择模式的命中区按几何算：.w-block 的盒子只有文字那么宽、块间还有
+         13px 空隙，点行右侧空白或缝里 closest 都是 null。落空的语义是
+         「点空白 = 全取消」，所以这两个位置必须仍能命中那一行。 */
+      T.reset('甲\n\n乙\n\n丙\n');
+      const bp0 = root.children[0].getBoundingClientRect();
+      const bp1 = root.children[1].getBoundingClientRect();
+      const bpRoot = root.getBoundingClientRect();
+      eq('命中：行右侧空白也算这一行',
+        ed.blockAtPoint(bpRoot.right - 6, bp1.top + bp1.height / 2) === root.children[1], true);
+      eq('命中：块间缝隙靠上归上一块',
+        ed.blockAtPoint(bp0.left + 8, bp0.bottom + 3) === root.children[0], true);
+      eq('命中：正文列之外仍算空白',
+        ed.blockAtPoint(bpRoot.left - 40, bp1.top + bp1.height / 2), null);
 
       /* 折叠是视图状态：md 一个字节都不该变 */
       T.reset('# 一\n\n甲\n\n## 二\n\n乙\n\n丙\n');
