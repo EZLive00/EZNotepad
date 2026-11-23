@@ -615,8 +615,10 @@ export function parseMarkdown(md) {
     const h = line.match(RE_HEADING);
     if (h) {
       levelOf.reset();
-      /* 空标题原地降级为正文（原先是载入后 normalize(true) 统一做的；
-         跳过全量扫描后这职责挪到 parse —— 构造出规范 DOM 才敢跳过扫描） */
+      /* 空标题（`## ` 后面什么都没有）在**解析**阶段就造段落。这是空标题唯一的
+         降级入口 —— 击键路径不许降（删光标题文字类型要保住，见 normalize 与
+         handleBackspace）。原先是载入后全量 normalize 统一扫一遍，跳过全量扫描
+         后这职责挪到 parse：构造出的 DOM 必须是规范的，才敢跳过扫描。 */
       frag.appendChild(h[2].trim() === '' ? mkPara('') : mkHeading(h[1].length, h[2]));
       i++;
       continue;
@@ -2734,7 +2736,7 @@ export class WysiwygEditor {
 
   onInput() {
     if (this.silent || this.loading || this.composing) return;
-    this.normalize(false, true);   // 只扫光标附近，见 normalize 的说明
+    this.normalize(true);   // 只扫光标附近，见 normalize 的说明
     if (this.applyBlockRule()) { this.renumber(); this.queueFlush(); return; }   // 接管 = 结构变化，全量重排一次
     this.applyInlineRule();
     // 纯打字不 renumber：编号只随结构变化，结构路径都显式全量重排。
@@ -2997,15 +2999,15 @@ export class WysiwygEditor {
   }
 
   /**
-   * 规范化 DOM。
+   * 规范化 DOM。**不改块类型** —— 空标题的降级只在解析阶段做（见 parseMarkdown），
+   * 这里的判据是「同一份 DOM 渲染两遍必须一模一样」，不能带任何取舍性质的改写。
    *
-   * @param all   true = 连「光标不在的空标题」也降级（载入文档时用）
    * @param local true = 只扫光标块与左右邻块。击键路径必须传 true：
    *   浏览器塞的游离节点、重复的 .w-text 只会在刚编辑过的地方冒出来，
    *   而全量扫一遍 600 个块 + 每块 sweepBlock，是单次击键最大的一块开销。
-   *   远处的问题留给下一次全量（载入 / 粘贴 / 换块）。
+   *   远处的问题留给下一次全量（粘贴 / 换块）。
    */
-  normalize(all = false, local = false) {
+  normalize(local = false) {
     const caret = this.currentBlock();
     const near = caret
       ? [caret.previousElementSibling, caret, caret.nextElementSibling].filter(Boolean)
@@ -3037,13 +3039,10 @@ export class WysiwygEditor {
         b.appendChild(t);
       }
       this.sweepBlock(b, t);
-      // 空标题立刻退回正文。留着它有两个坏处：标题下方那条装饰线会变成一条
-      // 没有文字的横线（像凭空多出来的分割线），而且接着打字还是标题。
-      // 只降级「光标所在的那个块」（以及整体载入时的所有块）：刚用菜单把空行设成
-      // 标题、还没开始打字的情况下，别的地方敲一个字就把这个标题悄悄吃掉。
-      if (/^h[1-6]$/.test(type) && !this.hashEl(b) && isEmptyText(t) && !t.querySelector('img') && (all || b === caret)) {
-        this.degradeHeading(b);
-      }
+      /* ⛔ 这里不许加「块是空的又是个标题就降级」。删光标题里的字，用户的意思
+         多半是「重写这个标题」，不是「不要标题了」；击键路径走过来就会把类型当场
+         抹掉。空标题降级只在解析阶段做一次（parseMarkdown / 大文档 records 两条
+         路径，见「跳过全量扫描」的说明），退出类型只有退格与回车两条显式的路。 */
       // 清掉空的行内包裹（删字后常见的 <strong></strong>）。
       // 判空必须忽略零宽空格 —— contenteditable 会往空元素里塞 \u200b 当落脚点，
       // 有它在 textContent 就不为空，于是这个 <strong> 活下来，
@@ -3625,10 +3624,22 @@ export class WysiwygEditor {
       return;
     }
 
-    // 标题：行首退格不直接砍级别，先把 ### 亮出来，之后每按一次删一个 #
+    /* 标题的行首退格。
+       空标题：一步退回正文 —— 没有内容要保护，逐级删 # 纯属折腾（删光文字的
+       时候用户已经在心里把这一块当「待重写的标题」了，退格就是「不当标题了」）。
+       非空标题：先把 ### 亮出来，之后每按一次删一个 #，级别一级一级降。 */
     if (/^h[1-6]$/.test(type)) {
       e.preventDefault();
-      if (this.hashEl(block)) this.demoteHeading(block);
+      const mark = this.hashEl(block);
+      if (this.isEmptyBlock(block) && !textEl(block).querySelector('img')) {
+        if (mark) mark.remove();
+        this.degradeHeading(block);
+        this.hCoalesce = false;
+        this.renumber();
+        this.flush();
+        return;
+      }
+      if (mark) this.demoteHeading(block);
       else this.showHashes(block);
       return;
     }
@@ -4278,29 +4289,21 @@ export class WysiwygEditor {
     const h = this.hashEl(block);
     if (!h) return false;
     h.remove();
-    // 标题被删空了就别留着一条没有文字的横线
-    if (block.dataset.type !== 'p' && this.isEmptyBlock(block) && !textEl(block).querySelector('img')) {
-      this.degradeHeading(block);
-      return true;              // 类型变了 = Markdown 变了，调用方记得 flush
-    }
+    /* 这里原来还有一条「收标记时块是空的就把标题降成正文」。它和 normalize 的那条
+       一起造成了「删光标题文字，标题当场没了」。空标题要留着 —— 光标离开、切标签、
+       点别处都不该偷偷改类型（见 normalize 里的说明）。 */
     return false;
   }
 
-  /** 光标已经不在的块：把标记全部收回去 */
+  /** 光标已经不在的块：把标记全部收回去。标记不进 Markdown，收完不必 flush */
   collapseHashes() {
     if (this.silent || !this.root.isConnected) return;
     const marks = this.root.querySelectorAll('.w-hash');
     if (!marks.length) return;
     const cur = this.currentBlock();
-    let changed = false;
     for (const h of marks) {
       const b = h.closest('.w-block');
-      if (b && b !== cur && this.hideHashes(b)) changed = true;
-    }
-    if (changed) {
-      this.hCoalesce = false;
-      this.renumber();
-      this.flush();
+      if (b && b !== cur) this.hideHashes(b);
     }
   }
 

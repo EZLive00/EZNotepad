@@ -1612,6 +1612,24 @@ try {
     await bksp();
     ok('真机：表格后空行退格能删掉', (await bl()).length === 1, JSON.stringify(await bl()));
 
+    /* 标题文字删光：类型要保住，按退格才退回正文。
+       删完最后一个字标题当场降级的话，用户想原地重写就得先选中、再开菜单设类型 ——
+       「重写这句标题」被当成了「不要这个标题」。 */
+    await load('h-keep.md', '## 小标题\n\n正文\n');
+    await ev(`(() => {
+      const b = [...document.querySelectorAll('.wysiwyg > .w-block')][0];
+      const t = b.querySelector('.w-text') || b;
+      const r = document.createRange(); r.selectNodeContents(t); r.collapse(false);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      document.querySelector('.wysiwyg').focus();
+    })()`);
+    for (let i = 0; i < 3; i++) await bksp();          // 删光「小标题」三个字
+    const hKeep = await bl();
+    ok('真机：标题文字删光后仍是标题（不自动降级）', hKeep[0] === 'h2:', JSON.stringify(hKeep));
+    await bksp();
+    const hGone = await bl();
+    ok('真机：空标题按一次退格退回正文', hGone[0] === 'p:', JSON.stringify(hGone));
+
     /* ---- J. 菜单栏：速记与对比放在最右边 ----
        它们原来分别在「文件」的第二位和「工具」的中段 —— 天天点的东西不该让人
        在菜单栏上找。两个都是一级项：速记是动作（点一次直接打开，没有下拉），

@@ -1794,7 +1794,9 @@ window.__run = () => {
   eq('两个空行保留', T.out(), 'a\n\n\nb');
   eq('第二个空行是个空块', T.blocks().join(','), 'p=a,p=,p=b');
 
-  // 33. 删空标题：块立刻退回正文（否则会留下一条没有文字的装饰线，打字还是标题）
+  /* 33. 删空标题：类型保住。用户把标题里的字删光，多半是想重写这个标题，
+     不是「不要标题了」—— 原地降级要用户重新设一遍类型，很烦。
+     退出标题有显式的两条路：空标题里按退格、或按回车。 */
   T.reset('## 标题');
   T.caret(0, 0);
   const rh = document.createRange();
@@ -1802,10 +1804,20 @@ window.__run = () => {
   getSelection().removeAllRanges();
   getSelection().addRange(rh);
   document.execCommand('delete');
-  eq('标题文字删空后立刻变正文', T.blocks()[0], 'p=');
+  eq('标题文字删空后仍是标题', T.blocks()[0], 'h2=');
   has('删空的块里没有游离 <br>', ![...root.children[0].childNodes].some((n) => n.nodeName === 'BR'));
   T.type('新内容');
-  eq('删空标题后重写是普通段落', T.out(), '新内容');
+  eq('删空标题后重写还是标题', T.blocks()[0], 'h2=新内容');
+  eq('重写内容写回文件', T.out(), '## 新内容');
+  // 再抹掉一次：这次按退格，一步退回正文（空标题没有内容要保护，不必逐级删 #）
+  const rh1b = document.createRange();
+  rh1b.selectNodeContents(root.querySelector('.w-text'));
+  getSelection().removeAllRanges();
+  getSelection().addRange(rh1b);
+  document.execCommand('delete');
+  eq('再次删空仍是标题', T.blocks()[0], 'h2=');
+  T.key('Backspace');
+  eq('空标题按一次退格退回正文', T.blocks()[0], 'p=');
 
   // 33b. 标题 + 分割线：删空标题不该把分割线挤下去，也不该把 ## 写回文件
   T.reset('## 标题\n\n---\n\n正文');
@@ -1815,18 +1827,25 @@ window.__run = () => {
   getSelection().removeAllRanges();
   getSelection().addRange(rh2);
   document.execCommand('delete');
-  eq('删空标题后分割线原地不动', T.blocks().join(','), 'p=,hr=,p=正文');
-  eq('删空标题后回写不留 ##', T.out(), '---\n\n正文');
+  eq('删空标题后分割线原地不动', T.blocks().join(','), 'h2=,hr=,p=正文');
+  T.key('Backspace');
+  eq('退格退回正文后分割线仍原位', T.blocks().join(','), 'p=,hr=,p=正文');
+  eq('退回正文后回写不留 ##', T.out(), '---\n\n正文');
 
   // 33c. 空标题里回车 = 退出标题，接着写的是正文
   T.reset('');
   T.caret(0, 0);
   T.type('## ');
   eq('输入 ## 空格得到空标题', T.blocks()[0], 'h2=');
+  T.type('字');
+  eq('空标题里打字仍然是标题', T.blocks()[0], 'h2=字');
+  T.reset('');
+  T.caret(0, 0);
+  T.type('## ');
   T.key('Enter');
   eq('空标题里回车退回正文', T.blocks()[0], 'p=');
 
-  // 33d. 文件里遗留的空标题（## 后面什么都没有）载入时也退回正文
+  // 33d. 文件里遗留的空标题（## 后面什么都没有）载入时退回正文
   T.reset('## \n\n正文');
   eq('载入时空标题退回正文', T.blocks().join(','), 'p=,p=正文');
 
@@ -1874,7 +1893,7 @@ window.__run = () => {
   T.key('Backspace');
   eq('再退格才和上一块合并', T.blocks().join(','), 'p=前言标题,p=正文');
 
-  // 34b. 空标题（还没写字）也一样：先亮标记，不把整行删掉
+  // 34b. 空标题（还没写字）一次退格就退出标题：没有内容要保护，不必逐级删 #
   T.reset('甲\n\n乙');
   T.caret(1, 0);
   const r9 = document.createRange();
@@ -1886,10 +1905,10 @@ window.__run = () => {
   window.__ed.toggleHeading(3);
   eq('空行设成三级标题', T.blocks()[1], 'h3=');
   T.key('Backspace');
-  eq('空标题退格不删行', T.blocks()[1], 'h3=');
-  eq('空标题亮出 ###', root.querySelector('.w-hash').textContent, '###');
+  eq('空标题退格不删行', T.blocks()[1], 'p=');
+  eq('空标题退格不留 # 标记', root.querySelector('.w-hash'), null);
   T.key('Backspace');
-  eq('空标题降为二级', T.blocks()[1], 'h2=');
+  eq('空块再退格并进上一块', T.blocks().join(','), 'p=甲');
 
   // 34c. 回车 / 光标离开时标记自动收起，级别不受影响
   T.reset('## 标题');
