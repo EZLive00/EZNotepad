@@ -704,9 +704,10 @@ body.tab-dragging, body.tab-dragging * { cursor: grabbing !important; }
 .side-add:hover, .side-locate:hover, .side-refresh:hover { background: var(--bg-hover); color: var(--fg); }
 .side-add .ico, .side-locate .ico, .side-refresh .ico { width: 14px; height: 14px; }
 /* 大纲页没有「往哪个目录里加」这回事，定位也没有目标 —— 这两个只属于文件页。
-   常驻着就是两个点了没反应的按钮 */
-.outline[data-side="outline"] .side-add,
-.outline[data-side="outline"] .side-locate { display: none; }
+   常驻着就是两个点了没反应的按钮。写成「非文件页隐藏」而不是「大纲页隐藏」：
+   侧栏以后再加页时，新页默认就是干净的，不用记得回来补一条。 */
+.outline:not([data-side="files"]) .side-add,
+.outline:not([data-side="files"]) .side-locate { display: none; }
 .side-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 
 /* ---- 文件树 ---- */
