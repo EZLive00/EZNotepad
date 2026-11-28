@@ -434,6 +434,7 @@ export const DICT = {
   '在这个文件夹里新建…': ['在這個資料夾裡新建…', 'New in This Folder…', 'このフォルダーに新規作成…', '이 폴더에 새로 만들기…', 'Nouveau dans ce dossier…', 'In diesem Ordner neu…', 'Nuevo en esta carpeta…', 'Novo nesta pasta…'],
   '重命名…': ['重新命名…', 'Rename…', '名前を変更…', '이름 바꾸기…', 'Renommer…', 'Umbenennen…', 'Renombrar…', 'Renomear…'],
   '在资源管理器中显示': ['在資源管理器中顯示', 'Show in File Explorer', 'エクスプローラーで表示', '탐색기에서 보기', 'Afficher dans l\'explorateur', 'Im Explorer anzeigen', 'Mostrar en el explorador', 'Mostrar no explorador'],
+  '在此处打开终端': ['在此處開啟終端', 'Open a Terminal Here', 'ここでターミナルを開く', '여기에서 터미널 열기', 'Ouvrir un terminal ici', 'Terminal hier öffnen', 'Abrir una terminal aquí', 'Abrir um terminal aqui'],
   '刷新': ['重新整理', 'Refresh', '更新', '새로 고침', 'Actualiser', 'Aktualisieren', 'Actualizar', 'Atualizar'],
   '刷新文件树与当前文档': ['重新整理檔案樹與當前文件', 'Refresh the file tree and the open file', 'ファイルツリーと開いているファイルを更新', '파일 트리와 열린 파일 새로 고침', 'Actualiser l\'arborescence et le fichier ouvert', 'Dateibaum und geöffnete Datei aktualisieren', 'Actualizar el árbol de archivos y el archivo abierto', 'Atualizar a árvore de arquivos e o arquivo aberto'],
   '属性': ['屬性', 'Properties', 'プロパティ', '속성', 'Propriétés', 'Eigenschaften', 'Propiedades', 'Propriedades'],

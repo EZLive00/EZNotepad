@@ -59,6 +59,7 @@ window.__opened = [];
 window.__renamed = [];
 window.__deleted = [];
 window.__compared = [];
+window.__termDirs = [];       // 「在此处打开终端」传出去的目录
 window.__added = [];          // 「添加文件夹」被点了（真实场景里会弹系统对话框）
 
 const be = {
@@ -109,6 +110,8 @@ const tree = new FileTree({
   onRenamed: (a, b) => window.__renamed.push([a, b]),
   onDeleted: (p) => window.__deleted.push(p),
   onCompare: (l, r) => window.__compared.push([l, r]),
+  /* 「在此处打开终端」：这一页没有终端，只记下传进来的目录 */
+  onTerm: (dir) => window.__termDirs.push(dir),
 });
 
 window.__tree = tree;

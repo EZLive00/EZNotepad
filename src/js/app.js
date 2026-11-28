@@ -33,7 +33,7 @@ import { tt, setLang, resolveLang, getLang, applyDom, LANGS } from './i18n.js';
 import { errText } from './errors.js';
 import { manualDoc } from './manual.js';
 import { writeClipboard } from './clipboard.js';
-import { initTerm, toggleTerm, termHasFocus, termVisible, relayoutTerm, refreshTermTheme, openTerm, closeTerm, termScreen, termIds, termSend } from './term.js';
+import { initTerm, toggleTerm, termHasFocus, termVisible, relayoutTerm, refreshTermTheme, openTerm, closeTerm, termScreen, termIds, termSend, termPalette } from './term.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -1485,6 +1485,9 @@ const tree = new FileTree({
   ask: askText,
   confirm: (title, html) => confirmBox(title, html, tt('删除'), tt('取消')),
   onReveal: (p) => revealInFolder(p),
+  /* 文件树右键「在此处打开终端」：目录就是它自己，文件取所在目录（filetree 算好传进来）。
+     走 openTerm 而不是 toggleTerm —— 用户点的是「在这里开一个」，不是「开关面板」 */
+  onTerm: (dir) => openTerm({ cwd: dir }).catch((e) => toast(errText(e))),
   /* 「添加文件夹」在三个地方出现（侧栏头、树里空白处右键、空状态那个按钮），
      都汇到这一个入口 —— 每个地方各写一遍取目录的流程，早晚会长歪 */
   onAddFolder: () => addFolder(),
@@ -6526,6 +6529,8 @@ window.__snp = {
     screen: (id) => termScreen(id),
     ids: () => termIds(),
     send: (t, id) => termSend(t, id),
+    /* 调色板：浅色主题下「字是不是白的」「16 色有没有真映射」都从这里验 */
+    palette: () => termPalette(),
   },
   /* 查看器的调试面：真机探针靠它拿类型、缩放、归档状态，不必去猜 DOM */
   viewer: {

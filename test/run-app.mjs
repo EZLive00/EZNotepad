@@ -1414,6 +1414,33 @@ try {
     ok('没开查看器时编辑器正常显示', vp.wrapVisible);
     ok('调试面可用（探针靠它拿类型与缩放）', vp.api && vp.active === false, JSON.stringify(vp));
   }
+
+  // ---- 标签栏：当前标签要「一眼看得出」 ----
+  // 以前只有字重 + 文字深浅，浅色下纸面与灰面只差 3 个色阶，用户看不出哪个是当前。
+  {
+    await ev(`window.__snp.newTab('tab-a.md', '# 甲\\n', null)`);
+    await ev(`window.__snp.newTab('tab-b.md', '# 乙\\n', null)`);
+    await sleep(160);
+    await ev(`document.querySelectorAll('.tab')[0].click()`);
+    await sleep(160);
+    const st = await ev(`(() => {
+      const tabs = [...document.querySelectorAll('.tab')];
+      const on = tabs.find((t) => t.classList.contains('active'));
+      const off = tabs.find((t) => !t.classList.contains('active'));
+      const bg = (n) => getComputedStyle(n).backgroundColor;
+      return {
+        n: tabs.length,
+        onBg: on && bg(on), offBg: off && bg(off),
+        onFg: on && getComputedStyle(on).color, offFg: off && getComputedStyle(off).color,
+        onW: on && getComputedStyle(on).fontWeight, offW: off && getComputedStyle(off).fontWeight,
+        line: on && getComputedStyle(on).boxShadow,
+      };
+    })()`);
+    ok('当前标签有自己的底色，且与非当前标签不同',
+      !!st && st.onBg !== st.offBg, JSON.stringify(st));
+    ok('当前标签有强调色定音线', !!st && /inset/.test(st.line) && !/none/.test(st.line), st && st.line);
+    ok('当前标签更重、更亮', !!st && st.onW === '600' && st.onFg !== st.offFg, JSON.stringify({ onFg: st && st.onFg, offFg: st && st.offFg }));
+  }
 } catch (e) {
   ok('运行期间没有异常', false, String((e && e.message) || e).slice(0, 300));
 } finally {

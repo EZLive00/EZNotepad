@@ -42,7 +42,12 @@ let booted = false;
 
 /* ---------------- 主题 ---------------- */
 
-/** 终端配色跟着七个面走：底色用「坑」（比纸面低一步），强调色当光标 */
+/** 终端配色跟着七个面走：底色用「坑」（比纸面低一步），强调色当光标；
+    16 色读主题里的 --term-*（xterm 的 theme 是实例属性，切主题得逐个重设）。
+    ⛔ 16 个槽一个都不能漏：漏掉的槽会落回 xterm 自带的深色配色 ——
+       深色下看着正常，浅色下就是「白纸上的白字」（brightWhite 尤其）。
+       这也是终端能不能出彩色的全部前提：程序按 SGR 30-37/90-97 要什么色，
+       xterm 就从这张表里取。 */
 function termTheme() {
   const cs = getComputedStyle(document.body);
   const v = (n, d) => (cs.getPropertyValue(n).trim() || d);
@@ -52,15 +57,22 @@ function termTheme() {
     cursor: v('--accent', '#d13415'),
     cursorAccent: v('--bg-well', '#ffffff'),
     selectionBackground: v('--accent-soft', 'rgba(0,0,0,.12)'),
-    black: v('--gray-12', '#1c2024'),
-    brightBlack: v('--fg-faint', '#80838d'),
-    red: v('--red-9', '#e5484d'),
-    green: v('--green-9', '#30a46c'),
-    yellow: v('--amber-9', '#ffc53d'),
-    blue: v('--blue-9', '#0090ff'),
-    magenta: v('--violet-11', '#8e4ec6'),
-    cyan: v('--teal-11', '#0d9488'),
-    white: v('--gray-7', '#cdced6'),
+    black: v('--term-black', '#1c2024'),
+    red: v('--term-red', '#ce2c31'),
+    green: v('--term-green', '#218358'),
+    yellow: v('--term-yellow', '#ab6400'),
+    blue: v('--term-blue', '#0d74ce'),
+    magenta: v('--term-magenta', '#8145b5'),
+    cyan: v('--term-cyan', '#008573'),
+    white: v('--term-white', '#60646c'),
+    brightBlack: v('--term-bright-black', '#80838d'),
+    brightRed: v('--term-bright-red', '#ce2c31'),
+    brightGreen: v('--term-bright-green', '#218358'),
+    brightYellow: v('--term-bright-yellow', '#ab6400'),
+    brightBlue: v('--term-bright-blue', '#0d74ce'),
+    brightMagenta: v('--term-bright-magenta', '#8145b5'),
+    brightCyan: v('--term-bright-cyan', '#008573'),
+    brightWhite: v('--term-bright-white', '#1c2024'),
   };
 }
 
@@ -320,6 +332,13 @@ export function closeTerm(id) {  const v = views.get(id);
 }
 
 /* ---------------- 探针 ---------------- */
+
+/** 当前这块主题的 16 色调色板。探针靠它验两件事：
+ *  ① 浅色主题下默认字色（white / brightWhite）是不是真给了浅色（= 白纸白字）；
+ *  ② 16 个槽有没有真的映射过（漏槽会落回 xterm 的深色默认值，「彩色」就成了假的）。 */
+export function termPalette() {
+  return termTheme();
+}
 
 /** 当前终端屏幕上有什么（整段回滚缓冲的纯文本）。只给真机探针用：
  *  终端的一切都发生在 canvas 里，DOM 上除了几个 div 一个字都没有。 */

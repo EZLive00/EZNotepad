@@ -117,6 +117,32 @@ body[data-theme="light"] {
   /* 焦点环：2px 实色环 + 2px 偏移，跟随圆角（box-shadow 会被组件自己的阴影盖掉） */
   --ring: 2px solid var(--accent-solid);
 
+  /* --- 终端 16 色（term.js 逐个读进 xterm 的 theme） ---
+     终端文字是「前景」，所以取 -11 这一档（纸上能读的饱和度），不取 -9 的实心色。
+     ⛔ white / brightWhite 绝不能真给白：PowerShell 5.1 每写一个字都带 SGR 97，
+        真给白就是白纸上的白字（用户报的「输入的文字在浅色背景上看不清」）。
+        浅色下这两个槽反而是最深的灰。 */
+  --term-black: var(--gray-12);
+  --term-red: var(--red-11);
+  --term-green: var(--green-11);
+  --term-yellow: var(--amber-11);
+  --term-blue: var(--blue-11);
+  --term-magenta: var(--purple-11);
+  --term-cyan: var(--teal-11);
+  --term-white: var(--gray-11);
+  --term-bright-black: var(--gray-10);
+  --term-bright-red: var(--red-11);
+  --term-bright-green: var(--green-11);
+  --term-bright-yellow: var(--amber-11);
+  --term-bright-blue: var(--blue-11);
+  --term-bright-magenta: var(--purple-11);
+  --term-bright-cyan: var(--teal-11);
+  --term-bright-white: var(--gray-12);
+  /* 非激活标签的底色：比灰面再深一档，让纸面那颗浮起来。
+     浅色下只能是「往深走」（纸面已经是最亮的了），深色下反过来是透明 ——
+     那里的纸面本来就比灰面亮三步，不必再压（见深色块里的同名令牌）。 */
+  --tab-off: color-mix(in srgb, var(--fg) 3.5%, transparent);
+
   /* --- 文档内的高亮 --- */
   /* 选区属于「当前选中」这一状态，跟大纲选中项用同一层浅橙底（--accent-soft）。
      相同文本高亮是选中的延伸，取它再淡一档，免得两块同色抢视线。
@@ -233,6 +259,27 @@ body[data-theme="dark"] {
 
   --shadow-float: 0 10px 24px -8px rgba(0, 0, 0, .62);
   --ring: 2px solid var(--accent-solid);
+
+  /* 终端 16 色：深色下 -11 这一档本身就是给深底用的浅粉彩，直接拿来当文字色；
+     white / brightWhite 在这里才真是浅色（浅色主题里反过来是最深的灰）。 */
+  --term-black: var(--gray-1);
+  --term-red: var(--red-11);
+  --term-green: var(--green-11);
+  --term-yellow: var(--amber-11);
+  --term-blue: var(--blue-11);
+  --term-magenta: var(--purple-11);
+  --term-cyan: var(--teal-11);
+  --term-white: var(--gray-11);
+  --term-bright-black: var(--gray-8);
+  --term-bright-red: var(--red-11);
+  --term-bright-green: var(--green-11);
+  --term-bright-yellow: var(--amber-11);
+  --term-bright-blue: var(--blue-11);
+  --term-bright-magenta: var(--purple-11);
+  --term-bright-cyan: var(--teal-11);
+  --term-bright-white: var(--gray-12);
+  /* 深色下纸面（gray-2）本来就比灰面（gray-1）亮，非激活标签不必再压暗 */
+  --tab-off: transparent;
 
   /* 深色下选区用暗一档的番茄底：既不是系统高亮色（发白），也不是亮橙实底。
      与浅色共用「选中态」的语义，但色值按主题各给一份。 */
@@ -442,6 +489,11 @@ body.win-blur .brand-mark { filter: saturate(.55) brightness(.96); }
   cursor: default;
 }
 .tab:hover { background: var(--bg-hover); }
+/* 非激活标签压暗一档：浅色主题里纸面（gray-1）与灰面（gray-2）只差 3 个色阶，
+   只给激活的那颗换底色等于没换。让没选中的先「退到后面」，纸面那颗才浮得起来。
+   用的是同一个前景色兑出来的淡灰，不引新色值，深浅两个主题各自成立。 */
+.tab:not(.active) { background: var(--tab-off); }
+.tab:not(.active):hover { background: var(--bg-hover); }
 /* 拖拽换位的两个状态：被拖的那颗变淡，落点用 2px 竖线提示 */
 .tab.dragging { opacity: .4; }
 /* 拖拽期间整扇窗口都换成「抓取」光标 —— 指针一旦离开标签条就收不到标签自己的
@@ -454,10 +506,13 @@ body.tab-dragging, body.tab-dragging * { cursor: grabbing !important; }
 }
 .tab.drop-before::before { left: -2px; }
 .tab.drop-after::before { left: auto; right: -2px; }
-/* 激活标签：同色平面上的激活态靠字重 + 全亮文字表达，不再另铺底色
-   （全域同色后底色差已不存在）。 */
+/* 激活标签：纸面底色 + 顶上一条强调色 + 全强度文字。
+   ⛔ 只靠字重和文字深浅不够区分：浅色下纸面（gray-1）与灰面（gray-2）只差一步，
+      用户看不出「哪个是当前」。强调色在这里只标「当前」这一个状态，
+      与当前章节、焦点、未保存点同一套语义，不算滥用。 */
 .tab.active {
   background: var(--bg-panel); color: var(--fg); font-weight: 600;
+  box-shadow: inset 0 2px 0 var(--accent-solid);
 }
 /* 左端不封口：最左那颗（以及只有一颗时）不画外侧左边线，否则左边会多出
    一根孤立的竖线。只把颜色置透明，宽度留着，布局不动。选择器带 .tabs
@@ -1446,13 +1501,27 @@ body[data-zen="1"] .win-title { color: var(--fg-faint); }
 .term-host { position: absolute; inset: 0; display: none; padding: 4px 6px; }
 .term-host.on { display: block; }
 
-/* xterm 自己带了一套内边距与滚动条样式，这里只把它的滚动条收窄一号，
-   免得在 260px 高的面板里占掉一条 */
+/* xterm 自己带了一套内边距与滚动条样式，这里把它的底色与滚动条收回来：
+   ⛔ 它给 .xterm-viewport 写死了 `background-color: #000` 且 `overflow-y: scroll`。
+      面板高度除不尽行高时，最底下那几像素画布盖不到，露出来的就是这条黑带
+      （用户报的「面板底部有个黑色条，好像是滚动条」）；常驻的滚动条轨道也是它。
+      底色交还给面板（与终端主题的 background 同色），滚动条改成按需出现。 */
 .term-host .xterm { height: 100%; }
-.term-host .xterm-viewport::-webkit-scrollbar { width: 8px; }
-.term-host .xterm-viewport::-webkit-scrollbar-thumb {
+.term-host .xterm .xterm-viewport {
+  background-color: transparent;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--bg-active) transparent;
+}
+.term-host .xterm .xterm-viewport::-webkit-scrollbar { width: 8px; }
+.term-host .xterm .xterm-viewport::-webkit-scrollbar-track { background: transparent; }
+.term-host .xterm .xterm-viewport::-webkit-scrollbar-thumb {
   background: var(--bg-active); border-radius: 4px;
 }
+/* 画布只画到「行数 × 行高」，多出来的余量由外层兜着 —— 否则那一条是 xterm
+   的默认底色，换主题也不跟着走 */
+.term-host .xterm .xterm-screen,
+.term-host .xterm .xterm-screen canvas { background-color: transparent; }
 
 /* 拖动分隔线时全局禁用选择，否则会一路选到正文里去 */
 body.resizing-v { cursor: row-resize; user-select: none; }

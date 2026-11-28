@@ -80,6 +80,7 @@ export class FileTree {
     this.onReveal = opt.onReveal || (() => {});
     this.onCompare = opt.onCompare || null;
     this.onHistory = opt.onHistory || null;
+    this.onTerm = opt.onTerm || null;
     /* 多选只对文件生效：Ctrl 点击增减、Shift 点击选一段，用来挑两个文件做比较 */
     this.sel = new Set();
     this.anchor = '';
@@ -574,6 +575,12 @@ export class FileTree {
        文件与目录都给 —— 目录路径贴到终端里一样有用。 */
     items.push({ label: tt('复制文件路径'), icon: 'copy', action: () => this._copyPath(entry.path) });
     items.push({ label: tt('在资源管理器中显示'), icon: 'folder-open', action: () => this.onReveal(entry.path) });
+    /* 在终端里进到这一层：目录就是它自己，文件取所在目录 ——
+       「在这里打开终端」是文件管理器的常见动作，省得先复制路径再 cd 一遍。 */
+    if (this.onTerm) {
+      const dir = entry.is_dir ? entry.path : parentOf(entry.path);
+      items.push({ label: tt('在此处打开终端'), icon: 'terminal', action: () => this.onTerm(dir) });
+    }
     /* 交给系统默认程序：图片/压缩包虽然程序内能看，但「我要用 PS 改这张图」
        这条需求一直都在。放在最后，不抢主路径。 */
     if (!entry.is_dir) {
@@ -602,6 +609,9 @@ export class FileTree {
       { sep: true },
       { label: tt('刷新'), icon: 'rotate-ccw', action: () => this.render() },
     ];
+    if (this.onTerm) {
+      items.push({ label: tt('在此处打开终端'), icon: 'terminal', action: () => this.onTerm(root) });
+    }
     if (this.onAddFolder) {
       items.push({ label: tt('添加文件夹…'), icon: 'folder-plus', action: () => this.onAddFolder() });
     }

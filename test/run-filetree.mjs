@@ -134,6 +134,20 @@ try {
     fileMenu.indexOf('复制文件路径') === fileMenu.indexOf('在资源管理器中显示') - 1, fileMenu.join(' | '));
   ok('目录菜单也给了复制路径', dirMenu.includes('复制文件路径'), dirMenu.join(' | '));
 
+  // ---- 行右键「在此处打开终端」：文件给所在目录，目录给自己 ----
+  ok('文件菜单有「在此处打开终端」', fileMenu.includes('在此处打开终端'), fileMenu.join(' | '));
+  ok('目录菜单也有「在此处打开终端」', dirMenu.includes('在此处打开终端'), dirMenu.join(' | '));
+  await ev(`window.__termDirs.length = 0; 1`);
+  await rightClick('笔记.md');
+  ok('点它能执行', await pick('在此处打开终端'));
+  const fileDir = await ev(`window.__termDirs.slice()`);
+  ok('文件传下去的是它所在的目录（不是文件自己的路径）',
+    fileDir.length === 1 && fileDir[0] === 'C:/demo', JSON.stringify(fileDir));
+  await rightClick('assets');
+  await pick('在此处打开终端');
+  const dirDir = await ev(`window.__termDirs.slice(-1)[0]`);
+  ok('目录传下去的是它自己', dirDir === 'C:/demo/assets', JSON.stringify(dirDir));
+
   await rightClick('笔记.md');
   ok('点复制路径能执行', await pick('复制文件路径'));
   const copied = await ev(`window.__copied`);

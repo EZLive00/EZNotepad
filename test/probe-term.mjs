@@ -177,6 +177,41 @@ await c.ev(`window.__snp.term.send('echo TERMOK\\r')`);
 for (let i = 0; i < 30 && !/TERMOK/.test(await screen()); i++) await sleep(150);
 ok('粘贴进去的命令有回显也有输出', /TERMOK/.test(await screen()), JSON.stringify((await screen()).slice(-60)));
 
+/* ---------- 2.5 配色与底色 ----------
+   两件只有在真机上才看得见的事：
+   ① 浅色主题下默认字色是不是白的（用户报的「输入的文字亮色，浅色背景上看不清」）——
+      PowerShell 每写一个字都带 SGR 97，落到 brightWhite 槽；
+   ② 面板底部那条黑带：xterm 给 .xterm-viewport 写死了 #000 与 overflow-y: scroll。
+   调色板只能从 __snp.term.palette() 拿：终端的一切都在 canvas 里，DOM 上一个字都没有。 */
+const pal = await c.ev(`window.__snp.term.palette()`);
+const lum = (s) => {
+  const m = /^#([0-9a-f]{6})$/i.exec(String(s || '').trim());
+  if (!m) return null;
+  const n = parseInt(m[1], 16);
+  return (0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255)) / 255;
+};
+const SLOTS = ['black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white',
+  'brightBlack', 'brightRed', 'brightGreen', 'brightYellow', 'brightBlue', 'brightMagenta', 'brightCyan', 'brightWhite'];
+ok('16 色槽全都映射到了（漏一个就落回 xterm 自带的深色值）',
+  SLOTS.every((k) => /^#[0-9a-f]{6}$/i.test(String(pal?.[k] || ''))),
+  JSON.stringify(SLOTS.filter((k) => !/^#[0-9a-f]{6}$/i.test(String(pal?.[k] || '')))));
+ok('彩色是真的：红 / 绿 / 蓝 / 青 / 品红 / 黄 六个色各不相同',
+  new Set([pal.red, pal.green, pal.blue, pal.cyan, pal.magenta, pal.yellow].map((x) => String(x).toLowerCase())).size === 6,
+  JSON.stringify([pal.red, pal.green, pal.blue, pal.cyan, pal.magenta, pal.yellow]));
+const themeNow = await c.ev(`document.body.dataset.theme`);
+if (themeNow === 'light') {
+  ok('浅色主题：默认字色是深的，不是白纸白字',
+    lum(pal.white) < 0.55 && lum(pal.brightWhite) < 0.3,
+    JSON.stringify({ white: pal.white, brightWhite: pal.brightWhite, lum: [lum(pal.white), lum(pal.brightWhite)] }));
+  ok('浅色主题：终端底色是亮的（跟面板同色）', lum(pal.background) > 0.8, String(pal.background));
+} else {
+  ok('深色主题：默认字色是浅的', lum(pal.white) > 0.5 && lum(pal.brightWhite) > 0.7,
+    JSON.stringify({ white: pal.white, brightWhite: pal.brightWhite }));
+}
+ok('viewport 不再刷 xterm 写死的黑底（面板底部那条黑带）',
+  (await c.ev(`getComputedStyle(document.querySelector('.term-host.on .xterm .xterm-viewport')).backgroundColor`)) === 'rgba(0, 0, 0, 0)',
+  await c.ev(`getComputedStyle(document.querySelector('.term-host.on .xterm .xterm-viewport')).backgroundColor`));
+
 /* ---------- 3. 键盘路径与 Ctrl+C ----------
    和粘贴分开验：合批（8ms 攒一次 pty_write）一坏，往往只用其中一条还能用。
 
@@ -335,6 +370,34 @@ await c.ev(`window.__snp.term.close(${JSON.stringify(adminId)})`);
 await sleep(2000);
 ok('关掉管理员终端，helper 与 shell 一起收掉', ezProcs() < ezMid,
   JSON.stringify({ before: ezMid, after: ezProcs() }));
+
+/* ---------- 8.5 文件树右键：在此处打开终端 ----------
+   菜单是 DOM（不是 canvas），所以这一条能在真机上走完整链路：
+   右键一行 → 点菜单项 → 真的起一个 shell。 */
+
+await c.ev(`window.__snp.fileTree.setRoot('D:/dev/project/EZ/EZNotepad')`);
+await sleep(1400);
+const treeRows = await c.ev(`[...document.querySelectorAll('.ft-row .ft-name')].map((n) => n.textContent)`);
+ok('文件树挂上根了（右键用例的前提）', (treeRows || []).includes('src'), JSON.stringify((treeRows || []).slice(0, 6)));
+await c.ev(`(() => {
+  const row = [...document.querySelectorAll('.ft-row')].find((r) => r.querySelector('.ft-name').textContent === 'src');
+  if (row) row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 120, clientY: 220 }));
+  return !!row;
+})()`);
+await sleep(450);
+const rowMenu = await c.ev(`[...document.querySelectorAll('.ctx-menu .ctx-item')].map((n) => n.textContent.trim())`);
+ok('目录右键菜单有「在此处打开终端」', (rowMenu || []).includes('在此处打开终端'), JSON.stringify(rowMenu));
+const beforeTerm = (await ids()).length;
+await c.ev(`(() => {
+  const it = [...document.querySelectorAll('.ctx-menu .ctx-item')].find((n) => n.textContent.trim() === '在此处打开终端');
+  if (it) it.click();
+  return !!it;
+})()`);
+await sleep(2400);
+const afterTerm = await ids();
+ok('点了会开一个终端，面板跟着展开',
+  afterTerm.length === beforeTerm + 1 && (await visible()) === true,
+  JSON.stringify({ before: beforeTerm, after: afterTerm.length }));
 
 /* ---------- 9. 收尾 ---------- */
 await c.ev(`(() => { for (const id of window.__snp.term.ids()) window.__snp.term.close(id); return true; })()`);
