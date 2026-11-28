@@ -868,6 +868,37 @@ body.tab-dragging, body.tab-dragging * { cursor: grabbing !important; }
 .ft-add:hover { background: var(--bg-active); color: var(--fg); }
 .ft-add .ico { width: 13px; height: 13px; }
 
+/* ---- 拖动移动 ----
+   拖动中：源行压暗、合法落点描一圈强调色、非法落点描红、指针旁跟一个名字小签。
+   全部用现有令牌，不引新色值（拖一次不该让任何一块面看起来变了颜色）。
+   ⛔ 这里不要打算用 HTML5 拖放（draggable/drop）：Windows 上 Tauri 把整窗口的
+   拖放交给 OS，页面里一个 drag 事件都收不到 —— 见 filetree.js 的 _dragDown。 */
+body.ft-dragging { cursor: grabbing; user-select: none; }
+body.ft-dragging .ft-row,
+body.ft-dragging .ft-root { cursor: grabbing; }
+.ft-row.ft-drag-src { opacity: .38; }
+.ft-row.dir.ft-drop,
+.ft-root.ft-drop {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 var(--bw) var(--accent);
+  color: var(--fg);
+}
+.ft-row.dir.ft-drop-no,
+.ft-root.ft-drop-no {
+  background: var(--bg-hover);
+  box-shadow: inset 0 0 0 var(--bw) var(--danger-solid);
+}
+.ft-drag-chip {
+  position: fixed; left: 0; top: 0; z-index: 3200; pointer-events: none;
+  display: flex; align-items: center; gap: 5px; max-width: 240px;
+  padding: 3px 8px; border-radius: var(--r-1);
+  background: var(--bg-float); color: var(--fg);
+  box-shadow: 0 0 0 var(--bw) var(--line), var(--shadow-float);
+  font-size: var(--fs-1); line-height: 1.5;
+}
+.ft-drag-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ft-drag-chip .ft-ico { color: var(--fg-soft); }
+
 .ft-hit-file {
   display: flex; align-items: center; gap: 5px; width: 100%;
   margin-top: 4px; padding: 4px 6px; border: none; border-radius: var(--r-1);

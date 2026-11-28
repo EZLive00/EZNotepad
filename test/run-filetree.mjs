@@ -297,6 +297,26 @@ try {
   ok('空白处右键给「添加文件夹 / 刷新」', rootMenu.includes('添加文件夹…') && rootMenu.includes('刷新'), rootMenu.join(' | '));
   ok('空白处右键不再猜「哪个根」（没有新建项）', !rootMenu.includes('新建文件…'), rootMenu.join(' | '));
 
+  // ---- 根行右键：和普通目录行一样能「出去」 ----
+  /* 根行也是一个真实目录，复制路径 / 在资源管理器中显示 / 开终端这三件事
+     以前只给了子目录行，想复制根自己的路径反而要绕一圈 */
+  await ev(`document.querySelector('.ft-root').dispatchEvent(
+    new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 30, clientY: 20 }))`);
+  const rootRowMenu = await labels();
+  ok('根行右键有「复制文件路径 / 在资源管理器中显示」',
+    rootRowMenu.includes('复制文件路径') && rootRowMenu.includes('在资源管理器中显示'),
+    rootRowMenu.join(' | '));
+  ok('根行右键有「在此处打开终端」', rootRowMenu.includes('在此处打开终端'), rootRowMenu.join(' | '));
+  await ev(`window.__termDirs.length = 0; window.__copied = []; 1`);
+  await pick('在此处打开终端');
+  const rootTerm = await ev(`window.__termDirs.slice()`);
+  ok('根行开终端进的是根自己', JSON.stringify(rootTerm) === JSON.stringify(['C:/demo']), JSON.stringify(rootTerm));
+  await ev(`document.querySelector('.ft-root').dispatchEvent(
+    new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 30, clientY: 20 }))`);
+  await pick('复制文件路径');
+  const rootCopied = await ev(`window.__copied.slice(-1)[0]`);
+  ok('根行复制的是根自己的路径', rootCopied === 'C:/demo', JSON.stringify(rootCopied));
+
   // ---- 多根：一个侧栏同时挂两个目录 ----
   await ev(`window.__tree.addRoot('C:/work')`);
   await new Promise((r) => setTimeout(r, 180));
@@ -402,6 +422,94 @@ try {
   ok('移除根只留另一棵', afterRemove.roots === 1 && afterRemove.rows.includes('改名后.md'), JSON.stringify(afterRemove));
   ok('移除后根列表也同步出去',
     JSON.stringify(afterRemove.saved) === JSON.stringify(['C:/demo']), JSON.stringify(afterRemove.saved));
+
+  // ---- 拖动移动 ----
+  /* 拖动是 pointer 实现的：HTML5 拖放在 Windows 的 WebView2 里**一个事件都收不到**
+     （Tauri 的 dragDropEnabled 把整窗口的拖放交给 OS，见 filetree.js 的 _dragDown）。
+     这里按真实顺序派发 pointerdown → pointermove → pointerup，落点靠 elementFromPoint
+     判，所以行必须真的可见、坐标必须真的对得上。 */
+  await ev(`(async () => {
+    await window.__tree.setRoots(['C:/demo']);
+    window.__tree.expanded.clear();
+    for (const r of window.__tree.roots) window.__tree.expanded.add(r);
+    window.__tree.expanded.add('C:/demo/assets');
+    await window.__tree.render();
+    return 1;
+  })()`);
+  await new Promise((r) => setTimeout(r, 220));
+
+  const dragTo = (fromName, toName) => ev(`(() => {
+    const byName = (n) => [...document.querySelectorAll('.ft-row')]
+      .find((r) => r.querySelector('.ft-name').textContent === n);
+    const from = byName(${JSON.stringify(fromName)});
+    const to = [...document.querySelectorAll('.ft-row.dir, .ft-root')]
+      .find((r) => r.querySelector('.ft-name').textContent === ${JSON.stringify(toName)});
+    if (!from || !to) return { err: 'row missing' };
+    const pe = (type, x, y, extra = {}) => new PointerEvent(type, {
+      bubbles: true, cancelable: true, button: 0, buttons: 1,
+      clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse', ...extra,
+    });
+    const a = from.getBoundingClientRect();
+    const b = to.getBoundingClientRect();
+    const x0 = a.left + 20, y0 = a.top + a.height / 2;
+    const x1 = b.left + 20, y1 = b.top + b.height / 2;
+    const openedBefore = window.__opened.length;
+    from.dispatchEvent(pe('pointerdown', x0, y0));
+    document.dispatchEvent(pe('pointermove', x0 + 8, y0 + 6));
+    document.dispatchEvent(pe('pointermove', x1, y1));
+    const chip = !!document.querySelector('.ft-drag-chip');
+    const marked = [...document.querySelectorAll('.ft-drop')].map((r) => r.querySelector('.ft-name').textContent);
+    const blocked = [...document.querySelectorAll('.ft-drop-no')].map((r) => r.querySelector('.ft-name').textContent);
+    document.dispatchEvent(pe('pointerup', x1, y1, { buttons: 0 }));
+    /* 松手之后浏览器会补一个 click：不拦住就会顺手打开源文件 */
+    from.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    return { chip, marked, blocked, opened: window.__opened.length - openedBefore };
+  })()`);
+
+  // 1）往子目录里拖：高亮、真调用、提示、树里换位置
+  await ev(`window.__calls.length = 0; window.__renamed.length = 0; 1`);
+  const dropOk = await dragTo('改名后.md', 'assets');
+  ok('拖动时指针旁跟着一个名字小签', dropOk.chip === true, JSON.stringify(dropOk));
+  ok('合法落点高亮在目标目录上', JSON.stringify(dropOk.marked) === JSON.stringify(['assets']), JSON.stringify(dropOk));
+  ok('拖完那一下不顺手打开源文件', dropOk.opened === 0, JSON.stringify(dropOk));
+  await new Promise((r) => setTimeout(r, 300));
+  const moveCall = await ev(`window.__calls.filter((c) => c[0] === 'move').slice(-1)[0]`);
+  ok('拖动真的调了后端移动（源 → 目标目录）',
+    JSON.stringify(moveCall) === JSON.stringify(['move', 'C:/demo/改名后.md', 'C:/demo/assets']),
+    JSON.stringify(moveCall));
+  const moveToast = await ev(`window.__calls.filter((c) => c[0] === 'toast').slice(-1)[0]`);
+  ok('移动成功给出「已移动」', moveToast && moveToast[1] === '已移动', JSON.stringify(moveToast));
+  const movedTag = await ev(`window.__renamed.slice(-1)[0]`);
+  ok('打开着的标签跟着换路径（onRenamed 第三参表示是不是目录）',
+    JSON.stringify(movedTag) === JSON.stringify(['C:/demo/改名后.md', 'C:/demo/assets/改名后.md', false]),
+    JSON.stringify(movedTag));
+  const afterMove = await ev(`(() => {
+    const rows = [...document.querySelectorAll('.ft-row')];
+    const hits = rows.filter((r) => r.querySelector('.ft-name').textContent === '改名后.md');
+    /* 归谁管看它挂在哪个 .ft-kids 里，不看扁平列表的下一个 —— 兄弟容器的顺序
+       会把同层的所有行连成一片 */
+    const head = hits.length === 1 && hits[0].parentElement.classList.contains('ft-kids')
+      ? hits[0].parentElement.previousElementSibling : null;
+    return { count: hits.length, under: head ? head.querySelector('.ft-name').textContent : '' };
+  })()`);
+  ok('树里它已经挪到目标目录下面（不是复制出一份）',
+    afterMove.count === 1 && afterMove.under === 'assets', JSON.stringify(afterMove));
+
+  // 2）拖进自己的子目录：不许，标红且不出手
+  await ev(`window.__calls.length = 0; 1`);
+  const bad = await dragTo('assets', 'deep');
+  ok('目录拖进自己的子目录会被标红拒绝',
+    JSON.stringify(bad.blocked) === JSON.stringify(['deep']) && bad.marked.length === 0, JSON.stringify(bad));
+  await new Promise((r) => setTimeout(r, 200));
+  ok('拒绝时后端一次都没被调用', (await ev(`window.__calls.filter((c) => c[0] === 'move').length`)) === 0);
+
+  // 3）拖回原来的父目录：标红（这里放不了），松手不做事、不报错
+  await ev(`window.__calls.length = 0; 1`);
+  const same = await dragTo('deep', 'assets');
+  ok('拖回父目录只标红、不给可放置的暗示',
+    same.marked.length === 0 && JSON.stringify(same.blocked) === JSON.stringify(['assets']), JSON.stringify(same));
+  await new Promise((r) => setTimeout(r, 200));
+  ok('拖回原地后端没被调用', (await ev(`window.__calls.filter((c) => c[0] === 'move').length`)) === 0);
 
   // ---- 一个根都没有：给一个明显的入口 ----
   await ev(`window.__tree.setRoots([])`);

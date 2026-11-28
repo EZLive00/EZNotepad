@@ -1501,16 +1501,23 @@ const tree = new FileTree({
   /* 右键「历史版本」按被右键的那个路径列快照；那个文件可能没打开，
      不能偷懒复用只认 activeTab 的入口 */
   onHistory: (p, name) => showHistoryForPath(p, name),
-  /* 改名/删除要带着已打开的标签一起走，否则标签还指着旧路径，
-     下次保存就凭空造出一个同名文件（删除的情况则是把内容写回已删位置）。 */
-  onRenamed: (oldPath, newPath) => {
-    const t = tabs.find((x) => x.path === oldPath);
-    if (!t) return;
-    t.path = newPath;
-    t.name = be.baseName(newPath);
-    t.mtime = null;
-    t.extChanged = false;
-    currentLang = (t.name.split('.').pop() || '').toLowerCase();
+  /* 改名 / 移动要带着已打开的标签一起走，否则标签还指着旧路径，
+     下次保存就凭空造出一个同名文件（删除的情况则是把内容写回已删位置）。
+     `isDir` 为真时按前缀整段搬 —— 拖走一个目录，里面开着的文件全跟着换位置。 */
+  onRenamed: (oldPath, newPath, isDir) => {
+    const pre = String(oldPath).replace(/[\\/]+$/, '');
+    const hit = (p) => p === oldPath
+      || (isDir && (p.startsWith(pre + '\\') || p.startsWith(pre + '/')));
+    const moved = tabs.filter((t) => t.path && hit(t.path));
+    if (!moved.length) return;
+    for (const t of moved) {
+      t.path = newPath + t.path.slice(oldPath.length);
+      t.name = be.baseName(t.path);
+      t.mtime = null;
+      t.extChanged = false;
+    }
+    const cur = activeTab();
+    if (cur && cur.path) currentLang = (cur.name.split('.').pop() || '').toLowerCase();
     renderTabs();
     refreshTitle();
     syncWatches();

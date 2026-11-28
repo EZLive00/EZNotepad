@@ -216,6 +216,130 @@ fn rename_entry(path: String, new_name: String) -> Result<String, AppError> {
     Ok(dst.to_string_lossy().to_string())
 }
 
+/// 两个路径是不是同一个位置。
+///
+/// 走 `canonicalize` 而不是字面比较：`C:\a\.\b`、`D:/work` 与 `D:\work`、
+/// 结尾带不带分隔符，都是同一条路。Windows 的路径还不认大小写。
+fn same_path(a: &Path, b: &Path) -> bool {
+    if a == b {
+        return true;
+    }
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(x), Ok(y)) => {
+            #[cfg(windows)]
+            {
+                x.to_string_lossy().eq_ignore_ascii_case(&y.to_string_lossy())
+            }
+            #[cfg(not(windows))]
+            {
+                x == y
+            }
+        }
+        _ => false,
+    }
+}
+
+/// `p` 是否在 `dir` 里面（`dir` 自己不算）。两者都必须已经存在。
+fn is_inside(p: &Path, dir: &Path) -> bool {
+    match (p.canonicalize(), dir.canonicalize()) {
+        (Ok(cp), Ok(cd)) => cp != cd && cp.starts_with(&cd),
+        _ => false,
+    }
+}
+
+/// 这次 rename 失败是不是因为「跨卷」。
+///
+/// Windows 回 `ERROR_NOT_SAME_DEVICE`(17)，类 Unix 回 `EXDEV`(18)。这两种是
+/// **预期内**的失败（同一个硬盘里移动不会遇到），其余错误原样往上报。
+fn crosses_devices(e: &std::io::Error) -> bool {
+    match e.raw_os_error() {
+        Some(code) => {
+            #[cfg(windows)]
+            {
+                code == 17
+            }
+            #[cfg(not(windows))]
+            {
+                code == 18
+            }
+        }
+        None => false,
+    }
+}
+
+/// 递归复制（跨卷移动的兜底）。符号链接按它指向的内容复制，不重建链接 ——
+/// 记事本的树里几乎不会有链接，为此引入平台分支不值当。
+fn copy_tree(src: &Path, dst: &Path) -> std::io::Result<()> {
+    if fs::symlink_metadata(src)?.is_dir() {
+        fs::create_dir_all(dst)?;
+        for entry in fs::read_dir(src)? {
+            let entry = entry?;
+            copy_tree(&entry.path(), &dst.join(entry.file_name()))?;
+        }
+        Ok(())
+    } else {
+        fs::copy(src, dst).map(|_| ())
+    }
+}
+
+fn remove_tree(p: &Path) -> std::io::Result<()> {
+    if fs::symlink_metadata(p)?.is_dir() {
+        fs::remove_dir_all(p)
+    } else {
+        fs::remove_file(p)
+    }
+}
+
+/// 把条目移到另一个目录下（名字不变），返回新路径。
+///
+/// 和 `rename_entry` 只差目标位置：改名是同一个父目录换个名字，移动是换个
+/// 父目录 —— 文件树里拖一下走的就是它。
+///
+/// 跨盘（C: → D:）时 `fs::rename` 必然失败，改走「复制完再删源」，资源管理器
+/// 也是这么做的。删源失败会把刚复制的那份撤回：宁可什么都没发生，也不要留下
+/// 两处各一份（用户下次编辑哪一份都不知道）。
+#[tauri::command]
+fn move_entry(path: String, dest_dir: String) -> Result<String, AppError> {
+    let src = PathBuf::from(&path);
+    if !src.exists() {
+        return Err(AppError::new("entry.missing"));
+    }
+    let dest = PathBuf::from(&dest_dir);
+    if !dest.is_dir() {
+        return Err(AppError::new("dir.missing"));
+    }
+    let parent = src.parent().ok_or_else(|| AppError::new("entry.no_parent"))?;
+    /* 拖回原来的父目录是常见手滑：不算错，也不做任何事 */
+    if same_path(parent, &dest) {
+        return Ok(path);
+    }
+    /* 目录不能装进它自己（或它的子孙）—— 那会把整棵子树从自己的脚下抽走 */
+    if src.is_dir() && (same_path(&src, &dest) || is_inside(&dest, &src)) {
+        return Err(AppError::new("move.into_self"));
+    }
+    let name = src
+        .file_name()
+        .ok_or_else(|| AppError::new("entry.no_parent"))?
+        .to_string_lossy()
+        .to_string();
+    let dst = dest.join(&name);
+    if dst.exists() {
+        return Err(AppError::var("entry.exists", "name", &name));
+    }
+    match fs::rename(&src, &dst) {
+        Ok(()) => Ok(dst.to_string_lossy().to_string()),
+        Err(e) if crosses_devices(&e) => {
+            copy_tree(&src, &dst).map_err(|e| AppError::detail("io.move", e))?;
+            if let Err(e) = remove_tree(&src) {
+                let _ = remove_tree(&dst);
+                return Err(AppError::detail("io.move", e));
+            }
+            Ok(dst.to_string_lossy().to_string())
+        }
+        Err(e) => Err(AppError::detail("io.move", e)),
+    }
+}
+
 #[cfg(target_os = "windows")]
 fn delete_file_impl(p: &Path) -> Result<(), AppError> {
     use std::os::windows::ffi::OsStrExt;
@@ -1906,6 +2030,7 @@ pub fn run() {
             watch_files,
             create_entry,
             rename_entry,
+            move_entry,
             delete_entry,
             initial_files,
             initial_folders,
@@ -2120,5 +2245,47 @@ mod tests {
         assert!(np.ends_with(&format!("r{stamp}.md")));
         assert!(!Path::new(&p).exists());
         fs::remove_file(&np).unwrap();
+    }
+
+    #[test]
+    fn move_entry_into_folder_and_reject_self() {
+        let base = std::env::temp_dir().join(format!(
+            "ez-snp-move-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let into = base.join("into");
+        fs::create_dir_all(&into).unwrap();
+        let p = create_entry(base.to_string_lossy().to_string(), "a.md".into(), false).unwrap();
+
+        // 移进子目录：路径变了、内容还在、旧位置没有了
+        let np = move_entry(p.clone(), into.to_string_lossy().to_string()).unwrap();
+        assert!(np.ends_with("a.md"), "{np}");
+        assert!(Path::new(&np).is_file());
+        assert!(!Path::new(&p).exists());
+
+        // 拖回原来的目录 = 什么都没发生（返回原路径，不报「已存在」）
+        let same = move_entry(np.clone(), into.to_string_lossy().to_string()).unwrap();
+        assert_eq!(same, np);
+
+        // 目录不能塞进它自己的子目录
+        let sub = into.join("sub");
+        fs::create_dir_all(&sub).unwrap();
+        let err = move_entry(into.to_string_lossy().to_string(), sub.to_string_lossy().to_string())
+            .unwrap_err();
+        assert_eq!(err.code, "move.into_self");
+        assert!(into.is_dir());
+
+        // 目标里已经有同名的：拒绝，而不是覆盖
+        let other = base.join("other");
+        fs::create_dir_all(&other).unwrap();
+        fs::write(other.join("a.md"), b"x").unwrap();
+        let err = move_entry(np.clone(), other.to_string_lossy().to_string()).unwrap_err();
+        assert_eq!(err.code, "entry.exists");
+        assert_eq!(fs::read_to_string(other.join("a.md")).unwrap(), "x");
+
+        fs::remove_dir_all(&base).unwrap();
     }
 }

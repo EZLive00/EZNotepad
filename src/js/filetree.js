@@ -59,9 +59,10 @@ export class FileTree {
    *   menu     (x, y, items) => void           右键菜单（ui.js 的 contextMenu）
    *   ask      (title, label, value) => Promise<string|null>   文本输入框
    *   confirm  (title, html) => Promise<boolean>               二次确认
-  *   onRenamed (oldPath, newPath) => void     让打开着的标签跟着改名
+   *   onRenamed (oldPath, newPath, isDir?) => void  标签跟着改名 / 移动（目录要带 isDir）
    *   onDeleted (path) => void                 让打开着的标签脱离磁盘
    *   onReveal  (path) => void                 在资源管理器里定位
+   *   onTerm    (dir) => void                  在某个目录里打开终端
    *   onCompare (leftPath, rightPath) => void  多选两个文件后右键「比较」
    *   onHistory (path, name) => void          右键「历史版本」（按被右键的路径）
    */
@@ -105,6 +106,13 @@ export class FileTree {
       ev.preventDefault();
       this._blankMenu(ev);
     });
+    /* 拖动移动：整棵树共用一套监听（行会被重画，逐行挂会漏）。
+       ⛔ 不用 HTML5 拖放（draggable + dragstart/drop）：Windows 上 Tauri 的
+       `dragDropEnabled: true` 把整个窗口的拖放交给 OS，页面里**一个 drag 事件
+       都收不到** —— 能点能写、就是拖不动，还不报错（app.js 的 attachTabDrag
+       上面写着同一句话）。所以和标签一样自己跟 pointer 走。 */
+    this._drag = null;
+    this.body.addEventListener('pointerdown', (ev) => this._dragDown(ev));
   }
 
   /** 第一个根 —— 只给「当前能不能搜」这类判断用，别拿它当唯一根 */
@@ -541,6 +549,208 @@ export class FileTree {
     });
   }
 
+  /* ---------------- 拖动移动 ----------------
+     把一行拖到一个文件夹上松手 = 移动过去（换父目录、名字不变）。
+     根行只能当落点、不能当拖动源：拖根等于搬整棵树，误触代价太大。
+
+     判据全在这里，DOM 只用来找「指针下面是哪一行」。 */
+
+  /** 路径归一：只用来比较（分隔符两种写法都认，尾部斜杠不算） */
+  static _eq(a, b) {
+    const n = (p) => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '');
+    return n(a) === n(b);
+  }
+
+  /** 松手落在 `dest` 这个目录上，允不允许 */
+  _canDrop(st, dest) {
+    if (FileTree._eq(dest, st.path)) return false;              // 拖到自己身上
+    if (FileTree._eq(dest, parentOf(st.path))) return false;    // 原地：不会发生任何事
+    if (st.isDir) {
+      const d = String(dest).replace(/\\/g, '/').replace(/\/+$/, '');
+      const s = String(st.path).replace(/\\/g, '/').replace(/\/+$/, '');
+      if (d.startsWith(s + '/')) return false;                  // 塞进自己的子目录
+    }
+    return true;
+  }
+
+  _dragDown(ev) {
+    if (ev.button !== 0) return;
+    /* 上一次拖动没收到 pointerup（在窗口外松的手）—— 先把残局收掉 */
+    if (this._drag) this._dragEnd(this._drag, true);
+    const row = ev.target.closest && ev.target.closest('.ft-row');
+    if (!row) return;
+    /* 「＋」和折叠箭头有自己的语义，别把它们变成拖动的起点 */
+    if (ev.target.closest('.ft-add')) return;
+    const path = row.dataset.path;
+    if (!path) return;
+    const nameNode = row.querySelector('.ft-name');
+    const st = {
+      row,
+      path,
+      isDir: row.classList.contains('dir'),
+      name: nameNode ? nameNode.textContent : baseName(path),
+      x0: ev.clientX,
+      y0: ev.clientY,
+      active: false,
+      drop: null,
+      chip: null,
+      killClick: null,
+      killTimer: 0,
+      esc: null,
+    };
+    this._drag = st;
+    st.move = (e) => this._dragMove(st, e);
+    st.up = (e) => this._dragUp(st, e);
+    st.cancel = () => this._dragEnd(st, true);
+    document.addEventListener('pointermove', st.move);
+    document.addEventListener('pointerup', st.up);
+    document.addEventListener('pointercancel', st.cancel);
+    window.addEventListener('blur', st.cancel);
+  }
+
+  _dragMove(st, ev) {
+    /* 松手发生在窗口外时 up 送不到这里：按键已经抬起（buttons=0）就当取消，
+       否则提示条会一直挂在屏幕上等着下一次点击来收尸 */
+    if (ev.buttons === 0) { this._dragEnd(st, true); return; }
+    if (!st.active) {
+      /* 4px 之内仍算点击：手一抖就把单击变成拖动会很难用（同标签拖动） */
+      if (Math.hypot(ev.clientX - st.x0, ev.clientY - st.y0) < 4) return;
+      this._dragBegin(st);
+    }
+    ev.preventDefault();
+    st.chip.style.transform = `translate(${ev.clientX + 12}px, ${ev.clientY + 14}px)`;
+    this._dragHover(st, ev.clientX, ev.clientY);
+  }
+
+  _dragBegin(st) {
+    st.active = true;
+    document.body.classList.add('ft-dragging');
+    st.row.classList.add('ft-drag-src');
+    /* 多选里拖其中一行：这次只动这一行，把选择收束过来，
+       免得看起来像要把整组搬走 */
+    if (this.sel.size > 1) {
+      this.sel.clear();
+      this.sel.add(st.path);
+      this.anchor = st.path;
+      this._paintSel();
+    }
+    const chip = document.createElement('div');
+    chip.className = 'ft-drag-chip';
+    chip.innerHTML = icon(st.isDir ? 'folder' : 'file-text', 'ft-ico') + '<span></span>';
+    chip.querySelector('span').textContent = st.name;
+    document.body.append(chip);
+    st.chip = chip;
+    /* 松手之后浏览器还会补一个 click：不拦住就会顺手把源文件打开 / 把目录收起。
+       只拦这一次，350ms 后自动摘掉，别把之后的正常点击也吃掉 */
+    st.killClick = (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      this.body.removeEventListener('click', st.killClick, true);
+      st.killClick = null;
+    };
+    this.body.addEventListener('click', st.killClick, true);
+    st.killTimer = setTimeout(() => {
+      if (!st.killClick) return;
+      this.body.removeEventListener('click', st.killClick, true);
+      st.killClick = null;
+    }, 350);
+    st.esc = (e) => { if (e.key === 'Escape') this._dragEnd(st, true); };
+    document.addEventListener('keydown', st.esc);
+  }
+
+  _dragHover(st, x, y) {
+    const el = document.elementFromPoint(x, y);
+    const row = el && el.closest ? el.closest('.ft-row.dir, .ft-root') : null;
+    const dest = row ? row.dataset.path || '' : '';
+    const next = dest ? { row, dest, ok: this._canDrop(st, dest) } : null;
+    if (st.drop && (!next || st.drop.row !== next.row)) {
+      st.drop.row.classList.remove('ft-drop', 'ft-drop-no');
+    }
+    st.drop = next;
+    if (next) {
+      next.row.classList.remove('ft-drop', 'ft-drop-no');
+      next.row.classList.add(next.ok ? 'ft-drop' : 'ft-drop-no');
+    }
+  }
+
+  async _dragUp(st, ev) {
+    const wasActive = st.active;
+    const drop = st.drop;
+    this._dragEnd(st);
+    if (!wasActive) return;        // 没挪过 = 一次普通点击，交给 onclick
+    if (!drop || !drop.ok) return;
+    await this._moveTo({ path: st.path, name: st.name, is_dir: st.isDir }, drop.dest);
+  }
+
+  _dragEnd(st, cancelled = false) {
+    document.removeEventListener('pointermove', st.move);
+    document.removeEventListener('pointerup', st.up);
+    document.removeEventListener('pointercancel', st.cancel);
+    window.removeEventListener('blur', st.cancel);
+    if (st.esc) document.removeEventListener('keydown', st.esc);
+    document.body.classList.remove('ft-dragging');
+    st.row.classList.remove('ft-drag-src');
+    if (st.chip) st.chip.remove();
+    if (st.drop) st.drop.row.classList.remove('ft-drop', 'ft-drop-no');
+    clearTimeout(st.killTimer);
+    /* 取消（Esc / 指针丢掉）不会有 click，拦截器立刻摘掉最干净 */
+    if (cancelled && st.killClick) {
+      this.body.removeEventListener('click', st.killClick, true);
+      st.killClick = null;
+    }
+    st.active = false;
+    st.drop = null;
+    st.chip = null;
+    st.esc = null;
+    if (this._drag === st) this._drag = null;
+  }
+
+  /**
+   * 移动一个条目到 `destDir`。
+   *
+   * 后端只保证「要么移好了、要么原地不动」，所以这里不做乐观更新：成功之后
+   * 才刷源与目标两层，并把展开状态 / 多选 / 打开着的标签一起搬到新路径 ——
+   * 搬过的目录如果还开着，用户不该看到它「自己收起来了」。
+   */
+  async _moveTo(entry, destDir) {
+    const from = parentOf(entry.path);
+    let np = '';
+    try {
+      np = await this.be.moveEntry(entry.path, destDir);
+    } catch (e) {
+      this.toast(errText(e));
+      return false;
+    }
+    if (!np || FileTree._eq(np, entry.path)) return false;   // 拖回原地，什么都不发生
+    this._repath(entry.path, np);
+    /* 源和目标各刷一层；有一个是根就整棵重画（根那层没有可局部刷的容器） */
+    if (this.roots.includes(from) || this.roots.includes(destDir)) await this.render();
+    else {
+      await this._reloadDir(from);
+      await this._reloadDir(destDir);
+    }
+    /* 打开着的标签跟着走。目录要带 is_dir：里面可能开着文件，路径要跟着换前缀，
+       否则下次保存就写回已经不存在的旧位置 */
+    this.onRenamed(entry.path, np, !!entry.is_dir);
+    this.toast(tt('已移动'));
+    return true;
+  }
+
+  /** 把一个路径搬家的事告诉内部状态：展开过的子目录、多选、当前文件 */
+  _repath(from, to) {
+    const fix = (p) => {
+      if (!p) return p;
+      if (FileTree._eq(p, from)) return to;
+      const pre = String(from).replace(/[\\/]+$/, '');
+      if (p.startsWith(pre + '\\') || p.startsWith(pre + '/')) return to + p.slice(pre.length);
+      return p;
+    };
+    this.expanded = new Set([...this.expanded].map(fix));
+    this.sel = new Set([...this.sel].map(fix));
+    this.anchor = fix(this.anchor);
+    if (this.activePath) this.activePath = fix(this.activePath);
+  }
+
   _rowMenu(ev, entry) {
     if (!this.menu) return;
     /* 右键落在没被选中的文件上时，把选择收束到它 —— 否则「比较」会作用在
@@ -600,7 +810,13 @@ export class FileTree {
     this.toast(writeClipboard(path) ? tt('路径已复制') : tt('无法复制路径'));
   }
 
-  /** 根行右键：这个根自己的新建 / 刷新，加上全局的「添加文件夹」 */
+  /**
+   * 根行右键。
+   *
+   * 根行也是一个真实存在的目录，所以「复制路径 / 在资源管理器中显示 / 在此处
+   * 打开终端」这三件外出的动作和普通目录行完全一样 —— 以前只给了新建和刷新，
+   * 想复制这个根自己的路径反而要退回去开一个子目录。
+   */
   _rootRowMenu(ev, root) {
     if (!this.menu) return;
     const items = [
@@ -608,14 +824,17 @@ export class FileTree {
       { label: tt('新建文件夹…'), icon: 'folder-plus', action: () => this._create(root, true) },
       { sep: true },
       { label: tt('刷新'), icon: 'rotate-ccw', action: () => this.render() },
+      { sep: true },
+      { label: tt('复制文件路径'), icon: 'copy', action: () => this._copyPath(root) },
+      { label: tt('在资源管理器中显示'), icon: 'folder-open', action: () => this.onReveal(root) },
     ];
     if (this.onTerm) {
       items.push({ label: tt('在此处打开终端'), icon: 'terminal', action: () => this.onTerm(root) });
     }
+    items.push({ sep: true });
     if (this.onAddFolder) {
       items.push({ label: tt('添加文件夹…'), icon: 'folder-plus', action: () => this.onAddFolder() });
     }
-    items.push({ sep: true });
     items.push({ label: tt('移除这个文件夹'), icon: 'x', action: () => this._removeRootAsk(root) });
     this.menu(ev.clientX, ev.clientY, items);
   }
@@ -667,8 +886,11 @@ export class FileTree {
     if (!name || name === entry.name) return;
     try {
       const np = await this.be.renameEntry(entry.path, name);
+      /* 先搬状态再刷：目录改名时它下面那些「开着」的子目录也要跟着换前缀，
+         否则重放时找不到行，展开状态会被当成失效标记清掉 */
+      this._repath(entry.path, np);
       await this._reloadDir(parentOf(entry.path));
-      this.onRenamed(entry.path, np);
+      this.onRenamed(entry.path, np, !!entry.is_dir);
       this.toast(tt('已重命名'));
     } catch (e) {
       this.toast(errText(e));

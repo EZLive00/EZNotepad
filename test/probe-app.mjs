@@ -2595,6 +2595,79 @@ try {
         ftPasted === winFile, JSON.stringify({ got: ftPasted, want: winFile }));
     }
 
+    /* ---- 真机：拖动移动 ----
+       拖动是 pointer 实现的（HTML5 拖放在 Windows 的 WebView2 里一个事件都收不到，
+       Tauri 把整窗口的拖放交给 OS 了）。这里发**真实鼠标事件**，让浏览器自己派发
+       pointerdown/move/up —— 合成的 PointerEvent 不过命中测试，验不到
+       elementFromPoint 那条路，也验不到「松手后补的那个 click 有没有被拦住」。 */
+    const mvRoot = path.join(os.tmpdir(), 'eznotepad-probe', 'move');
+    fs.rmSync(mvRoot, { recursive: true, force: true });
+    fs.mkdirSync(path.join(mvRoot, 'to'), { recursive: true });
+    fs.writeFileSync(path.join(mvRoot, 'm.md'), '# m\n', 'utf8');
+    const wMv = mvRoot.replace(/\//g, '\\');
+    await ev(`(async () => { await window.__snp.setFolder(${JSON.stringify(wMv)}); return 1; })()`);
+    await sleep(650);
+    await ev(`document.querySelector('[data-side="files"]').click()`);
+    await sleep(320);
+
+    const mvBox = await ev(`(() => {
+      const rows = [...document.querySelectorAll('#ftBody .ft-row')];
+      const a = rows.find((r) => r.querySelector('.ft-name').textContent === 'm.md');
+      const b = rows.find((r) => r.classList.contains('dir') && r.querySelector('.ft-name').textContent === 'to');
+      if (!a || !b) return null;
+      const ra = a.getBoundingClientRect();
+      const rb = b.getBoundingClientRect();
+      return {
+        from: { x: Math.round(ra.left + 44), y: Math.round(ra.top + ra.height / 2) },
+        to: { x: Math.round(rb.left + 44), y: Math.round(rb.top + rb.height / 2) },
+      };
+    })()`);
+    ok('真机：拖动两头（文件行 / 目录行）都在树里', !!mvBox, JSON.stringify(mvBox));
+    if (mvBox) {
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: mvBox.from.x, y: mvBox.from.y, buttons: 0 });
+      await sleep(60);
+      await send('Input.dispatchMouseEvent',
+        { type: 'mousePressed', x: mvBox.from.x, y: mvBox.from.y, button: 'left', buttons: 1, clickCount: 1 });
+      for (let i = 1; i <= 6; i++) {
+        const x = Math.round(mvBox.from.x + ((mvBox.to.x - mvBox.from.x) * i) / 6);
+        const y = Math.round(mvBox.from.y + ((mvBox.to.y - mvBox.from.y) * i) / 6);
+        await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'left', buttons: 1 });
+        await sleep(35);
+      }
+      const marked = await ev(`[...document.querySelectorAll('#ftBody .ft-drop, #ftBody .ft-drop-no')]
+        .map((r) => r.querySelector('.ft-name').textContent)`);
+      ok('真机：拖到目录上会亮出落点', JSON.stringify(marked) === JSON.stringify(['to']), JSON.stringify(marked));
+      await send('Input.dispatchMouseEvent',
+        { type: 'mouseReleased', x: mvBox.to.x, y: mvBox.to.y, button: 'left', buttons: 0, clickCount: 1 });
+      await sleep(700);
+      const landed = fs.existsSync(path.join(mvRoot, 'to', 'm.md')) && !fs.existsSync(path.join(mvRoot, 'm.md'));
+      ok('真机：拖动在磁盘上真的把文件挪了位置', landed,
+        JSON.stringify({ root: fs.readdirSync(mvRoot), to: fs.readdirSync(path.join(mvRoot, 'to')) }));
+      ok('真机：移动成功后提示「已移动」',
+        /已移动/.test(String(await ev(`document.getElementById('toasts').textContent`))),
+        String(await ev(`document.getElementById('toasts').textContent`)));
+      ok('真机：拖完不顺手把源文件打开',
+        (await ev(`[...document.querySelectorAll('.tab')].some((t) => /m\\.md/.test(t.textContent))`)) === false);
+    }
+
+    /* 根行右键：根自己也是目录，外面的三个动作都要有 */
+    const rootBox = await ev(`(() => {
+      const r = document.querySelector('#ftBody .ft-root');
+      if (!r) return null;
+      const b = r.getBoundingClientRect();
+      return { x: Math.round(b.left + 40), y: Math.round(b.top + b.height / 2) };
+    })()`);
+    if (rootBox) {
+      await rightClickAt(rootBox.x, rootBox.y);
+      const rm = (await ctxLabels()).map((i) => i.label);
+      ok('真机：根行右键有「复制文件路径 / 在资源管理器中显示 / 在此处打开终端」',
+        rm.includes('复制文件路径') && rm.includes('在资源管理器中显示') && rm.includes('在此处打开终端'),
+        JSON.stringify(rm));
+      /* 走菜单自己的关闭路径（直接 remove DOM 会留下 document 上的捕获监听） */
+      await ev(`(() => { document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true })); return 1; })()`);
+      await sleep(120);
+    }
+
     /* ---- 多根：一个侧栏同时挂两个目录 ----
        真实入口（侧栏头的 ＋、拖目录进窗口）都要过系统对话框或原生拖放，
        自动化进不去 → 直接调 fileTree 的加根入口，验「加进去之后界面对不对」。 */

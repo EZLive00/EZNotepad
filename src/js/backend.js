@@ -149,6 +149,8 @@ export const watchFiles = (paths) => invoke('watch_files', { paths });
    名字只允许单层，路径分隔符由后端拒绝；删除进系统回收站。 */
 export const createEntry = (parent, name, dir) => invoke('create_entry', { parent, name, dir });
 export const renameEntry = (path, newName) => invoke('rename_entry', { path, newName });
+/** 移动到另一个目录（名字不变）→ 新路径。文件树里拖动走的是它 */
+export const moveEntry = (path, destDir) => invoke('move_entry', { path, destDir });
 export const deleteEntry = (path) => invoke('delete_entry', { path });
 
 /** 启动参数里带的文件（双击 .md 打开时由系统传进来） */

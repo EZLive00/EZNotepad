@@ -89,6 +89,21 @@ const be = {
     calls.push(['delete', p]);
     for (const k of Object.keys(fs)) fs[k] = fs[k].filter((e) => e.path !== p);
   },
+  /* 拖动移动：和真后端同形 —— 成功回新路径，失败抛 { code } 对象 */
+  moveEntry: async (p, destDir) => {
+    calls.push(['move', p, destDir]);
+    const name = p.split('/').pop();
+    let item = null;
+    for (const k of Object.keys(fs)) {
+      const i = fs[k].findIndex((e) => e.path === p);
+      if (i >= 0) { item = fs[k].splice(i, 1)[0]; break; }
+    }
+    if (!item) throw { code: 'entry.missing' };
+    if ((fs[destDir] || []).some((e) => e.name === name)) throw { code: 'entry.exists', vars: { name } };
+    const np = `${destDir}/${name}`;
+    (fs[destDir] = fs[destDir] || []).push({ ...item, path: np });
+    return np;
+  },
 };
 
 /* 行内动作都要走这四样：菜单、输入框、确认框、提示 */
@@ -107,7 +122,7 @@ const tree = new FileTree({
   onAddFolder: () => window.__added.push('add'),
   onRootsChanged: (roots) => { window.__roots = roots.slice(); },
   onOpen: (p) => window.__opened.push(p),
-  onRenamed: (a, b) => window.__renamed.push([a, b]),
+  onRenamed: (a, b, isDir) => window.__renamed.push([a, b, !!isDir]),
   onDeleted: (p) => window.__deleted.push(p),
   onCompare: (l, r) => window.__compared.push([l, r]),
   /* 「在此处打开终端」：这一页没有终端，只记下传进来的目录 */
