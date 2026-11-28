@@ -2,6 +2,10 @@
 // 只做网页端做不了的事：原生文件对话框、磁盘读写与编码转换、目录遍历。
 
 mod error;
+// 非文本文件的「看一眼」：类型探测、原始字节、压缩包浏览（只读、不解压到磁盘）
+mod media;
+// 内嵌终端的 pty 会话（ConPTY / forkpty）。和文件读写一样属于「网页端做不了的事」
+mod pty;
 
 use error::AppError;
 use serde::{Deserialize, Serialize};
@@ -19,7 +23,7 @@ struct ReadResult {
 }
 
 /// 用 encoding_rs 按顺序尝试解码，返回 (文本, 编码名)
-fn decode_bytes(bytes: &[u8]) -> (String, String, bool) {
+pub(crate) fn decode_bytes(bytes: &[u8]) -> (String, String, bool) {
     if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
         let (s, _, _) = encoding_rs::UTF_8.decode(&bytes[3..]);
         return (s.into_owned(), "UTF-8".into(), true);
@@ -563,7 +567,7 @@ fn write_binary_file(path: String, bytes: Vec<u8>) -> Result<String, AppError> {
 
 /* 导出单文件 HTML 时把图片内嵌成 data URI：不内嵌的话，
    另存到别处就只剩一堆断链。手写编码，省一个依赖。 */
-fn b64_encode(bytes: &[u8]) -> String {
+pub(crate) fn b64_encode(bytes: &[u8]) -> String {
     const T: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
@@ -1839,6 +1843,13 @@ async fn export_pdf(_window: tauri::WebviewWindow, _path: String) -> Result<(), 
 /// 菜单由前端 appmenu.js 渲染，命令仍统一走前端 commands 表。
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    /* 提权终端 helper：同一个 exe 的另一个角色，不建窗口、不跑 Tauri，
+       只把 ConPTY 和主进程那条 TCP 连起来。必须在建 Builder 之前分叉 ——
+       否则单实例插件会把这个「第二个进程」当成重复启动直接收编掉。 */
+    if let Some(args) = pty::host_args(std::env::args().skip(1)) {
+        pty::run_host(args);
+    }
+
     let app = tauri::Builder::default()
         /* 单实例要第一个装：得赶在窗口创建前认出「已经有一个在跑」，
            否则第二次双击会老老实实再起一个进程，两个窗口改同一个文件 */
@@ -1866,6 +1877,18 @@ pub fn run() {
         .manage(CompareRequest::default())
         .manage(FolderCompareRequest::default())
         .manage(TearoffState::default())
+        .manage(pty::PtyState::default())
+        /* 窗口被销毁时收掉它名下的终端：拆出去的窗口一关，里面那个
+           powershell 不该继续在后台跑。主窗口关掉但还有别的窗口在时
+           也走这条路（应用整体退出另由 RunEvent::Exit 兜底）。 */
+        .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                use tauri::Manager;
+                if let Some(st) = window.try_state::<pty::PtyState>() {
+                    pty::kill_owned_by(&st, window.label());
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             read_text_file,
             file_size,
@@ -1903,7 +1926,18 @@ pub fn run() {
             merge_tabs_to_main,
             close_tearoff_windows,
             export_pdf,
-            tool_set_fullscreen
+            tool_set_fullscreen,
+            /* 内嵌终端：一个 pty 会话一个 id，跨窗口共享（拆窗只改订阅方） */
+            pty::pty_shells,
+            pty::pty_open,
+            pty::pty_write,
+            pty::pty_resize,
+            pty::pty_kill,
+            pty::pty_retarget,
+            media::probe_file,
+            media::read_bytes_b64,
+            media::archive_list,
+            media::archive_read
         ])
         .setup(|app| {
             #[cfg(target_os = "windows")]
@@ -1921,7 +1955,17 @@ pub fn run() {
         .build(app_context())
         .expect("error while building tauri application");
 
-    app.run(|_, _| {});
+    /* 退出前把终端会话收干净：ConPTY 里的 shell 是独立进程，不主动杀会留在
+       后台（用户看到的是「应用关了，powershell 还在」）。RunEvent::Exit 是
+       最后一道口子，窗口逐个关掉时另有 kill_owned_by 兜着。 */
+    app.run(|app, event| {
+        if matches!(event, tauri::RunEvent::Exit) {
+            use tauri::Manager;
+            if let Some(st) = app.try_state::<pty::PtyState>() {
+                pty::kill_all(&st);
+            }
+        }
+    });
 }
 
 /// 建 Context 顺手把探针要的浏览器参数接上去。

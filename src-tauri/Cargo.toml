@@ -36,6 +36,19 @@ regex = "1"
 # 文件变化监听：只监听已打开文档所在目录这一层，靠系统原生的
 # ReadDirectoryChangesW / inotify，空闲时零 CPU。
 notify = "8"
+# 内嵌终端：pty 会话。Windows 上落到 ConPTY，Unix 上是 forkpty ——
+# 自己拿 windows-sys 糊一遍也能跑，但 STARTUPINFOEX 的属性表、句柄关闭顺序
+# 全是静默失败的高发区，用踩过坑的库更稳。
+portable-pty = "0.9.0"
+# pty 输出要按块送到前端，事件走 JSON：base64 是唯一既省体积又不会把
+# 多字节 UTF-8 从中间切断的编码。这棵树里已经有同版本在编译，不额外增重。
+base64 = "0.22"
+# 压缩包浏览。三件套都是纯 Rust：zip 用 deflate（不开 bzip2/zstd/aes，
+# 那些会拉 C 依赖、体积翻倍，而日常 .zip 几乎全是 deflate），tar 只做
+# 256 字节头解析，flate2 用 miniz_oxide 后端不需要 zlib。
+zip = { version = "2", default-features = false, features = ["deflate"] }
+tar = "0.4"
+flate2 = "1"
 
 # 无边框窗口的系统圆角（Win11 DWM）。只在 Windows 上参与编译。
 [target.'cfg(windows)'.dependencies]
@@ -48,6 +61,11 @@ windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Graphics_Dwm",
     "Win32_Graphics_Gdi",
+    # 管理员终端的 ShellExecuteExW(runas)：SHELLEXECUTEINFOW 里的 hkeyClass
+    # 让整个结构落在 Win32_System_Registry 后面，不开这个特性结构体不存在
+    "Win32_System_Registry",
+    # GetProcessId：拿到 helper 的 pid，收尾时 taskkill /T 才有目标
+    "Win32_System_Threading",
     "Win32_UI_HiDpi",
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",

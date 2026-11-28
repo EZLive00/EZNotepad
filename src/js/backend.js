@@ -96,6 +96,17 @@ export const writeBinary = (path, bytes) => invoke('write_binary_file', { path, 
 export const readFileBase64 = (path, maxBytes = 4 * 1024 * 1024) =>
   invoke('read_file_base64', { path, maxBytes });
 
+/* ---- 非文本文件的查看器 ---- */
+/** 认类型：读文件头 + 扩展名兜底，返回 { kind, format, mime, size, text, svg } */
+export const probeFile = (path) => invoke('probe_file', { path });
+/** 取一段原始字节（十六进制视图用），返回 base64 */
+export const readBytesB64 = (path, offset = 0, len = 64 * 1024) =>
+  invoke('read_bytes_b64', { path, offset, len });
+/** 列出压缩包条目（zip / tar / tar.gz），不往磁盘解压 */
+export const archiveList = (path) => invoke('archive_list', { path });
+/** 从压缩包里抽一个条目，返回 { kind, text, b64, size, truncated } */
+export const archiveRead = (path, entry, maxBytes) => invoke('archive_read', { path, entry, maxBytes });
+
 const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'ico', 'avif'];
 
 /** 选一张本地图片（不复制，只返回路径） */
@@ -157,6 +168,16 @@ export const exportPdf = (path) => invoke('export_pdf', { path });
    速记的文件位置由后端决定（应用数据目录下固定一份），前端不拼路径：
    这样「换个平台数据目录该在哪」只有一处答案，也不需要用户选位置。 */
 export const quickNotePath = () => invoke('quick_note_path');
+
+/* ---------------- 内嵌终端 ----------------
+   一个 pty 会话一个 id。数据从 `pty:data` 事件回流（base64，见 term.js），
+   这里只负责开 / 写 / 改尺寸 / 关 / 换窗口。 */
+export const ptyShells = () => invoke('pty_shells');
+export const ptyOpen = (opts) => invoke('pty_open', { opts });
+export const ptyWrite = (id, data) => invoke('pty_write', { id, data });
+export const ptyResize = (id, cols, rows) => invoke('pty_resize', { id, cols, rows });
+export const ptyKill = (id) => invoke('pty_kill', { id });
+export const ptyRetarget = (id, owner) => invoke('pty_retarget', { id, owner });
 
 /* ---------------- 本地历史 ----------------
    每次保存前把旧内容留一份，存在应用数据目录（不进文档目录，不污染仓库） */

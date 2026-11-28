@@ -1,10 +1,10 @@
 // ============================================================
-// test/run-probe.mjs —— 七个真机探针，只起一次应用
+// test/run-probe.mjs —— 九个真机探针，只起一次应用
 //
 // 每个探针单独跑都要「起应用 → 收应用」，而应用的 WebView2 每次会话都会
 // 写/删一批日志与锁文件（本机删除全部进回收站）。探针的数据目录已经挪到
 // %TEMP%（SGuard 不备份那里的删除），但一次会话仍然是几十次文件操作，
-// 能少开就少开。这里先起一次、七个探针共用（NO_LAUNCH=1 让它们别自己起），
+// 能少开就少开。这里先起一次、九个探针共用（NO_LAUNCH=1 让它们别自己起），
 // runner 退出时统一收，也省掉六次冷启动。
 //
 // probe-fcmp 排在最后：它会开一扇文件夹对比窗、还会开一次文本对比，
@@ -16,8 +16,13 @@
 import { spawnSync } from 'node:child_process';
 import { ensureApp } from './lib/appctl.mjs';
 
+/* 一次起、九个探针共用。终端那条要验管理员模式，而自动化里没人能点 UAC
+   —— 这个变量让 admin 会话跳过「提权」那一句 ShellExecuteExW，握手 / 两条
+   连接 / 帧格式 / 收尾全照走。必须在 ensureApp 之前设，应用才吃得到。 */
+process.env.EZNOTEPAD_PTY_NO_ELEVATE = '1';
+
 const PORT = Number(process.env.CDP_PORT || 9333);
-const PROBES = ['probe-app', 'probe-bmenu', 'probe-ctx', 'probe-compare', 'probe-undo', 'probe-quicknote', 'probe-fcmp'];
+const PROBES = ['probe-app', 'probe-bmenu', 'probe-ctx', 'probe-compare', 'probe-undo', 'probe-quicknote', 'probe-term', 'probe-fcmp', 'probe-media'];
 
 const app = await ensureApp(PORT);
 console.log(app.reused ? `复用已在端口 ${PORT} 的应用` : `已启动应用（pid ${app.pid}）`);

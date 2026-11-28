@@ -1377,6 +1377,242 @@ body[data-zen="1"] .titlebar:hover .brand,
 body[data-zen="1"] .titlebar:hover .win-ctrl { opacity: 1; }
 body[data-zen="1"] .win-title { color: var(--fg-faint); }
 
+/* ================= 内嵌终端 ================= */
+/* 面板挂在 workspace 与状态栏之间：正文让出高度，它自己 flex: none。
+   底色用「坑」（--bg-well，比纸面低一步）—— 终端是往后退的一层，
+   不能和正文抢注意力。 */
+.term-panel {
+  flex: none; display: flex; flex-direction: column;
+  height: 260px; min-height: 120px;
+  background: var(--bg-well);
+  border-top: var(--bw) solid var(--line-strong);
+  position: relative;
+}
+.term-panel.hidden { display: none; }
+
+/* 拖高：6px 的命中区，视觉上只有悬停时才显形（常驻一条会像分隔线） */
+.term-grip {
+  position: absolute; top: -3px; left: 0; right: 0; height: 7px;
+  cursor: row-resize; z-index: 3;
+}
+.term-grip::after {
+  content: ''; position: absolute; left: 0; right: 0; top: 3px; height: 2px;
+  background: transparent; transition: background 120ms linear;
+}
+.term-grip:hover::after { background: var(--accent); }
+
+.term-head {
+  flex: none; height: 30px; display: flex; align-items: center;
+  gap: 4px; padding: 0 6px 0 8px;
+  background: var(--bg-side);
+  border-bottom: var(--bw) solid var(--line);
+}
+.term-tabs { display: flex; align-items: center; gap: 2px; flex: 1; min-width: 0; overflow-x: auto; }
+.term-tabs::-webkit-scrollbar { height: 0; }
+
+/* 标签沿用 .tab 的形态，但字号小一档：终端是次要工作面 */
+.term-tab {
+  display: flex; align-items: center; gap: 6px; flex: none;
+  height: 22px; padding: 0 4px 0 7px; border: none; background: transparent;
+  border-radius: var(--r-1); color: var(--fg-soft);
+  font-size: var(--fs-1); max-width: 220px;
+}
+.term-tab .tt-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.term-tab:hover { background: var(--bg-hover); color: var(--fg); }
+.term-tab.on { background: var(--bg-active); color: var(--fg); }
+.term-tab.dead { opacity: .55; }
+/* 管理员会话要一眼认出来：强调色描一道，标题也是「（管理员）」 */
+.term-tab.admin { color: var(--accent); box-shadow: inset 0 0 0 var(--bw) var(--accent-solid); }
+.term-tab .ico { width: 13px; height: 13px; opacity: .8; }
+
+.term-tab .tt-x {
+  display: grid; place-items: center; width: 16px; height: 16px;
+  border-radius: var(--r-1); opacity: 0;
+}
+.term-tab:hover .tt-x, .term-tab.on .tt-x { opacity: .65; }
+.term-tab .tt-x:hover { opacity: 1; background: var(--bg-active); }
+.term-tab .tt-x .ico { width: 11px; height: 11px; }
+
+.term-acts { display: flex; align-items: center; gap: 2px; flex: none; }
+.term-btn {
+  display: grid; place-items: center; width: 22px; height: 22px;
+  border: none; background: transparent; border-radius: var(--r-1);
+  color: var(--fg-soft);
+}
+.term-btn:hover { background: var(--bg-hover); color: var(--fg); }
+.term-btn .ico { width: 13px; height: 13px; }
+
+.term-body { flex: 1; min-height: 0; position: relative; }
+.term-host { position: absolute; inset: 0; display: none; padding: 4px 6px; }
+.term-host.on { display: block; }
+
+/* xterm 自己带了一套内边距与滚动条样式，这里只把它的滚动条收窄一号，
+   免得在 260px 高的面板里占掉一条 */
+.term-host .xterm { height: 100%; }
+.term-host .xterm-viewport::-webkit-scrollbar { width: 8px; }
+.term-host .xterm-viewport::-webkit-scrollbar-thumb {
+  background: var(--bg-active); border-radius: 4px;
+}
+
+/* 拖动分隔线时全局禁用选择，否则会一路选到正文里去 */
+body.resizing-v { cursor: row-resize; user-select: none; }
+
+/* ================= 文件查看器 =================
+   非文本文件的只读视图（图片 / 音视频 / 字体 / 压缩包 / 十六进制）。
+   与编辑器互斥地占满正文区：edit-wrap 收起时这块接管，外层只负责铺满，
+   留白交给内容自己决定。 */
+.viewer-pane {
+  flex: 1; min-height: 0; display: flex; flex-direction: column;
+  background: var(--bg-panel);
+}
+.viewer-pane.hidden { display: none; }
+.vw { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+/* 工具条：和查找条同一层，不抢正文的注意力 */
+.vw-bar {
+  flex: none; height: 34px; display: flex; align-items: center; gap: 2px;
+  padding: 0 10px; min-width: 0;
+  border-bottom: var(--bw) solid var(--line);
+  background: var(--bg-side);
+}
+.vw-btn {
+  height: 24px; min-width: 24px; padding: 0 8px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+  border: none; border-radius: var(--r-1); background: transparent;
+  color: var(--fg-soft); font-size: var(--fs-1); white-space: nowrap;
+}
+.vw-btn:hover { background: var(--bg-hover); color: var(--fg); }
+.vw-btn.primary {
+  background: var(--accent-solid); color: var(--accent-fg); padding: 0 12px; height: 28px;
+}
+.vw-btn.primary:hover { background: var(--accent-solid-hover); }
+.vw-spacer { flex: 1; }
+
+/* 舞台：图片和音视频都放这里。棋盘格只用在这一层，说明「透明是透明的」 */
+.vw-stage {
+  flex: 1; min-height: 0; overflow: auto; padding: 12px;
+  /* safe center：图片比舞台大时退化成「从左上开始」，
+     普通 center 会把左侧和上方溢出到滚不到的地方 */
+  display: grid; place-items: safe center;
+}
+.vw-image .vw-stage {
+  background-color: var(--bg-panel);
+  background-image:
+    linear-gradient(45deg, var(--bg-soft) 25%, transparent 25%, transparent 75%, var(--bg-soft) 75%),
+    linear-gradient(45deg, var(--bg-soft) 25%, transparent 25%, transparent 75%, var(--bg-soft) 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 8px 8px;
+}
+.vw-image .vw-stage.grabbing { cursor: grabbing; }
+.vw-img {
+  display: block; max-width: none; user-select: none;
+  /* 放大后边缘会有半像素发虚，给一条极淡的边界让它在浅底上「站住」 */
+  box-shadow: 0 0 0 var(--bw) var(--line);
+}
+/* 归档里的图片没有缩放，就按舞台宽高收着 */
+.vw-img.in-archive { max-width: 100%; max-height: 100%; box-shadow: none; }
+
+.vw-audio { width: min(560px, 100%); }
+.vw-video { max-width: 100%; max-height: 100%; background: #000; }
+
+/* 底部一行元信息：宽度、体积、格式 */
+.vw-foot {
+  flex: none; height: 26px; display: flex; align-items: center;
+  padding: 0 12px; font-size: var(--fs-1); color: var(--fg-faint);
+  border-top: var(--bw) solid var(--line); background: var(--bg-side);
+}
+
+/* ---- 空态 / 错误态 ---- */
+.vw-empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 8px; padding: 40px 20px; color: var(--fg-faint); font-size: var(--fs-2);
+  text-align: center;
+}
+.vw-empty-t { color: var(--fg); font-size: var(--fs-3); }
+.vw-empty-s { color: var(--fg-faint); font-size: var(--fs-1); max-width: 42ch; line-height: 1.6; }
+
+/* ---- 提示条（条目太大 / 只显示前一段） ---- */
+.vw-note {
+  flex: none; margin: 8px 12px 0; padding: 6px 10px; border-radius: var(--r-1);
+  background: var(--chg-bg); color: var(--chg-fg); font-size: var(--fs-1);
+}
+.vw-note[hidden] { display: none; }
+
+/* ---- 字体样张 ---- */
+/* 字体样张与十六进制都不走 .vw-stage 那套 grid 居中：
+   grid + place-items:center 会把内容按 max-content 收窄再居中，
+   长行十六进制和被截短，样张也会缩在中间。各自铺满即可 */
+.vw-font-stage, .vw-hex-stage {
+  flex: 1; min-height: 0; overflow: auto; padding: 12px;
+}
+.vw-font-name {
+  font-size: var(--fs-1); color: var(--fg-faint); margin: 0 0 18px;
+  padding-bottom: 8px; border-bottom: var(--bw) solid var(--line);
+}
+.vw-font-row { line-height: 1.25; margin-bottom: 10px; color: var(--fg); }
+
+/* ---- 压缩包 ---- */
+.vw-crumbs {
+  display: flex; align-items: center; gap: 1px; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.vw-crumb {
+  border: none; background: transparent; padding: 2px 4px; border-radius: var(--r-1);
+  color: var(--fg-soft); font-size: var(--fs-2); max-width: 220px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.vw-crumb:hover { background: var(--bg-hover); color: var(--fg); }
+.vw-crumb:last-of-type { color: var(--fg); }
+.vw-crumb-sep { color: var(--fg-faint); font-size: var(--fs-1); }
+.vw-count { font-size: var(--fs-1); color: var(--fg-faint); margin-left: 8px; white-space: nowrap; }
+
+.vw-filter {
+  width: 168px; height: 24px; padding: 0 8px;
+  border: var(--bw) solid var(--line-strong); border-radius: var(--r-1);
+  background: var(--bg-float); color: var(--fg); font-size: var(--fs-1);
+  outline: none;
+}
+.vw-filter:focus { border-color: var(--accent-solid); }
+
+.vw-list { flex: 1; min-height: 0; overflow: auto; padding: 4px 0; }
+.ar-row {
+  width: 100%; display: grid; grid-template-columns: 18px minmax(0, 1fr) 88px 132px;
+  align-items: center; gap: 8px; height: 28px; padding: 0 12px;
+  border: none; background: transparent; text-align: left;
+  font-size: var(--fs-2); color: var(--fg);
+}
+.ar-row:hover { background: var(--bg-hover); }
+.ar-row.dir .ar-name { color: var(--fg); }
+.ar-ico { display: grid; place-items: center; color: var(--fg-faint); }
+.ar-ico .ico { width: 14px; height: 14px; }
+.ar-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ar-size, .ar-time {
+  font-size: var(--fs-1); color: var(--fg-faint);
+  text-align: right; overflow: hidden; white-space: nowrap;
+}
+
+/* ---- 归档里的条目预览 ---- */
+.vw-entry { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.vw-entry-head {
+  flex: none; display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px; border-bottom: var(--bw) solid var(--line);
+}
+.vw-entry-name { font-size: var(--fs-2); color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vw-entry-meta { font-size: var(--fs-1); color: var(--fg-faint); margin-left: auto; white-space: nowrap; }
+/* 不用 grid 居中：文本预览必须从左上角起排，只有图片才该居中。
+   图片用 margin auto，两边的行为各自成立 */
+.vw-entry-body {
+  flex: 1; min-height: 0; overflow: auto; padding: 12px;
+}
+.vw-entry-body > img { display: block; margin: 0 auto; }
+
+/* 文本与十六进制都是等宽，左边的行号感靠 padStart 撑，不用额外 DOM */
+.ar-text, .ar-hex {
+  margin: 0; font-family: var(--font-mono); font-size: 12.5px; line-height: 1.5;
+  color: var(--fg); white-space: pre; tab-size: 2;
+}
+.ar-hex { color: var(--fg-soft); }
+
 /* ================= 状态栏 ================= */
 /* 与正文同色，分界只靠这道 1px 上边线 */
 .statusbar {
@@ -1475,6 +1711,9 @@ body[data-zen="1"] .win-title { color: var(--fg-faint); }
 .merge-result .warn { color: var(--chg-fg); font-weight: 600; }
 .dlg-text { font-size: var(--fs-2); line-height: 1.75; color: var(--fg-soft); }
 .dlg-text b { color: var(--fg); }
+/* 「用系统程序打开？」弹层里的文件名：正文字色、稍重、和下面的问句分开一点。
+   路径/文件名是这块的唯一变量，不强调的话两行会读成一句话。 */
+.dlg-name { font-weight: 600; color: var(--fg); margin-bottom: 4px; }
 .dlg-input {
   width: 100%; margin-top: 6px; padding: 6px 9px; font-size: var(--fs-2);
   color: var(--fg); background: var(--bg-well);

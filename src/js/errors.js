@@ -87,6 +87,24 @@ export const ERR_TEXT = {
   'tearoff.empty': '要拖出去的标签是空的',
   'app.emit': '无法把文件交给主窗口：{detail}',
   'state.lock': '内部状态异常，请重试',
+
+  /* ---- 内嵌终端 ---- */
+  'term.no_shell': '找不到这个 shell，可能在系统里没装',
+  'term.missing': '这个终端已经不在运行了',
+  'term.spawn': '终端启动失败：{detail}',
+  'term.write': '往终端写入失败：{detail}',
+  'term.resize': '调整终端尺寸失败：{detail}',
+
+  /* ---- 文件查看器（probe / 压缩包） ---- */
+  'media.unsupported': '暂时不支持浏览这种压缩格式',
+  'media.bad_archive': '压缩包读取失败：{detail}',
+  'media.entry_missing': '压缩包里没有这个条目：{name}',
+  'media.too_large': '这个文件太大，无法在程序内查看（上限 {mb} MB）',
+  'media.zip_bomb': '这个条目解压后异常巨大，已拒绝解压',
+  'term.no_admin': '这个平台还不支持管理员终端',
+  'term.bad_helper': '终端后台进程没有正常连接，请重试',
+  'term.elevate': '无法以管理员身份启动终端：{detail}',
+  'term.elevate_cancelled': '已取消提权，终端没有打开',
 };
 
 /* 后端错误对象的判据：有 code、没有 message。用过的 Error（含这里翻过的）

@@ -22,6 +22,7 @@ import { iconHTML, setIcon } from './icons.js';
 import { createAppMenu } from './appmenu.js';
 import * as domfind from './domfind.js';
 import { FileTree } from './filetree.js';
+import * as viewer from './viewer.js';
 import { showHistory } from './history.js';
 import { freeUntitledName, moveById } from './taborder.js';
 import { isTearoffLabel, leftTabbar, hitsRect, tabSeed } from './tearoff.js';
@@ -32,6 +33,7 @@ import { tt, setLang, resolveLang, getLang, applyDom, LANGS } from './i18n.js';
 import { errText } from './errors.js';
 import { manualDoc } from './manual.js';
 import { writeClipboard } from './clipboard.js';
+import { initTerm, toggleTerm, termHasFocus, termVisible, relayoutTerm, refreshTermTheme, openTerm, closeTerm, termScreen, termIds, termSend } from './term.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -50,6 +52,7 @@ const el = {
   mid: $('midSplitter'),
   outlineSplitter: $('outlineSplitter'),
   editorPane: $('editorPane'),
+  viewerPane: $('viewerPane'),
   modeLabel: $('modeLabel'),
   modeIcon: $('modeIcon'),
   modeMenu: $('modeMenu'),
@@ -125,6 +128,8 @@ function applyTheme() {
     resetDiagramCache();
     schedulePreview();
   }
+  /* 终端的配色是实例属性（xterm 不会自己读 CSS 变量），换主题时单独刷一遍 */
+  refreshTermTheme();
 }
 
 /* ---------------- WYSIWYG ---------------- */
@@ -889,6 +894,9 @@ function activate(id) {
   const t = activeTab();
   renderTabs();
   if (!t) { clearView(); return; }
+  /* 查看器标签（图片 / 压缩包 / 音视频…）不走编辑器的那套：模式、光标、大纲、
+     查找在这里都没有意义。整块正文区交给 viewer，然后直接返回。 */
+  if (t.viewer) { showViewer(t); tree.setActive(t.path); saveDraft(); return; }
   currentLang = (t.name.split('.').pop() || '').toLowerCase();
   const kind = detectKind(t.name);
   const allowed = modesFor(kind);
@@ -906,6 +914,9 @@ function activate(id) {
 
 function clearView() {
   renderedTabId = null;
+  viewer.clear(el.viewerPane);
+  el.viewerPane.classList.add('hidden');
+  el.editWrap.classList.remove('hidden');
   plain.load('');
   wys.clearBlockSel();      // 编辑区被整批换掉，块选中态不该残留
   wys.clearSelMatchNow();   // 编辑区被清空，全局的高亮注册表不会自己消失
@@ -914,6 +925,31 @@ function clearView() {
   el.preview.__pvText = null;   // 容器被换掉了，预览的内容签名也要一起作废
   el.outlineList.innerHTML = '<div class="outline-empty">' + tt('新建或打开一个文件开始。') + '</div>';
   el.fmtBadge.textContent = '—';
+}
+
+/**
+ * 查看器标签上台：正文区整个交给 viewer。
+ *
+ * setMode 平时做的收尾（模式标签、大纲、状态栏）在这里要自己做一遍 ——
+ * 它每一行都假定「有个编辑器要装内容」，而这里根本没有。
+ * 先显示再渲染：图片的「适应窗口」要量舞台尺寸，藏在 display:none 里量出来是 0。
+ */
+function showViewer(t) {
+  renderedTabId = null;          // 编辑器里装的不是它，任何序列化路径都该让开
+  el.editWrap.classList.add('hidden');
+  el.viewerPane.classList.remove('hidden');
+  el.previewPane.classList.add('hidden');
+  el.mid.classList.add('hidden');
+  el.editorPane.classList.remove('hidden');
+  el.editorPane.style.flex = '1';
+  if (!el.findbar.classList.contains('hidden')) closeFind();
+  viewer.render(t, el.viewerPane);
+  el.modeLabel.textContent = tt('查看');
+  setIcon(el.modeIcon, 'eye');
+  updateModeMenu('viewer', []);
+  updateOutline();
+  refreshStats();
+  updateStatus();
 }
 
 /* 编辑器里现在**显示着**的是哪个标签的内容。
@@ -932,6 +968,7 @@ let renderedTabId = null;
  *  自己判 mode 就会去空的预览容器里查标题、把滚动量记到错的容器上。 */
 function viewKindOf(t = activeTab()) {
   if (!t) return 'none';
+  if (t.viewer) return 'viewer';
   if (t.mode === 'wysiwyg') return 'wys';
   if (t.mode === 'preview' && detectKind(t.name) === 'md') return 'preview';
   return 'editor';
@@ -940,6 +977,16 @@ function viewKindOf(t = activeTab()) {
 function setMode(mode, opt = {}) {
   const t = activeTab();
   if (!t) return;
+  /* 查看器标签没有模式可切：Ctrl+1/2/3、模式菜单、命令面板全汇到这里，
+     一律忽略（按钮那边已经置灰，这里是兜底）。 */
+  if (t.viewer) return;
+  /* 从查看器回到文本文档：把正文区收回来，并把图片/视频的 src 撤掉，
+     否则关掉查看器后大图还挂在 DOM 上占着解码后的内存 */
+  if (!el.viewerPane.classList.contains('hidden')) {
+    viewer.clear(el.viewerPane);
+    el.viewerPane.classList.add('hidden');
+  }
+  el.editWrap.classList.remove('hidden');
   /* 内置手册是只读的：模式下拉里另外两项点了也切不过去，
      否则用户一进编辑模式就能改，改完又没处保存，只会变成一肚子疑问。
      ⛔ 别把 toast 关在「t.mode !== 'preview'」后面 —— 手册本来就是预览模式，
@@ -1191,7 +1238,11 @@ function updateOutline() {
     outlineSig = '';
     outlineNodes = [];
     outlineActive = -1;
-    el.outlineList.innerHTML = '<div class="outline-empty">' + (outlineEmptyHint()[kind] || tt('当前文件没有可提取的结构。')) + '</div>';
+    /* 查看器里的文件（图片 / 压缩包 / 二进制）根本没「章节」这回事，
+       别拿 txt 那句「未发现章节标记」去解释一张 png */
+    const hint = t.viewer ? tt('这个文件没有大纲。')
+      : (outlineEmptyHint()[kind] || tt('当前文件没有可提取的结构。'));
+    el.outlineList.innerHTML = '<div class="outline-empty">' + hint + '</div>';
     return;
   }
   /* 结构没变就别重建 DOM：改正文时标题几乎不动，而重建 600 个按钮
@@ -2026,6 +2077,13 @@ function refreshStats() {
   /* 渐进载入进行中别覆盖「载入中…」：大文档上这次调用会落在载入冻结期，
      把进度文字冲掉后，完成前的状态栏就一直是假数据 */
   if (wys.loading) return;
+  /* 查看器没有行列可数：左边放文件类型，右边放体积/尺寸，中间留空 */
+  if (t.viewer) {
+    el.stLines.textContent = viewer.kindName(t.viewer.info);
+    el.stWords.textContent = '';
+    el.stChars.textContent = viewer.statusText(t);
+    return;
+  }
   const { lines, words, chars } = countStats(t.content);
   el.stLines.textContent = tt('{n} 行', { n: lines });
   el.stWords.textContent = tt('{n} 字', { n: words });
@@ -2085,6 +2143,18 @@ function syncSelCount() {
 function updateStatus() {
   const t = activeTab();
   if (!t) { syncHist(); return; }
+  if (t.viewer) {
+    /* 换行符/编码对一张图没有意义，别把上一个文档的 LF / UTF-8 留在那儿 */
+    /* 格式只出现在徽章上：换行符/编码两个槽在查看器里都没有意义，
+       填成同一个格式会变成「ZIP …… ZIP」，一行里说两遍 */
+    el.stEOL.textContent = '—';
+    el.stEncoding.textContent = '—';
+    el.fmtBadge.textContent = (t.viewer.info.format || '').toUpperCase() || '—';
+    el.stPos.hidden = true;
+    renderTabs();
+    syncHist();
+    return;
+  }
   el.stEOL.textContent = t.eol;
   el.stEncoding.textContent = t.encoding;
   el.fmtBadge.textContent = kindLabel(detectKind(t.name));
@@ -2342,21 +2412,6 @@ export async function openPath(path) {
   const qp = quickPath || await quickFile().catch(() => null);
   if (qp && path === qp) return openQuickNote();
 
-  /* PDF 这类二进制只读格式：在点开文件的入口就交给系统默认阅读器，本程序
-     不建标签。按文本读会直接报 file.binary；就算硬塞进标签，草稿/localStorage、
-     保存、格式化、查找、外部改动重载都会把它当文本处理，改动面大且容易串档。
-     文件树 / 拖放 / 命令行 / 最近打开都汇到 openPath，这一处分流全部覆盖。 */
-  if (externalFileKind(path)) {
-    try {
-      await be.openExternal(path);
-      addRecent(path);
-      toast(tt('已用系统默认程序打开 PDF：{name}', { name: be.baseName(path) }));
-    } catch (e) {
-      dialog({ title: tt('无法打开'), body: errText(e) });
-    }
-    return null;
-  }
-
   const existing = tabs.find((t) => t.path === path);
   if (existing) {
     /* 已是当前标签就别再 activate —— activate 会整篇重渲染，
@@ -2365,6 +2420,30 @@ export async function openPath(path) {
     if (!act || act.id !== existing.id) activate(existing.id);
     return existing;
   }
+
+  /* 本程序打不开的格式：**问一句**再交给系统，不自己偷偷拉别的程序。
+     以前 PDF 是直接 openExternal —— 用户点一个文件，屏幕上突然冒出 Edge，
+     既不知道是谁打开的，也不知道程序为什么不自己显示，看着就像程序坏了。
+     文件树 / 拖放 / 命令行 / 最近打开都汇到 openPath，这一处分流全部覆盖。 */
+  if (externalFileKind(path)) {
+    await askSystemOpen(path, 'pdf');
+    return null;
+  }
+
+  /* 先认类型再决定用哪条路读。以前这里一律 readText，于是一张 png 点开
+     就弹「这是二进制文件」—— 文件明明是好的，用户只会以为程序坏了。
+     探测本身失败（文件没了 / 没有权限）不在这里报错：交给下面的 readText
+     报它那个更具体的错误（io.read 带系统原因）。 */
+  let info = null;
+  try { info = await be.probeFile(path); } catch { info = null; }
+  if (info && info.kind === 'office') return askSystemOpen(path, 'office').then(() => null);
+  /* 压缩包分两种：能进查看器的直接开；7z/rar 这类我们解不了的先问，
+     省得开出一个只说「打不开」的空标签。 */
+  if (info && info.kind === 'archive' && !viewer.canBrowseArchive(info)) {
+    return askSystemOpen(path, 'archive').then(() => null);
+  }
+  if (info && !info.text) return newViewerTab(info);
+
   try {
     const r = await be.readText(path);
     // 先拿到修改时间再建标签：否则「刚打开就被自己当成外部改动」
@@ -2373,9 +2452,93 @@ export async function openPath(path) {
     addRecent(path);
     return t;
   } catch (e) {
+    /* 探测没给出答案（老文件 / 探测失败），但按文本读出来是二进制：
+       同样是「本程序打不开」，问一句再交系统，别直接甩一个错误框 */
+    if (e && e.code === 'file.binary') { await askSystemOpen(path, 'binary'); return null; }
     dialog({ title: tt('无法打开'), body: errText(e) });
     return null;
   }
+}
+
+/**
+ * 「本程序打不开，要不要用系统程序打开？」
+ *
+ * 两件事要分清：**本程序打不开** 和 **本程序不替用户做决定**。点一下就无声地
+ * 启动别的程序，用户既不知道是谁开的，也不知道为什么本程序不肯自己显示；
+ * 更糟的是误点一次（比如手滑点了个 exe 旁边的文件）根本没法拦。
+ * 所以所有交系统的路径都先过这里，确认之后才 openExternal。
+ *
+ * 返回 true = 已经交给系统了；false = 用户取消 / 系统那边也打不开。
+ *
+ * 排队：一次可能来好几个打不开的文件（拖一组、命令行一串、文件关联多选）。
+ * `dialog()` 是单例浮层，第二个弹层会直接盖掉第一个的 DOM，而第一个的 Promise
+ * 再也不会 resolve（`await openPath` 就永远挂在那儿）。所以这里串成一条链，
+ * 问完一个再问下一个。
+ */
+let askQueue = Promise.resolve();
+
+function askSystemOpen(path, why) {
+  const run = () => askSystemOpenNow(path, why);
+  const p = askQueue.then(run, run);
+  askQueue = p.catch(() => { /* 一次问崩了不能拖住后面排队的 */ });
+  return p;
+}
+
+async function askSystemOpenNow(path, why) {
+  const reason = {
+    pdf: tt('本程序不内置 PDF 阅读器。'),
+    office: tt('本程序不直接打开 Office 文档。'),
+    archive: tt('本程序还打不开这种压缩包。'),
+  }[why] || tt('本程序打不开这个文件。');
+
+  /* 正文用 DOM 拼（textContent）：文件名里带 < > & 的时候，拼 HTML 会被当标签，
+     路径里这些都是合法字符。 */
+  const body = document.createElement('div');
+  const nameEl = document.createElement('div');
+  nameEl.className = 'dlg-text dlg-name';
+  nameEl.textContent = be.baseName(path);
+  const whyEl = document.createElement('div');
+  whyEl.className = 'dlg-text';
+  whyEl.textContent = reason + tt('要交给系统里默认关联的程序打开吗？');
+  body.append(nameEl, whyEl);
+
+  const r = await dialog({
+    title: tt('用系统程序打开？'),
+    body,
+    buttons: [
+      { id: 'ok', label: tt('用系统程序打开'), primary: true, key: 'Y' },
+      { id: 'cancel', label: tt('取消'), key: 'N' },
+    ],
+  });
+  if (r !== 'ok') return false;
+  try {
+    await be.openExternal(path);
+    addRecent(path);
+    return true;
+  } catch (e) {
+    dialog({ title: tt('无法打开'), body: errText(e) });
+    return false;
+  }
+}
+
+/**
+ * 开一个查看器标签：只读，没有正文。
+ *
+ * content 故意留空 —— isDirty 是「content !== savedContent」，空对空恒不脏，
+ * 于是自动保存、关标签确认、草稿这些路径天然绕开它，不用到处加判断。
+ * 真正的数据在 t.viewer 里：探测结果 + 归档的浏览状态（当前目录/筛选/条目）。
+ */
+function newViewerTab(info) {
+  const t = createTab(info.name, '', info.path);
+  t.viewer = { info, entries: null, prefix: '', filter: '', entry: null };
+  t.mode = 'viewer';
+  t.readonly = true;
+  t.mtime = info.mtime ? info.mtime * 1000 : null;
+  tabs.push(t);
+  activate(t.id);
+  syncWatches();
+  addRecent(info.path);
+  return t;
 }
 
 async function openFileDialog() {
@@ -2385,6 +2548,8 @@ async function openFileDialog() {
 
 async function saveTab(t = activeTab(), saveAs = false, opts = {}) {
   if (!t) return false;
+  /* 查看器是只读的：Ctrl+S 在这里不该有任何反应，也别去动磁盘上的原文件 */
+  if (t.viewer) return false;
   /* 速记没有保存对话框这条路：它的位置是固定的，写就是了 */
   if (t.quickNote) return quickNoteSaveNow(t, saveAs);
   const silent = !!opts.silent;
@@ -3443,6 +3608,9 @@ function openCompareWindow() {
 function openFind(expand) {
   const t = activeTab();
   if (!t) return;
+  /* 查看器里没有可查找的文本（归档内部有自己的筛选框）。
+     静默不响应比弹一条「不能查找」好 —— 用户只是误按了 Ctrl+F。 */
+  if (t.viewer) return;
   el.findbar.classList.remove('hidden');
   if (expand != null) setFindExpanded(expand);
   // 「选区内」只在真的选了东西时才可用，否则勾了也没意义还让人困惑
@@ -4092,6 +4260,15 @@ function activePath() {
   return t.path || (t.quickNote ? quickPath || '' : '');
 }
 
+/** 终端的起始目录：当前文档所在目录 > 侧栏第一个根 > 空（交给后端用主目录）。
+ *  这个顺序比「永远从主目录开」有用得多 —— 绝大多数时候你是在这篇笔记的
+ *  目录里跑脚本、看产物。 */
+function terminalCwd() {
+  const p = activePath();
+  if (p) return be.dirName(p);
+  return (tree && tree.roots && tree.roots[0]) || '';
+}
+
 const commands = {
   new: newFilePrompt,
   open: openFileDialog,
@@ -4229,6 +4406,9 @@ const commands = {
     if (on) toast(tt('已进入全屏，按 F11 退出'));
   },
   toggleZen: () => toggleZen(),
+  /* 内嵌终端：开/收面板。真正的进程在 Rust 侧（src-tauri/src/pty.rs），
+     这一条只管面板显隐 —— 收起终端不杀会话，再展开还是原来那个 shell。 */
+  toggleTerm: () => toggleTerm(),
   zoomIn: () => zoom(1),
   zoomOut: () => zoom(-1),
   zoomReset: () => { settings.fontSize = DEFAULTS.fontSize; saveSettings(); applyFont(); },
@@ -4449,6 +4629,10 @@ const menuTree = () => [
   {
     label: tt('工具'),
     items: [
+      /* 终端放在工具菜单第一项：它是「干活的地方」，和排序/去重那些
+         处理文本的动作不是一类，但需要伸手就到 */
+      { id: 'toggleTerm', label: tt('终端'), kbd: 'Ctrl+`', checked: () => termVisible() },
+      { sep: true },
       { id: 'palette', label: tt('命令面板…'), kbd: 'Ctrl+Shift+P' },
       { sep: true },
       { id: 'format', label: tt('一键格式化'), kbd: 'Ctrl+Alt+L', disabled: () => !hasTab() },
@@ -6012,7 +6196,22 @@ function recordCombo(cb) {
 
 function setupKeys() {
   window.addEventListener('keydown', (e) => {
-    /* 自定义键位最优先：命中就执行并结束，不再往下走 */
+    /* ① 终端拿着键盘时，全局快捷键必须整体让路。
+       shell 里 Ctrl+C 是中断、Ctrl+W 删词、Ctrl+K 删到行尾、Ctrl+A 到行首、
+       Ctrl+L 清屏、Tab 是补全 —— 这里拦一个，那边就少一个功能，
+       而且用户看到的是「Ctrl+C 停不掉命令」这种没法解释的现象。
+       唯一保留的是「收起/展开终端」自己，否则开进去就出不来。
+       （自定义键位也在这条之后 —— 用户把命令绑到 Ctrl+T 上时，
+       在终端里按 Ctrl+T 仍该交给 shell。） */
+    if (termHasFocus()) {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.code === 'Backquote') {
+        e.preventDefault();
+        toggleTerm();
+      }
+      return;
+    }
+
+    /* ② 自定义键位：命中就执行并结束，不再往下走 */
     const combo = comboOf(e);
     const map = keymap();
     if (Object.prototype.hasOwnProperty.call(map, combo)) {
@@ -6082,6 +6281,9 @@ function setupKeys() {
     else if (k === 'tab') cycleTab(shift ? -1 : 1);
     else if (k === 'p' && shift) openPalette();
     else if (k === 'p') commands.exportPdf();
+    /* Ctrl+` = 终端（VSCode / Windows Terminal 同一个键位）。
+       用 e.code 判：某些输入法布局下 ` 的 e.key 不是反引号 */
+    else if (e.code === 'Backquote' && !shift) commands.toggleTerm();
     else handled = false;
     if (handled) e.preventDefault();
   });
@@ -6222,6 +6424,15 @@ async function boot() {
   updateOutline();
   applyZen();
 
+  /* 内嵌终端：这里只接线，不起进程。用户按 Ctrl+` 才会真的开一个 shell ——
+     「一开应用后台就躺着个 powershell」属于自作主张。 */
+  await initTerm({ getCwd: terminalCwd }).catch((e) => console.warn('[term]', e));
+  window.addEventListener('resize', () => relayoutTerm());
+  /* 图片解码完才知道真实尺寸，查看器在那时补发一次：状态栏要写上「200 × 120」 */
+  window.addEventListener('ez:viewer-stats', () => {
+    if (activeTab() && activeTab().viewer) { refreshStats(); updateStatus(); }
+  });
+
   window.addEventListener('beforeunload', () => { persistCurrentView(); if (!discardOnQuit) saveDraft(); });
 
   /* Alt+F4 / 任务栏关闭不走标题栏那个按钮，不拦一下就绕过上面那套检查 */
@@ -6305,6 +6516,70 @@ window.__snp = {
     list: (p) => be.listHistory(p),
     read: (p) => be.readHistory(p),
     clear: (p) => be.clearHistory(p),
+  },
+  /* 探针：终端要验的是「pty 真的起来了、字节真的回流了、关掉进程真的没了」，
+     这些都只能从外面问。给出打开/关闭入口和当前屏幕文本的读取点。 */
+  term: {
+    open: (o) => openTerm(o),
+    close: (id) => closeTerm(id),
+    visible: () => termVisible(),
+    screen: (id) => termScreen(id),
+    ids: () => termIds(),
+    send: (t, id) => termSend(t, id),
+  },
+  /* 查看器的调试面：真机探针靠它拿类型、缩放、归档状态，不必去猜 DOM */
+  viewer: {
+    info: () => {
+      const t = activeTab();
+      return t && t.viewer ? t.viewer.info : null;
+    },
+    visible: () => !!(activeTab() && activeTab().viewer),
+    state: () => {
+      const t = activeTab();
+      if (!t || !t.viewer) return null;
+      const v = t.viewer;
+      return {
+        kind: v.info.kind,
+        format: v.info.format,
+        prefix: v.prefix || '',
+        entry: v.entry || null,
+        entries: (v.entries || []).length,
+        scale: (t.vstate && t.vstate.scale) || 0,
+        natural: (t.vstate && t.vstate.natural) || null,
+        hexLines: (document.querySelector('#viewerPane .ar-hex') || {}).textContent
+          ? document.querySelector('#viewerPane .ar-hex').textContent.split('\n').length
+          : 0,
+      };
+    },
+    /* 归档内部跳转（探针用；界面上是点行） */
+    enter: (name) => {
+      const t = activeTab();
+      if (!t || !t.viewer) return false;
+      t.viewer.prefix = String(name).endsWith('/') ? String(name) : String(name) + '/';
+      t.viewer.entry = null;
+      const host = el.viewerPane;
+      host.__vwKey = null;
+      viewer.render(t, host);
+      return true;
+    },
+    openEntry: (name) => {
+      const t = activeTab();
+      if (!t || !t.viewer) return false;
+      const row = el.viewerPane.querySelector('.ar-row[data-name="' + CSS.escape(String(name)) + '"]');
+      if (row) { row.click(); return true; }
+      return false;
+    },
+    setZoom: (s) => {
+      const t = activeTab();
+      if (!t || !t.viewer) return 0;
+      t.vstate = t.vstate || {};
+      t.vstate.fit = false;
+      t.vstate.scale = s;
+      const host = el.viewerPane;
+      host.__vwKey = null;
+      viewer.render(t, host);
+      return s;
+    },
   },
 };
 window.__merge = merge;

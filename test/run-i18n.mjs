@@ -117,9 +117,17 @@ ok('getLang 与 setLang 一致', (setLang('ja'), getLang() === 'ja'));
   /* 没收录的码要露出去（宁可看到码，不要静默吞） */
   eq('未知错误码露出码本身', errText({ code: 'io.foo', detail: 'boom' }), '[io.foo] boom');
 
-  /* 后端回的码必须前后端对得上：Rust 源里的 code 字符串都要能查到模板 */
-  const rs = (await import('node:fs')).readFileSync(new URL('../src-tauri/src/lib.rs', import.meta.url), 'utf8');
+  /* 后端回的码必须前后端对得上：Rust 源里的 code 字符串都要能查到模板。
+     ⚠️ 要扫**整个 src 目录**，不是只扫 lib.rs —— pty.rs 里的 term.spawn /
+     term.missing 就这么从这个测试的缝里漏过去过一次（code 露出去没人发现）。 */
+  const fsMod = await import('node:fs');
+  const rsDir = new URL('../src-tauri/src/', import.meta.url);
+  const rs = fsMod.readdirSync(rsDir)
+    .filter((f) => f.endsWith('.rs'))
+    .map((f) => fsMod.readFileSync(new URL(f, rsDir), 'utf8'))
+    .join('\n');
   const rsCodes = [...new Set([...rs.matchAll(/AppError::\w+\(\s*"([a-z_.]+)"/g)].map((m) => m[1]))];
+  ok('Rust 错误码扫到了（不是空集）', rsCodes.length > 20);
   eq('Rust 侧每个错误码前端都有模板', rsCodes.filter((c) => !ERR_TEXT[c]), []);
 }
 

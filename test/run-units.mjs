@@ -22,6 +22,7 @@ import { appIconSvg, brandSprite } from '../scripts/app-icon.mjs';
 import { splitFrontmatter, parseFrontmatter, inlineTags, allTags } from '../src/js/frontmatter.js';
 import { isTearoffLabel, leftTabbar, hitsRect, tabSeed } from '../src/js/tearoff.js';
 import { inBarBand, planDrop } from '../src/js/tabdrag.js';
+import { sizeText, hexDump, visibleEntries, crumbsOf, canBrowseArchive } from '../src/js/viewer.js';
 
 const out = [];
 const eq = (name, got, want) => out.push({ name, ok: JSON.stringify(got) === JSON.stringify(want), got, want });
@@ -1313,6 +1314,74 @@ eq('没有标签给 null', tabSeed(null, false), null);
     ["'使用手册'", "'使用手册.md'", "'内置手册不能关闭'", "'内置手册是只读的'"]
       .every((k) => dictSrc.includes(k)));
 }
+
+/* ---------- 文件查看器：纯逻辑 ---------- */
+/* 体积格式化：不到 1 KB 按整数 B，之后一位小数；过 100 之后不再要小数
+   （「1024.0 MB」那位小数没有任何信息量） */
+eq('体积 0', sizeText(0), '0 B');
+eq('体积 1023 字节', sizeText(1023), '1023 B');
+eq('体积 1 KB', sizeText(1024), '1.0 KB');
+eq('体积 1.5 KB', sizeText(1536), '1.5 KB');
+eq('体积 1 MB', sizeText(1024 * 1024), '1.0 MB');
+eq('体积过 100 收成整数', sizeText(150 * 1024 * 1024), '150 MB');
+eq('体积 1 GB', sizeText(1024 ** 3), '1.0 GB');
+eq('体积空值当 0', sizeText(null), '0 B');
+
+/* 十六进制：一行 16 字节，地址 8 位大写十六进制，ASCII 侧栏不可见字符打点 */
+{
+  const bytes = new Uint8Array(18);
+  bytes[0] = 0x4d; bytes[1] = 0x5a; bytes[15] = 0x90; bytes[16] = 0x41; bytes[17] = 0x00;
+  const lines = hexDump(bytes).split('\n');
+  eq('十六进制行数（18 字节 → 2 行）', lines.length, 2);
+  ok('第一行地址是 00000000', lines[0].startsWith('00000000  '));
+  ok('第一行含 MZ 的十六进制', lines[0].includes('4d 5a'));
+  ok('第一行 ASCII 侧栏显示 MZ', lines[0].includes('|MZ'));
+  ok('不可见字节（0x90）在 ASCII 栏打点', lines[0].includes('.') && lines[0].includes('|MZ'));
+  ok('第二行地址是 00000010', lines[1].startsWith('00000010  '));
+  eq('空输入不出行', hexDump(new Uint8Array(0)), '');
+}
+
+/* 归档列表分层：只显示当前这一层的直接子项，目录去重、目录排前面 */
+{
+  const entries = [
+    { name: 'a.txt', size: 10, packed: 8, mtime: 0 },
+    { name: 'sub/b.json', size: 20, packed: 12, mtime: 0 },
+    { name: 'sub/deep/c.md', size: 30, packed: 15, mtime: 0 },
+    { name: 'z.png', size: 40, packed: 40, mtime: 0 },
+  ];
+  eq('根层只出现 a.txt、sub/、z.png，且目录在最前',
+    visibleEntries(entries, '', '').map((e) => e.name),
+    ['sub/', 'a.txt', 'z.png']);
+  eq('进 sub 后只出现 deep/ 与 b.json',
+    visibleEntries(entries, 'sub/', '').map((e) => e.name),
+    ['sub/deep/', 'sub/b.json']);
+  eq('进 deep 后只有 c.md',
+    visibleEntries(entries, 'sub/deep/', '').map((e) => e.name),
+    ['sub/deep/c.md']);
+  eq('筛选只看这一层', visibleEntries(entries, '', 'z').map((e) => e.name), ['z.png']);
+  eq('筛选大小写不敏感', visibleEntries(entries, '', 'A.TXT').map((e) => e.name), ['a.txt']);
+  eq('没有匹配就是空', visibleEntries(entries, '', 'nope').length, 0);
+  eq('前缀不匹配的条目被丢掉', visibleEntries(entries, 'other/', '').length, 0);
+}
+
+/* 面包屑：每段带着累积前缀，点哪一段都能回去 */
+eq('面包屑三段', crumbsOf('a/b/c.txt'), [
+  { label: 'a', prefix: 'a/' },
+  { label: 'b', prefix: 'a/b/' },
+  { label: 'c.txt', prefix: 'a/b/c.txt/' },
+]);
+eq('面包屑空路径', crumbsOf(''), []);
+
+/* 哪些压缩格式能在程序里浏览。这份白名单同时决定 openPath 是「直接开」还是
+   「先问一句要不要交系统」，所以只认 media.rs 真能解的那三种。 */
+ok('zip 能浏览', canBrowseArchive({ kind: 'archive', format: 'zip' }));
+ok('tar 能浏览', canBrowseArchive({ kind: 'archive', format: 'tar' }));
+ok('tar.gz（探测成 gz）能浏览', canBrowseArchive({ kind: 'archive', format: 'gz' }));
+ok('格式大小写不敏感', canBrowseArchive({ kind: 'archive', format: 'ZIP' }));
+ok('7z 不能浏览（要走「问一句」）', !canBrowseArchive({ kind: 'archive', format: '7z' }));
+ok('rar 不能浏览', !canBrowseArchive({ kind: 'archive', format: 'rar' }));
+ok('图片不是压缩包', !canBrowseArchive({ kind: 'image', format: 'zip' }));
+ok('没有探测结果时不能浏览', !canBrowseArchive(null));
 
 /* ---------- 汇总 ---------- */
 const fail = out.filter((r) => !r.ok);

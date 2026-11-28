@@ -38,6 +38,11 @@ export const DEFAULTS = {
   zen: false,           // 专注模式：只留标题栏和正文
   watchFiles: true,     // 监听磁盘上的改动（别的程序改了文件实时提示）
   keymap: {},           // 自定义快捷键：{ 'mod+shift+k': 'commandId' }，优先于默认键位
+  /* 内嵌终端：只记「面板多高」和「上次用的 shell」。
+     不记「上次开着没」—— 一开应用就在后台起一个 shell 属于自作主张，
+     用户没按 Ctrl+` 就不该有进程。 */
+  termHeight: 260,
+  termShell: 'powershell',
   __v: 5,               // 设置版本：默认值变更时 +1，触发下面的迁移
 };
 

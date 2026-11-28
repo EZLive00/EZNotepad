@@ -11,6 +11,9 @@ import { runPage } from './harness.mjs';
 
 const THEME = process.env.THEME || 'light';
 const out = [];
+/* Node 侧等待：别用页面里的 setTimeout —— headless 里它会被节流，
+   而探针还要靠它等弹层动画。 */
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const ok = (name, pass, extra = '') => out.push({ name, pass, extra });
 
 const { ev, send, close } = await runPage({
@@ -823,16 +826,75 @@ try {
 
     const tabsBefore = await ev(`document.querySelectorAll('.tab').length`);
     await ev('window.__calls.length = 0');
-    await ev(`window.__snp.openPath('C:/tmp/手册.PDF')`);
+    /* 不能 await：openPath 要等用户在弹层上点完才 resolve，await 会一直挂着 */
+    await ev(`void window.__snp.openPath('C:/tmp/手册.PDF')`);
+    await sleep(240);
     const calls = await ev(`window.__calls.slice()`);
     const tabsAfter = await ev(`document.querySelectorAll('.tab').length`);
     ok('打开 PDF 不建标签、也不去按文本读取',
       tabsAfter === tabsBefore && !calls.includes('read_text_file'),
       JSON.stringify({ tabsBefore, tabsAfter, calls }));
-    ok('打开 PDF 调的是系统默认程序',
-      calls.includes('plugin:opener|open_path'), JSON.stringify(calls));
-    ok('给了明确提示，不会以为点了没反应',
-      (await ev(`[...document.querySelectorAll('.toast')].map(t => t.textContent).join('|')`)).includes('手册.PDF'));
+    ok('打开 PDF 不直接调系统程序（先问一句）',
+      !calls.includes('plugin:opener|open_path'), JSON.stringify(calls));
+
+    const d = await ev(`(() => {
+      const o = document.getElementById('dlgOverlay');
+      if (!o || o.classList.contains('hidden')) return null;
+      const btns = [...document.querySelectorAll('#dlgFoot button')];
+      return {
+        title: document.getElementById('dlgTitle').textContent,
+        body: document.getElementById('dlgBody').textContent,
+        labels: btns.map((b) => b.textContent),
+        keys: btns.map((b) => b.dataset.key || ''),
+      };
+    })()`);
+    ok('弹层问「用系统程序打开？」并写清是哪个文件、为什么不自己开',
+      !!d && /用系统程序打开/.test(d.title) && /手册\.PDF/.test(d.body) && /PDF 阅读器/.test(d.body),
+      d && JSON.stringify(d));
+    ok('按钮是「用系统程序打开 / 取消」，带 Y / N 键帽（键盘能走完）',
+      !!d && d.labels[0] === '用系统程序打开' && d.labels[1] === '取消'
+      && d.keys[0] === 'Y' && d.keys[1] === 'N', d && JSON.stringify(d));
+
+    /* 取消 = 什么都没发生 */
+    await ev(`[...document.querySelectorAll('#dlgFoot button')].find((b) => /取消/.test(b.textContent)).click()`);
+    await sleep(240);
+    ok('取消后没有调系统程序',
+      !(await ev(`window.__calls.slice()`)).includes('plugin:opener|open_path'),
+      JSON.stringify(await ev(`window.__calls.slice()`)));
+    ok('取消后弹层关掉、也没建标签',
+      (await ev(`document.getElementById('dlgOverlay').classList.contains('hidden')`)) === true
+      && (await ev(`document.querySelectorAll('.tab').length`)) === tabsBefore);
+
+    /* 确认 = 这时候才真的交出去 */
+    await ev(`void window.__snp.openPath('C:/tmp/手册.PDF')`);
+    await sleep(240);
+    await ev(`[...document.querySelectorAll('#dlgFoot button')].find((b) => /用系统程序打开/.test(b.textContent)).click()`);
+    await sleep(300);
+    ok('确认后才调系统默认程序',
+      (await ev(`window.__calls.slice()`)).includes('plugin:opener|open_path'),
+      JSON.stringify(await ev(`window.__calls.slice()`)));
+    ok('确认后仍然不建标签（PDF 不在本程序里开）',
+      (await ev(`document.querySelectorAll('.tab').length`)) === tabsBefore);
+
+    /* 排队：拖一组 PDF 进来时，第二个弹层不许盖掉第一个 ——
+       盖掉之后第一个的 Promise 永远不 resolve，`await openPath` 那条链就卡死了。 */
+    await ev(`void window.__snp.openPath('C:/tmp/甲.pdf')`);
+    await ev(`void window.__snp.openPath('C:/tmp/乙.pdf')`);
+    await sleep(320);
+    const firstBody = await ev(`document.getElementById('dlgBody').textContent`);
+    ok('同时来两个：先问第一个，不叠层', /甲\.pdf/.test(firstBody) && !/乙\.pdf/.test(firstBody), firstBody);
+    await ev(`[...document.querySelectorAll('#dlgFoot button')].find((b) => /取消/.test(b.textContent)).click()`);
+    await sleep(320);
+    const secondBody = await ev(`(() => {
+      const o = document.getElementById('dlgOverlay');
+      return o.classList.contains('hidden') ? '' : document.getElementById('dlgBody').textContent;
+    })()`);
+    ok('取消第一个之后才问第二个', /乙\.pdf/.test(secondBody), secondBody);
+    await ev(`[...document.querySelectorAll('#dlgFoot button')].find((b) => /取消/.test(b.textContent)).click()`);
+    await sleep(320);
+    ok('两个都取消后弹层关掉，还是没标签',
+      (await ev(`document.getElementById('dlgOverlay').classList.contains('hidden')`)) === true
+      && (await ev(`document.querySelectorAll('.tab').length`)) === tabsBefore);
   }
 
   /* ---- 13. 块级删除入口：转换面板与右键菜单 ----
@@ -1278,6 +1340,79 @@ try {
       JSON.stringify(g.at(-1)));
     const firstColor = await ev(`getComputedStyle(document.querySelector('.tabs .tab:first-child')).borderLeftColor`);
     ok('最左侧标签仍不封口', firstColor === 'rgba(0, 0, 0, 0)', firstColor);
+  }
+
+  // ---- 内嵌终端：只验「接线在不在」，pty 那半截真机才测得到 ----
+  {
+    const box = await ev(`(() => {
+      const p = document.getElementById('termPanel');
+      if (!p) return { found: false };
+      const sb = document.querySelector('.statusbar');
+      const r = p.getBoundingClientRect();
+      return {
+        found: true,
+        hidden: p.classList.contains('hidden'),
+        h: r.height,
+        grip: !!document.getElementById('termGrip'),
+        more: !!document.getElementById('termMore'),
+        hide: !!document.getElementById('termHide'),
+        tabs: !!document.getElementById('termTabs'),
+        body: !!document.getElementById('termBody'),
+        // 面板排在状态栏之前：展开时它是往上长的，不能把状态栏挤出去
+        beforeStatus: !!(p.compareDocumentPosition(sb) & Node.DOCUMENT_POSITION_FOLLOWING),
+      };
+    })()`);
+    ok('终端面板在页面上，默认是收起的', box.found && box.hidden, JSON.stringify(box));
+    ok('收起时不占地方（高度为 0）', box.h <= 0.5, String(box.h));
+    ok('拖柄 / 新建 / 隐藏 / 标签条 / 画布都在',
+      box.grip && box.more && box.hide && box.tabs && box.body, JSON.stringify(box));
+    ok('面板排在状态栏前面（展开时往上长）', box.beforeStatus);
+
+    /* 「工具」菜单第一项就是终端，并且写明快捷键 —— 用户找不到入口等于没做 */
+    const menu = await ev(`(async () => {
+      const btn = [...document.querySelectorAll('.am-btn')].find((b) => b.textContent === '工具');
+      if (!btn) return { found: false };
+      btn.click();
+      await new Promise((r) => setTimeout(r, 120));
+      const panel = document.querySelector('.appmenu');
+      const first = panel && panel.querySelector('.am-item');
+      const out = {
+        found: true,
+        label: first ? first.querySelector('.am-label')?.textContent : null,
+        kbd: first ? first.querySelector('.am-kbd')?.textContent : null,
+        items: panel ? [...panel.querySelectorAll('.am-label')].map((n) => n.textContent) : [],
+      };
+      btn.click();
+      return out;
+    })()`);
+    ok('「工具」菜单里第一项是终端', menu.found && menu.label === '终端', JSON.stringify(menu));
+    ok('菜单上写着 Ctrl+`', String(menu.kbd || '').replace(/\s/g, '').toLowerCase() === 'ctrl+`', String(menu.kbd));
+  }
+
+  // ---- 文件查看器：占位与初始状态（真机那半截在 probe-media） ----
+  {
+    const vp = await ev(`(() => {
+      const p = document.getElementById('viewerPane');
+      if (!p) return { found: false };
+      const wrap = document.getElementById('editWrap');
+      const pane = document.getElementById('editorPane');
+      return {
+        found: true,
+        hidden: p.classList.contains('hidden'),
+        h: p.getBoundingClientRect().height,
+        inPane: p.parentElement === pane,
+        // 排在 editWrap 之后：同一块正文区，谁显示谁占位
+        afterWrap: !!(wrap.compareDocumentPosition(p) & Node.DOCUMENT_POSITION_FOLLOWING),
+        wrapVisible: !wrap.classList.contains('hidden'),
+        api: !!(window.__snp.viewer && typeof window.__snp.viewer.info === 'function'),
+        active: window.__snp.viewer.visible(),
+      };
+    })()`);
+    ok('查看器占位在页面上，默认收起', vp.found && vp.hidden, JSON.stringify(vp));
+    ok('收起时不占地方', vp.h <= 0.5, String(vp.h));
+    ok('它和编辑器同一块正文区（editorPane 里、editWrap 之后）', vp.inPane && vp.afterWrap, JSON.stringify(vp));
+    ok('没开查看器时编辑器正常显示', vp.wrapVisible);
+    ok('调试面可用（探针靠它拿类型与缩放）', vp.api && vp.active === false, JSON.stringify(vp));
   }
 } catch (e) {
   ok('运行期间没有异常', false, String((e && e.message) || e).slice(0, 300));

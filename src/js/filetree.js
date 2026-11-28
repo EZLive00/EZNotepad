@@ -574,6 +574,15 @@ export class FileTree {
        文件与目录都给 —— 目录路径贴到终端里一样有用。 */
     items.push({ label: tt('复制文件路径'), icon: 'copy', action: () => this._copyPath(entry.path) });
     items.push({ label: tt('在资源管理器中显示'), icon: 'folder-open', action: () => this.onReveal(entry.path) });
+    /* 交给系统默认程序：图片/压缩包虽然程序内能看，但「我要用 PS 改这张图」
+       这条需求一直都在。放在最后，不抢主路径。 */
+    if (!entry.is_dir) {
+      items.push({
+        label: tt('用系统程序打开'),
+        icon: 'external-link',
+        action: () => this.be.openExternal(entry.path).catch(() => this.toast(tt('打不开这个文件'))),
+      });
+    }
     this.menu(ev.clientX, ev.clientY, items);
   }
 
